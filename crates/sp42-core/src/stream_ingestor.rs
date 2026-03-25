@@ -108,13 +108,13 @@ impl StreamIngestor {
             old_rev_id: revision.old_rev_id,
             performer: classify_editor(&raw.user),
             timestamp_ms: raw.timestamp.to_ms()?,
-            is_bot: raw.bot,
-            is_minor: raw.minor,
-            is_new_page: raw.change_type == "new",
+            is_bot: raw.bot.into(),
+            is_minor: raw.minor.into(),
+            is_new_page: (raw.change_type == "new").into(),
             tags: raw.tags,
             comment: raw.comment.filter(|value| !value.is_empty()),
             byte_delta,
-            is_patrolled: false,
+            is_patrolled: false.into(),
         }))
     }
 

@@ -563,9 +563,12 @@ fn render_context_preview(
         &RecentChangesQuery {
             limit: 25,
             rccontinue: None,
-            include_bots: false,
-            unpatrolled_only: false,
-            include_minor: true,
+            include_bots: false.into(),
+            unpatrolled_only: false.into(),
+            include_minor: true.into(),
+            include_anonymous: true.into(),
+            include_new_pages: true.into(),
+            tag_filter: None,
             namespace_override: None,
         },
     )

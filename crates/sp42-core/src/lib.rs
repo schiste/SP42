@@ -162,11 +162,11 @@ pub use training_data::{
 };
 pub use traits::{
     Clock, EventSource, FileStorage, FixedClock, HttpClient, LoopbackWebSocket, MemoryStorage,
-    ReplayEventSource, Rng, SequenceRng, Storage, StubHttpClient, WebSocket,
+    ReplayEventSource, Rng, SequenceRng, Storage, StubHttpClient, SystemClock, WebSocket,
 };
 pub use types::{
     Action, ActionBroadcast, CompositeScore, CoordinationMessage, CoordinationRoomSummary,
-    CoordinationSnapshot, EditClaim, EditEvent, EditorIdentity, FlaggedEdit, HttpMethod,
+    CoordinationSnapshot, EditClaim, EditEvent, EditorIdentity, FlagState, FlaggedEdit, HttpMethod,
     HttpRequest, HttpResponse, LocalOAuthSourceReport, PresenceHeartbeat, QueuedEdit,
     RaceResolution, ScoreDelta, ScoreWeights, ScoringConfig, ScoringContext, ScoringSignal,
     ServerDebugSummary, ServerSentEvent, SignalContribution, UserRiskProfile, WarningLevel,

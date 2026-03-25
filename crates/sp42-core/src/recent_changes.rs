@@ -6,15 +6,20 @@ use serde::Deserialize;
 
 use crate::errors::RecentChangesError;
 use crate::traits::HttpClient;
-use crate::types::{EditEvent, EditorIdentity, HttpMethod, HttpRequest, HttpResponse, WikiConfig};
+use crate::types::{
+    EditEvent, EditorIdentity, FlagState, HttpMethod, HttpRequest, HttpResponse, WikiConfig,
+};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RecentChangesQuery {
     pub limit: u16,
     pub rccontinue: Option<String>,
-    pub include_bots: bool,
-    pub unpatrolled_only: bool,
-    pub include_minor: bool,
+    pub include_bots: FlagState,
+    pub unpatrolled_only: FlagState,
+    pub include_minor: FlagState,
+    pub include_anonymous: FlagState,
+    pub include_new_pages: FlagState,
+    pub tag_filter: Option<String>,
     pub namespace_override: Option<Vec<i32>>,
 }
 
@@ -24,9 +29,12 @@ impl RecentChangesQuery {
         Self {
             limit,
             rccontinue: None,
-            include_bots,
-            unpatrolled_only: false,
-            include_minor: true,
+            include_bots: FlagState::from_bool(include_bots),
+            unpatrolled_only: FlagState::Disabled,
+            include_minor: FlagState::Enabled,
+            include_anonymous: FlagState::Enabled,
+            include_new_pages: FlagState::Enabled,
+            tag_filter: None,
             namespace_override: None,
         }
     }
@@ -96,21 +104,36 @@ pub fn build_recent_changes_request(
                 "title|ids|sizes|flags|user|tags|comment|timestamp|patrolled",
             )
             .append_pair("rclimit", &query.limit.to_string())
-            .append_pair("rctype", "edit|new");
+            .append_pair(
+                "rctype",
+                if query.include_new_pages.is_enabled() {
+                    "edit|new"
+                } else {
+                    "edit"
+                },
+            );
         {
             let mut show_flags: Vec<&str> = Vec::new();
-            if !query.include_bots {
+            if !query.include_bots.is_enabled() {
                 show_flags.push("!bot");
             }
-            if query.unpatrolled_only {
+            if query.unpatrolled_only.is_enabled() {
                 show_flags.push("!patrolled");
             }
-            if !query.include_minor {
+            if !query.include_minor.is_enabled() {
                 show_flags.push("!minor");
+            }
+            if !query.include_anonymous.is_enabled() {
+                show_flags.push("!anon");
             }
             if !show_flags.is_empty() {
                 pairs.append_pair("rcshow", &show_flags.join("|"));
             }
+        }
+        if let Some(tag) = query.tag_filter.as_deref()
+            && !tag.trim().is_empty()
+        {
+            pairs.append_pair("rctag", tag.trim());
         }
         {
             let ns_list = query
@@ -190,10 +213,10 @@ pub fn parse_recent_changes_response(
         if !matches!(change.change_type.as_str(), "edit" | "new") {
             continue;
         }
-        if !query.include_bots && change.bot {
+        if !query.include_bots.is_enabled() && change.bot.is_enabled() {
             continue;
         }
-        if !query.include_minor && change.minor {
+        if !query.include_minor.is_enabled() && change.minor.is_enabled() {
             continue;
         }
         if !config.namespace_allowlist.is_empty()
@@ -212,7 +235,7 @@ pub fn parse_recent_changes_response(
             timestamp_ms: parse_rfc3339_utc_to_ms(&change.timestamp)?,
             is_bot: change.bot,
             is_minor: change.minor,
-            is_new_page: change.change_type == "new" || change.is_new,
+            is_new_page: FlagState::from(change.change_type == "new" || change.is_new.is_enabled()),
             tags: change.tags,
             comment: change.comment.filter(|value| !value.is_empty()),
             byte_delta: compute_byte_delta(change.newlen, change.oldlen),
@@ -405,7 +428,6 @@ struct RecentChangesQueryPayload {
     recentchanges: Vec<RecentChangeItem>,
 }
 
-#[allow(clippy::struct_excessive_bools)]
 #[derive(Debug, Deserialize)]
 struct RecentChangeItem {
     #[serde(rename = "type")]
@@ -416,11 +438,11 @@ struct RecentChangeItem {
     user: String,
     timestamp: String,
     #[serde(default)]
-    bot: bool,
+    bot: FlagState,
     #[serde(default)]
-    minor: bool,
+    minor: FlagState,
     #[serde(default, rename = "new")]
-    is_new: bool,
+    is_new: FlagState,
     revid: u64,
     old_revid: Option<u64>,
     oldlen: Option<i32>,
@@ -429,7 +451,7 @@ struct RecentChangeItem {
     #[serde(default)]
     tags: Vec<String>,
     #[serde(default)]
-    patrolled: bool,
+    patrolled: FlagState,
 }
 
 #[cfg(test)]
@@ -457,9 +479,12 @@ mod tests {
             &RecentChangesQuery {
                 limit: 25,
                 rccontinue: Some("20260324120000|123".to_string()),
-                include_bots: false,
-                unpatrolled_only: false,
-                include_minor: true,
+                include_bots: false.into(),
+                unpatrolled_only: false.into(),
+                include_minor: true.into(),
+                include_anonymous: true.into(),
+                include_new_pages: true.into(),
+                tag_filter: None,
                 namespace_override: None,
             },
         )
@@ -484,9 +509,12 @@ mod tests {
             &RecentChangesQuery {
                 limit: 25,
                 rccontinue: None,
-                include_bots: true,
-                unpatrolled_only: false,
-                include_minor: true,
+                include_bots: true.into(),
+                unpatrolled_only: false.into(),
+                include_minor: true.into(),
+                include_anonymous: true.into(),
+                include_new_pages: true.into(),
+                tag_filter: None,
                 namespace_override: None,
             },
         )
@@ -504,9 +532,12 @@ mod tests {
             &RecentChangesQuery {
                 limit: 25,
                 rccontinue: Some("   ".to_string()),
-                include_bots: false,
-                unpatrolled_only: false,
-                include_minor: true,
+                include_bots: false.into(),
+                unpatrolled_only: false.into(),
+                include_minor: true.into(),
+                include_anonymous: true.into(),
+                include_new_pages: true.into(),
+                tag_filter: None,
                 namespace_override: None,
             },
         )
@@ -691,9 +722,12 @@ mod tests {
             &RecentChangesQuery {
                 limit: 10,
                 rccontinue: None,
-                include_bots: false,
-                unpatrolled_only: false,
-                include_minor: true,
+                include_bots: false.into(),
+                unpatrolled_only: false.into(),
+                include_minor: true.into(),
+                include_anonymous: true.into(),
+                include_new_pages: true.into(),
+                tag_filter: None,
                 namespace_override: None,
             },
         ))
@@ -769,7 +803,7 @@ mod tests {
             .expect("response should parse");
 
         assert_eq!(batch.events.len(), 1);
-        assert!(batch.events[0].is_bot);
+        assert!(batch.events[0].is_bot.is_enabled());
         assert!(matches!(
             batch.events[0].performer,
             crate::types::EditorIdentity::Temporary { .. }

@@ -245,13 +245,13 @@ mod tests {
                 label: "192.0.2.10".to_string(),
             },
             timestamp_ms: 1_710_000_000_000,
-            is_bot: false,
-            is_minor: false,
-            is_new_page: false,
+            is_bot: false.into(),
+            is_minor: false.into(),
+            is_new_page: false.into(),
             tags: vec!["mw-reverted".to_string()],
             comment: Some("demo".to_string()),
             byte_delta: -30,
-            is_patrolled: false,
+            is_patrolled: false.into(),
         };
         let context = ScoringContext {
             user_risk: Some(UserRiskProfile {
@@ -356,13 +356,13 @@ mod tests {
                 label: "198.51.100.2".to_string(),
             },
             timestamp_ms: 1_710_000_000_000,
-            is_bot: false,
-            is_minor: false,
-            is_new_page: true,
+            is_bot: false.into(),
+            is_minor: false.into(),
+            is_new_page: true.into(),
             tags: Vec::new(),
             comment: None,
             byte_delta: 100,
-            is_patrolled: false,
+            is_patrolled: false.into(),
         };
         let item = QueuedEdit {
             score: score_edit(&event, &ScoringConfig::default()).expect("score should compute"),

@@ -9,7 +9,7 @@ use crate::recent_changes::{
     normalize_continue_token,
 };
 use crate::traits::{HttpClient, Storage};
-use crate::types::{HttpRequest, WikiConfig};
+use crate::types::{FlagState, HttpRequest, WikiConfig};
 
 const DEFAULT_BACKLOG_KEY_PREFIX: &str = "recentchanges.rccontinue";
 
@@ -98,9 +98,12 @@ where
         RecentChangesQuery {
             limit: self.config.limit,
             rccontinue: self.next_continue.clone(),
-            include_bots: self.config.include_bots,
-            unpatrolled_only: false,
-            include_minor: true,
+            include_bots: FlagState::from(self.config.include_bots),
+            unpatrolled_only: FlagState::Disabled,
+            include_minor: FlagState::Enabled,
+            include_anonymous: FlagState::Enabled,
+            include_new_pages: FlagState::Enabled,
+            tag_filter: None,
             namespace_override: None,
         }
     }
@@ -618,13 +621,13 @@ mod tests {
                 label: "192.0.2.1".to_string(),
             },
             timestamp_ms: 1_774_366_920_000,
-            is_bot: false,
-            is_minor: false,
-            is_new_page: false,
+            is_bot: false.into(),
+            is_minor: false.into(),
+            is_new_page: false.into(),
             tags: vec!["mw-reverted".to_string()],
             comment: Some("demo".to_string()),
             byte_delta: 20,
-            is_patrolled: false,
+            is_patrolled: false.into(),
         }
     }
 }

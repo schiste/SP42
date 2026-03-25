@@ -9,7 +9,7 @@ use url::form_urlencoded::Serializer;
 
 use crate::errors::ActionError;
 use crate::traits::HttpClient;
-use crate::types::{HttpMethod, HttpRequest, HttpResponse, WikiConfig};
+use crate::types::{FlagState, HttpMethod, HttpRequest, HttpResponse, WikiConfig};
 
 fn action_error(message: impl Into<String>) -> ActionError {
     ActionError::Execution {
@@ -57,7 +57,6 @@ pub struct UndoRequest {
     pub summary: Option<String>,
 }
 
-#[allow(clippy::struct_excessive_bools)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WikiPageSaveRequest {
     pub title: String,
@@ -67,8 +66,8 @@ pub struct WikiPageSaveRequest {
     pub baserevid: Option<u64>,
     pub tags: Vec<String>,
     pub watchlist: Option<String>,
-    pub create_only: bool,
-    pub minor: bool,
+    pub create_only: FlagState,
+    pub minor: FlagState,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -317,8 +316,8 @@ pub fn build_wiki_page_save_request(
             ("baserevid", baserevid.as_str()),
             ("tags", tags.as_str()),
             ("watchlist", request.watchlist.as_deref().unwrap_or("")),
-            ("createonly", bool_flag(request.create_only)),
-            ("minor", bool_flag(request.minor)),
+            ("createonly", bool_flag(request.create_only.is_enabled())),
+            ("minor", bool_flag(request.minor.is_enabled())),
         ]),
     })
 }
@@ -732,7 +731,7 @@ mod tests {
     };
     use crate::config_parser::parse_wiki_config;
     use crate::traits::StubHttpClient;
-    use crate::types::{HttpMethod, HttpResponse};
+    use crate::types::{FlagState, HttpMethod, HttpResponse};
 
     const CONFIG: &str = include_str!("../../../configs/frwiki.yaml");
 
@@ -857,8 +856,8 @@ mod tests {
                 baserevid: Some(123),
                 tags: vec!["sp42".to_string(), "manual".to_string()],
                 watchlist: Some("nochange".to_string()),
-                create_only: false,
-                minor: true,
+                create_only: FlagState::Disabled,
+                minor: FlagState::Enabled,
             },
         )
         .expect("page save request should build");
@@ -992,8 +991,8 @@ mod tests {
                 baserevid: None,
                 tags: vec!["sp42".to_string()],
                 watchlist: None,
-                create_only: true,
-                minor: false,
+                create_only: FlagState::Enabled,
+                minor: FlagState::Disabled,
             },
         ))
         .expect("page save execution should succeed");

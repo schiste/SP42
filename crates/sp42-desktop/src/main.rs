@@ -378,10 +378,13 @@ fn build_desktop_recentchanges_request(
         &RecentChangesQuery {
             limit: 25,
             rccontinue: None,
-            include_bots: false,
-            include_minor: true,
+            include_bots: false.into(),
+            unpatrolled_only: false.into(),
+            include_minor: true.into(),
+            include_anonymous: true.into(),
+            include_new_pages: true.into(),
+            tag_filter: None,
             namespace_override: None,
-            unpatrolled_only: false,
         },
     )
     .map_err(|error| error.to_string())

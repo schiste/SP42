@@ -630,13 +630,13 @@ mod tests {
                 username: "Tester".to_string(),
             },
             timestamp_ms: 1_710_000_000_000,
-            is_bot: false,
-            is_minor: false,
-            is_new_page: false,
+            is_bot: false.into(),
+            is_minor: false.into(),
+            is_new_page: false.into(),
             tags: vec![],
             comment: Some("example".to_string()),
             byte_delta: 42,
-            is_patrolled: false,
+            is_patrolled: false.into(),
         };
         let score = score_edit(&event, &ScoringConfig::default()).expect("score should compute");
 

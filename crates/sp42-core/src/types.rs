@@ -1,9 +1,48 @@
 //! Shared types used across all SP42 targets.
 
 use std::collections::BTreeMap;
+use std::fmt;
 
 use serde::{Deserialize, Serialize};
 use url::Url;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(from = "bool", into = "bool")]
+pub enum FlagState {
+    #[default]
+    Disabled,
+    Enabled,
+}
+
+impl FlagState {
+    #[must_use]
+    pub const fn is_enabled(self) -> bool {
+        matches!(self, Self::Enabled)
+    }
+
+    #[must_use]
+    pub const fn from_bool(value: bool) -> Self {
+        if value { Self::Enabled } else { Self::Disabled }
+    }
+}
+
+impl From<bool> for FlagState {
+    fn from(value: bool) -> Self {
+        Self::from_bool(value)
+    }
+}
+
+impl From<FlagState> for bool {
+    fn from(value: FlagState) -> Self {
+        value.is_enabled()
+    }
+}
+
+impl fmt::Display for FlagState {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(if self.is_enabled() { "true" } else { "false" })
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum EditorIdentity {
@@ -12,7 +51,6 @@ pub enum EditorIdentity {
     Temporary { label: String },
 }
 
-#[allow(clippy::struct_excessive_bools)]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct EditEvent {
     pub wiki_id: String,
@@ -22,14 +60,14 @@ pub struct EditEvent {
     pub old_rev_id: Option<u64>,
     pub performer: EditorIdentity,
     pub timestamp_ms: i64,
-    pub is_bot: bool,
-    pub is_minor: bool,
-    pub is_new_page: bool,
+    pub is_bot: FlagState,
+    pub is_minor: FlagState,
+    pub is_new_page: FlagState,
     pub tags: Vec<String>,
     pub comment: Option<String>,
     pub byte_delta: i32,
     #[serde(default)]
-    pub is_patrolled: bool,
+    pub is_patrolled: FlagState,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -311,10 +349,10 @@ mod tests {
     use super::LocalOAuthSourceReport;
 
     #[test]
-    fn local_oauth_source_report_serializes_with_source_path_and_flag() {
+    fn local_oauth_source_report_serializes_without_requiring_path_disclosure() {
         let report = LocalOAuthSourceReport {
             file_name: ".env.wikimedia.local".to_string(),
-            source_path: Some("/tmp/.env.wikimedia.local".to_string()),
+            source_path: None,
             loaded_from_source: true,
         };
 

@@ -5,22 +5,21 @@ use serde::{Deserialize, Serialize};
 use crate::{
     ActionExecutionHistoryReport, ActionExecutionStatusReport, BacklogRuntimeStatus,
     CoordinationRoomSummary, CoordinationStateSummary, DebugSnapshot, DevAuthCapabilityReport,
-    DevAuthSessionStatus, LocalOAuthConfigStatus, LocalOAuthSourceReport, PatrolScenarioReport,
-    PatrolSessionDigest, QueuedEdit, ReviewWorkbench, ScoringContext, ShellStateModel,
-    StreamRuntimeStatus, StructuredDiff,
+    DevAuthSessionStatus, FlagState, LocalOAuthConfigStatus, LocalOAuthSourceReport,
+    PatrolScenarioReport, PatrolSessionDigest, QueuedEdit, ReviewWorkbench, ScoringContext,
+    ShellStateModel, StreamRuntimeStatus, StructuredDiff,
 };
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[allow(clippy::struct_excessive_bools)]
 pub struct LiveOperatorBackendStatus {
-    pub ready_for_local_testing: bool,
+    pub ready_for_local_testing: FlagState,
     pub readiness_issues: Vec<String>,
-    pub bootstrap_ready: bool,
+    pub bootstrap_ready: FlagState,
     pub oauth: LocalOAuthConfigStatus,
     pub session: DevAuthSessionStatus,
     pub source_report: LocalOAuthSourceReport,
-    pub capability_cache_present: bool,
-    pub capability_cache_fresh: bool,
+    pub capability_cache_present: FlagState,
+    pub capability_cache_fresh: FlagState,
     pub capability_cache_age_ms: Option<u64>,
     pub capability_cache_wiki_id: Option<String>,
 }
@@ -29,14 +28,23 @@ pub struct LiveOperatorBackendStatus {
 pub struct LiveOperatorQuery {
     pub limit: u16,
     #[serde(default)]
-    pub include_bots: bool,
+    pub include_bots: FlagState,
     #[serde(default)]
-    pub unpatrolled_only: bool,
+    pub unpatrolled_only: FlagState,
     #[serde(default)]
-    pub include_minor: bool,
+    pub include_minor: FlagState,
+    #[serde(default)]
+    pub include_registered: FlagState,
+    #[serde(default)]
+    pub include_anonymous: FlagState,
+    #[serde(default)]
+    pub include_temporary: FlagState,
+    #[serde(default)]
+    pub include_new_pages: FlagState,
     #[serde(default)]
     pub namespaces: Vec<i32>,
     pub min_score: Option<i32>,
+    pub tag_filter: Option<String>,
     pub rccontinue: Option<String>,
 }
 
@@ -87,14 +95,14 @@ pub struct LiveOperatorView {
 #[cfg(test)]
 mod tests {
     use super::LiveOperatorBackendStatus;
-    use crate::{DevAuthSessionStatus, LocalOAuthConfigStatus, LocalOAuthSourceReport};
+    use crate::{DevAuthSessionStatus, FlagState, LocalOAuthConfigStatus, LocalOAuthSourceReport};
 
     #[test]
     fn live_operator_backend_status_serializes_authoritative_local_env_state() {
         let status = LiveOperatorBackendStatus {
-            ready_for_local_testing: true,
+            ready_for_local_testing: FlagState::Enabled,
             readiness_issues: vec!["capability cache cold".to_string()],
-            bootstrap_ready: true,
+            bootstrap_ready: FlagState::Enabled,
             oauth: LocalOAuthConfigStatus {
                 client_id_present: true,
                 client_secret_present: true,
@@ -111,11 +119,11 @@ mod tests {
             },
             source_report: LocalOAuthSourceReport {
                 file_name: ".env.wikimedia.local".to_string(),
-                source_path: Some("/tmp/.env.wikimedia.local".to_string()),
+                source_path: None,
                 loaded_from_source: true,
             },
-            capability_cache_present: true,
-            capability_cache_fresh: true,
+            capability_cache_present: FlagState::Enabled,
+            capability_cache_fresh: FlagState::Enabled,
             capability_cache_age_ms: Some(5),
             capability_cache_wiki_id: Some("frwiki".to_string()),
         };

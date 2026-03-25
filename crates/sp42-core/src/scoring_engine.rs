@@ -47,7 +47,7 @@ pub fn score_edit_with_context(
 
     apply_editor_signal(event, &config.weights, &mut total, &mut contributions);
 
-    if event.is_new_page {
+    if event.is_new_page.is_enabled() {
         push_signal(
             ScoringSignal::NewPage,
             config.weights.new_page,
@@ -67,7 +67,7 @@ pub fn score_edit_with_context(
         );
     }
 
-    if event.is_bot {
+    if event.is_bot.is_enabled() {
         push_signal(
             ScoringSignal::BotLikeEdit,
             config.weights.bot_like_edit,
@@ -273,13 +273,13 @@ mod tests {
                 label: "192.0.2.1".to_string(),
             },
             timestamp_ms: 1_710_000_000_000,
-            is_bot: false,
-            is_minor: false,
-            is_new_page: true,
+            is_bot: false.into(),
+            is_minor: false.into(),
+            is_new_page: true.into(),
             tags: vec!["mobile edit".to_string()],
             comment: Some("Ajout http://spam.example.test".to_string()),
             byte_delta: 200,
-            is_patrolled: false,
+            is_patrolled: false.into(),
         }
     }
 
@@ -312,7 +312,7 @@ mod tests {
     #[test]
     fn bot_signal_reduces_total() {
         let mut event = sample_event();
-        event.is_bot = true;
+        event.is_bot = true.into();
 
         let score = score_edit(&event, &ScoringConfig::default()).expect("score should compute");
 
@@ -389,7 +389,7 @@ mod tests {
     #[test]
     fn extreme_weights_do_not_overflow_total_or_scaling() {
         let mut event = sample_event();
-        event.is_bot = true;
+        event.is_bot = true.into();
         event.tags = vec!["mw-reverted".to_string(), "trusted".to_string()];
         event.comment = Some("http://example.test merde".to_string());
         event.byte_delta = i32::MIN;
@@ -428,7 +428,7 @@ mod tests {
     #[test]
     fn applies_trusted_revert_and_large_removal_signals() {
         let mut event = sample_event();
-        event.is_new_page = false;
+        event.is_new_page = false.into();
         event.comment = Some("clean edit".to_string());
         event.tags = vec!["mw-manual-revert".to_string(), "mw-reverted".to_string()];
         event.byte_delta = -900;
@@ -497,8 +497,8 @@ mod tests {
         ) {
             let mut event = sample_event();
             event.byte_delta = byte_delta;
-            event.is_new_page = is_new_page;
-            event.is_bot = is_bot;
+            event.is_new_page = is_new_page.into();
+            event.is_bot = is_bot.into();
             event.comment = Some(match (has_link, has_profanity) {
                 (true, true) => "http://example.test merde".to_string(),
                 (true, false) => "http://example.test".to_string(),
@@ -520,7 +520,7 @@ mod tests {
         #[test]
         fn property_positive_signals_do_not_reduce_score(byte_delta in -5000i32..5000) {
             let mut baseline = sample_event();
-            baseline.is_new_page = false;
+            baseline.is_new_page = false.into();
             baseline.comment = Some("clean edit".to_string());
             baseline.byte_delta = byte_delta;
 
@@ -537,11 +537,11 @@ mod tests {
         #[test]
         fn property_negative_signals_do_not_increase_score(is_new_page in any::<bool>()) {
             let mut baseline = sample_event();
-            baseline.is_bot = false;
-            baseline.is_new_page = is_new_page;
+            baseline.is_bot = false.into();
+            baseline.is_new_page = is_new_page.into();
 
             let mut with_negative_signal = baseline.clone();
-            with_negative_signal.is_bot = true;
+            with_negative_signal.is_bot = true.into();
 
             let config = ScoringConfig::default();
             let baseline_score = score_edit(&baseline, &config).expect("baseline score should compute");
@@ -567,7 +567,7 @@ mod tests {
             liftwing_probability in any::<f32>(),
         ) {
             let mut event = sample_event();
-            event.is_bot = true;
+            event.is_bot = true.into();
             event.tags = vec!["mw-reverted".to_string(), "trusted".to_string()];
             event.comment = Some("http://example.test merde".to_string());
             event.byte_delta = i32::MIN;
@@ -617,8 +617,8 @@ mod tests {
         ) {
             let mut event = sample_event();
             event.byte_delta = byte_delta;
-            event.is_new_page = is_new_page;
-            event.is_bot = is_bot;
+            event.is_new_page = is_new_page.into();
+            event.is_bot = is_bot.into();
             event.tags = [
                 trusted.then_some("trusted".to_string()),
                 reverted.then_some("mw-reverted".to_string()),
@@ -657,8 +657,8 @@ mod tests {
         ) {
             let mut event = sample_event();
             event.byte_delta = byte_delta;
-            event.is_new_page = is_new_page;
-            event.is_bot = is_bot;
+            event.is_new_page = is_new_page.into();
+            event.is_bot = is_bot.into();
             event.tags = [
                 trusted.then_some("trusted".to_string()),
                 reverted.then_some("mw-reverted".to_string()),

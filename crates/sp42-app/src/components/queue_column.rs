@@ -19,7 +19,7 @@ pub fn QueueColumn(
                 .map(|(index, item)| {
                     let score = item.score.total;
                     let title = item.event.title.clone();
-                    let is_patrolled = item.event.is_patrolled;
+                    let is_patrolled = item.event.is_patrolled.is_enabled();
                     let (tier_bg, tier_icon) = score_tier(score);
                     let opacity = if is_patrolled { "opacity:0.5;" } else { "" };
                     view! {

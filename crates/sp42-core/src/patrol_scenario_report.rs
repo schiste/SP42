@@ -582,9 +582,9 @@ mod tests {
                     old_rev_id: Some(rev_id - 1),
                     performer,
                     timestamp_ms: 1_710_000_000_000,
-                    is_bot: bot,
-                    is_minor: false,
-                    is_new_page: new_page,
+                    is_bot: bot.into(),
+                    is_minor: false.into(),
+                    is_new_page: new_page.into(),
                     tags: if bot {
                         vec!["mw-reverted".to_string()]
                     } else {
@@ -592,7 +592,7 @@ mod tests {
                     },
                     comment: Some("scenario".to_string()),
                     byte_delta,
-                    is_patrolled: false,
+                    is_patrolled: false.into(),
                 };
                 let score =
                     score_edit(&event, &ScoringConfig::default()).expect("score should compute");

@@ -47,7 +47,7 @@ Optional:
 ### 1. Clone and build
 
 ```sh
-cargo build --workspace
+./scripts/build-local.sh
 ```
 
 ### 2. Run the localhost server
@@ -72,7 +72,7 @@ cargo run -p sp42-cli
 
 ```sh
 rustup target add wasm32-unknown-unknown
-cargo build -p sp42-app --target wasm32-unknown-unknown
+./scripts/build-frontend.sh
 ```
 
 If you use `trunk`:
@@ -106,6 +106,8 @@ The file is ignored by `.gitignore`.
 ## Development Commands
 
 ```sh
+./scripts/clean-house.sh
+./scripts/build-local.sh
 cargo test --workspace
 cargo clippy --workspace --all-targets --all-features -- -D warnings
 cargo doc --workspace --no-deps
@@ -127,4 +129,3 @@ Selected utility scripts:
 ## License
 
 SP42 is licensed under the Apache License, Version 2.0. See [LICENSE](LICENSE).
-

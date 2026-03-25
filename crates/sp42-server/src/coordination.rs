@@ -1,21 +1,21 @@
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use tokio::sync::{RwLock, broadcast};
 
 use sp42_core::{
-    CoordinationMessage, CoordinationRoomSummary, CoordinationSnapshot, CoordinationState,
-    CoordinationStateSummary, decode_message,
+    Clock, CoordinationMessage, CoordinationRoomSummary, CoordinationSnapshot, CoordinationState,
+    CoordinationStateSummary, SystemClock, decode_message,
 };
 
 const ROOM_CAPACITY: usize = 128;
 const PRESENCE_STALE_AFTER_MS: i64 = 60_000;
 const ROOM_IDLE_EVICT_AFTER_MS: i64 = 5 * 60_000;
 
-#[derive(Debug, Clone, Default)]
+#[derive(Clone)]
 pub struct CoordinationRegistry {
     rooms: Arc<RwLock<HashMap<String, CoordinationRoomState>>>,
+    clock: Arc<dyn Clock>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -52,6 +52,17 @@ struct CoordinationRoomState {
 }
 
 impl CoordinationRegistry {
+    pub fn new(clock: Arc<dyn Clock>) -> Self {
+        Self {
+            rooms: Arc::new(RwLock::new(HashMap::new())),
+            clock,
+        }
+    }
+
+    fn current_time_ms(&self) -> i64 {
+        self.clock.now_ms()
+    }
+
     pub async fn subscribe(&self, wiki_id: &str) -> broadcast::Receiver<CoordinationEnvelope> {
         let sender = self.room_sender(wiki_id).await;
         sender.subscribe()
@@ -61,9 +72,9 @@ impl CoordinationRegistry {
         let sender = self.room_sender(wiki_id).await;
         {
             let mut rooms = self.rooms.write().await;
-            prune_inactive_rooms(&mut rooms, now_ms());
+            let current_time_ms = self.current_time_ms();
+            prune_inactive_rooms(&mut rooms, current_time_ms);
             if let Some(room) = rooms.get_mut(wiki_id) {
-                let current_time_ms = now_ms();
                 room.published_messages = room.published_messages.saturating_add(1);
                 room.last_activity_ms = Some(current_time_ms);
                 if let Ok(message) = decode_message(&envelope.payload) {
@@ -81,11 +92,11 @@ impl CoordinationRegistry {
 
     pub async fn connect_client(&self, wiki_id: &str) {
         let mut rooms = self.rooms.write().await;
-        prune_inactive_rooms(&mut rooms, now_ms());
+        let current_time_ms = self.current_time_ms();
+        prune_inactive_rooms(&mut rooms, current_time_ms);
         let room = rooms
             .entry(wiki_id.to_string())
             .or_insert_with(|| new_room_state(wiki_id));
-        let current_time_ms = now_ms();
         room.connected_clients = room.connected_clients.saturating_add(1);
         room.last_activity_ms = Some(current_time_ms);
         prune_stale_presence(room, current_time_ms);
@@ -93,7 +104,7 @@ impl CoordinationRegistry {
 
     pub async fn disconnect_client(&self, wiki_id: &str) {
         let mut rooms = self.rooms.write().await;
-        let current_time_ms = now_ms();
+        let current_time_ms = self.current_time_ms();
         prune_inactive_rooms(&mut rooms, current_time_ms);
         let should_remove = if let Some(room) = rooms.get_mut(wiki_id) {
             room.connected_clients = room.connected_clients.saturating_sub(1);
@@ -113,7 +124,7 @@ impl CoordinationRegistry {
     }
 
     pub async fn snapshot(&self) -> CoordinationSnapshot {
-        let current_time_ms = now_ms();
+        let current_time_ms = self.current_time_ms();
         let mut rooms = self.rooms.write().await;
         prune_inactive_rooms(&mut rooms, current_time_ms);
         for room in rooms.values_mut() {
@@ -129,7 +140,7 @@ impl CoordinationRegistry {
     }
 
     pub async fn room_state_summary(&self, wiki_id: &str) -> Option<CoordinationStateSummary> {
-        let current_time_ms = now_ms();
+        let current_time_ms = self.current_time_ms();
         let mut rooms = self.rooms.write().await;
         prune_inactive_rooms(&mut rooms, current_time_ms);
         if let Some(room) = rooms.get_mut(wiki_id) {
@@ -139,7 +150,7 @@ impl CoordinationRegistry {
     }
 
     pub async fn room_inspection(&self, wiki_id: &str) -> Option<CoordinationRoomInspection> {
-        let current_time_ms = now_ms();
+        let current_time_ms = self.current_time_ms();
         let mut rooms = self.rooms.write().await;
         prune_inactive_rooms(&mut rooms, current_time_ms);
         if let Some(room) = rooms.get_mut(wiki_id) {
@@ -158,7 +169,7 @@ impl CoordinationRegistry {
     }
 
     pub async fn room_inspections(&self) -> Vec<CoordinationRoomInspection> {
-        let current_time_ms = now_ms();
+        let current_time_ms = self.current_time_ms();
         let mut rooms = self.rooms.write().await;
         prune_inactive_rooms(&mut rooms, current_time_ms);
         for room in rooms.values_mut() {
@@ -217,12 +228,18 @@ impl CoordinationRegistry {
         }
 
         let mut rooms = self.rooms.write().await;
-        prune_inactive_rooms(&mut rooms, now_ms());
+        prune_inactive_rooms(&mut rooms, self.current_time_ms());
         rooms
             .entry(wiki_id.to_string())
             .or_insert_with(|| new_room_state(wiki_id))
             .sender
             .clone()
+    }
+}
+
+impl Default for CoordinationRegistry {
+    fn default() -> Self {
+        Self::new(Arc::new(SystemClock))
     }
 }
 
@@ -303,19 +320,37 @@ fn room_is_stale(room: &CoordinationRoomState, current_time_ms: i64) -> bool {
     current_time_ms.saturating_sub(last_activity_ms) >= ROOM_IDLE_EVICT_AFTER_MS
 }
 
-fn now_ms() -> i64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .ok()
-        .and_then(|duration| i64::try_from(duration.as_millis()).ok())
-        .unwrap_or(0)
-}
-
 #[cfg(test)]
 mod tests {
-    use sp42_core::{CoordinationMessage, EditClaim, encode_message};
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicI64, Ordering};
 
-    use super::{CoordinationEnvelope, CoordinationRegistry, ROOM_IDLE_EVICT_AFTER_MS, now_ms};
+    use sp42_core::{Clock, CoordinationMessage, EditClaim, encode_message};
+
+    use super::{CoordinationEnvelope, CoordinationRegistry, ROOM_IDLE_EVICT_AFTER_MS};
+
+    #[derive(Debug)]
+    struct TestClock {
+        now_ms: AtomicI64,
+    }
+
+    impl TestClock {
+        fn new(now_ms: i64) -> Self {
+            Self {
+                now_ms: AtomicI64::new(now_ms),
+            }
+        }
+
+        fn set_now_ms(&self, now_ms: i64) {
+            self.now_ms.store(now_ms, Ordering::Relaxed);
+        }
+    }
+
+    impl Clock for TestClock {
+        fn now_ms(&self) -> i64 {
+            self.now_ms.load(Ordering::Relaxed)
+        }
+    }
 
     #[tokio::test]
     async fn publishes_to_all_subscribers_in_room() {
@@ -435,7 +470,8 @@ mod tests {
 
     #[tokio::test]
     async fn evicts_idle_rooms_with_no_connected_clients() {
-        let registry = CoordinationRegistry::default();
+        let clock = Arc::new(TestClock::new(10_000));
+        let registry = CoordinationRegistry::new(clock.clone());
         let payload = encode_message(&CoordinationMessage::EditClaim(EditClaim {
             wiki_id: "frwiki".to_string(),
             rev_id: 7,
@@ -454,9 +490,8 @@ mod tests {
             )
             .await;
         registry.disconnect_client("frwiki").await;
-        registry
-            .set_last_activity_for_test("frwiki", now_ms() - ROOM_IDLE_EVICT_AFTER_MS - 1)
-            .await;
+        clock.set_now_ms(10_000 + ROOM_IDLE_EVICT_AFTER_MS + 1);
+        registry.set_last_activity_for_test("frwiki", 10_000).await;
 
         let snapshot = registry.snapshot().await;
 

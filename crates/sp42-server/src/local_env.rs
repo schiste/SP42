@@ -16,7 +16,9 @@ pub struct LocalOAuthConfig {
 
 impl LocalOAuthConfig {
     pub fn load() -> Self {
-        Self::load_from_candidates(candidate_paths())
+        let mut config = Self::load_from_candidates(candidate_paths());
+        config.apply_env_overrides();
+        config
     }
 
     pub fn load_from_candidates<I>(candidates: I) -> Self
@@ -51,10 +53,6 @@ impl LocalOAuthConfig {
             && self.client_secret().is_some_and(|value| !value.is_empty())
     }
 
-    pub fn source_path(&self) -> Option<&Path> {
-        self.source_path.as_deref()
-    }
-
     pub fn status(&self) -> LocalOAuthConfigStatus {
         LocalOAuthConfigStatus {
             client_id_present: self
@@ -73,13 +71,49 @@ impl LocalOAuthConfig {
     }
 
     pub fn source_report(&self) -> LocalOAuthSourceReport {
+        let any_credential_present = self.status().client_id_present
+            || self.status().client_secret_present
+            || self.status().access_token_present;
+        let source_file_name = self
+            .source_path
+            .as_ref()
+            .and_then(|path| path.file_name())
+            .map(|name| name.to_string_lossy().to_string())
+            .or_else(|| any_credential_present.then_some("environment".to_string()))
+            .unwrap_or_else(|| LOCAL_ENV_FILE_NAME.to_string());
+
         LocalOAuthSourceReport {
-            file_name: LOCAL_ENV_FILE_NAME.to_string(),
-            source_path: self
-                .source_path
-                .as_ref()
-                .map(|path| path.display().to_string()),
+            file_name: source_file_name,
+            source_path: None,
             loaded_from_source: self.source_path.is_some(),
+        }
+    }
+
+    fn apply_env_overrides(&mut self) {
+        self.apply_env_overrides_from_iter(std::env::vars());
+    }
+
+    fn apply_env_overrides_from_iter<I>(&mut self, pairs: I)
+    where
+        I: IntoIterator<Item = (String, String)>,
+    {
+        for (key, value) in pairs {
+            if value.trim().is_empty() {
+                continue;
+            }
+
+            match key.as_str() {
+                "WIKIMEDIA_CLIENT_APPLICATION_KEY" => {
+                    self.client_application_key = Some(value);
+                }
+                "WIKIMEDIA_CLIENT_APPLICATION_SECRET" => {
+                    self.client_application_secret = Some(value);
+                }
+                "WIKIMEDIA_ACCESS_TOKEN" => {
+                    self.access_token = Some(value);
+                }
+                _ => {}
+            }
         }
     }
 }
@@ -230,10 +264,7 @@ mod tests {
         let report = config.source_report();
 
         assert_eq!(report.file_name, super::LOCAL_ENV_FILE_NAME);
-        assert_eq!(
-            report.source_path.as_deref(),
-            Some("/tmp/.env.wikimedia.local")
-        );
+        assert!(report.source_path.is_none());
         assert!(report.loaded_from_source);
     }
 
@@ -252,7 +283,8 @@ mod tests {
         let config = LocalOAuthConfig::load_from_candidates([config_path.clone()]);
 
         assert_eq!(config.access_token(), Some("token-from-file"));
-        assert_eq!(config.source_path(), Some(config_path.as_path()));
+        assert_eq!(config.source_report().file_name, super::LOCAL_ENV_FILE_NAME);
+        assert!(config.source_report().loaded_from_source);
 
         let _ = fs::remove_file(&config_path);
         let _ = fs::remove_dir_all(&temp_dir);
@@ -275,9 +307,47 @@ mod tests {
         let config = LocalOAuthConfig::load_from_candidates([config_path.clone()]);
 
         assert_eq!(config.access_token(), Some("token-from-dot-env"));
-        assert_eq!(config.source_path(), Some(config_path.as_path()));
+        assert_eq!(
+            config.source_report().file_name,
+            super::FALLBACK_ENV_FILE_NAME
+        );
+        assert!(config.source_report().loaded_from_source);
 
         let _ = fs::remove_file(&config_path);
         let _ = fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn source_report_uses_environment_label_without_leaking_path() {
+        let config = LocalOAuthConfig {
+            source_path: None,
+            client_application_key: Some("client-key".to_string()),
+            client_application_secret: None,
+            access_token: Some("token-value".to_string()),
+        };
+
+        let report = config.source_report();
+
+        assert_eq!(report.file_name, "environment");
+        assert!(report.source_path.is_none());
+        assert!(!report.loaded_from_source);
+    }
+
+    #[test]
+    fn load_prefers_process_environment_over_file_values() {
+        let mut config = LocalOAuthConfig::load_from_candidates(Vec::<PathBuf>::new());
+        config.apply_env_overrides_from_iter([
+            (
+                "WIKIMEDIA_ACCESS_TOKEN".to_string(),
+                "env-token".to_string(),
+            ),
+            (
+                "WIKIMEDIA_CLIENT_APPLICATION_KEY".to_string(),
+                "env-key".to_string(),
+            ),
+        ]);
+
+        assert_eq!(config.access_token(), Some("env-token"));
+        assert_eq!(config.client_id(), Some("env-key"));
     }
 }

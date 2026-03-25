@@ -204,19 +204,12 @@ impl Storage for FileStorage {
             message: error.to_string(),
         })?;
         let target = self.key_path(&key);
-        let nanos = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map_err(|error| StorageError::Operation {
-                message: error.to_string(),
-            })?
-            .as_nanos();
         let sequence = FILE_STORAGE_TEMP_SEQUENCE.fetch_add(1, Ordering::Relaxed);
         let temp_path = self.root.join(format!(
-            ".{}.{}.{}.tmp",
+            ".{}.{}.tmp",
             target
                 .file_name()
                 .map_or_else(|| "checkpoint".into(), |name| name.to_string_lossy()),
-            nanos,
             sequence
         ));
         fs::write(&temp_path, value).map_err(|error| StorageError::Operation {
@@ -254,6 +247,19 @@ impl FixedClock {
 impl Clock for FixedClock {
     fn now_ms(&self) -> i64 {
         self.now_ms
+    }
+}
+
+#[derive(Debug, Default, Clone, Copy)]
+pub struct SystemClock;
+
+impl Clock for SystemClock {
+    fn now_ms(&self) -> i64 {
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .ok()
+            .and_then(|duration| i64::try_from(duration.as_millis()).ok())
+            .unwrap_or(0)
     }
 }
 

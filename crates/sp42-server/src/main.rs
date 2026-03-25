@@ -3,10 +3,11 @@ mod local_env;
 mod wikimedia_capabilities;
 
 use std::collections::HashMap;
+use std::io;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
 use axum::extract::OriginalUri;
@@ -32,22 +33,22 @@ use tracing_subscriber::EnvFilter;
 
 use sp42_core::{
     ActionError, ActionExecutionHistoryReport, ActionExecutionLogEntry,
-    ActionExecutionStatusReport, BacklogRuntime, BacklogRuntimeConfig, ContextInputs,
+    ActionExecutionStatusReport, BacklogRuntime, BacklogRuntimeConfig, Clock, ContextInputs,
     CoordinationRoomSummary, CoordinationSnapshot, CoordinationState, DebugSnapshotInputs,
-    DevAuthBootstrapRequest, DevAuthCapabilityReport, DevAuthSessionStatus, FileStorage,
-    LiftWingRequest, LiveOperatorBackendStatus, LiveOperatorPhaseTiming, LiveOperatorQuery,
-    LiveOperatorTelemetry, LiveOperatorView, LocalOAuthConfigStatus, LocalOAuthSourceReport,
-    OAuthCallback, OAuthClientConfig, OAuthTokenResponse, PatrolScenarioReportInputs,
-    PatrolSessionDigestInputs, QueuedEdit, RecentChangesQuery, ServerDebugSummary,
-    SessionActionExecutionRequest, SessionActionExecutionResponse, SessionActionKind,
-    ShellStateInputs, Storage, StreamRuntimeStatus, TokenKind, UndoRequest, WikiConfig,
-    WikiStorageConfig, WikiStoragePlan, WikiStoragePlanInput, build_authorization_url,
-    build_debug_snapshot, build_patrol_scenario_report, build_patrol_session_digest,
-    build_ranked_queue, build_review_workbench, build_scoring_context, build_shell_state_model,
-    build_wiki_storage_plan, diff_lines, execute_fetch_token, execute_liftwing_score,
-    execute_patrol, execute_recent_changes, execute_rollback, execute_undo, generate_oauth_state,
-    generate_pkce_verifier, parse_callback_query, render_wiki_storage_document_page,
-    render_wiki_storage_index_page,
+    DevAuthBootstrapRequest, DevAuthCapabilityReport, DevAuthSessionStatus, EditorIdentity,
+    FileStorage, FlagState, LiftWingRequest, LiveOperatorBackendStatus, LiveOperatorPhaseTiming,
+    LiveOperatorQuery, LiveOperatorTelemetry, LiveOperatorView, LocalOAuthConfigStatus,
+    LocalOAuthSourceReport, OAuthCallback, OAuthClientConfig, OAuthTokenResponse,
+    PatrolScenarioReportInputs, PatrolSessionDigestInputs, QueuedEdit, RecentChangesQuery,
+    ServerDebugSummary, SessionActionExecutionRequest, SessionActionExecutionResponse,
+    SessionActionKind, ShellStateInputs, Storage, StreamRuntimeStatus, SystemClock, TokenKind,
+    UndoRequest, WikiConfig, WikiStorageConfig, WikiStoragePlan, WikiStoragePlanInput,
+    build_authorization_url, build_debug_snapshot, build_patrol_scenario_report,
+    build_patrol_session_digest, build_ranked_queue, build_review_workbench, build_scoring_context,
+    build_shell_state_model, build_wiki_storage_plan, diff_lines, execute_fetch_token,
+    execute_liftwing_score, execute_patrol, execute_recent_changes, execute_rollback, execute_undo,
+    generate_oauth_state, generate_pkce_verifier, parse_callback_query,
+    render_wiki_storage_document_page, render_wiki_storage_index_page,
 };
 
 use crate::coordination::{
@@ -78,7 +79,7 @@ const AUTH_CALLBACK_PATH: &str = "/auth/callback";
 const AUTH_SESSION_PATH: &str = "/auth/session";
 const AUTH_LOGOUT_PATH: &str = "/auth/logout";
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 struct AppState {
     capability_cache: SharedCapabilityCache,
     sessions: SharedSessions,
@@ -87,6 +88,7 @@ struct AppState {
     local_oauth: LocalOAuthConfig,
     runtime_storage_root: PathBuf,
     capability_targets: CapabilityProbeTargets,
+    clock: Arc<dyn Clock>,
     coordination: CoordinationRegistry,
     next_client_id: Arc<AtomicU64>,
     next_session_id: Arc<AtomicU64>,
@@ -145,18 +147,17 @@ struct AuthLoginQuery {
     wiki_id: Option<String>,
 }
 
-#[allow(clippy::struct_excessive_bools)]
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 struct OAuthSessionView {
-    authenticated: bool,
+    authenticated: FlagState,
     username: Option<String>,
     scopes: Vec<String>,
     expires_at_ms: Option<i64>,
     upstream_access_expires_at_ms: Option<i64>,
-    refresh_available: bool,
+    refresh_available: FlagState,
     bridge_mode: String,
-    local_token_available: bool,
-    oauth_client_ready: bool,
+    local_token_available: FlagState,
+    oauth_client_ready: FlagState,
     login_path: String,
     logout_path: String,
 }
@@ -302,25 +303,31 @@ async fn main() -> Result<(), std::io::Error> {
         project = sp42_core::branding::PROJECT_NAME,
         "starting localhost server"
     );
+    let clock: Arc<dyn Clock> = Arc::new(SystemClock);
     let router = build_router(AppState {
         capability_cache: Arc::new(RwLock::new(None)),
         sessions: Arc::new(RwLock::new(HashMap::new())),
         pending_oauth_logins: Arc::new(RwLock::new(HashMap::new())),
-        http_client: reqwest::Client::builder()
-            .timeout(Duration::from_secs(5))
-            .user_agent(sp42_core::branding::USER_AGENT)
-            .build()
-            .expect("reqwest client should build"),
+        http_client: build_http_client()?,
         local_oauth: LocalOAuthConfig::load(),
         runtime_storage_root: runtime_storage_root(),
         capability_targets: CapabilityProbeTargets::default(),
-        coordination: CoordinationRegistry::default(),
+        clock: clock.clone(),
+        coordination: CoordinationRegistry::new(clock),
         next_client_id: Arc::new(AtomicU64::new(1)),
         next_session_id: Arc::new(AtomicU64::new(1)),
         started_at: Instant::now(),
     });
 
     axum::serve(listener, router).await
+}
+
+fn build_http_client() -> io::Result<reqwest::Client> {
+    reqwest::Client::builder()
+        .timeout(Duration::from_secs(5))
+        .user_agent(sp42_core::branding::USER_AGENT)
+        .build()
+        .map_err(|error| io::Error::other(format!("failed to build reqwest client: {error}")))
 }
 
 fn init_tracing() {
@@ -631,25 +638,69 @@ struct LiveViewFilterParams {
     #[serde(default = "default_limit")]
     limit: u16,
     #[serde(default)]
-    include_bots: bool,
+    include_bots: FlagState,
     #[serde(default)]
-    unpatrolled_only: bool,
+    unpatrolled_only: FlagState,
     #[serde(default = "default_true")]
-    include_minor: bool,
+    include_minor: FlagState,
+    #[serde(default = "default_true")]
+    include_registered: FlagState,
+    #[serde(default = "default_true")]
+    include_anonymous: FlagState,
+    #[serde(default = "default_true")]
+    include_temporary: FlagState,
+    #[serde(default = "default_true")]
+    include_new_pages: FlagState,
     #[serde(default)]
     namespaces: Option<String>,
     #[serde(default)]
     min_score: Option<i32>,
     #[serde(default)]
+    tag_filter: Option<String>,
+    #[serde(default)]
     rccontinue: Option<String>,
+}
+
+struct LiveOperatorBootstrap {
+    config: WikiConfig,
+    auth: DevAuthSessionStatus,
+    action_status: ActionExecutionStatusReport,
+    action_history: ActionExecutionHistoryReport,
+    capabilities: DevAuthCapabilityReport,
+    stream_status: StreamRuntimeStatus,
+}
+
+struct LiveQueueState {
+    query: LiveOperatorQuery,
+    batch: sp42_core::RecentChangesBatch,
+    backlog_status: sp42_core::BacklogRuntimeStatus,
+    queue: Vec<QueuedEdit>,
+    selected_index: Option<usize>,
+}
+
+struct SelectedReviewState {
+    scoring_context: Option<sp42_core::ScoringContext>,
+    diff: Option<sp42_core::StructuredDiff>,
+    review_workbench: Option<sp42_core::ReviewWorkbench>,
+    readiness: ServerHealthStatus,
+    coordination_state: Option<sp42_core::CoordinationStateSummary>,
+    coordination_room: Option<CoordinationRoomSummary>,
+}
+
+struct LiveOperatorProducts {
+    scenario_report: sp42_core::PatrolScenarioReport,
+    session_digest: sp42_core::PatrolSessionDigest,
+    shell_state: sp42_core::ShellStateModel,
+    backend: LiveOperatorBackendStatus,
+    debug_snapshot: sp42_core::DebugSnapshot,
 }
 
 const fn default_limit() -> u16 {
     15
 }
 
-const fn default_true() -> bool {
-    true
+const fn default_true() -> FlagState {
+    FlagState::Enabled
 }
 
 async fn get_live_operator_view(
@@ -730,7 +781,7 @@ async fn server_readiness(state: &AppState, headers: &HeaderMap) -> ServerHealth
 
     if !bootstrap_ready {
         readiness_issues
-            .push("Local token bootstrap is unavailable because WIKIMEDIA_ACCESS_TOKEN is not set in .env.wikimedia.local.".to_string());
+            .push("Local token bootstrap is unavailable because WIKIMEDIA_ACCESS_TOKEN is not set in process environment, .env.wikimedia.local, or .env.".to_string());
     }
     if !session_ready && !bootstrap_ready {
         readiness_issues.push("No dev session is bootstrapped yet.".to_string());
@@ -789,6 +840,8 @@ async fn operator_storage_layout_view(
         .username
         .clone()
         .or_else(|| session.as_ref().map(|session| session.username.clone()))
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
         .ok_or_else(|| "username is required via query or authenticated session".to_string())?;
     let shared_owner_username = query
         .shared_owner_username
@@ -937,62 +990,58 @@ async fn persisted_stream_status(
     })
 }
 
-#[allow(clippy::too_many_lines)]
-async fn live_operator_view(
+async fn load_live_operator_bootstrap(
     state: &AppState,
     headers: &HeaderMap,
     wiki_id: &str,
-    filters: &LiveViewFilterParams,
-) -> Result<LiveOperatorView, String> {
-    let total_started = Instant::now();
-    let mut phase_timings = Vec::new();
+) -> Result<LiveOperatorBootstrap, String> {
+    Ok(LiveOperatorBootstrap {
+        config: resolved_wiki_config(state, wiki_id)?,
+        auth: current_status(state, headers, true).await,
+        action_status: action_status_report(state, headers).await,
+        action_history: action_history_report(state, headers, Some(10)).await,
+        capabilities: capability_report_for_request(state, headers, wiki_id, false).await,
+        stream_status: persisted_stream_status(state, wiki_id).await?,
+    })
+}
 
-    let phase_started = Instant::now();
-    let config = resolved_wiki_config(state, wiki_id)?;
-    let auth = current_status(state, headers, true).await;
-    let action_status = action_status_report(state, headers).await;
-    let action_history = action_history_report(state, headers, Some(10)).await;
-    let capabilities = capability_report_for_request(state, headers, wiki_id, false).await;
-    let stream_status = persisted_stream_status(state, wiki_id).await?;
-    phase_timings.push(LiveOperatorPhaseTiming {
-        phase: "bootstrap".to_string(),
-        duration_ms: u64::try_from(phase_started.elapsed().as_millis()).unwrap_or(u64::MAX),
-    });
-
-    let phase_started = Instant::now();
-    let access_token = access_token_for_request(state, headers)
-        .await
-        .ok_or_else(|| "No local Wikimedia access token is available.".to_string())?;
-    let client = BearerHttpClient::new(state.http_client.clone(), access_token.clone());
-
-    let namespace_override = filters.namespaces.as_ref().map(|ns_str| {
-        ns_str
+fn parsed_namespaces(namespaces: Option<&String>) -> Vec<i32> {
+    namespaces.map_or_else(Vec::new, |value| {
+        value
             .split(',')
-            .filter_map(|s| s.trim().parse::<i32>().ok())
-            .collect::<Vec<_>>()
-    });
+            .filter_map(|entry| entry.trim().parse::<i32>().ok())
+            .collect()
+    })
+}
 
-    let live_query = LiveOperatorQuery {
+async fn load_live_queue_state(
+    state: &AppState,
+    wiki_id: &str,
+    filters: &LiveViewFilterParams,
+    config: &WikiConfig,
+    client: &BearerHttpClient,
+) -> Result<LiveQueueState, String> {
+    let query = LiveOperatorQuery {
         limit: filters.limit.clamp(1, 500),
         include_bots: filters.include_bots,
         unpatrolled_only: filters.unpatrolled_only,
         include_minor: filters.include_minor,
-        namespaces: filters.namespaces.as_ref().map_or_else(Vec::new, |ns_str| {
-            ns_str
-                .split(',')
-                .filter_map(|s| s.trim().parse::<i32>().ok())
-                .collect::<Vec<_>>()
-        }),
+        include_registered: filters.include_registered,
+        include_anonymous: filters.include_anonymous,
+        include_temporary: filters.include_temporary,
+        include_new_pages: filters.include_new_pages,
+        namespaces: parsed_namespaces(filters.namespaces.as_ref()),
         min_score: filters.min_score,
+        tag_filter: filters.tag_filter.clone(),
         rccontinue: filters.rccontinue.clone(),
     };
-
+    let namespace_override = (!query.namespaces.is_empty()).then(|| query.namespaces.clone());
     let mut backlog_runtime = BacklogRuntime::new(
         config.clone(),
         runtime_storage_for(state),
         BacklogRuntimeConfig {
-            limit: live_query.limit,
-            include_bots: live_query.include_bots,
+            limit: query.limit,
+            include_bots: query.include_bots.is_enabled(),
         },
         format!("recentchanges.rccontinue.{wiki_id}"),
     );
@@ -1000,22 +1049,33 @@ async fn live_operator_view(
         .initialize()
         .await
         .map_err(|error| format!("backlog runtime init failed: {error}"))?;
-    let batch = if live_query.rccontinue.is_some()
-        || live_query.unpatrolled_only
-        || !live_query.include_minor
-        || namespace_override.is_some()
-    {
-        let query = RecentChangesQuery {
-            limit: live_query.limit,
-            rccontinue: live_query.rccontinue.clone(),
-            include_bots: live_query.include_bots,
-            unpatrolled_only: live_query.unpatrolled_only,
-            include_minor: live_query.include_minor,
-            namespace_override,
-        };
-        let batch = execute_recent_changes(&client, &config, &query)
-            .await
-            .map_err(|error| format!("recentchanges fetch failed: {error}"))?;
+    let uses_custom_filters = query.rccontinue.is_some()
+        || query.unpatrolled_only.is_enabled()
+        || !query.include_minor.is_enabled()
+        || !query.include_anonymous.is_enabled()
+        || !query.include_registered.is_enabled()
+        || !query.include_temporary.is_enabled()
+        || !query.include_new_pages.is_enabled()
+        || query.tag_filter.is_some()
+        || namespace_override.is_some();
+    let batch = if uses_custom_filters {
+        let batch = execute_recent_changes(
+            client,
+            config,
+            &RecentChangesQuery {
+                limit: query.limit,
+                rccontinue: query.rccontinue.clone(),
+                include_bots: query.include_bots,
+                unpatrolled_only: query.unpatrolled_only,
+                include_minor: query.include_minor,
+                include_anonymous: query.include_anonymous,
+                include_new_pages: query.include_new_pages,
+                tag_filter: query.tag_filter.clone(),
+                namespace_override,
+            },
+        )
+        .await
+        .map_err(|error| format!("recentchanges fetch failed: {error}"))?;
         backlog_runtime
             .apply_batch(&batch)
             .await
@@ -1023,36 +1083,45 @@ async fn live_operator_view(
         batch
     } else {
         backlog_runtime
-            .poll(&client)
+            .poll(client)
             .await
             .map_err(|error| format!("recentchanges fetch failed: {error}"))?
     };
-    phase_timings.push(LiveOperatorPhaseTiming {
-        phase: "recentchanges".to_string(),
-        duration_ms: u64::try_from(phase_started.elapsed().as_millis()).unwrap_or(u64::MAX),
-    });
-
-    let phase_started = Instant::now();
     let backlog_status = backlog_runtime.status();
-    let mut queue = build_ranked_queue(batch.events, &config.scoring)
+    let mut queue = build_ranked_queue(batch.events.clone(), &config.scoring)
         .map_err(|error| format!("queue build failed: {error}"))?;
-
-    // Apply min_score client-side filter (score is computed after API fetch)
     if let Some(min_score) = filters.min_score {
         queue.retain(|item| item.score.total >= min_score);
     }
-    let selected_index = (!queue.is_empty()).then_some(0usize);
-    let selected = selected_index.and_then(|index| queue.get(index));
-    phase_timings.push(LiveOperatorPhaseTiming {
-        phase: "queue".to_string(),
-        duration_ms: u64::try_from(phase_started.elapsed().as_millis()).unwrap_or(u64::MAX),
-    });
+    if !query.include_registered.is_enabled() {
+        queue.retain(|item| !matches!(item.event.performer, EditorIdentity::Registered { .. }));
+    }
+    if !query.include_temporary.is_enabled() {
+        queue.retain(|item| !matches!(item.event.performer, EditorIdentity::Temporary { .. }));
+    }
 
-    let phase_started = Instant::now();
+    Ok(LiveQueueState {
+        query,
+        batch,
+        backlog_status,
+        selected_index: (!queue.is_empty()).then_some(0),
+        queue,
+    })
+}
+
+async fn load_selected_review_state(
+    state: &AppState,
+    headers: &HeaderMap,
+    wiki_id: &str,
+    config: &WikiConfig,
+    access_token: &str,
+    auth: &DevAuthSessionStatus,
+    selected: Option<&QueuedEdit>,
+) -> Result<SelectedReviewState, String> {
     let liftwing_risk = if let Some(item) = selected {
         execute_liftwing_score(
-            &client,
-            &config,
+            &BearerHttpClient::new(state.http_client.clone(), access_token.to_string()),
+            config,
             &LiftWingRequest {
                 rev_id: item.event.rev_id,
             },
@@ -1062,29 +1131,17 @@ async fn live_operator_view(
     } else {
         None
     };
-    phase_timings.push(LiveOperatorPhaseTiming {
-        phase: "liftwing".to_string(),
-        duration_ms: u64::try_from(phase_started.elapsed().as_millis()).unwrap_or(u64::MAX),
-    });
-
     let scoring_context = liftwing_risk.map(|probability| {
         build_scoring_context(&ContextInputs {
             talk_page_wikitext: None,
             liftwing_probability: Some(probability),
         })
     });
-    let phase_started = Instant::now();
     let diff = if let Some(item) = selected {
-        fetch_revision_diff(&state.http_client, &access_token, &config, item).await?
+        fetch_revision_diff(&state.http_client, access_token, config, item).await?
     } else {
         None
     };
-    phase_timings.push(LiveOperatorPhaseTiming {
-        phase: "diff".to_string(),
-        duration_ms: u64::try_from(phase_started.elapsed().as_millis()).unwrap_or(u64::MAX),
-    });
-
-    let phase_started = Instant::now();
     let readiness = server_readiness(state, headers).await;
     let coordination_state = state.coordination.room_state_summary(wiki_id).await;
     let coordination_room = state
@@ -1096,7 +1153,7 @@ async fn live_operator_view(
         .find(|room| room.wiki_id == wiki_id);
     let review_workbench = selected.and_then(|item| {
         build_review_workbench(
-            &config,
+            config,
             item,
             "SP42_REDACTED_TOKEN",
             auth.username.as_deref().unwrap_or("SP42"),
@@ -1104,67 +1161,47 @@ async fn live_operator_view(
         )
         .ok()
     });
-    phase_timings.push(LiveOperatorPhaseTiming {
-        phase: "reports".to_string(),
-        duration_ms: u64::try_from(phase_started.elapsed().as_millis()).unwrap_or(u64::MAX),
-    });
-    let scenario_report = build_patrol_scenario_report(&PatrolScenarioReportInputs {
-        queue: &queue,
-        selected,
-        scoring_context: scoring_context.as_ref(),
-        diff: diff.as_ref(),
-        review_workbench: review_workbench.as_ref(),
-        stream_status: Some(&stream_status),
-        backlog_status: Some(&backlog_status),
-        coordination: coordination_state.as_ref(),
-        wiki_id_hint: Some(wiki_id),
-    });
-    let session_digest = build_patrol_session_digest(&PatrolSessionDigestInputs {
-        report: &scenario_report,
-        review_workbench: review_workbench.as_ref(),
-    });
-    let shell_state = build_shell_state_model(&ShellStateInputs {
-        report: &scenario_report,
-        review_workbench: review_workbench.as_ref(),
-    });
-    let backend = live_operator_backend_status(&readiness, &auth);
-    let debug_snapshot = build_debug_snapshot(&DebugSnapshotInputs {
-        queue: &queue,
-        selected,
-        scoring_context: scoring_context.as_ref(),
-        diff: diff.as_ref(),
-        review_workbench: review_workbench.as_ref(),
-        stream_status: Some(&stream_status),
-        backlog_status: Some(&backlog_status),
-        coordination: coordination_state.as_ref(),
-    });
-    let telemetry = LiveOperatorTelemetry {
-        total_duration_ms: u64::try_from(total_started.elapsed().as_millis()).unwrap_or(u64::MAX),
-        phase_timings,
-    };
 
+    Ok(SelectedReviewState {
+        scoring_context,
+        diff,
+        review_workbench,
+        readiness,
+        coordination_state,
+        coordination_room,
+    })
+}
+
+fn build_live_operator_notes(
+    query: &LiveOperatorQuery,
+    backlog_status: &sp42_core::BacklogRuntimeStatus,
+    queue: &[QueuedEdit],
+    scoring_context: Option<&sp42_core::ScoringContext>,
+    diff: Option<&sp42_core::StructuredDiff>,
+    review_workbench: Option<&sp42_core::ReviewWorkbench>,
+) -> Vec<String> {
     let mut notes =
         vec!["Queue and selected review are built from live recent changes.".to_string()];
     notes.push(format!(
         "Applied filters: limit={} include_bots={} unpatrolled_only={} include_minor={} namespaces={} min_score={} rccontinue={}",
-        live_query.limit,
-        live_query.include_bots,
-        live_query.unpatrolled_only,
-        live_query.include_minor,
-        if live_query.namespaces.is_empty() {
+        query.limit,
+        query.include_bots,
+        query.unpatrolled_only,
+        query.include_minor,
+        if query.namespaces.is_empty() {
             "default".to_string()
         } else {
-            live_query
+            query
                 .namespaces
                 .iter()
                 .map(ToString::to_string)
                 .collect::<Vec<_>>()
                 .join(",")
         },
-        live_query
+        query
             .min_score
             .map_or_else(|| "none".to_string(), |value| value.to_string()),
-        live_query.rccontinue.as_deref().unwrap_or("none"),
+        query.rccontinue.as_deref().unwrap_or("none"),
     ));
     if review_workbench.is_some() {
         notes.push(
@@ -1188,33 +1225,159 @@ async fn live_operator_view(
     if queue.is_empty() {
         notes.push("No edits matched the current live filter set.".to_string());
     }
+    notes
+}
 
-    Ok(LiveOperatorView {
-        project: sp42_core::branding::PROJECT_NAME.to_string(),
-        fetched_at_ms: now_ms(),
-        wiki_id: wiki_id.to_string(),
-        query: live_query,
+fn build_live_operator_products(
+    wiki_id: &str,
+    queue: &[QueuedEdit],
+    selected: Option<&QueuedEdit>,
+    stream_status: &StreamRuntimeStatus,
+    backlog_status: &sp42_core::BacklogRuntimeStatus,
+    selected_review: &SelectedReviewState,
+    auth: &DevAuthSessionStatus,
+) -> LiveOperatorProducts {
+    let scenario_report = build_patrol_scenario_report(&PatrolScenarioReportInputs {
         queue,
-        selected_index,
-        scoring_context,
-        diff,
-        review_workbench,
+        selected,
+        scoring_context: selected_review.scoring_context.as_ref(),
+        diff: selected_review.diff.as_ref(),
+        review_workbench: selected_review.review_workbench.as_ref(),
         stream_status: Some(stream_status),
         backlog_status: Some(backlog_status),
+        coordination: selected_review.coordination_state.as_ref(),
+        wiki_id_hint: Some(wiki_id),
+    });
+    let session_digest = build_patrol_session_digest(&PatrolSessionDigestInputs {
+        report: &scenario_report,
+        review_workbench: selected_review.review_workbench.as_ref(),
+    });
+    let shell_state = build_shell_state_model(&ShellStateInputs {
+        report: &scenario_report,
+        review_workbench: selected_review.review_workbench.as_ref(),
+    });
+    let backend = live_operator_backend_status(&selected_review.readiness, auth);
+    let debug_snapshot = build_debug_snapshot(&DebugSnapshotInputs {
+        queue,
+        selected,
+        scoring_context: selected_review.scoring_context.as_ref(),
+        diff: selected_review.diff.as_ref(),
+        review_workbench: selected_review.review_workbench.as_ref(),
+        stream_status: Some(stream_status),
+        backlog_status: Some(backlog_status),
+        coordination: selected_review.coordination_state.as_ref(),
+    });
+
+    LiveOperatorProducts {
         scenario_report,
         session_digest,
         shell_state,
-        capabilities,
-        auth,
         backend,
-        action_status,
-        action_history,
-        coordination_room,
-        coordination_state,
         debug_snapshot,
+    }
+}
+
+async fn live_operator_view(
+    state: &AppState,
+    headers: &HeaderMap,
+    wiki_id: &str,
+    filters: &LiveViewFilterParams,
+) -> Result<LiveOperatorView, String> {
+    let total_started = Instant::now();
+    let mut phase_timings = Vec::new();
+
+    let phase_started = Instant::now();
+    let bootstrap = load_live_operator_bootstrap(state, headers, wiki_id).await?;
+    phase_timings.push(LiveOperatorPhaseTiming {
+        phase: "bootstrap".to_string(),
+        duration_ms: u64::try_from(phase_started.elapsed().as_millis()).unwrap_or(u64::MAX),
+    });
+
+    let phase_started = Instant::now();
+    let access_token = access_token_for_request(state, headers)
+        .await
+        .ok_or_else(|| "No local Wikimedia access token is available.".to_string())?;
+    let client = BearerHttpClient::new(state.http_client.clone(), access_token.clone());
+    let queue_state =
+        load_live_queue_state(state, wiki_id, filters, &bootstrap.config, &client).await?;
+    phase_timings.push(LiveOperatorPhaseTiming {
+        phase: "recentchanges".to_string(),
+        duration_ms: u64::try_from(phase_started.elapsed().as_millis()).unwrap_or(u64::MAX),
+    });
+
+    let phase_started = Instant::now();
+    let selected = queue_state
+        .selected_index
+        .and_then(|index| queue_state.queue.get(index));
+    phase_timings.push(LiveOperatorPhaseTiming {
+        phase: "queue".to_string(),
+        duration_ms: u64::try_from(phase_started.elapsed().as_millis()).unwrap_or(u64::MAX),
+    });
+
+    let phase_started = Instant::now();
+    let selected_review = load_selected_review_state(
+        state,
+        headers,
+        wiki_id,
+        &bootstrap.config,
+        &access_token,
+        &bootstrap.auth,
+        selected,
+    )
+    .await?;
+    phase_timings.push(LiveOperatorPhaseTiming {
+        phase: "selection".to_string(),
+        duration_ms: u64::try_from(phase_started.elapsed().as_millis()).unwrap_or(u64::MAX),
+    });
+    let products = build_live_operator_products(
+        wiki_id,
+        &queue_state.queue,
+        selected,
+        &bootstrap.stream_status,
+        &queue_state.backlog_status,
+        &selected_review,
+        &bootstrap.auth,
+    );
+    let telemetry = LiveOperatorTelemetry {
+        total_duration_ms: u64::try_from(total_started.elapsed().as_millis()).unwrap_or(u64::MAX),
+        phase_timings,
+    };
+
+    let notes = build_live_operator_notes(
+        &queue_state.query,
+        &queue_state.backlog_status,
+        &queue_state.queue,
+        selected_review.scoring_context.as_ref(),
+        selected_review.diff.as_ref(),
+        selected_review.review_workbench.as_ref(),
+    );
+
+    Ok(LiveOperatorView {
+        project: sp42_core::branding::PROJECT_NAME.to_string(),
+        fetched_at_ms: state.clock.now_ms(),
+        wiki_id: wiki_id.to_string(),
+        query: queue_state.query,
+        queue: queue_state.queue,
+        selected_index: queue_state.selected_index,
+        scoring_context: selected_review.scoring_context,
+        diff: selected_review.diff,
+        review_workbench: selected_review.review_workbench,
+        stream_status: Some(bootstrap.stream_status),
+        backlog_status: Some(queue_state.backlog_status),
+        scenario_report: products.scenario_report,
+        session_digest: products.session_digest,
+        shell_state: products.shell_state,
+        capabilities: bootstrap.capabilities,
+        auth: bootstrap.auth,
+        backend: products.backend,
+        action_status: bootstrap.action_status,
+        action_history: bootstrap.action_history,
+        coordination_room: selected_review.coordination_room,
+        coordination_state: selected_review.coordination_state,
+        debug_snapshot: products.debug_snapshot,
         telemetry,
         notes,
-        next_continue: batch.next_continue.clone(),
+        next_continue: queue_state.batch.next_continue,
     })
 }
 
@@ -1418,7 +1581,7 @@ fn operator_endpoint_manifest() -> Vec<OperatorEndpointDescriptor> {
 
 async fn session_count(state: &AppState) -> usize {
     let mut sessions = state.sessions.write().await;
-    prune_expired_sessions(&mut sessions);
+    prune_expired_sessions(&mut sessions, state.clock.now_ms());
     sessions.len()
 }
 
@@ -1433,12 +1596,12 @@ async fn capability_cache_status(state: &AppState, wiki_id: &str) -> CapabilityC
         };
     };
 
-    let age_ms = now_ms().saturating_sub(cache.fetched_at_ms);
+    let age_ms = state.clock.now_ms().saturating_sub(cache.fetched_at_ms);
     let valid =
         cache.report.wiki_id == wiki_id && cache.report.checked && cache.report.error.is_none();
     CapabilityCacheStatus {
         present: valid,
-        fresh: valid && cache_is_fresh(cache),
+        fresh: valid && cache_is_fresh(cache, state.clock.now_ms()),
         age_ms: Some(u64::try_from(age_ms).unwrap_or(u64::MAX)),
         wiki_id: Some(cache.report.wiki_id.clone()),
     }
@@ -1466,7 +1629,7 @@ async fn capability_report_for_local_token(
         let guard = state.capability_cache.read().await;
         if let Some(cache) = guard.as_ref()
             && cache.report.wiki_id == wiki_id
-            && cache_is_fresh(cache)
+            && cache_is_fresh(cache, state.clock.now_ms())
         {
             return cache.report.clone();
         }
@@ -1490,7 +1653,7 @@ async fn capability_report_for_local_token(
 
     let mut guard = state.capability_cache.write().await;
     *guard = Some(CachedCapabilityReport {
-        fetched_at_ms: now_ms(),
+        fetched_at_ms: state.clock.now_ms(),
         report: report.clone(),
     });
 
@@ -1568,7 +1731,7 @@ async fn get_auth_login(
         .map_err(|error| invalid_payload(&error.to_string()))?;
     let authorization_url = build_authorization_url(&oauth_config, &state_token, &challenge)
         .map_err(|error| invalid_payload(&error.to_string()))?;
-    let now = now_ms();
+    let now = state.clock.now_ms();
     let pending = PendingOAuthLogin {
         wiki_id: wiki_id.to_string(),
         state: state_token.clone(),
@@ -1582,7 +1745,102 @@ async fn get_auth_login(
     Ok(Redirect::temporary(authorization_url.as_ref()))
 }
 
-#[allow(clippy::too_many_lines)]
+fn oauth_redirect_target(pending: Option<&PendingOAuthLogin>) -> String {
+    pending.map_or_else(
+        || "/".to_string(),
+        |entry| entry.redirect_after_login.clone(),
+    )
+}
+
+fn oauth_error_redirect_response(pending: Option<&PendingOAuthLogin>, message: &str) -> Response {
+    Redirect::temporary(&redirect_with_status(
+        &oauth_redirect_target(pending),
+        "auth_error",
+        message,
+    ))
+    .into_response()
+}
+
+async fn complete_auth_callback(
+    state: &AppState,
+    headers: &HeaderMap,
+    pending: PendingOAuthLogin,
+    code: String,
+) -> Result<Response, (StatusCode, Json<serde_json::Value>)> {
+    let oauth_config = oauth_client_config_from_pending(state, &pending)?;
+    let token_response = exchange_authorization_code(
+        &state.http_client,
+        &state.local_oauth,
+        &oauth_config,
+        &code,
+        &pending.verifier,
+    )
+    .await
+    .map_err(|message| invalid_payload(&message))?;
+    let profile = fetch_oauth_profile(
+        &state.http_client,
+        &token_response.access_token,
+        &state.capability_targets.profile_url,
+    )
+    .await
+    .map_err(|message| invalid_payload(&message))?;
+    let capability_report = probe_with_targets(
+        &state.http_client,
+        Some(&token_response.access_token),
+        &state.local_oauth.status(),
+        &pending.wiki_id,
+        &state.capability_targets,
+    )
+    .await;
+    let current_ms = state.clock.now_ms();
+    let stored = StoredSession {
+        username: profile.username,
+        scopes: if capability_report.checked && capability_report.error.is_none() {
+            effective_session_scopes(&capability_report)
+        } else if !profile.grants.is_empty() {
+            profile.grants
+        } else {
+            token_response
+                .scope
+                .as_deref()
+                .map_or_else(Vec::new, split_scope_string)
+        },
+        expires_at_ms: Some(current_ms + SESSION_IDLE_TIMEOUT_MS),
+        access_token: token_response.access_token,
+        refresh_token: token_response.refresh_token,
+        upstream_access_expires_at_ms: token_response
+            .expires_in
+            .and_then(|seconds| i64::try_from(seconds).ok())
+            .map(|seconds| current_ms.saturating_add(seconds.saturating_mul(1000))),
+        bridge_mode: "wikimedia-oauth".to_string(),
+        created_at_ms: current_ms,
+        last_seen_at_ms: current_ms,
+        capability_cache: HashMap::from([(
+            pending.wiki_id.clone(),
+            CachedCapabilityReport {
+                fetched_at_ms: current_ms,
+                report: capability_report,
+            },
+        )]),
+        action_history: Vec::new(),
+    };
+    let session_id =
+        install_session(state, session_cookie_value(headers), stored, current_ms).await;
+
+    let cookie = session_cookie_header(&session_id)
+        .ok_or_else(|| internal_error("failed to build session cookie header"))?;
+
+    Ok((
+        [(SET_COOKIE, cookie)],
+        Redirect::temporary(&redirect_with_status(
+            &pending.redirect_after_login,
+            "auth",
+            "oauth-ok",
+        )),
+    )
+        .into_response())
+}
+
 async fn get_auth_callback(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -1606,17 +1864,10 @@ async fn get_auth_callback(
             error,
             error_description,
             ..
-        } => {
-            let target = pending.as_ref().map_or_else(
-                || "/".to_string(),
-                |entry| entry.redirect_after_login.clone(),
-            );
-            let message = error_description.unwrap_or(error);
-            Ok(
-                Redirect::temporary(&redirect_with_status(&target, "auth_error", &message))
-                    .into_response(),
-            )
-        }
+        } => Ok(oauth_error_redirect_response(
+            pending.as_ref(),
+            &error_description.unwrap_or(error),
+        )),
         OAuthCallback::AuthorizationCode {
             code,
             state: callback_state,
@@ -1627,76 +1878,7 @@ async fn get_auth_callback(
             if pending.state != callback_state {
                 return Err(invalid_payload("oauth callback state mismatch"));
             }
-
-            let oauth_config = oauth_client_config_from_pending(&state, &pending)?;
-            let token_response = exchange_authorization_code(
-                &state.http_client,
-                &state.local_oauth,
-                &oauth_config,
-                &code,
-                &pending.verifier,
-            )
-            .await
-            .map_err(|message| invalid_payload(&message))?;
-            let profile = fetch_oauth_profile(
-                &state.http_client,
-                &token_response.access_token,
-                &state.capability_targets.profile_url,
-            )
-            .await
-            .map_err(|message| invalid_payload(&message))?;
-            let capability_report = probe_with_targets(
-                &state.http_client,
-                Some(&token_response.access_token),
-                &state.local_oauth.status(),
-                &pending.wiki_id,
-                &state.capability_targets,
-            )
-            .await;
-            let current_ms = now_ms();
-            let stored = StoredSession {
-                username: profile.username,
-                scopes: if capability_report.checked && capability_report.error.is_none() {
-                    effective_session_scopes(&capability_report)
-                } else if !profile.grants.is_empty() {
-                    profile.grants
-                } else {
-                    token_response
-                        .scope
-                        .as_deref()
-                        .map_or_else(Vec::new, split_scope_string)
-                },
-                expires_at_ms: Some(current_ms + SESSION_IDLE_TIMEOUT_MS),
-                access_token: token_response.access_token,
-                refresh_token: token_response.refresh_token,
-                upstream_access_expires_at_ms: token_response
-                    .expires_in
-                    .and_then(|seconds| i64::try_from(seconds).ok())
-                    .map(|seconds| current_ms.saturating_add(seconds.saturating_mul(1000))),
-                bridge_mode: "wikimedia-oauth".to_string(),
-                created_at_ms: current_ms,
-                last_seen_at_ms: current_ms,
-                capability_cache: HashMap::from([(
-                    pending.wiki_id.clone(),
-                    CachedCapabilityReport {
-                        fetched_at_ms: current_ms,
-                        report: capability_report,
-                    },
-                )]),
-                action_history: Vec::new(),
-            };
-            let session_id =
-                install_session(&state, session_cookie_value(&headers), stored, current_ms).await;
-
-            Ok((
-                [(SET_COOKIE, session_cookie_header(&session_id))],
-                Redirect::temporary(&redirect_with_status(
-                    &pending.redirect_after_login,
-                    "auth",
-                    "oauth-ok",
-                )),
-            )
-                .into_response())
+            complete_auth_callback(&state, &headers, pending, code).await
         }
     }
 }
@@ -1708,17 +1890,20 @@ async fn get_auth_session(
     Json(auth_session_view(&state, &headers, true).await)
 }
 
-async fn post_auth_logout(State(state): State<AppState>, headers: HeaderMap) -> impl IntoResponse {
+async fn post_auth_logout(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
     if let Some(session_id) = session_cookie_value(&headers) {
         let mut sessions = state.sessions.write().await;
         sessions.remove(&session_id);
     }
 
-    (
+    Ok((
         StatusCode::OK,
         [(SET_COOKIE, expired_session_cookie_header())],
         Json(auth_session_view_without_session(&state)),
-    )
+    ))
 }
 
 async fn get_session(State(state): State<AppState>, headers: HeaderMap) -> impl IntoResponse {
@@ -1759,7 +1944,7 @@ async fn post_bootstrap_session(
         return Err((
             StatusCode::PRECONDITION_FAILED,
             Json(serde_json::json!({
-                "error": "WIKIMEDIA_ACCESS_TOKEN is not available in .env.wikimedia.local"
+                "error": "WIKIMEDIA_ACCESS_TOKEN is not available in process environment, .env.wikimedia.local, or .env"
             })),
         ));
     };
@@ -1775,7 +1960,7 @@ async fn post_bootstrap_session(
         ));
     };
 
-    let current_ms = now_ms();
+    let current_ms = state.clock.now_ms();
     let session_id = next_session_id(&state, current_ms);
     let stored = StoredSession {
         username,
@@ -1799,7 +1984,7 @@ async fn post_bootstrap_session(
 
     let prior_session_id = session_cookie_value(&headers);
     let mut sessions = state.sessions.write().await;
-    prune_expired_sessions(&mut sessions);
+    prune_expired_sessions(&mut sessions, current_ms);
     if let Some(prior_session_id) = prior_session_id {
         sessions.remove(&prior_session_id);
     }
@@ -1812,14 +1997,16 @@ async fn post_bootstrap_session(
         "bootstrapped local dev-auth session"
     );
 
-    Ok((
-        StatusCode::OK,
-        [(SET_COOKIE, session_cookie_header(&session_id))],
-        Json(status),
-    ))
+    let cookie = session_cookie_header(&session_id)
+        .ok_or_else(|| internal_error("failed to build session cookie header"))?;
+
+    Ok((StatusCode::OK, [(SET_COOKIE, cookie)], Json(status)))
 }
 
-async fn delete_session(State(state): State<AppState>, headers: HeaderMap) -> impl IntoResponse {
+async fn delete_session(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
     if let Some(session_id) = session_cookie_value(&headers) {
         let mut sessions = state.sessions.write().await;
         sessions.remove(&session_id);
@@ -1829,11 +2016,11 @@ async fn delete_session(State(state): State<AppState>, headers: HeaderMap) -> im
         );
     }
 
-    (
+    Ok((
         StatusCode::OK,
         [(SET_COOKIE, expired_session_cookie_header())],
-        Json(to_status(None, &state.local_oauth, now_ms())),
-    )
+        Json(to_status(None, &state.local_oauth, state.clock.now_ms())),
+    ))
 }
 
 async fn get_bootstrap_status(
@@ -1845,7 +2032,115 @@ async fn get_bootstrap_status(
     Json(bootstrap_status(&state, &auth))
 }
 
-#[allow(clippy::too_many_lines)]
+fn action_response_payload(
+    payload: &SessionActionExecutionRequest,
+    actor: String,
+    response: &sp42_core::HttpResponse,
+    summary: &sp42_core::ActionResponseSummary,
+    response_preview: &str,
+) -> SessionActionExecutionResponse {
+    SessionActionExecutionResponse {
+        wiki_id: payload.wiki_id.clone(),
+        kind: payload.kind,
+        rev_id: payload.rev_id,
+        accepted: true,
+        actor: Some(actor),
+        http_status: Some(response.status),
+        api_code: summary.api_code.clone(),
+        retryable: summary.retryable,
+        warnings: summary.warnings.clone(),
+        result: summary.result.clone(),
+        message: Some(format!(
+            "MediaWiki HTTP {} {}",
+            response.status, response_preview
+        )),
+    }
+}
+
+async fn handle_action_success(
+    state: &AppState,
+    session: &SessionSnapshot,
+    payload: &SessionActionExecutionRequest,
+    executed_at_ms: i64,
+    response: sp42_core::HttpResponse,
+) -> Result<(StatusCode, Json<SessionActionExecutionResponse>), (StatusCode, Json<serde_json::Value>)>
+{
+    let response_preview = truncate_response_body(&response.body);
+    let response_summary =
+        sp42_core::parse_action_response_summary(&response, payload.kind.label())
+            .map_err(|error| action_error_response(&error))?;
+    record_action_execution(
+        state,
+        &session.session_id,
+        build_action_log_entry(
+            executed_at_ms,
+            payload,
+            ActionLogOutcome {
+                accepted: true,
+                http_status: Some(response.status),
+                api_code: response_summary.api_code.clone(),
+                retryable: response_summary.retryable,
+                warnings: response_summary.warnings.clone(),
+                result: response_summary.result.clone(),
+                response_preview: Some(response_preview.clone()),
+                error: None,
+            },
+        ),
+    )
+    .await;
+
+    Ok((
+        StatusCode::OK,
+        Json(action_response_payload(
+            payload,
+            session.username.clone(),
+            &response,
+            &response_summary,
+            &response_preview,
+        )),
+    ))
+}
+
+async fn handle_action_failure(
+    state: &AppState,
+    session: &SessionSnapshot,
+    payload: &SessionActionExecutionRequest,
+    executed_at_ms: i64,
+    error: ActionError,
+) -> (StatusCode, Json<serde_json::Value>) {
+    let (api_code, retryable, logged_http_status) = match &error {
+        ActionError::Execution {
+            code,
+            http_status,
+            retryable,
+            ..
+        } => (code.clone(), *retryable, *http_status),
+    };
+    let api_error = action_error_response(&error);
+    let status = api_error.0.as_u16();
+    let error_message = action_error_message(&api_error.1);
+    record_action_execution(
+        state,
+        &session.session_id,
+        build_action_log_entry(
+            executed_at_ms,
+            payload,
+            ActionLogOutcome {
+                accepted: false,
+                http_status: logged_http_status.or(Some(status)),
+                api_code,
+                retryable,
+                warnings: Vec::new(),
+                result: None,
+                response_preview: None,
+                error: Some(error_message),
+            },
+        ),
+    )
+    .await;
+    api_error
+}
+
 async fn post_execute_action(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -1865,7 +2160,7 @@ async fn post_execute_action(
     }
     let config = config_for_state_wiki(&state, &payload.wiki_id)?;
     let client = BearerHttpClient::new(state.http_client.clone(), session.access_token.clone());
-    let executed_at_ms = now_ms();
+    let executed_at_ms = state.clock.now_ms();
     let outcome = execute_session_action(&client, &config, &payload).await;
     info!(
         session_id = session.session_id.as_str(),
@@ -1877,82 +2172,12 @@ async fn post_execute_action(
 
     match outcome {
         Ok(response) => {
-            let response_preview = truncate_response_body(&response.body);
-            let response_summary =
-                sp42_core::parse_action_response_summary(&response, payload.kind.label())
-                    .map_err(|error| action_error_response(&error))?;
-            record_action_execution(
-                &state,
-                &session.session_id,
-                build_action_log_entry(
-                    executed_at_ms,
-                    &payload,
-                    ActionLogOutcome {
-                        accepted: true,
-                        http_status: Some(response.status),
-                        api_code: response_summary.api_code.clone(),
-                        retryable: response_summary.retryable,
-                        warnings: response_summary.warnings.clone(),
-                        result: response_summary.result.clone(),
-                        response_preview: Some(response_preview.clone()),
-                        error: None,
-                    },
-                ),
-            )
-            .await;
-
-            Ok((
-                StatusCode::OK,
-                Json(SessionActionExecutionResponse {
-                    wiki_id: payload.wiki_id,
-                    kind: payload.kind,
-                    rev_id: payload.rev_id,
-                    accepted: true,
-                    actor: Some(session.username),
-                    http_status: Some(response.status),
-                    api_code: response_summary.api_code.clone(),
-                    retryable: response_summary.retryable,
-                    warnings: response_summary.warnings.clone(),
-                    result: response_summary.result.clone(),
-                    message: Some(format!(
-                        "MediaWiki HTTP {} {}",
-                        response.status, response_preview
-                    )),
-                }),
-            ))
+            let result =
+                handle_action_success(&state, &session, &payload, executed_at_ms, response).await?;
+            Ok(result)
         }
         Err(error) => {
-            let (api_code, retryable, logged_http_status) = match &error {
-                ActionError::Execution {
-                    code,
-                    http_status,
-                    retryable,
-                    ..
-                } => (code.clone(), *retryable, *http_status),
-            };
-            let api_error = action_error_response(&error);
-            let status = api_error.0.as_u16();
-            let error_message = action_error_message(&api_error.1);
-            record_action_execution(
-                &state,
-                &session.session_id,
-                build_action_log_entry(
-                    executed_at_ms,
-                    &payload,
-                    ActionLogOutcome {
-                        accepted: false,
-                        http_status: logged_http_status.or(Some(status)),
-                        api_code,
-                        retryable,
-                        warnings: Vec::new(),
-                        result: None,
-                        response_preview: None,
-                        error: Some(error_message.clone()),
-                    },
-                ),
-            )
-            .await;
-            Err(api_error)
+            Err(handle_action_failure(&state, &session, &payload, executed_at_ms, error).await)
         }
     }
 }
@@ -1991,9 +2216,14 @@ async fn execute_session_action(
         }
         SessionActionKind::Undo => {
             let token = execute_fetch_token(client, config, TokenKind::Csrf).await?;
-            let undo_after_rev_id = payload
-                .undo_after_rev_id
-                .expect("undo_after_rev_id is validated above");
+            let Some(undo_after_rev_id) = payload.undo_after_rev_id else {
+                return Err(ActionError::Execution {
+                    message: "undo actions require undo_after_rev_id to be present".to_string(),
+                    code: Some("invalid-input".to_string()),
+                    http_status: None,
+                    retryable: false,
+                });
+            };
             execute_undo(
                 client,
                 config,
@@ -2010,7 +2240,6 @@ async fn execute_session_action(
     }
 }
 
-#[allow(clippy::too_many_arguments)]
 fn build_action_log_entry(
     executed_at_ms: i64,
     payload: &SessionActionExecutionRequest,
@@ -2046,13 +2275,20 @@ struct ActionLogOutcome {
     error: Option<String>,
 }
 
+struct ActionHistoryStats {
+    total_actions: usize,
+    successful_actions: usize,
+    retryable_failures: usize,
+    last_execution: Option<ActionExecutionLogEntry>,
+}
+
 async fn record_action_execution(
     state: &AppState,
     session_id: &str,
     entry: ActionExecutionLogEntry,
 ) {
     let mut sessions = state.sessions.write().await;
-    prune_expired_sessions(&mut sessions);
+    prune_expired_sessions(&mut sessions, state.clock.now_ms());
     if let Some(session) = sessions.get_mut(session_id) {
         session.action_history.push(entry);
         if session.action_history.len() > ACTION_HISTORY_LIMIT {
@@ -2121,6 +2357,13 @@ fn action_error_message(error: &Json<serde_json::Value>) -> String {
         .map_or_else(|| error.0.to_string(), ToString::to_string)
 }
 
+fn internal_error(message: &str) -> (StatusCode, Json<serde_json::Value>) {
+    (
+        StatusCode::INTERNAL_SERVER_ERROR,
+        Json(serde_json::json!({ "error": message })),
+    )
+}
+
 async fn action_status_report(
     state: &AppState,
     headers: &HeaderMap,
@@ -2140,12 +2383,11 @@ async fn action_status_report(
         };
     };
 
-    let history = action_history_for_session(state, &session.session_id, 1).await;
-    let last_execution = history.first().cloned();
-    let total_actions = action_history_len_for_session(state, &session.session_id).await;
-    let successful_actions = sessions_action_count(state, &session.session_id, true).await;
+    let history_summary = action_history_stats_for_session(state, &session.session_id).await;
+    let last_execution = history_summary.last_execution.clone();
+    let total_actions = history_summary.total_actions;
+    let successful_actions = history_summary.successful_actions;
     let failed_actions = total_actions.saturating_sub(successful_actions);
-    let retryable_failures = retryable_failure_count(state, &session.session_id).await;
     ActionExecutionStatusReport {
         authenticated: true,
         session_id: Some(session.session_id),
@@ -2153,7 +2395,7 @@ async fn action_status_report(
         total_actions,
         successful_actions,
         failed_actions,
-        retryable_failures,
+        retryable_failures: history_summary.retryable_failures,
         last_execution: last_execution.clone(),
         shell_feedback: action_shell_feedback(total_actions, last_execution.as_ref()),
     }
@@ -2207,35 +2449,37 @@ async fn action_history_for_session(
     }
 }
 
-async fn action_history_len_for_session(state: &AppState, session_id: &str) -> usize {
+async fn action_history_stats_for_session(
+    state: &AppState,
+    session_id: &str,
+) -> ActionHistoryStats {
     let sessions = state.sessions.read().await;
-    if let Some(session) = sessions.get(session_id) {
-        session.action_history.len()
-    } else {
-        0
-    }
-}
+    sessions.get(session_id).map_or(
+        ActionHistoryStats {
+            total_actions: 0,
+            successful_actions: 0,
+            retryable_failures: 0,
+            last_execution: None,
+        },
+        |session| {
+            let mut successful_actions = 0usize;
+            let mut retryable_failures = 0usize;
+            for entry in &session.action_history {
+                if entry.accepted {
+                    successful_actions = successful_actions.saturating_add(1);
+                } else if entry.retryable {
+                    retryable_failures = retryable_failures.saturating_add(1);
+                }
+            }
 
-async fn sessions_action_count(state: &AppState, session_id: &str, accepted: bool) -> usize {
-    let sessions = state.sessions.read().await;
-    sessions.get(session_id).map_or(0, |session| {
-        session
-            .action_history
-            .iter()
-            .filter(|entry| entry.accepted == accepted)
-            .count()
-    })
-}
-
-async fn retryable_failure_count(state: &AppState, session_id: &str) -> usize {
-    let sessions = state.sessions.read().await;
-    sessions.get(session_id).map_or(0, |session| {
-        session
-            .action_history
-            .iter()
-            .filter(|entry| !entry.accepted && entry.retryable)
-            .count()
-    })
+            ActionHistoryStats {
+                total_actions: session.action_history.len(),
+                successful_actions,
+                retryable_failures,
+                last_execution: session.action_history.last().cloned(),
+            }
+        },
+    )
 }
 
 fn action_shell_feedback(
@@ -2298,15 +2542,15 @@ fn split_scope_string(value: &str) -> Vec<String> {
 
 fn auth_session_view_without_session(state: &AppState) -> OAuthSessionView {
     OAuthSessionView {
-        authenticated: false,
+        authenticated: FlagState::Disabled,
         username: None,
         scopes: Vec::new(),
         expires_at_ms: None,
         upstream_access_expires_at_ms: None,
-        refresh_available: false,
+        refresh_available: FlagState::Disabled,
         bridge_mode: "inactive".to_string(),
-        local_token_available: state.local_oauth.access_token().is_some(),
-        oauth_client_ready: state.local_oauth.has_confidential_oauth_client(),
+        local_token_available: FlagState::from(state.local_oauth.access_token().is_some()),
+        oauth_client_ready: FlagState::from(state.local_oauth.has_confidential_oauth_client()),
         login_path: AUTH_LOGIN_PATH.to_string(),
         logout_path: AUTH_LOGOUT_PATH.to_string(),
     }
@@ -2315,15 +2559,15 @@ fn auth_session_view_without_session(state: &AppState) -> OAuthSessionView {
 async fn auth_session_view(state: &AppState, headers: &HeaderMap, touch: bool) -> OAuthSessionView {
     match current_session_snapshot(state, headers, touch).await {
         Some(session) => OAuthSessionView {
-            authenticated: true,
+            authenticated: FlagState::Enabled,
             username: Some(session.username),
             scopes: session.scopes,
             expires_at_ms: session.expires_at_ms,
             upstream_access_expires_at_ms: sessions_upstream_access_expiry(state, headers).await,
-            refresh_available: sessions_refresh_available(state, headers).await,
+            refresh_available: FlagState::from(sessions_refresh_available(state, headers).await),
             bridge_mode: session.bridge_mode,
-            local_token_available: state.local_oauth.access_token().is_some(),
-            oauth_client_ready: state.local_oauth.has_confidential_oauth_client(),
+            local_token_available: FlagState::from(state.local_oauth.access_token().is_some()),
+            oauth_client_ready: FlagState::from(state.local_oauth.has_confidential_oauth_client()),
             login_path: AUTH_LOGIN_PATH.to_string(),
             logout_path: AUTH_LOGOUT_PATH.to_string(),
         },
@@ -2362,12 +2606,31 @@ fn public_base_url(headers: &HeaderMap) -> Result<String, String> {
         .and_then(|value| value.to_str().ok())
         .filter(|value| !value.trim().is_empty())
         .ok_or_else(|| "host header is required to build oauth redirect URI".to_string())?;
+    if !is_local_host(host) {
+        return Err(
+            "non-local oauth redirects require SP42_PUBLIC_BASE_URL instead of trusting Host"
+                .to_string(),
+        );
+    }
     let scheme = headers
         .get("x-forwarded-proto")
         .and_then(|value| value.to_str().ok())
         .filter(|value| !value.trim().is_empty())
         .unwrap_or("http");
     Ok(format!("{scheme}://{host}"))
+}
+
+fn is_local_host(host: &str) -> bool {
+    let authority = host.trim();
+    let host_without_port = if authority.starts_with('[') {
+        authority
+            .split_once(']')
+            .map_or(authority, |(head, _)| &head[1..])
+    } else {
+        authority.split(':').next().unwrap_or(authority)
+    };
+
+    matches!(host_without_port, "localhost" | "127.0.0.1" | "::1")
 }
 
 fn oauth_client_config_for_request(
@@ -2423,7 +2686,7 @@ fn oauth_client_config_from_pending(
 
 async fn store_pending_oauth_login(state: &AppState, pending: PendingOAuthLogin) {
     let mut pending_logins = state.pending_oauth_logins.write().await;
-    prune_expired_pending_oauth_logins(&mut pending_logins);
+    prune_expired_pending_oauth_logins(&mut pending_logins, state.clock.now_ms());
     pending_logins.insert(pending.state.clone(), pending);
 }
 
@@ -2432,12 +2695,14 @@ async fn take_pending_oauth_login(
     state_token: &str,
 ) -> Option<PendingOAuthLogin> {
     let mut pending_logins = state.pending_oauth_logins.write().await;
-    prune_expired_pending_oauth_logins(&mut pending_logins);
+    prune_expired_pending_oauth_logins(&mut pending_logins, state.clock.now_ms());
     pending_logins.remove(state_token)
 }
 
-fn prune_expired_pending_oauth_logins(pending_logins: &mut HashMap<String, PendingOAuthLogin>) {
-    let current_time_ms = now_ms();
+fn prune_expired_pending_oauth_logins(
+    pending_logins: &mut HashMap<String, PendingOAuthLogin>,
+    current_time_ms: i64,
+) {
     pending_logins.retain(|_, pending| pending.expires_at_ms > current_time_ms);
 }
 
@@ -2449,7 +2714,7 @@ async fn install_session(
 ) -> String {
     let session_id = next_session_id(state, current_ms);
     let mut sessions = state.sessions.write().await;
-    prune_expired_sessions(&mut sessions);
+    prune_expired_sessions(&mut sessions, current_ms);
     if let Some(prior_session_id) = prior_session_id {
         sessions.remove(&prior_session_id);
     }
@@ -2537,15 +2802,16 @@ fn to_status(
 }
 
 fn bootstrap_status(state: &AppState, auth: &DevAuthSessionStatus) -> DevAuthBootstrapStatus {
+    let source_report = state.local_oauth.source_report();
+
     DevAuthBootstrapStatus {
         bootstrap_ready: state.local_oauth.access_token().is_some(),
         oauth: state.local_oauth.status(),
         session: auth.clone(),
-        source_path: state
-            .local_oauth
-            .source_path()
-            .map(|path| path.display().to_string()),
-        source_report: state.local_oauth.source_report(),
+        source_path: source_report
+            .loaded_from_source
+            .then_some(source_report.file_name.clone()),
+        source_report,
     }
 }
 
@@ -2554,14 +2820,14 @@ fn live_operator_backend_status(
     auth: &DevAuthSessionStatus,
 ) -> LiveOperatorBackendStatus {
     LiveOperatorBackendStatus {
-        ready_for_local_testing: readiness.ready_for_local_testing,
+        ready_for_local_testing: FlagState::from(readiness.ready_for_local_testing),
         readiness_issues: readiness.readiness_issues.clone(),
-        bootstrap_ready: readiness.bootstrap.bootstrap_ready,
+        bootstrap_ready: FlagState::from(readiness.bootstrap.bootstrap_ready),
         oauth: readiness.oauth.clone(),
         session: auth.clone(),
         source_report: readiness.bootstrap.source_report.clone(),
-        capability_cache_present: readiness.capability_cache.present,
-        capability_cache_fresh: readiness.capability_cache.fresh,
+        capability_cache_present: FlagState::from(readiness.capability_cache.present),
+        capability_cache_fresh: FlagState::from(readiness.capability_cache.fresh),
         capability_cache_age_ms: readiness.capability_cache.age_ms,
         capability_cache_wiki_id: readiness.capability_cache.wiki_id.clone(),
     }
@@ -2589,11 +2855,9 @@ fn validate_bootstrap_payload(
     Ok(())
 }
 
+#[cfg(test)]
 fn now_ms() -> i64 {
-    match SystemTime::now().duration_since(UNIX_EPOCH) {
-        Ok(duration) => i64::try_from(duration.as_millis()).unwrap_or(i64::MAX),
-        Err(_) => 0,
-    }
+    SystemClock.now_ms()
 }
 
 fn session_cookie_value(headers: &HeaderMap) -> Option<String> {
@@ -2620,18 +2884,15 @@ fn next_session_id(state: &AppState, current_ms: i64) -> String {
     )
 }
 
-fn session_cookie_header(session_id: &str) -> HeaderValue {
+fn session_cookie_header(session_id: &str) -> Option<HeaderValue> {
     HeaderValue::from_str(&format!(
         "{SESSION_COOKIE_NAME}={session_id}; HttpOnly; SameSite=Lax; Path=/; Max-Age={SESSION_COOKIE_MAX_AGE_SECONDS}"
     ))
-    .expect("session cookie header should be valid")
+    .ok()
 }
 
 fn expired_session_cookie_header() -> HeaderValue {
-    HeaderValue::from_str(&format!(
-        "{SESSION_COOKIE_NAME}=deleted; HttpOnly; SameSite=Lax; Path=/; Max-Age=0"
-    ))
-    .expect("expired session cookie header should be valid")
+    HeaderValue::from_static("sp42_dev_session=deleted; HttpOnly; SameSite=Lax; Path=/; Max-Age=0")
 }
 
 fn session_expires_at_ms(session: &StoredSession, current_time_ms: i64) -> i64 {
@@ -2649,8 +2910,7 @@ fn session_is_expired(session: &StoredSession, current_time_ms: i64) -> bool {
     current_time_ms >= session_expires_at_ms(session, current_time_ms)
 }
 
-fn prune_expired_sessions(sessions: &mut HashMap<String, StoredSession>) {
-    let current_time_ms = now_ms();
+fn prune_expired_sessions(sessions: &mut HashMap<String, StoredSession>, current_time_ms: i64) {
     sessions.retain(|_, session| !session_is_expired(session, current_time_ms));
 }
 
@@ -2661,11 +2921,12 @@ async fn current_session_snapshot(
 ) -> Option<SessionSnapshot> {
     let session_id = session_cookie_value(headers)?;
     let mut sessions = state.sessions.write().await;
-    prune_expired_sessions(&mut sessions);
+    let current_time_ms = state.clock.now_ms();
+    prune_expired_sessions(&mut sessions, current_time_ms);
     let session = sessions.get_mut(&session_id)?;
     if touch {
-        session.last_seen_at_ms = now_ms();
-        session.expires_at_ms = Some(session_expires_at_ms(session, now_ms()));
+        session.last_seen_at_ms = current_time_ms;
+        session.expires_at_ms = Some(session_expires_at_ms(session, current_time_ms));
     }
 
     Some(SessionSnapshot {
@@ -2712,7 +2973,7 @@ async fn current_status(
             bridge_mode: session.bridge_mode,
             local_token_available: state.local_oauth.access_token().is_some(),
         },
-        None => to_status(None, &state.local_oauth, now_ms()),
+        None => to_status(None, &state.local_oauth, state.clock.now_ms()),
     }
 }
 
@@ -2722,12 +2983,13 @@ async fn cached_capabilities_for_session(
     wiki_id: &str,
 ) -> Option<DevAuthCapabilityReport> {
     let mut sessions = state.sessions.write().await;
-    prune_expired_sessions(&mut sessions);
+    let current_time_ms = state.clock.now_ms();
+    prune_expired_sessions(&mut sessions, current_time_ms);
     let session = sessions.get_mut(session_id)?;
     let cache = session.capability_cache.get(wiki_id)?;
-    if cache_is_fresh(cache) {
-        session.last_seen_at_ms = now_ms();
-        session.expires_at_ms = Some(session_expires_at_ms(session, now_ms()));
+    if cache_is_fresh(cache, current_time_ms) {
+        session.last_seen_at_ms = current_time_ms;
+        session.expires_at_ms = Some(session_expires_at_ms(session, current_time_ms));
         Some(cache.report.clone())
     } else {
         session.capability_cache.remove(wiki_id);
@@ -2741,20 +3003,21 @@ async fn store_capabilities_for_session(
     report: &DevAuthCapabilityReport,
 ) {
     let mut sessions = state.sessions.write().await;
-    prune_expired_sessions(&mut sessions);
+    let current_time_ms = state.clock.now_ms();
+    prune_expired_sessions(&mut sessions, current_time_ms);
     if let Some(session) = sessions.get_mut(session_id) {
         session.capability_cache.insert(
             report.wiki_id.clone(),
             CachedCapabilityReport {
-                fetched_at_ms: now_ms(),
+                fetched_at_ms: current_time_ms,
                 report: report.clone(),
             },
         );
     }
 }
 
-fn cache_is_fresh(cache: &CachedCapabilityReport) -> bool {
-    now_ms().saturating_sub(cache.fetched_at_ms) < CAPABILITY_CACHE_TTL_MS
+fn cache_is_fresh(cache: &CachedCapabilityReport, current_time_ms: i64) -> bool {
+    current_time_ms.saturating_sub(cache.fetched_at_ms) < CAPABILITY_CACHE_TTL_MS
 }
 
 fn sanitize_coordination_payload(payload: Vec<u8>, actor: Option<&str>) -> Vec<u8> {
@@ -3025,14 +3288,15 @@ mod tests {
     use std::collections::HashMap;
     use std::sync::Arc;
     use std::sync::atomic::AtomicU64;
+    use std::time::Duration;
     use std::time::Instant;
-    use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
     use axum::body::{Body, to_bytes};
-    use axum::http::{Method, Request, StatusCode};
+    use axum::http::header::HOST;
+    use axum::http::{HeaderMap, Method, Request, StatusCode};
     use axum::routing::get;
     use axum::{Json, Router};
-    use sp42_core::{FileStorage, LocalOAuthSourceReport, Storage};
+    use sp42_core::{Clock, FileStorage, LocalOAuthSourceReport, Storage, SystemClock};
     use tower::util::ServiceExt;
 
     use super::{
@@ -3042,7 +3306,7 @@ mod tests {
         OPERATOR_STORAGE_LAYOUT_PATH, OperatorReport, OperatorRuntimeInspection,
         OperatorStorageLayoutView, RoomInspectionCollection, RuntimeDebugStatus,
         ServerHealthStatus, StoredSession, build_router, now_ms, operator_endpoint_manifest,
-        to_status,
+        public_base_url, to_status,
     };
     use crate::coordination::CoordinationRegistry;
     use crate::local_env::LocalOAuthConfig;
@@ -3059,6 +3323,7 @@ mod tests {
     >;
 
     fn test_state() -> AppState {
+        let clock: Arc<dyn Clock> = Arc::new(SystemClock);
         AppState {
             capability_cache: Arc::new(tokio::sync::RwLock::new(None)),
             sessions: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
@@ -3072,7 +3337,8 @@ mod tests {
             runtime_storage_root: std::env::temp_dir()
                 .join(format!("sp42-server-runtime-{}", std::process::id())),
             capability_targets: CapabilityProbeTargets::default(),
-            coordination: CoordinationRegistry::default(),
+            clock: clock.clone(),
+            coordination: CoordinationRegistry::new(clock),
             next_client_id: Arc::new(AtomicU64::new(1)),
             next_session_id: Arc::new(AtomicU64::new(1)),
             started_at: Instant::now(),
@@ -3083,10 +3349,7 @@ mod tests {
         let temp_dir = std::env::temp_dir().join(format!(
             "sp42-server-test-{}-{}",
             std::process::id(),
-            SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .expect("system time should be valid")
-                .as_nanos()
+            SystemClock.now_ms()
         ));
         std::fs::create_dir_all(&temp_dir).expect("temp dir should create");
         let path = temp_dir.join(".env.wikimedia.local");
@@ -3541,6 +3804,7 @@ mod tests {
             "WIKIMEDIA_CLIENT_APPLICATION_KEY=client-key\nWIKIMEDIA_CLIENT_APPLICATION_SECRET=client-secret\nWIKIMEDIA_ACCESS_TOKEN=token-value\n",
         );
         let (profile_base, server) = mock_capability_server().await;
+        let clock: Arc<dyn Clock> = Arc::new(SystemClock);
 
         let state = AppState {
             capability_cache: Arc::new(tokio::sync::RwLock::new(None)),
@@ -3556,7 +3820,8 @@ mod tests {
                 profile_url: format!("{profile_base}/oauth2/resource/profile"),
                 api_url: Some(format!("{profile_base}/w/api.php")),
             },
-            coordination: CoordinationRegistry::default(),
+            clock: clock.clone(),
+            coordination: CoordinationRegistry::new(clock),
             next_client_id: Arc::new(AtomicU64::new(1)),
             next_session_id: Arc::new(AtomicU64::new(1)),
             started_at: Instant::now(),
@@ -3587,9 +3852,10 @@ mod tests {
         assert!(status.ready_for_local_testing);
         assert!(status.bootstrap.bootstrap_ready);
         assert!(status.bootstrap.source_report.loaded_from_source);
+        assert!(status.bootstrap.source_report.source_path.is_none());
         assert_eq!(
-            status.bootstrap.source_report.source_path.as_deref(),
-            local_env_path.to_str()
+            status.bootstrap.source_report.file_name,
+            ".env.wikimedia.local"
         );
         assert!(status.capability_probe.available);
     }
@@ -3665,7 +3931,7 @@ mod tests {
                 source_path: Some(".env.wikimedia.local".to_string()),
                 source_report: LocalOAuthSourceReport {
                     file_name: ".env.wikimedia.local".to_string(),
-                    source_path: Some("/tmp/.env.wikimedia.local".to_string()),
+                    source_path: None,
                     loaded_from_source: true,
                 },
             },
@@ -3686,10 +3952,10 @@ mod tests {
 
         let backend = super::live_operator_backend_status(&readiness, &readiness.auth);
 
-        assert!(backend.ready_for_local_testing);
-        assert!(backend.bootstrap_ready);
+        assert!(backend.ready_for_local_testing.is_enabled());
+        assert!(backend.bootstrap_ready.is_enabled());
         assert!(backend.source_report.loaded_from_source);
-        assert!(backend.capability_cache_present);
+        assert!(backend.capability_cache_present.is_enabled());
         assert_eq!(backend.capability_cache_wiki_id.as_deref(), Some("frwiki"));
     }
 
@@ -3806,6 +4072,26 @@ mod tests {
                 .any(|entry| entry.path == "/operator/storage/layout/{wiki_id}")
         );
         assert!(endpoints.iter().all(|entry| entry.available));
+    }
+
+    #[test]
+    fn public_base_url_accepts_loopback_host() {
+        let mut headers = HeaderMap::new();
+        headers.insert(HOST, axum::http::HeaderValue::from_static("127.0.0.1:8788"));
+
+        let base = public_base_url(&headers).expect("loopback host should be accepted");
+
+        assert_eq!(base, "http://127.0.0.1:8788");
+    }
+
+    #[test]
+    fn public_base_url_rejects_non_local_host_without_override() {
+        let mut headers = HeaderMap::new();
+        headers.insert(HOST, axum::http::HeaderValue::from_static("example.org"));
+
+        let error = public_base_url(&headers).expect_err("non-local host should be rejected");
+
+        assert!(error.contains("SP42_PUBLIC_BASE_URL"));
     }
 
     #[tokio::test]
@@ -3984,6 +4270,7 @@ mod tests {
             "WIKIMEDIA_CLIENT_APPLICATION_KEY=client-key\nWIKIMEDIA_CLIENT_APPLICATION_SECRET=client-secret\nWIKIMEDIA_ACCESS_TOKEN=token-value\n",
         );
         let (profile_base, server) = mock_capability_server().await;
+        let clock: Arc<dyn Clock> = Arc::new(SystemClock);
         let state = AppState {
             capability_cache: Arc::new(tokio::sync::RwLock::new(None)),
             sessions: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
@@ -3998,7 +4285,8 @@ mod tests {
                 profile_url: format!("{profile_base}/oauth2/resource/profile"),
                 api_url: Some(format!("{profile_base}/w/api.php")),
             },
-            coordination: CoordinationRegistry::default(),
+            clock: clock.clone(),
+            coordination: CoordinationRegistry::new(clock),
             next_client_id: Arc::new(AtomicU64::new(1)),
             next_session_id: Arc::new(AtomicU64::new(1)),
             started_at: Instant::now(),
@@ -4044,8 +4332,11 @@ mod tests {
             "WIKIMEDIA_CLIENT_APPLICATION_KEY=client-key\nWIKIMEDIA_CLIENT_APPLICATION_SECRET=client-secret\nWIKIMEDIA_ACCESS_TOKEN=token-value\n",
         );
         let (profile_base, server) = mock_capability_server().await;
-        let runtime_root =
-            std::env::temp_dir().join(format!("sp42-live-operator-runtime-{}", now_ms()));
+        let runtime_root = std::env::temp_dir().join(format!(
+            "sp42-live-operator-runtime-{}",
+            SystemClock.now_ms()
+        ));
+        let clock: Arc<dyn Clock> = Arc::new(SystemClock);
         let state = AppState {
             capability_cache: Arc::new(tokio::sync::RwLock::new(None)),
             sessions: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
@@ -4060,7 +4351,8 @@ mod tests {
                 profile_url: format!("{profile_base}/oauth2/resource/profile"),
                 api_url: Some(format!("{profile_base}/w/api.php")),
             },
-            coordination: CoordinationRegistry::default(),
+            clock: clock.clone(),
+            coordination: CoordinationRegistry::new(clock),
             next_client_id: Arc::new(AtomicU64::new(1)),
             next_session_id: Arc::new(AtomicU64::new(1)),
             started_at: Instant::now(),
@@ -4096,7 +4388,7 @@ mod tests {
         assert!(view.stream_status.is_some());
         assert!(view.diff.is_some());
         assert!(view.capabilities.checked);
-        assert!(view.backend.bootstrap_ready);
+        assert!(view.backend.bootstrap_ready.is_enabled());
         assert!(!view.telemetry.phase_timings.is_empty());
         assert!(
             view.debug_snapshot
@@ -4119,8 +4411,11 @@ mod tests {
             "WIKIMEDIA_CLIENT_APPLICATION_KEY=client-key\nWIKIMEDIA_CLIENT_APPLICATION_SECRET=client-secret\nWIKIMEDIA_ACCESS_TOKEN=token-value\n",
         );
         let (profile_base, server) = mock_capability_server().await;
-        let runtime_root =
-            std::env::temp_dir().join(format!("sp42-live-operator-runtime-persist-{}", now_ms()));
+        let runtime_root = std::env::temp_dir().join(format!(
+            "sp42-live-operator-runtime-persist-{}",
+            SystemClock.now_ms()
+        ));
+        let clock: Arc<dyn Clock> = Arc::new(SystemClock);
         let state = AppState {
             capability_cache: Arc::new(tokio::sync::RwLock::new(None)),
             sessions: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
@@ -4135,7 +4430,8 @@ mod tests {
                 profile_url: format!("{profile_base}/oauth2/resource/profile"),
                 api_url: Some(format!("{profile_base}/w/api.php")),
             },
-            coordination: CoordinationRegistry::default(),
+            clock: clock.clone(),
+            coordination: CoordinationRegistry::new(clock),
             next_client_id: Arc::new(AtomicU64::new(1)),
             next_session_id: Arc::new(AtomicU64::new(1)),
             started_at: Instant::now(),
@@ -4283,6 +4579,7 @@ mod tests {
             "WIKIMEDIA_CLIENT_APPLICATION_KEY=client-key\nWIKIMEDIA_CLIENT_APPLICATION_SECRET=client-secret\nWIKIMEDIA_ACCESS_TOKEN=token-value\n",
         );
         let (profile_base, server) = mock_capability_server().await;
+        let clock: Arc<dyn Clock> = Arc::new(SystemClock);
         let state = AppState {
             capability_cache: Arc::new(tokio::sync::RwLock::new(None)),
             sessions: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
@@ -4298,7 +4595,8 @@ mod tests {
                 profile_url: format!("{profile_base}/oauth2/resource/profile"),
                 api_url: Some(format!("{profile_base}/w/api.php")),
             },
-            coordination: CoordinationRegistry::default(),
+            clock: clock.clone(),
+            coordination: CoordinationRegistry::new(clock),
             next_client_id: Arc::new(AtomicU64::new(1)),
             next_session_id: Arc::new(AtomicU64::new(1)),
             started_at: Instant::now(),

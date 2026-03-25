@@ -374,7 +374,7 @@ async fn operator_live_contract_reuses_checkpoints_and_handles_concurrent_reques
     assert!(first.diff.is_some());
     assert!(first.backlog_status.is_some());
     assert!(first.capabilities.checked);
-    assert!(first.backend.bootstrap_ready);
+    assert!(first.backend.bootstrap_ready.is_enabled());
     assert!(
         first
             .notes

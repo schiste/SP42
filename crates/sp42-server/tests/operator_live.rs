@@ -268,6 +268,7 @@ fn spawn_server(temp_dir: &Path, bind_addr: &str, mock_base: &str) -> Child {
                 "{mock_base}/service/lw/inference/v1/models/revertrisk-language-agnostic:predict"
             ),
         )
+        .env("SP42_INGESTION_POLL_MS", "50")
         .stdout(Stdio::null())
         .stderr(Stdio::inherit())
         .spawn()
@@ -341,6 +342,32 @@ async fn fetch_live(client: &Client, base_url: &str, runtime_root: &Path) -> Liv
     serde_json::from_str::<LiveOperatorView>(&body).expect("live operator payload should parse")
 }
 
+async fn wait_for_live_title(
+    client: &Client,
+    base_url: &str,
+    runtime_root: &Path,
+    expected_title: &str,
+) -> LiveOperatorView {
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        let view = fetch_live(client, base_url, runtime_root).await;
+        if view
+            .queue
+            .first()
+            .is_some_and(|item| item.event.title == expected_title)
+        {
+            return view;
+        }
+
+        assert!(
+            Instant::now() < deadline,
+            "timed out waiting for live title {expected_title}"
+        );
+
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+}
+
 #[allow(clippy::too_many_lines)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn operator_live_contract_reuses_checkpoints_and_handles_concurrent_requests() {
@@ -383,8 +410,17 @@ async fn operator_live_contract_reuses_checkpoints_and_handles_concurrent_reques
     );
     assert_eq!(first.next_continue.as_deref(), Some("20260324010202|456"));
 
-    let second = fetch_live(&client, &base_url, &runtime_root).await;
-    assert_eq!(second.queue[0].event.title, "Live route sample page 2");
+    let stable = fetch_live(&client, &base_url, &runtime_root).await;
+    assert_eq!(stable.queue[0].event.title, "Live route sample");
+    assert_eq!(stable.next_continue.as_deref(), Some("20260324010202|456"));
+
+    let second = wait_for_live_title(
+        &client,
+        &base_url,
+        &runtime_root,
+        "Live route sample page 2",
+    )
+    .await;
     assert_eq!(second.next_continue.as_deref(), Some("20260324010203|789"));
     assert_eq!(
         second

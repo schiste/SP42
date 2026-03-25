@@ -7,8 +7,13 @@ pub struct PatrolFilterParams {
     pub include_bots: bool,
     pub unpatrolled_only: bool,
     pub include_minor: bool,
+    pub include_registered: bool,
+    pub include_anonymous: bool,
+    pub include_temporary: bool,
+    pub include_new_pages: bool,
     pub namespaces: Option<Vec<i32>>,
     pub min_score: Option<i32>,
+    pub tag_filter: Option<String>,
     pub rccontinue: Option<String>,
 }
 
@@ -19,8 +24,13 @@ impl Default for PatrolFilterParams {
             include_bots: false,
             unpatrolled_only: false,
             include_minor: true,
+            include_registered: true,
+            include_anonymous: true,
+            include_temporary: true,
+            include_new_pages: true,
             namespaces: None,
             min_score: None,
+            tag_filter: None,
             rccontinue: None,
         }
     }
@@ -40,12 +50,27 @@ impl PatrolFilterParams {
         if !self.include_minor {
             pairs.push("include_minor=false".to_string());
         }
+        if !self.include_registered {
+            pairs.push("include_registered=false".to_string());
+        }
+        if !self.include_anonymous {
+            pairs.push("include_anonymous=false".to_string());
+        }
+        if !self.include_temporary {
+            pairs.push("include_temporary=false".to_string());
+        }
+        if !self.include_new_pages {
+            pairs.push("include_new_pages=false".to_string());
+        }
         if let Some(ref ns) = self.namespaces {
             let ns_str: Vec<String> = ns.iter().map(ToString::to_string).collect();
             pairs.push(format!("namespaces={}", ns_str.join(",")));
         }
         if let Some(score) = self.min_score {
             pairs.push(format!("min_score={score}"));
+        }
+        if let Some(ref tag) = self.tag_filter {
+            pairs.push(format!("tag_filter={tag}"));
         }
         if let Some(ref token) = self.rccontinue {
             pairs.push(format!("rccontinue={token}"));
@@ -164,6 +189,62 @@ pub fn FilterBar(
 
             <span style="color:rgba(148,163,184,.3);">"|"</span>
 
+            // Editor type filters
+            <label style=label_style>
+                <input
+                    type="checkbox"
+                    style=checkbox_style
+                    prop:checked=move || filters.get().include_registered
+                    on:change=move |ev| {
+                        let checked = event_target_checked(&ev);
+                        update_filter!(move |f| f.include_registered = checked);
+                    }
+                />
+                "Registered"
+            </label>
+
+            <label style=label_style>
+                <input
+                    type="checkbox"
+                    style=checkbox_style
+                    prop:checked=move || filters.get().include_anonymous
+                    on:change=move |ev| {
+                        let checked = event_target_checked(&ev);
+                        update_filter!(move |f| f.include_anonymous = checked);
+                    }
+                />
+                "Anonymous"
+            </label>
+
+            <label style=label_style>
+                <input
+                    type="checkbox"
+                    style=checkbox_style
+                    prop:checked=move || filters.get().include_temporary
+                    on:change=move |ev| {
+                        let checked = event_target_checked(&ev);
+                        update_filter!(move |f| f.include_temporary = checked);
+                    }
+                />
+                "Temporary"
+            </label>
+
+            // Hide new pages
+            <label style=label_style>
+                <input
+                    type="checkbox"
+                    style=checkbox_style
+                    prop:checked=move || !filters.get().include_new_pages
+                    on:change=move |ev| {
+                        let checked = event_target_checked(&ev);
+                        update_filter!(move |f| f.include_new_pages = !checked);
+                    }
+                />
+                "Hide new pages"
+            </label>
+
+            <span style="color:rgba(148,163,184,.3);">"|"</span>
+
             // Min score
             <label style=label_style>
                 "Min score:"
@@ -181,6 +262,27 @@ pub fn FilterBar(
                     <option value="50" selected=move || filters.get().min_score == Some(50)>"50"</option>
                     <option value="70" selected=move || filters.get().min_score == Some(70)>"70"</option>
                 </select>
+            </label>
+
+            // Tag filter
+            <label style=label_style>
+                "Tag:"
+                <input
+                    type="text"
+                    style=format!("{select_style}width:100px;")
+                    placeholder="e.g. mw-reverted"
+                    prop:value=move || filters.get().tag_filter.unwrap_or_default()
+                    on:change=move |ev| {
+                        let value = event_target_input_value(&ev);
+                        update_filter!(move |f| {
+                            f.tag_filter = if value.trim().is_empty() {
+                                None
+                            } else {
+                                Some(value.trim().to_string())
+                            };
+                        });
+                    }
+                />
             </label>
 
             <span style="color:rgba(148,163,184,.3);">"|"</span>
@@ -268,6 +370,20 @@ fn event_target_checked(_ev: &leptos::ev::Event) -> bool {
     false
 }
 
+#[cfg(target_arch = "wasm32")]
+fn event_target_input_value(ev: &leptos::ev::Event) -> String {
+    use wasm_bindgen::JsCast;
+    ev.target()
+        .and_then(|t| t.dyn_into::<web_sys::HtmlInputElement>().ok())
+        .map(|el| el.value())
+        .unwrap_or_default()
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn event_target_input_value(_ev: &leptos::ev::Event) -> String {
+    String::new()
+}
+
 #[cfg(test)]
 mod tests {
     use super::PatrolFilterParams;
@@ -280,6 +396,11 @@ mod tests {
         assert!(!qs.contains("include_bots"));
         assert!(!qs.contains("unpatrolled_only"));
         assert!(!qs.contains("include_minor"));
+        assert!(!qs.contains("include_registered"));
+        assert!(!qs.contains("include_anonymous"));
+        assert!(!qs.contains("include_temporary"));
+        assert!(!qs.contains("include_new_pages"));
+        assert!(!qs.contains("tag_filter"));
     }
 
     #[test]
@@ -289,8 +410,13 @@ mod tests {
             include_bots: true,
             unpatrolled_only: true,
             include_minor: false,
+            include_registered: false,
+            include_anonymous: false,
+            include_temporary: false,
+            include_new_pages: false,
             namespaces: Some(vec![0, 2]),
             min_score: Some(30),
+            tag_filter: Some("mw-reverted".to_string()),
             rccontinue: Some("20260325|abc".to_string()),
         };
         let qs = params.to_query_string();
@@ -298,8 +424,13 @@ mod tests {
         assert!(qs.contains("include_bots=true"));
         assert!(qs.contains("unpatrolled_only=true"));
         assert!(qs.contains("include_minor=false"));
+        assert!(qs.contains("include_registered=false"));
+        assert!(qs.contains("include_anonymous=false"));
+        assert!(qs.contains("include_temporary=false"));
+        assert!(qs.contains("include_new_pages=false"));
         assert!(qs.contains("namespaces=0,2"));
         assert!(qs.contains("min_score=30"));
+        assert!(qs.contains("tag_filter=mw-reverted"));
         assert!(qs.contains("rccontinue=20260325|abc"));
     }
 }

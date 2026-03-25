@@ -186,4 +186,8 @@ pub enum WikiStorageError {
     InvalidInput { message: String },
     #[error("wiki storage serialization failed: {message}")]
     Serialize { message: String },
+    #[error("wiki storage transport failed: {message}")]
+    Transport { message: String },
+    #[error("wiki storage write conflict on `{title}`: {message}")]
+    Conflict { title: String, message: String },
 }

@@ -112,8 +112,9 @@ pub use liftwing::{
     parse_liftwing_score_response,
 };
 pub use live_operator::{
-    LiveOperatorBackendStatus, LiveOperatorPhaseTiming, LiveOperatorQuery, LiveOperatorTelemetry,
-    LiveOperatorView,
+    LiveIngestionSupervisorStatus, LiveOperatorActionPreflight, LiveOperatorActionRecommendation,
+    LiveOperatorBackendStatus, LiveOperatorPhaseTiming, LiveOperatorQuery, LiveOperatorRetryClass,
+    LiveOperatorTelemetry, LiveOperatorView, build_live_operator_action_preflight, classify_retry,
 };
 pub use oauth::{
     OAuthCallback, OAuthClientConfig, OAuthLaunchContext, OAuthTokenResponse,
@@ -176,7 +177,10 @@ pub use user_analyzer::{
     UserRiskCache, build_user_risk_profile, count_warning_templates, parse_warning_level,
 };
 pub use wiki_storage::{
-    WikiStorageConfig, WikiStorageDocument, WikiStorageDocumentKind, WikiStoragePayloadEnvelope,
-    WikiStoragePlan, WikiStoragePlanInput, WikiStorageRealm, build_wiki_storage_plan,
-    render_wiki_storage_document_page, render_wiki_storage_index_page,
+    WikiStorageConfig, WikiStorageDocument, WikiStorageDocumentKind, WikiStorageLoadedDocument,
+    WikiStoragePayloadEnvelope, WikiStoragePlan, WikiStoragePlanInput, WikiStorageRealm,
+    WikiStorageWriteOutcome, WikiStorageWriteRequest, build_wiki_storage_document_load_request,
+    build_wiki_storage_plan, load_wiki_storage_document, parse_wiki_storage_document_response,
+    parse_wiki_storage_payload_envelope, render_wiki_storage_document_page,
+    render_wiki_storage_index_page, save_wiki_storage_document,
 };

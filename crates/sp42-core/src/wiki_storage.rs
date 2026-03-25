@@ -1,10 +1,16 @@
 //! Shared conventions for storing SP42 public state on-wiki.
 
+use std::collections::BTreeMap;
+
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use url::Url;
 
 use crate::branding::PROJECT_NAME;
 use crate::errors::WikiStorageError;
+use crate::traits::HttpClient;
+use crate::types::{FlagState, HttpMethod, HttpRequest, HttpResponse, WikiConfig};
+use crate::{ActionError, WikiPageSaveRequest, execute_wiki_page_save};
 
 const PAYLOAD_BEGIN_MARKER: &str = "<!-- SP42:BEGIN -->";
 const PAYLOAD_END_MARKER: &str = "<!-- SP42:END -->";
@@ -112,6 +118,40 @@ pub struct WikiStoragePayloadEnvelope {
     pub site_wiki_id: String,
     pub realm: WikiStorageRealm,
     pub data: Value,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WikiStorageLoadedDocument {
+    pub title: String,
+    pub exists: bool,
+    pub page_id: Option<u64>,
+    pub revision_id: Option<u64>,
+    pub body: Option<String>,
+    pub envelope: Option<WikiStoragePayloadEnvelope>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct WikiStorageWriteRequest {
+    pub document: WikiStorageDocument,
+    #[serde(default)]
+    pub human_summary: Vec<String>,
+    pub data: Value,
+    pub token: String,
+    pub baserevid: Option<u64>,
+    #[serde(default)]
+    pub tags: Vec<String>,
+    pub watchlist: Option<String>,
+    pub create_only: FlagState,
+    pub minor: FlagState,
+    pub summary: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WikiStorageWriteOutcome {
+    pub title: String,
+    pub baserevid: Option<u64>,
+    pub http_status: u16,
+    pub result: Option<String>,
 }
 
 #[must_use]
@@ -325,6 +365,275 @@ pub fn render_wiki_storage_document_page(
     Ok(lines.join("\n"))
 }
 
+/// Build a `MediaWiki` query request for reading a stored SP42 document.
+///
+/// # Errors
+///
+/// Returns [`WikiStorageError`] when the requested title is empty.
+pub fn build_wiki_storage_document_load_request(
+    config: &WikiConfig,
+    title: &str,
+) -> Result<HttpRequest, WikiStorageError> {
+    if title.trim().is_empty() {
+        return Err(WikiStorageError::InvalidInput {
+            message: "title is required".to_string(),
+        });
+    }
+
+    Ok(HttpRequest {
+        method: HttpMethod::Get,
+        url: build_query_url(
+            &config.api_url,
+            &[
+                ("action", "query"),
+                ("prop", "revisions"),
+                ("titles", title),
+                ("rvprop", "ids|content"),
+                ("rvslots", "main"),
+                ("format", "json"),
+                ("formatversion", "2"),
+            ],
+        ),
+        headers: BTreeMap::default(),
+        body: Vec::new(),
+    })
+}
+
+/// Load and parse a canonical SP42 on-wiki document through an injected HTTP client.
+///
+/// # Errors
+///
+/// Returns [`WikiStorageError`] when the request is invalid, transport fails,
+/// or the response cannot be parsed into a canonical SP42 document.
+pub async fn load_wiki_storage_document<C>(
+    client: &C,
+    config: &WikiConfig,
+    title: &str,
+) -> Result<WikiStorageLoadedDocument, WikiStorageError>
+where
+    C: HttpClient + ?Sized,
+{
+    let request = build_wiki_storage_document_load_request(config, title)?;
+    let response = client
+        .execute(request)
+        .await
+        .map_err(|error| WikiStorageError::Transport {
+            message: error.to_string(),
+        })?;
+    parse_wiki_storage_document_response(title, &response)
+}
+
+/// Parse a `MediaWiki` page query response into a canonical SP42 document view.
+///
+/// # Errors
+///
+/// Returns [`WikiStorageError`] when the HTTP status is not successful, the
+/// JSON body is invalid, or the embedded SP42 payload cannot be parsed.
+pub fn parse_wiki_storage_document_response(
+    requested_title: &str,
+    response: &HttpResponse,
+) -> Result<WikiStorageLoadedDocument, WikiStorageError> {
+    if !(200..300).contains(&response.status) {
+        return Err(WikiStorageError::Transport {
+            message: format!(
+                "wiki document fetch returned HTTP {} for `{requested_title}`",
+                response.status
+            ),
+        });
+    }
+
+    let parsed: WikiStorageQueryResponse =
+        serde_json::from_slice(&response.body).map_err(|error| WikiStorageError::Serialize {
+            message: error.to_string(),
+        })?;
+    let page =
+        parsed
+            .query
+            .pages
+            .into_iter()
+            .next()
+            .ok_or_else(|| WikiStorageError::Transport {
+                message: "wiki document query returned no pages".to_string(),
+            })?;
+
+    let body = page
+        .revisions
+        .as_ref()
+        .and_then(|revisions| revisions.first())
+        .and_then(|revision| revision.slots.main.content.clone());
+    let envelope = body
+        .as_deref()
+        .map(parse_wiki_storage_payload_envelope)
+        .transpose()?;
+
+    Ok(WikiStorageLoadedDocument {
+        title: page.title,
+        exists: !page.missing.unwrap_or(false),
+        page_id: page.pageid,
+        revision_id: page
+            .revisions
+            .and_then(|revisions| revisions.first().map(|revision| revision.revid)),
+        body,
+        envelope,
+    })
+}
+
+/// Extract the SP42 machine payload envelope embedded in a wiki page body.
+///
+/// # Errors
+///
+/// Returns [`WikiStorageError`] when payload markers are missing or the
+/// embedded JSON block is invalid.
+pub fn parse_wiki_storage_payload_envelope(
+    body: &str,
+) -> Result<WikiStoragePayloadEnvelope, WikiStorageError> {
+    let begin = body
+        .find(PAYLOAD_BEGIN_MARKER)
+        .ok_or_else(|| WikiStorageError::InvalidInput {
+            message: "document does not contain SP42 payload markers".to_string(),
+        })?;
+    let end = body
+        .find(PAYLOAD_END_MARKER)
+        .ok_or_else(|| WikiStorageError::InvalidInput {
+            message: "document does not contain a closing SP42 payload marker".to_string(),
+        })?;
+    if end <= begin {
+        return Err(WikiStorageError::InvalidInput {
+            message: "document payload markers are malformed".to_string(),
+        });
+    }
+
+    let payload_section = &body[begin + PAYLOAD_BEGIN_MARKER.len()..end];
+    let payload = payload_section
+        .replace("<syntaxhighlight lang=\"json\">", "")
+        .replace("</syntaxhighlight>", "")
+        .trim()
+        .to_string();
+
+    serde_json::from_str(&payload).map_err(|error| WikiStorageError::Serialize {
+        message: error.to_string(),
+    })
+}
+
+/// Render and save a canonical SP42 document to a wiki page.
+///
+/// # Errors
+///
+/// Returns [`WikiStorageError`] when rendering fails, the save transport fails,
+/// or the underlying write is rejected because of a conflict.
+pub async fn save_wiki_storage_document<C>(
+    client: &C,
+    config: &WikiConfig,
+    request: &WikiStorageWriteRequest,
+) -> Result<WikiStorageWriteOutcome, WikiStorageError>
+where
+    C: HttpClient + ?Sized,
+{
+    let text = render_wiki_storage_document_page(
+        &request.document,
+        &request.human_summary,
+        &request.data,
+    )?;
+    let response = execute_wiki_page_save(
+        client,
+        config,
+        &WikiPageSaveRequest {
+            title: request.document.title.clone(),
+            text,
+            token: request.token.clone(),
+            summary: request.summary.clone(),
+            baserevid: request.baserevid,
+            tags: request.tags.clone(),
+            watchlist: request.watchlist.clone(),
+            create_only: request.create_only,
+            minor: request.minor,
+        },
+    )
+    .await
+    .map_err(|error| map_wiki_storage_write_error(&request.document.title, error))?;
+    let summary =
+        crate::parse_action_response_summary(&response, "page save").map_err(|error| {
+            WikiStorageError::Transport {
+                message: error.to_string(),
+            }
+        })?;
+
+    Ok(WikiStorageWriteOutcome {
+        title: request.document.title.clone(),
+        baserevid: request.baserevid,
+        http_status: response.status,
+        result: summary.result,
+    })
+}
+
+fn map_wiki_storage_write_error(title: &str, error: ActionError) -> WikiStorageError {
+    match error {
+        ActionError::Execution {
+            message,
+            code,
+            http_status: _,
+            retryable: _,
+        } => {
+            let is_conflict = matches!(
+                code.as_deref(),
+                Some("editconflict" | "articleexists" | "pagedeleted" | "missingtitle")
+            );
+            if is_conflict {
+                WikiStorageError::Conflict {
+                    title: title.to_string(),
+                    message,
+                }
+            } else {
+                WikiStorageError::Transport { message }
+            }
+        }
+    }
+}
+
+fn build_query_url(base_url: &Url, params: &[(&str, &str)]) -> Url {
+    let mut url = base_url.clone();
+    {
+        let mut query = url.query_pairs_mut();
+        query.clear().extend_pairs(params.iter().copied());
+    }
+    url
+}
+
+#[derive(Debug, Deserialize)]
+struct WikiStorageQueryResponse {
+    query: WikiStorageQueryPages,
+}
+
+#[derive(Debug, Deserialize)]
+struct WikiStorageQueryPages {
+    pages: Vec<WikiStoragePageRecord>,
+}
+
+#[derive(Debug, Deserialize)]
+struct WikiStoragePageRecord {
+    title: String,
+    pageid: Option<u64>,
+    missing: Option<bool>,
+    revisions: Option<Vec<WikiStorageRevisionRecord>>,
+}
+
+#[derive(Debug, Deserialize)]
+struct WikiStorageRevisionRecord {
+    revid: u64,
+    slots: WikiStorageRevisionSlots,
+}
+
+#[derive(Debug, Deserialize)]
+struct WikiStorageRevisionSlots {
+    main: WikiStorageRevisionSlotMain,
+}
+
+#[derive(Debug, Deserialize)]
+struct WikiStorageRevisionSlotMain {
+    #[serde(rename = "content")]
+    content: Option<String>,
+}
+
 fn build_shared_documents(
     config: &WikiStorageConfig,
     input: &WikiStoragePlanInput,
@@ -508,12 +817,20 @@ fn document_kind_label(kind: &WikiStorageDocumentKind) -> &'static str {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeMap;
+
+    use futures::executor::block_on;
     use serde_json::json;
 
     use super::{
         PAYLOAD_BEGIN_MARKER, PAYLOAD_END_MARKER, WikiStorageConfig, WikiStoragePlanInput,
-        build_wiki_storage_plan, render_wiki_storage_document_page, render_wiki_storage_index_page,
+        WikiStorageWriteRequest, build_wiki_storage_plan, load_wiki_storage_document,
+        parse_wiki_storage_payload_envelope, render_wiki_storage_document_page,
+        render_wiki_storage_index_page, save_wiki_storage_document,
     };
+    use crate::config_parser::parse_wiki_config;
+    use crate::traits::StubHttpClient;
+    use crate::{FlagState, HttpResponse, WikiStorageError};
 
     fn sample_input() -> WikiStoragePlanInput {
         WikiStoragePlanInput {
@@ -610,5 +927,89 @@ mod tests {
                 .iter()
                 .any(|document| document.title == "User:Schiste-Test/SP42/fr_wiki/Teams/core_team")
         );
+    }
+
+    #[test]
+    fn parses_embedded_payload_envelope() {
+        let plan = build_wiki_storage_plan(&WikiStorageConfig::default(), &sample_input());
+        let page = render_wiki_storage_document_page(
+            &plan.personal_documents[0],
+            &["Compact theme".to_string()],
+            &json!({ "theme": "compact" }),
+        )
+        .expect("document page should render");
+
+        let envelope = parse_wiki_storage_payload_envelope(&page).expect("payload should parse");
+        assert_eq!(envelope.kind, "personal-profile");
+        assert_eq!(
+            envelope
+                .data
+                .get("theme")
+                .and_then(serde_json::Value::as_str),
+            Some("compact")
+        );
+    }
+
+    #[test]
+    fn load_document_reads_revision_and_payload() {
+        let config = parse_wiki_config(include_str!("../../../configs/frwiki.yaml"))
+            .expect("fixture should parse");
+        let client = StubHttpClient::new([Ok(HttpResponse {
+            status: 200,
+            headers: BTreeMap::default(),
+            body: br#"{"query":{"pages":[{"title":"User:Schiste/SP42/Profile","pageid":42,"revisions":[{"revid":314,"slots":{"main":{"content":"= Profile =\n<!-- SP42:BEGIN -->\n<syntaxhighlight lang=\"json\">\n{\"project\":\"SP42\",\"version\":1,\"title\":\"User:Schiste/SP42/Profile\",\"kind\":\"personal-profile\",\"site_wiki_id\":\"frwiki\",\"realm\":\"PersonalUserSpace\",\"data\":{\"theme\":\"compact\"}}\n</syntaxhighlight>\n<!-- SP42:END -->"}}}]}]}}"#.to_vec(),
+        })]);
+
+        let loaded = block_on(load_wiki_storage_document(
+            &client,
+            &config,
+            "User:Schiste/SP42/Profile",
+        ))
+        .expect("document should load");
+
+        assert!(loaded.exists);
+        assert_eq!(loaded.page_id, Some(42));
+        assert_eq!(loaded.revision_id, Some(314));
+        assert_eq!(
+            loaded
+                .envelope
+                .expect("payload should exist")
+                .data
+                .get("theme")
+                .and_then(serde_json::Value::as_str),
+            Some("compact")
+        );
+    }
+
+    #[test]
+    fn save_document_maps_edit_conflicts() {
+        let config = parse_wiki_config(include_str!("../../../configs/frwiki.yaml"))
+            .expect("fixture should parse");
+        let plan = build_wiki_storage_plan(&WikiStorageConfig::default(), &sample_input());
+        let client = StubHttpClient::new([Ok(HttpResponse {
+            status: 200,
+            headers: BTreeMap::default(),
+            body: br#"{"error":{"code":"editconflict","info":"Edit conflict"}}"#.to_vec(),
+        })]);
+
+        let error = block_on(save_wiki_storage_document(
+            &client,
+            &config,
+            &WikiStorageWriteRequest {
+                document: plan.personal_documents[0].clone(),
+                human_summary: vec!["Compact theme".to_string()],
+                data: json!({ "theme": "compact" }),
+                token: "csrf-token".to_string(),
+                baserevid: Some(10),
+                tags: vec![],
+                watchlist: None,
+                create_only: FlagState::Disabled,
+                minor: FlagState::Disabled,
+                summary: Some("Save SP42 profile".to_string()),
+            },
+        ))
+        .expect_err("conflict should be reported");
+
+        assert!(matches!(error, WikiStorageError::Conflict { .. }));
     }
 }

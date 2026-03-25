@@ -42,13 +42,15 @@ use sp42_core::{
     PatrolScenarioReportInputs, PatrolSessionDigestInputs, QueuedEdit, RecentChangesQuery,
     ServerDebugSummary, SessionActionExecutionRequest, SessionActionExecutionResponse,
     SessionActionKind, ShellStateInputs, Storage, StreamRuntimeStatus, SystemClock, TokenKind,
-    UndoRequest, WikiConfig, WikiStorageConfig, WikiStoragePlan, WikiStoragePlanInput,
-    build_authorization_url, build_debug_snapshot, build_patrol_scenario_report,
-    build_patrol_session_digest, build_ranked_queue, build_review_workbench, build_scoring_context,
-    build_shell_state_model, build_wiki_storage_plan, diff_lines, execute_fetch_token,
-    execute_liftwing_score, execute_patrol, execute_recent_changes, execute_rollback, execute_undo,
-    generate_oauth_state, generate_pkce_verifier, parse_callback_query,
-    render_wiki_storage_document_page, render_wiki_storage_index_page,
+    UndoRequest, WikiConfig, WikiStorageConfig, WikiStorageLoadedDocument, WikiStoragePlan,
+    WikiStoragePlanInput, WikiStorageWriteOutcome, WikiStorageWriteRequest,
+    build_authorization_url, build_debug_snapshot, build_live_operator_action_preflight,
+    build_patrol_scenario_report, build_patrol_session_digest, build_ranked_queue,
+    build_review_workbench, build_scoring_context, build_shell_state_model,
+    build_wiki_storage_plan, diff_lines, execute_fetch_token, execute_liftwing_score,
+    execute_patrol, execute_recent_changes, execute_rollback, execute_undo, generate_oauth_state,
+    generate_pkce_verifier, load_wiki_storage_document, parse_callback_query,
+    render_wiki_storage_document_page, render_wiki_storage_index_page, save_wiki_storage_document,
 };
 
 use crate::coordination::{
@@ -60,6 +62,7 @@ use crate::wikimedia_capabilities::{CapabilityProbeTargets, config_for_wiki, pro
 type SharedSessions = Arc<RwLock<HashMap<String, StoredSession>>>;
 type SharedCapabilityCache = Arc<RwLock<Option<CachedCapabilityReport>>>;
 type SharedPendingOAuthLogins = Arc<RwLock<HashMap<String, PendingOAuthLogin>>>;
+type SharedIngestionSupervisor = Arc<RwLock<HashMap<String, IngestionSupervisorSnapshot>>>;
 
 const SESSION_COOKIE_NAME: &str = "sp42_dev_session";
 const CAPABILITY_CACHE_TTL_MS: i64 = 30_000;
@@ -87,6 +90,7 @@ struct AppState {
     http_client: reqwest::Client,
     local_oauth: LocalOAuthConfig,
     runtime_storage_root: PathBuf,
+    ingestion_supervisor: SharedIngestionSupervisor,
     capability_targets: CapabilityProbeTargets,
     clock: Arc<dyn Clock>,
     coordination: CoordinationRegistry,
@@ -291,6 +295,26 @@ struct RenderedStorageDocumentPage {
     body: String,
 }
 
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Deserialize, serde::Serialize)]
+struct StorageDocumentQuery {
+    title: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, serde::Deserialize, serde::Serialize)]
+struct StorageDocumentSavePayload {
+    document: sp42_core::WikiStorageDocument,
+    #[serde(default)]
+    human_summary: Vec<String>,
+    data: serde_json::Value,
+    baserevid: Option<u64>,
+    #[serde(default)]
+    tags: Vec<String>,
+    watchlist: Option<String>,
+    create_only: FlagState,
+    minor: FlagState,
+    summary: Option<String>,
+}
+
 #[tokio::main]
 async fn main() -> Result<(), std::io::Error> {
     init_tracing();
@@ -304,20 +328,23 @@ async fn main() -> Result<(), std::io::Error> {
         "starting localhost server"
     );
     let clock: Arc<dyn Clock> = Arc::new(SystemClock);
-    let router = build_router(AppState {
+    let state = AppState {
         capability_cache: Arc::new(RwLock::new(None)),
         sessions: Arc::new(RwLock::new(HashMap::new())),
         pending_oauth_logins: Arc::new(RwLock::new(HashMap::new())),
         http_client: build_http_client()?,
         local_oauth: LocalOAuthConfig::load(),
         runtime_storage_root: runtime_storage_root(),
+        ingestion_supervisor: Arc::new(RwLock::new(HashMap::new())),
         capability_targets: CapabilityProbeTargets::default(),
         clock: clock.clone(),
         coordination: CoordinationRegistry::new(clock),
         next_client_id: Arc::new(AtomicU64::new(1)),
         next_session_id: Arc::new(AtomicU64::new(1)),
         started_at: Instant::now(),
-    });
+    };
+    spawn_ingestion_supervisors(&state);
+    let router = build_router(state);
 
     axum::serve(listener, router).await
 }
@@ -328,6 +355,213 @@ fn build_http_client() -> io::Result<reqwest::Client> {
         .user_agent(sp42_core::branding::USER_AGENT)
         .build()
         .map_err(|error| io::Error::other(format!("failed to build reqwest client: {error}")))
+}
+
+fn supervisor_poll_interval_ms() -> u64 {
+    std::env::var("SP42_INGESTION_POLL_MS")
+        .ok()
+        .and_then(|value| value.parse::<u64>().ok())
+        .filter(|value| *value > 0)
+        .unwrap_or(15_000)
+}
+
+fn supervisor_wiki_ids() -> Vec<String> {
+    let configured = std::env::var("SP42_SUPERVISOR_WIKIS")
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or_else(|| "frwiki".to_string());
+
+    configured
+        .split(',')
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToString::to_string)
+        .collect()
+}
+
+fn spawn_ingestion_supervisors(state: &AppState) {
+    let poll_interval_ms = supervisor_poll_interval_ms();
+    for wiki_id in supervisor_wiki_ids() {
+        let state_clone = state.clone();
+        tokio::spawn(async move {
+            run_ingestion_supervisor_for_wiki(state_clone, wiki_id, poll_interval_ms).await;
+        });
+    }
+}
+
+async fn run_ingestion_supervisor_for_wiki(
+    state: AppState,
+    wiki_id: String,
+    poll_interval_ms: u64,
+) {
+    loop {
+        let started_at_ms = state.clock.now_ms();
+        let snapshot =
+            supervisor_snapshot_iteration(&state, &wiki_id, poll_interval_ms, started_at_ms).await;
+        let sleep_ms = poll_interval_ms.max(1_000);
+        {
+            let mut guard = state.ingestion_supervisor.write().await;
+            guard.insert(wiki_id.clone(), snapshot);
+        }
+        tokio::time::sleep(Duration::from_millis(sleep_ms)).await;
+    }
+}
+
+async fn supervisor_snapshot_iteration(
+    state: &AppState,
+    wiki_id: &str,
+    poll_interval_ms: u64,
+    started_at_ms: i64,
+) -> IngestionSupervisorSnapshot {
+    let previous = {
+        let guard = state.ingestion_supervisor.read().await;
+        guard.get(wiki_id).cloned()
+    };
+    let previous_run_count = previous
+        .as_ref()
+        .map_or(0, |snapshot| snapshot.status.run_count);
+    let previous_success = previous
+        .as_ref()
+        .and_then(|snapshot| snapshot.status.last_success_at_ms);
+
+    let Some(access_token) = state.local_oauth.access_token().map(ToString::to_string) else {
+        return supervisor_inactive_snapshot(
+            wiki_id,
+            poll_interval_ms,
+            previous_run_count,
+            started_at_ms,
+            previous_success,
+            "No local Wikimedia access token is available.".to_string(),
+            "Supervisor is idle until a local token is configured.".to_string(),
+        );
+    };
+
+    let config = match resolved_wiki_config(state, wiki_id) {
+        Ok(config) => config,
+        Err(error) => {
+            return supervisor_inactive_snapshot(
+                wiki_id,
+                poll_interval_ms,
+                previous_run_count,
+                started_at_ms,
+                previous_success,
+                error,
+                "Supervisor could not resolve wiki configuration.".to_string(),
+            );
+        }
+    };
+
+    let poll_result = perform_supervisor_poll(state, wiki_id, &config, access_token).await;
+
+    match poll_result {
+        Ok((batch, backlog_status, stream_status, queue)) => {
+            let mut notes = vec![format!(
+                "Supervisor polled {} edits.",
+                backlog_status.last_batch_size
+            )];
+            if stream_status.last_event_id.is_none() && backlog_status.next_continue.is_some() {
+                notes.push(
+                    "Stream checkpoint is empty; backlog checkpoint is currently authoritative."
+                        .to_string(),
+                );
+            }
+            IngestionSupervisorSnapshot {
+                status: sp42_core::LiveIngestionSupervisorStatus {
+                    wiki_id: wiki_id.to_string(),
+                    active: true,
+                    poll_interval_ms,
+                    run_count: previous_run_count.saturating_add(1),
+                    latest_queue_depth: queue.len(),
+                    last_started_at_ms: Some(started_at_ms),
+                    last_success_at_ms: Some(state.clock.now_ms()),
+                    last_error: None,
+                    stream_status: Some(stream_status),
+                    backlog_status: Some(backlog_status),
+                    notes,
+                },
+                queue,
+                next_continue: batch.next_continue,
+            }
+        }
+        Err(error) => supervisor_inactive_snapshot(
+            wiki_id,
+            poll_interval_ms,
+            previous_run_count,
+            started_at_ms,
+            previous_success,
+            error.to_string(),
+            "Supervisor poll failed; request path will continue to fall back.".to_string(),
+        ),
+    }
+}
+
+fn supervisor_inactive_snapshot(
+    wiki_id: &str,
+    poll_interval_ms: u64,
+    previous_run_count: u64,
+    started_at_ms: i64,
+    previous_success: Option<i64>,
+    error: String,
+    note: String,
+) -> IngestionSupervisorSnapshot {
+    IngestionSupervisorSnapshot {
+        status: sp42_core::LiveIngestionSupervisorStatus {
+            wiki_id: wiki_id.to_string(),
+            active: false,
+            poll_interval_ms,
+            run_count: previous_run_count.saturating_add(1),
+            latest_queue_depth: 0,
+            last_started_at_ms: Some(started_at_ms),
+            last_success_at_ms: previous_success,
+            last_error: Some(error),
+            stream_status: None,
+            backlog_status: None,
+            notes: vec![note],
+        },
+        queue: Vec::new(),
+        next_continue: None,
+    }
+}
+
+async fn perform_supervisor_poll(
+    state: &AppState,
+    wiki_id: &str,
+    config: &WikiConfig,
+    access_token: String,
+) -> Result<
+    (
+        sp42_core::RecentChangesBatch,
+        sp42_core::BacklogRuntimeStatus,
+        StreamRuntimeStatus,
+        Vec<QueuedEdit>,
+    ),
+    sp42_core::BacklogRuntimeError,
+> {
+    let client = BearerHttpClient::new(state.http_client.clone(), access_token);
+    let storage = runtime_storage_for(state);
+    let mut backlog_runtime = BacklogRuntime::new(
+        config.clone(),
+        storage,
+        BacklogRuntimeConfig {
+            limit: default_limit(),
+            include_bots: false,
+        },
+        format!("recentchanges.rccontinue.{wiki_id}"),
+    );
+    backlog_runtime.initialize().await?;
+    let batch = backlog_runtime.poll(&client).await?;
+    let backlog_status = backlog_runtime.status();
+    let stream_status = persisted_stream_status(state, wiki_id)
+        .await
+        .map_err(|message| {
+            sp42_core::BacklogRuntimeError::Storage(sp42_core::StorageError::Operation { message })
+        })?;
+    let queue = build_ranked_queue(batch.events.clone(), &config.scoring).map_err(|error| {
+        sp42_core::BacklogRuntimeError::Storage(sp42_core::StorageError::Operation {
+            message: error.to_string(),
+        })
+    })?;
+    Ok((batch, backlog_status, stream_status, queue))
 }
 
 fn init_tracing() {
@@ -379,6 +613,10 @@ fn build_router(state: AppState) -> Router {
         .route(
             "/operator/storage/layout/{wiki_id}",
             get(get_operator_storage_layout),
+        )
+        .route(
+            "/operator/storage/document/{wiki_id}",
+            get(get_storage_document).put(put_storage_document),
         )
         .route("/ws/{wiki_id}", get(coordination_socket))
         .route("/dev/auth/session", get(get_session).delete(delete_session))
@@ -678,6 +916,13 @@ struct LiveQueueState {
     selected_index: Option<usize>,
 }
 
+#[derive(Debug, Clone)]
+struct IngestionSupervisorSnapshot {
+    status: sp42_core::LiveIngestionSupervisorStatus,
+    queue: Vec<QueuedEdit>,
+    next_continue: Option<String>,
+}
+
 struct SelectedReviewState {
     scoring_context: Option<sp42_core::ScoringContext>,
     diff: Option<sp42_core::StructuredDiff>,
@@ -693,6 +938,32 @@ struct LiveOperatorProducts {
     shell_state: sp42_core::ShellStateModel,
     backend: LiveOperatorBackendStatus,
     debug_snapshot: sp42_core::DebugSnapshot,
+    action_preflight: sp42_core::LiveOperatorActionPreflight,
+}
+
+struct LiveOperatorProductContext<'a> {
+    stream_status: &'a StreamRuntimeStatus,
+    backlog_status: &'a sp42_core::BacklogRuntimeStatus,
+    auth: &'a DevAuthSessionStatus,
+    action_status: &'a ActionExecutionStatusReport,
+    capabilities: &'a DevAuthCapabilityReport,
+}
+
+struct LiveOperatorFinalization {
+    queue_state: LiveQueueState,
+    bootstrap: LiveOperatorBootstrap,
+    selected_review: SelectedReviewState,
+    products: LiveOperatorProducts,
+    telemetry: LiveOperatorTelemetry,
+    notes: Vec<String>,
+    ingestion_supervisor: Option<sp42_core::LiveIngestionSupervisorStatus>,
+}
+
+fn operator_phase_timing(phase: &str, started_at: Instant) -> LiveOperatorPhaseTiming {
+    LiveOperatorPhaseTiming {
+        phase: phase.to_string(),
+        duration_ms: u64::try_from(started_at.elapsed().as_millis()).unwrap_or(u64::MAX),
+    }
 }
 
 const fn default_limit() -> u16 {
@@ -748,6 +1019,90 @@ async fn get_operator_storage_layout(
                 Json(serde_json::json!({ "error": error })),
             )
         })
+}
+
+async fn get_storage_document(
+    Path(wiki_id): Path<String>,
+    Query(query): Query<StorageDocumentQuery>,
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Result<Json<WikiStorageLoadedDocument>, (StatusCode, Json<serde_json::Value>)> {
+    let title = query
+        .title
+        .as_deref()
+        .filter(|value| !value.trim().is_empty())
+        .ok_or_else(|| invalid_payload("title query parameter is required"))?;
+    let access_token = access_token_for_request(&state, &headers)
+        .await
+        .ok_or_else(|| unauthorized_error("No authenticated Wikimedia session is active."))?;
+    let config =
+        resolved_wiki_config(&state, &wiki_id).map_err(|message| invalid_payload(&message))?;
+    let client = BearerHttpClient::new(state.http_client.clone(), access_token);
+
+    load_wiki_storage_document(&client, &config, title)
+        .await
+        .map(Json)
+        .map_err(|error| {
+            (
+                StatusCode::BAD_GATEWAY,
+                Json(serde_json::json!({ "error": error.to_string() })),
+            )
+        })
+}
+
+async fn put_storage_document(
+    Path(wiki_id): Path<String>,
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(payload): Json<StorageDocumentSavePayload>,
+) -> Result<Json<WikiStorageWriteOutcome>, (StatusCode, Json<serde_json::Value>)> {
+    if payload.document.title.trim().is_empty() {
+        return Err(invalid_payload("document.title is required"));
+    }
+
+    let access_token = access_token_for_request(&state, &headers)
+        .await
+        .ok_or_else(|| unauthorized_error("No authenticated Wikimedia session is active."))?;
+    let config =
+        resolved_wiki_config(&state, &wiki_id).map_err(|message| invalid_payload(&message))?;
+    let client = BearerHttpClient::new(state.http_client.clone(), access_token);
+    let csrf_token = execute_fetch_token(&client, &config, TokenKind::Csrf)
+        .await
+        .map_err(|error| {
+            (
+                StatusCode::BAD_GATEWAY,
+                Json(serde_json::json!({ "error": format!("csrf token fetch failed: {error}") })),
+            )
+        })?;
+
+    save_wiki_storage_document(
+        &client,
+        &config,
+        &WikiStorageWriteRequest {
+            document: payload.document,
+            human_summary: payload.human_summary,
+            data: payload.data,
+            token: csrf_token,
+            baserevid: payload.baserevid,
+            tags: payload.tags,
+            watchlist: payload.watchlist,
+            create_only: payload.create_only,
+            minor: payload.minor,
+            summary: payload.summary,
+        },
+    )
+    .await
+    .map(Json)
+    .map_err(|error| {
+        let status = match error {
+            sp42_core::WikiStorageError::Conflict { .. } => StatusCode::CONFLICT,
+            _ => StatusCode::BAD_GATEWAY,
+        };
+        (
+            status,
+            Json(serde_json::json!({ "error": error.to_string() })),
+        )
+    })
 }
 
 async fn server_debug_summary(state: &AppState, headers: &HeaderMap) -> ServerDebugSummary {
@@ -924,6 +1279,33 @@ async fn operator_runtime_inspection(
     state: &AppState,
     wiki_id: &str,
 ) -> Result<OperatorRuntimeInspection, String> {
+    if let Some(snapshot) = supervisor_snapshot_for_wiki(state, wiki_id).await {
+        let mut notes = snapshot.status.notes.clone();
+        notes.push(
+            "Runtime inspection is backed by the continuous ingestion supervisor.".to_string(),
+        );
+        return Ok(OperatorRuntimeInspection {
+            wiki_id: wiki_id.to_string(),
+            storage_root: state.runtime_storage_root.display().to_string(),
+            backlog: snapshot
+                .status
+                .backlog_status
+                .unwrap_or(sp42_core::BacklogRuntimeStatus {
+                    checkpoint_key: format!("recentchanges.rccontinue.{wiki_id}"),
+                    next_continue: snapshot.next_continue,
+                    last_batch_size: 0,
+                    total_events: 0,
+                    poll_count: 0,
+                }),
+            stream_checkpoint_key: format!("stream.last_event_id.{wiki_id}"),
+            stream_last_event_id: snapshot
+                .status
+                .stream_status
+                .and_then(|status| status.last_event_id),
+            notes,
+        });
+    }
+
     let config = resolved_wiki_config(state, wiki_id)?;
     let storage = runtime_storage_for(state);
     let mut backlog = BacklogRuntime::new(
@@ -1014,14 +1396,30 @@ fn parsed_namespaces(namespaces: Option<&String>) -> Vec<i32> {
     })
 }
 
-async fn load_live_queue_state(
+fn uses_default_live_filters(query: &LiveOperatorQuery) -> bool {
+    query.rccontinue.is_none()
+        && !query.include_bots.is_enabled()
+        && !query.unpatrolled_only.is_enabled()
+        && query.include_minor.is_enabled()
+        && query.include_anonymous.is_enabled()
+        && query.include_registered.is_enabled()
+        && query.include_temporary.is_enabled()
+        && query.include_new_pages.is_enabled()
+        && query.tag_filter.is_none()
+        && query.namespaces.is_empty()
+        && query.min_score.is_none()
+}
+
+async fn supervisor_snapshot_for_wiki(
     state: &AppState,
     wiki_id: &str,
-    filters: &LiveViewFilterParams,
-    config: &WikiConfig,
-    client: &BearerHttpClient,
-) -> Result<LiveQueueState, String> {
-    let query = LiveOperatorQuery {
+) -> Option<IngestionSupervisorSnapshot> {
+    let guard = state.ingestion_supervisor.read().await;
+    guard.get(wiki_id).cloned()
+}
+
+fn live_operator_query_from_filters(filters: &LiveViewFilterParams) -> LiveOperatorQuery {
+    LiveOperatorQuery {
         limit: filters.limit.clamp(1, 500),
         include_bots: filters.include_bots,
         unpatrolled_only: filters.unpatrolled_only,
@@ -1034,7 +1432,44 @@ async fn load_live_queue_state(
         min_score: filters.min_score,
         tag_filter: filters.tag_filter.clone(),
         rccontinue: filters.rccontinue.clone(),
-    };
+    }
+}
+
+fn queue_state_from_supervisor(
+    wiki_id: &str,
+    query: LiveOperatorQuery,
+    snapshot: IngestionSupervisorSnapshot,
+) -> LiveQueueState {
+    let mut queue = snapshot.queue;
+    queue.truncate(usize::from(query.limit));
+    LiveQueueState {
+        query,
+        batch: sp42_core::RecentChangesBatch {
+            events: queue.iter().map(|item| item.event.clone()).collect(),
+            next_continue: snapshot.next_continue,
+        },
+        backlog_status: snapshot
+            .status
+            .backlog_status
+            .unwrap_or(sp42_core::BacklogRuntimeStatus {
+                checkpoint_key: format!("recentchanges.rccontinue.{wiki_id}"),
+                next_continue: None,
+                last_batch_size: 0,
+                total_events: 0,
+                poll_count: 0,
+            }),
+        selected_index: (!queue.is_empty()).then_some(0),
+        queue,
+    }
+}
+
+async fn queue_state_from_recentchanges(
+    state: &AppState,
+    wiki_id: &str,
+    query: LiveOperatorQuery,
+    config: &WikiConfig,
+    client: &BearerHttpClient,
+) -> Result<LiveQueueState, String> {
     let namespace_override = (!query.namespaces.is_empty()).then(|| query.namespaces.clone());
     let mut backlog_runtime = BacklogRuntime::new(
         config.clone(),
@@ -1090,7 +1525,7 @@ async fn load_live_queue_state(
     let backlog_status = backlog_runtime.status();
     let mut queue = build_ranked_queue(batch.events.clone(), &config.scoring)
         .map_err(|error| format!("queue build failed: {error}"))?;
-    if let Some(min_score) = filters.min_score {
+    if let Some(min_score) = query.min_score {
         queue.retain(|item| item.score.total >= min_score);
     }
     if !query.include_registered.is_enabled() {
@@ -1107,6 +1542,23 @@ async fn load_live_queue_state(
         selected_index: (!queue.is_empty()).then_some(0),
         queue,
     })
+}
+
+async fn load_live_queue_state(
+    state: &AppState,
+    wiki_id: &str,
+    filters: &LiveViewFilterParams,
+    config: &WikiConfig,
+    client: &BearerHttpClient,
+) -> Result<LiveQueueState, String> {
+    let query = live_operator_query_from_filters(filters);
+    if uses_default_live_filters(&query)
+        && let Some(snapshot) = supervisor_snapshot_for_wiki(state, wiki_id).await
+        && snapshot.status.active
+    {
+        return Ok(queue_state_from_supervisor(wiki_id, query, snapshot));
+    }
+    queue_state_from_recentchanges(state, wiki_id, query, config, client).await
 }
 
 async fn load_selected_review_state(
@@ -1232,10 +1684,8 @@ fn build_live_operator_products(
     wiki_id: &str,
     queue: &[QueuedEdit],
     selected: Option<&QueuedEdit>,
-    stream_status: &StreamRuntimeStatus,
-    backlog_status: &sp42_core::BacklogRuntimeStatus,
     selected_review: &SelectedReviewState,
-    auth: &DevAuthSessionStatus,
+    context: &LiveOperatorProductContext<'_>,
 ) -> LiveOperatorProducts {
     let scenario_report = build_patrol_scenario_report(&PatrolScenarioReportInputs {
         queue,
@@ -1243,8 +1693,8 @@ fn build_live_operator_products(
         scoring_context: selected_review.scoring_context.as_ref(),
         diff: selected_review.diff.as_ref(),
         review_workbench: selected_review.review_workbench.as_ref(),
-        stream_status: Some(stream_status),
-        backlog_status: Some(backlog_status),
+        stream_status: Some(context.stream_status),
+        backlog_status: Some(context.backlog_status),
         coordination: selected_review.coordination_state.as_ref(),
         wiki_id_hint: Some(wiki_id),
     });
@@ -1256,17 +1706,19 @@ fn build_live_operator_products(
         report: &scenario_report,
         review_workbench: selected_review.review_workbench.as_ref(),
     });
-    let backend = live_operator_backend_status(&selected_review.readiness, auth);
+    let backend = live_operator_backend_status(&selected_review.readiness, context.auth);
     let debug_snapshot = build_debug_snapshot(&DebugSnapshotInputs {
         queue,
         selected,
         scoring_context: selected_review.scoring_context.as_ref(),
         diff: selected_review.diff.as_ref(),
         review_workbench: selected_review.review_workbench.as_ref(),
-        stream_status: Some(stream_status),
-        backlog_status: Some(backlog_status),
+        stream_status: Some(context.stream_status),
+        backlog_status: Some(context.backlog_status),
         coordination: selected_review.coordination_state.as_ref(),
     });
+    let action_preflight =
+        build_live_operator_action_preflight(selected, context.capabilities, context.action_status);
 
     LiveOperatorProducts {
         scenario_report,
@@ -1274,85 +1726,26 @@ fn build_live_operator_products(
         shell_state,
         backend,
         debug_snapshot,
+        action_preflight,
     }
 }
 
-async fn live_operator_view(
+fn finalize_live_operator_view(
     state: &AppState,
-    headers: &HeaderMap,
     wiki_id: &str,
-    filters: &LiveViewFilterParams,
-) -> Result<LiveOperatorView, String> {
-    let total_started = Instant::now();
-    let mut phase_timings = Vec::new();
+    finalized: LiveOperatorFinalization,
+) -> LiveOperatorView {
+    let LiveOperatorFinalization {
+        queue_state,
+        bootstrap,
+        selected_review,
+        products,
+        telemetry,
+        notes,
+        ingestion_supervisor,
+    } = finalized;
 
-    let phase_started = Instant::now();
-    let bootstrap = load_live_operator_bootstrap(state, headers, wiki_id).await?;
-    phase_timings.push(LiveOperatorPhaseTiming {
-        phase: "bootstrap".to_string(),
-        duration_ms: u64::try_from(phase_started.elapsed().as_millis()).unwrap_or(u64::MAX),
-    });
-
-    let phase_started = Instant::now();
-    let access_token = access_token_for_request(state, headers)
-        .await
-        .ok_or_else(|| "No local Wikimedia access token is available.".to_string())?;
-    let client = BearerHttpClient::new(state.http_client.clone(), access_token.clone());
-    let queue_state =
-        load_live_queue_state(state, wiki_id, filters, &bootstrap.config, &client).await?;
-    phase_timings.push(LiveOperatorPhaseTiming {
-        phase: "recentchanges".to_string(),
-        duration_ms: u64::try_from(phase_started.elapsed().as_millis()).unwrap_or(u64::MAX),
-    });
-
-    let phase_started = Instant::now();
-    let selected = queue_state
-        .selected_index
-        .and_then(|index| queue_state.queue.get(index));
-    phase_timings.push(LiveOperatorPhaseTiming {
-        phase: "queue".to_string(),
-        duration_ms: u64::try_from(phase_started.elapsed().as_millis()).unwrap_or(u64::MAX),
-    });
-
-    let phase_started = Instant::now();
-    let selected_review = load_selected_review_state(
-        state,
-        headers,
-        wiki_id,
-        &bootstrap.config,
-        &access_token,
-        &bootstrap.auth,
-        selected,
-    )
-    .await?;
-    phase_timings.push(LiveOperatorPhaseTiming {
-        phase: "selection".to_string(),
-        duration_ms: u64::try_from(phase_started.elapsed().as_millis()).unwrap_or(u64::MAX),
-    });
-    let products = build_live_operator_products(
-        wiki_id,
-        &queue_state.queue,
-        selected,
-        &bootstrap.stream_status,
-        &queue_state.backlog_status,
-        &selected_review,
-        &bootstrap.auth,
-    );
-    let telemetry = LiveOperatorTelemetry {
-        total_duration_ms: u64::try_from(total_started.elapsed().as_millis()).unwrap_or(u64::MAX),
-        phase_timings,
-    };
-
-    let notes = build_live_operator_notes(
-        &queue_state.query,
-        &queue_state.backlog_status,
-        &queue_state.queue,
-        selected_review.scoring_context.as_ref(),
-        selected_review.diff.as_ref(),
-        selected_review.review_workbench.as_ref(),
-    );
-
-    Ok(LiveOperatorView {
+    LiveOperatorView {
         project: sp42_core::branding::PROJECT_NAME.to_string(),
         fetched_at_ms: state.clock.now_ms(),
         wiki_id: wiki_id.to_string(),
@@ -1372,13 +1765,101 @@ async fn live_operator_view(
         backend: products.backend,
         action_status: bootstrap.action_status,
         action_history: bootstrap.action_history,
+        action_preflight: products.action_preflight,
+        ingestion_supervisor,
         coordination_room: selected_review.coordination_room,
         coordination_state: selected_review.coordination_state,
         debug_snapshot: products.debug_snapshot,
         telemetry,
         notes,
         next_continue: queue_state.batch.next_continue,
-    })
+    }
+}
+
+#[allow(clippy::too_many_lines)]
+async fn live_operator_view(
+    state: &AppState,
+    headers: &HeaderMap,
+    wiki_id: &str,
+    filters: &LiveViewFilterParams,
+) -> Result<LiveOperatorView, String> {
+    let total_started = Instant::now();
+    let mut phase_timings = Vec::new();
+
+    let phase_started = Instant::now();
+    let bootstrap = load_live_operator_bootstrap(state, headers, wiki_id).await?;
+    phase_timings.push(operator_phase_timing("bootstrap", phase_started));
+
+    let phase_started = Instant::now();
+    let access_token = access_token_for_request(state, headers)
+        .await
+        .ok_or_else(|| "No local Wikimedia access token is available.".to_string())?;
+    let client = BearerHttpClient::new(state.http_client.clone(), access_token.clone());
+    let queue_state =
+        load_live_queue_state(state, wiki_id, filters, &bootstrap.config, &client).await?;
+    phase_timings.push(operator_phase_timing("recentchanges", phase_started));
+
+    let phase_started = Instant::now();
+    let selected = queue_state
+        .selected_index
+        .and_then(|index| queue_state.queue.get(index));
+    phase_timings.push(operator_phase_timing("queue", phase_started));
+
+    let phase_started = Instant::now();
+    let selected_review = load_selected_review_state(
+        state,
+        headers,
+        wiki_id,
+        &bootstrap.config,
+        &access_token,
+        &bootstrap.auth,
+        selected,
+    )
+    .await?;
+    phase_timings.push(operator_phase_timing("selection", phase_started));
+    let products = build_live_operator_products(
+        wiki_id,
+        &queue_state.queue,
+        selected,
+        &selected_review,
+        &LiveOperatorProductContext {
+            stream_status: &bootstrap.stream_status,
+            backlog_status: &queue_state.backlog_status,
+            auth: &bootstrap.auth,
+            action_status: &bootstrap.action_status,
+            capabilities: &bootstrap.capabilities,
+        },
+    );
+    let telemetry = LiveOperatorTelemetry {
+        total_duration_ms: u64::try_from(total_started.elapsed().as_millis()).unwrap_or(u64::MAX),
+        phase_timings,
+    };
+
+    let notes = build_live_operator_notes(
+        &queue_state.query,
+        &queue_state.backlog_status,
+        &queue_state.queue,
+        selected_review.scoring_context.as_ref(),
+        selected_review.diff.as_ref(),
+        selected_review.review_workbench.as_ref(),
+    );
+    let ingestion_supervisor = supervisor_snapshot_for_wiki(state, wiki_id)
+        .await
+        .map(|snapshot| snapshot.status);
+
+    Ok(finalize_live_operator_view(
+        state,
+        wiki_id,
+        LiveOperatorFinalization {
+            queue_state,
+            bootstrap,
+            selected_review,
+            products,
+            telemetry,
+            notes,
+            ingestion_supervisor,
+        },
+    ))
 }
 
 async fn access_token_for_request(state: &AppState, headers: &HeaderMap) -> Option<String> {
@@ -1538,6 +2019,20 @@ fn operator_endpoint_manifest() -> Vec<OperatorEndpointDescriptor> {
             method: "GET".to_string(),
             path: format!("{OPERATOR_STORAGE_LAYOUT_PATH}/{{wiki_id}}"),
             purpose: "Canonical personal/shared on-wiki storage layout and sample page renderings.".to_string(),
+            available: true,
+        },
+        OperatorEndpointDescriptor {
+            method: "GET".to_string(),
+            path: "/operator/storage/document/{wiki_id}?title=...".to_string(),
+            purpose: "Load a canonical public SP42 on-wiki document and parse its machine payload."
+                .to_string(),
+            available: true,
+        },
+        OperatorEndpointDescriptor {
+            method: "PUT".to_string(),
+            path: "/operator/storage/document/{wiki_id}".to_string(),
+            purpose: "Save a canonical public SP42 on-wiki document with conflict-aware writes."
+                .to_string(),
             available: true,
         },
         OperatorEndpointDescriptor {
@@ -3305,8 +3800,8 @@ mod tests {
         DevAuthBootstrapStatus, OPERATOR_READINESS_PATH, OPERATOR_REPORT_PATH,
         OPERATOR_STORAGE_LAYOUT_PATH, OperatorReport, OperatorRuntimeInspection,
         OperatorStorageLayoutView, RoomInspectionCollection, RuntimeDebugStatus,
-        ServerHealthStatus, StoredSession, build_router, now_ms, operator_endpoint_manifest,
-        public_base_url, to_status,
+        ServerHealthStatus, SessionActionKind, StoredSession, build_router, now_ms,
+        operator_endpoint_manifest, public_base_url, to_status,
     };
     use crate::coordination::CoordinationRegistry;
     use crate::local_env::LocalOAuthConfig;
@@ -3336,6 +3831,7 @@ mod tests {
             local_oauth: LocalOAuthConfig::default(),
             runtime_storage_root: std::env::temp_dir()
                 .join(format!("sp42-server-runtime-{}", std::process::id())),
+            ingestion_supervisor: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
             capability_targets: CapabilityProbeTargets::default(),
             clock: clock.clone(),
             coordination: CoordinationRegistry::new(clock),
@@ -3816,6 +4312,7 @@ mod tests {
                 .expect("reqwest client should build"),
             local_oauth: LocalOAuthConfig::load_from_candidates([local_env_path.clone()]),
             runtime_storage_root: std::env::temp_dir().join("sp42-server-runtime-healthz"),
+            ingestion_supervisor: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
             capability_targets: CapabilityProbeTargets {
                 profile_url: format!("{profile_base}/oauth2/resource/profile"),
                 api_url: Some(format!("{profile_base}/w/api.php")),
@@ -4281,6 +4778,7 @@ mod tests {
                 .expect("reqwest client should build"),
             local_oauth: LocalOAuthConfig::load_from_candidates([local_env_path.clone()]),
             runtime_storage_root: std::env::temp_dir().join("sp42-server-runtime-capability"),
+            ingestion_supervisor: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
             capability_targets: CapabilityProbeTargets {
                 profile_url: format!("{profile_base}/oauth2/resource/profile"),
                 api_url: Some(format!("{profile_base}/w/api.php")),
@@ -4347,6 +4845,7 @@ mod tests {
                 .expect("reqwest client should build"),
             local_oauth: LocalOAuthConfig::load_from_candidates([local_env_path]),
             runtime_storage_root: runtime_root.clone(),
+            ingestion_supervisor: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
             capability_targets: CapabilityProbeTargets {
                 profile_url: format!("{profile_base}/oauth2/resource/profile"),
                 api_url: Some(format!("{profile_base}/w/api.php")),
@@ -4390,6 +4889,16 @@ mod tests {
         assert!(view.capabilities.checked);
         assert!(view.backend.bootstrap_ready.is_enabled());
         assert!(!view.telemetry.phase_timings.is_empty());
+        assert_eq!(
+            view.action_preflight.recommended_kind,
+            Some(SessionActionKind::Patrol)
+        );
+        assert!(
+            view.action_preflight
+                .recommendations
+                .iter()
+                .any(|entry| entry.available && entry.recommended)
+        );
         assert!(
             view.debug_snapshot
                 .summary_lines
@@ -4426,6 +4935,7 @@ mod tests {
                 .expect("reqwest client should build"),
             local_oauth: LocalOAuthConfig::load_from_candidates([local_env_path]),
             runtime_storage_root: runtime_root.clone(),
+            ingestion_supervisor: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
             capability_targets: CapabilityProbeTargets {
                 profile_url: format!("{profile_base}/oauth2/resource/profile"),
                 api_url: Some(format!("{profile_base}/w/api.php")),
@@ -4449,6 +4959,7 @@ mod tests {
             )
             .await
             .expect("first live operator request should succeed");
+        assert_eq!(first.status(), StatusCode::OK);
         let first_body = to_bytes(first.into_body(), usize::MAX)
             .await
             .expect("first response body should read");
@@ -4465,6 +4976,7 @@ mod tests {
             )
             .await
             .expect("second live operator request should succeed");
+        assert_eq!(second.status(), StatusCode::OK);
 
         server.abort();
 
@@ -4591,6 +5103,7 @@ mod tests {
                 .expect("reqwest client should build"),
             local_oauth: LocalOAuthConfig::load_from_candidates([local_env_path]),
             runtime_storage_root: std::env::temp_dir().join("sp42-server-runtime-bootstrap"),
+            ingestion_supervisor: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
             capability_targets: CapabilityProbeTargets {
                 profile_url: format!("{profile_base}/oauth2/resource/profile"),
                 api_url: Some(format!("{profile_base}/w/api.php")),

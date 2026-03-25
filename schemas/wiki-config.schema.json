@@ -1,0 +1,110 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://sp42.local/schemas/wiki-config.schema.json",
+  "title": "SP42 Wiki Config",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "wiki_id",
+    "display_name",
+    "api_url",
+    "eventstreams_url",
+    "oauth_authorize_url",
+    "oauth_token_url"
+  ],
+  "properties": {
+    "wiki_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "display_name": {
+      "type": "string",
+      "minLength": 1
+    },
+    "api_url": {
+      "type": "string",
+      "pattern": "^https?://.+/api\\.php$"
+    },
+    "eventstreams_url": {
+      "type": "string",
+      "pattern": "^https?://.+"
+    },
+    "oauth_authorize_url": {
+      "type": "string",
+      "pattern": "^https?://.+"
+    },
+    "oauth_token_url": {
+      "type": "string",
+      "pattern": "^https?://.+"
+    },
+    "liftwing_url": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "pattern": "^https?://.+"
+    },
+    "coordination_url": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "pattern": "^(https?|wss?)://.+"
+    },
+    "namespace_allowlist": {
+      "type": "array",
+      "items": {
+        "type": "integer"
+      },
+      "uniqueItems": true,
+      "default": []
+    },
+    "scoring": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "base_score",
+        "max_score",
+        "weights"
+      ],
+      "properties": {
+        "base_score": {
+          "type": "integer",
+          "default": 0
+        },
+        "max_score": {
+          "type": "integer",
+          "default": 100
+        },
+        "weights": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "anonymous_user",
+            "new_page",
+            "reverted_before",
+            "large_content_removal",
+            "profanity",
+            "link_spam",
+            "trusted_user",
+            "bot_like_edit",
+            "liftwing_risk",
+            "warning_history"
+          ],
+          "properties": {
+            "anonymous_user": { "type": "integer", "default": 25 },
+            "new_page": { "type": "integer", "default": 20 },
+            "reverted_before": { "type": "integer", "default": 30 },
+            "large_content_removal": { "type": "integer", "default": 15 },
+            "profanity": { "type": "integer", "default": 30 },
+            "link_spam": { "type": "integer", "default": 20 },
+            "trusted_user": { "type": "integer", "default": -40 },
+            "bot_like_edit": { "type": "integer", "default": -50 },
+            "liftwing_risk": { "type": "integer", "default": 35 },
+            "warning_history": { "type": "integer", "default": 25 }
+          }
+        }
+      }
+    }
+  }
+}

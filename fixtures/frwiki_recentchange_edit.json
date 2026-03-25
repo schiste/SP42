@@ -1,0 +1,20 @@
+{
+  "wiki": "frwiki",
+  "namespace": 0,
+  "title": "Exemple",
+  "user": "192.0.2.44",
+  "timestamp": 1710000000,
+  "bot": false,
+  "minor": false,
+  "type": "edit",
+  "comment": "Ajout http://spam.example.test",
+  "tags": ["mobile edit"],
+  "revision": {
+    "new": 123456,
+    "old": 123450
+  },
+  "length": {
+    "new": 120,
+    "old": 80
+  }
+}

@@ -1,0 +1,28 @@
+[package]
+name = "sp42-server"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+async-trait.workspace = true
+axum.workspace = true
+futures.workspace = true
+rand.workspace = true
+reqwest.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sp42-core = { path = "../sp42-core" }
+tokio.workspace = true
+tower-http = { workspace = true, features = ["cors", "fs"] }
+tracing.workspace = true
+tracing-subscriber.workspace = true
+url.workspace = true
+
+[dev-dependencies]
+tokio-tungstenite = "0.28.0"
+tower.workspace = true

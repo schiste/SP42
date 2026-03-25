@@ -1,0 +1,334 @@
+//! Shared types used across all SP42 targets.
+
+use std::collections::BTreeMap;
+
+use serde::{Deserialize, Serialize};
+use url::Url;
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum EditorIdentity {
+    Registered { username: String },
+    Anonymous { label: String },
+    Temporary { label: String },
+}
+
+#[allow(clippy::struct_excessive_bools)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EditEvent {
+    pub wiki_id: String,
+    pub title: String,
+    pub namespace: i32,
+    pub rev_id: u64,
+    pub old_rev_id: Option<u64>,
+    pub performer: EditorIdentity,
+    pub timestamp_ms: i64,
+    pub is_bot: bool,
+    pub is_minor: bool,
+    pub is_new_page: bool,
+    pub tags: Vec<String>,
+    pub comment: Option<String>,
+    pub byte_delta: i32,
+    #[serde(default)]
+    pub is_patrolled: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ScoreWeights {
+    pub anonymous_user: i32,
+    pub new_page: i32,
+    pub reverted_before: i32,
+    pub large_content_removal: i32,
+    pub profanity: i32,
+    pub link_spam: i32,
+    pub trusted_user: i32,
+    pub bot_like_edit: i32,
+    pub liftwing_risk: i32,
+    pub warning_history: i32,
+}
+
+impl Default for ScoreWeights {
+    fn default() -> Self {
+        Self {
+            anonymous_user: 25,
+            new_page: 20,
+            reverted_before: 30,
+            large_content_removal: 15,
+            profanity: 30,
+            link_spam: 20,
+            trusted_user: -40,
+            bot_like_edit: -50,
+            liftwing_risk: 35,
+            warning_history: 25,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ScoringConfig {
+    pub base_score: i32,
+    pub max_score: i32,
+    pub weights: ScoreWeights,
+}
+
+impl Default for ScoringConfig {
+    fn default() -> Self {
+        Self {
+            base_score: 0,
+            max_score: 100,
+            weights: ScoreWeights::default(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ScoringSignal {
+    AnonymousUser,
+    NewPage,
+    RevertedBefore,
+    LargeContentRemoval,
+    Profanity,
+    LinkSpam,
+    TrustedUser,
+    BotLikeEdit,
+    LiftWingRisk,
+    WarningHistory,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SignalContribution {
+    pub signal: ScoringSignal,
+    pub weight: i32,
+    pub note: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CompositeScore {
+    pub total: i32,
+    pub contributions: Vec<SignalContribution>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum WarningLevel {
+    None,
+    Level1,
+    Level2,
+    Level3,
+    Level4,
+    Final,
+}
+
+impl WarningLevel {
+    #[must_use]
+    pub const fn severity(self) -> i32 {
+        match self {
+            Self::None => 0,
+            Self::Level1 => 1,
+            Self::Level2 => 2,
+            Self::Level3 => 3,
+            Self::Level4 | Self::Final => 4,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct UserRiskProfile {
+    pub warning_level: WarningLevel,
+    pub warning_count: u32,
+    pub has_recent_vandalism_templates: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+pub struct ScoringContext {
+    pub user_risk: Option<UserRiskProfile>,
+    pub liftwing_risk: Option<f32>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct QueuedEdit {
+    pub event: EditEvent,
+    pub score: CompositeScore,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Action {
+    Rollback,
+    Revert,
+    Warn,
+    Report,
+    MarkPatrolled,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WikiConfig {
+    pub wiki_id: String,
+    pub display_name: String,
+    pub api_url: Url,
+    pub eventstreams_url: Url,
+    pub oauth_authorize_url: Url,
+    pub oauth_token_url: Url,
+    pub liftwing_url: Option<Url>,
+    pub coordination_url: Option<Url>,
+    #[serde(default)]
+    pub namespace_allowlist: Vec<i32>,
+    #[serde(default)]
+    pub scoring: ScoringConfig,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum HttpMethod {
+    Get,
+    Post,
+    Put,
+    Patch,
+    Delete,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct HttpRequest {
+    pub method: HttpMethod,
+    pub url: Url,
+    #[serde(default)]
+    pub headers: BTreeMap<String, String>,
+    #[serde(default)]
+    pub body: Vec<u8>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct HttpResponse {
+    pub status: u16,
+    #[serde(default)]
+    pub headers: BTreeMap<String, String>,
+    #[serde(default)]
+    pub body: Vec<u8>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ServerSentEvent {
+    pub event_type: Option<String>,
+    pub id: Option<String>,
+    pub data: String,
+    pub retry_ms: Option<u64>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum WebSocketFrame {
+    Text(String),
+    Binary(Vec<u8>),
+    Close,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum CoordinationMessage {
+    ActionBroadcast(ActionBroadcast),
+    EditClaim(EditClaim),
+    ScoreDelta(ScoreDelta),
+    PresenceHeartbeat(PresenceHeartbeat),
+    FlaggedEdit(FlaggedEdit),
+    RaceResolution(RaceResolution),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ActionBroadcast {
+    pub wiki_id: String,
+    pub rev_id: u64,
+    pub action: Action,
+    pub actor: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EditClaim {
+    pub wiki_id: String,
+    pub rev_id: u64,
+    pub actor: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ScoreDelta {
+    pub wiki_id: String,
+    pub rev_id: u64,
+    pub delta: i32,
+    pub reason: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PresenceHeartbeat {
+    pub wiki_id: String,
+    pub actor: String,
+    pub active_edit_count: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FlaggedEdit {
+    pub wiki_id: String,
+    pub rev_id: u64,
+    pub score: i32,
+    pub reason: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RaceResolution {
+    pub wiki_id: String,
+    pub rev_id: u64,
+    pub winning_actor: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CoordinationRoomSummary {
+    pub wiki_id: String,
+    pub connected_clients: u32,
+    pub published_messages: u64,
+    pub claim_count: usize,
+    pub presence_count: usize,
+    pub flagged_edit_count: usize,
+    pub score_delta_count: usize,
+    pub race_resolution_count: usize,
+    pub recent_action_count: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct CoordinationSnapshot {
+    pub rooms: Vec<CoordinationRoomSummary>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct LocalOAuthSourceReport {
+    pub file_name: String,
+    pub source_path: Option<String>,
+    pub loaded_from_source: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ServerDebugSummary {
+    pub project: String,
+    pub auth: crate::dev_auth::DevAuthSessionStatus,
+    pub oauth: crate::dev_auth::LocalOAuthConfigStatus,
+    pub capabilities: crate::dev_auth::DevAuthCapabilityReport,
+    pub coordination: CoordinationSnapshot,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::LocalOAuthSourceReport;
+
+    #[test]
+    fn local_oauth_source_report_serializes_with_source_path_and_flag() {
+        let report = LocalOAuthSourceReport {
+            file_name: ".env.wikimedia.local".to_string(),
+            source_path: Some("/tmp/.env.wikimedia.local".to_string()),
+            loaded_from_source: true,
+        };
+
+        let encoded = serde_json::to_value(&report).expect("report should serialize");
+
+        assert_eq!(
+            encoded.get("file_name").and_then(serde_json::Value::as_str),
+            Some(".env.wikimedia.local")
+        );
+        assert_eq!(
+            encoded
+                .get("loaded_from_source")
+                .and_then(serde_json::Value::as_bool),
+            Some(true)
+        );
+    }
+}

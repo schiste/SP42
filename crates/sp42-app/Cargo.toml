@@ -1,0 +1,26 @@
+[package]
+name = "sp42-app"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[lints]
+workspace = true
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+async-trait.workspace = true
+base64.workspace = true
+futures.workspace = true
+gloo-net.workspace = true
+js-sys.workspace = true
+leptos.workspace = true
+serde_json.workspace = true
+sp42-core = { path = "../sp42-core" }
+url.workspace = true
+wasm-bindgen = "0.2.105"
+wasm-bindgen-futures = "0.4.55"
+web-sys.workspace = true

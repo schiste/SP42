@@ -1,0 +1,614 @@
+//! Shared conventions for storing SP42 public state on-wiki.
+
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
+
+use crate::branding::PROJECT_NAME;
+use crate::errors::WikiStorageError;
+
+const PAYLOAD_BEGIN_MARKER: &str = "<!-- SP42:BEGIN -->";
+const PAYLOAD_END_MARKER: &str = "<!-- SP42:END -->";
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WikiStorageConfig {
+    pub project_root_segment: String,
+    pub personal_namespace: String,
+    pub shared_namespace: String,
+    pub meta_wiki_id: String,
+}
+
+impl Default for WikiStorageConfig {
+    fn default() -> Self {
+        Self {
+            project_root_segment: PROJECT_NAME.to_string(),
+            personal_namespace: "User".to_string(),
+            shared_namespace: "User".to_string(),
+            meta_wiki_id: "metawiki".to_string(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WikiStoragePlanInput {
+    pub username: String,
+    pub home_wiki_id: String,
+    pub target_wiki_id: String,
+    pub shared_owner_username: String,
+    #[serde(default)]
+    pub team_slugs: Vec<String>,
+    #[serde(default)]
+    pub rule_set_slugs: Vec<String>,
+    #[serde(default)]
+    pub training_dataset_slugs: Vec<String>,
+    #[serde(default)]
+    pub audit_period_slugs: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum WikiStorageRealm {
+    PersonalUserSpace,
+    SharedMetaUserSpace,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum WikiStorageDocumentKind {
+    PersonalIndex,
+    PersonalProfile,
+    PersonalPreferences,
+    PersonalQueue {
+        wiki_id: String,
+    },
+    PersonalWorkspace {
+        wiki_id: String,
+    },
+    PersonalLabels {
+        wiki_id: String,
+    },
+    SharedRegistry {
+        wiki_id: String,
+    },
+    SharedTeam {
+        wiki_id: String,
+        team_slug: String,
+    },
+    SharedRuleSet {
+        wiki_id: String,
+        rule_set_slug: String,
+    },
+    SharedTrainingDataset {
+        wiki_id: String,
+        dataset_slug: String,
+    },
+    SharedAuditPeriod {
+        wiki_id: String,
+        period_slug: String,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WikiStorageDocument {
+    pub site_wiki_id: String,
+    pub realm: WikiStorageRealm,
+    pub kind: WikiStorageDocumentKind,
+    pub title: String,
+    pub description: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WikiStoragePlan {
+    pub personal_root: WikiStorageDocument,
+    pub personal_documents: Vec<WikiStorageDocument>,
+    pub shared_root: WikiStorageDocument,
+    pub shared_documents: Vec<WikiStorageDocument>,
+    pub notes: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WikiStoragePayloadEnvelope {
+    pub project: String,
+    pub version: u32,
+    pub title: String,
+    pub kind: String,
+    pub site_wiki_id: String,
+    pub realm: WikiStorageRealm,
+    pub data: Value,
+}
+
+#[must_use]
+pub fn build_wiki_storage_plan(
+    config: &WikiStorageConfig,
+    input: &WikiStoragePlanInput,
+) -> WikiStoragePlan {
+    let personal_root_title =
+        build_personal_title(config, &input.username, std::iter::empty::<&str>());
+    let personal_root = WikiStorageDocument {
+        site_wiki_id: input.home_wiki_id.clone(),
+        realm: WikiStorageRealm::PersonalUserSpace,
+        kind: WikiStorageDocumentKind::PersonalIndex,
+        title: personal_root_title,
+        description: format!(
+            "Personal SP42 landing page for {} on {}.",
+            input.username, input.home_wiki_id
+        ),
+    };
+
+    let personal_documents = build_personal_documents(config, input);
+
+    let shared_root = WikiStorageDocument {
+        site_wiki_id: config.meta_wiki_id.clone(),
+        realm: WikiStorageRealm::SharedMetaUserSpace,
+        kind: WikiStorageDocumentKind::SharedRegistry {
+            wiki_id: input.target_wiki_id.clone(),
+        },
+        title: build_shared_title(
+            config,
+            &input.shared_owner_username,
+            [&input.target_wiki_id, "Registry"],
+        ),
+        description: format!(
+            "Shared SP42 registry and landing page for {} on Meta-Wiki.",
+            input.target_wiki_id
+        ),
+    };
+
+    let shared_documents = build_shared_documents(config, input);
+    let notes = vec![
+        format!(
+            "Personal durable state lives on {} under {}.",
+            input.home_wiki_id, personal_root.title
+        ),
+        format!(
+            "Shared durable state lives on {} under {}.",
+            config.meta_wiki_id, shared_root.title
+        ),
+        "Realtime coordination, sessions, tokens, and in-flight action state remain memory-only."
+            .to_string(),
+    ];
+
+    WikiStoragePlan {
+        personal_root,
+        personal_documents,
+        shared_root,
+        shared_documents,
+        notes,
+    }
+}
+
+fn build_personal_documents(
+    config: &WikiStorageConfig,
+    input: &WikiStoragePlanInput,
+) -> Vec<WikiStorageDocument> {
+    vec![
+        WikiStorageDocument {
+            site_wiki_id: input.home_wiki_id.clone(),
+            realm: WikiStorageRealm::PersonalUserSpace,
+            kind: WikiStorageDocumentKind::PersonalProfile,
+            title: build_personal_title(config, &input.username, ["Profile"]),
+            description: "Public operator identity, home wiki, and visible profile metadata."
+                .to_string(),
+        },
+        WikiStorageDocument {
+            site_wiki_id: input.home_wiki_id.clone(),
+            realm: WikiStorageRealm::PersonalUserSpace,
+            kind: WikiStorageDocumentKind::PersonalPreferences,
+            title: build_personal_title(config, &input.username, ["Preferences"]),
+            description: "User-visible patrol preferences, filters, and UI defaults.".to_string(),
+        },
+        WikiStorageDocument {
+            site_wiki_id: input.home_wiki_id.clone(),
+            realm: WikiStorageRealm::PersonalUserSpace,
+            kind: WikiStorageDocumentKind::PersonalQueue {
+                wiki_id: input.target_wiki_id.clone(),
+            },
+            title: build_personal_title(config, &input.username, ["Queues", &input.target_wiki_id]),
+            description: format!(
+                "Public queue preferences and saved queue state for {}.",
+                input.target_wiki_id
+            ),
+        },
+        WikiStorageDocument {
+            site_wiki_id: input.home_wiki_id.clone(),
+            realm: WikiStorageRealm::PersonalUserSpace,
+            kind: WikiStorageDocumentKind::PersonalWorkspace {
+                wiki_id: input.target_wiki_id.clone(),
+            },
+            title: build_personal_title(
+                config,
+                &input.username,
+                ["Workspace", &input.target_wiki_id],
+            ),
+            description: format!(
+                "Public working notes and saved review context for {}.",
+                input.target_wiki_id
+            ),
+        },
+        WikiStorageDocument {
+            site_wiki_id: input.home_wiki_id.clone(),
+            realm: WikiStorageRealm::PersonalUserSpace,
+            kind: WikiStorageDocumentKind::PersonalLabels {
+                wiki_id: input.target_wiki_id.clone(),
+            },
+            title: build_personal_title(config, &input.username, ["Labels", &input.target_wiki_id]),
+            description: format!(
+                "Public labels and training examples contributed by the user for {}.",
+                input.target_wiki_id
+            ),
+        },
+    ]
+}
+
+#[must_use]
+pub fn render_wiki_storage_index_page(
+    root: &WikiStorageDocument,
+    linked_documents: &[WikiStorageDocument],
+    summary_lines: &[String],
+) -> String {
+    let mut lines = vec![
+        format!(
+            "= {} =",
+            root.title.rsplit('/').next().unwrap_or(PROJECT_NAME)
+        ),
+        String::new(),
+        root.description.clone(),
+        String::new(),
+        "== Linked Pages ==".to_string(),
+    ];
+
+    for document in linked_documents {
+        lines.push(format!(
+            "* [[{}]]: {}",
+            document.title, document.description
+        ));
+    }
+
+    if !summary_lines.is_empty() {
+        lines.push(String::new());
+        lines.push("== Notes ==".to_string());
+        for line in summary_lines {
+            lines.push(format!("* {line}"));
+        }
+    }
+
+    lines.join("\n")
+}
+
+/// Render a human-readable wiki page with an embedded machine JSON block.
+///
+/// # Errors
+///
+/// Returns [`WikiStorageError`] when the embedded JSON payload cannot be
+/// serialized.
+pub fn render_wiki_storage_document_page(
+    document: &WikiStorageDocument,
+    human_summary: &[String],
+    data: &Value,
+) -> Result<String, WikiStorageError> {
+    let envelope = WikiStoragePayloadEnvelope {
+        project: PROJECT_NAME.to_string(),
+        version: 1,
+        title: document.title.clone(),
+        kind: document_kind_label(&document.kind).to_string(),
+        site_wiki_id: document.site_wiki_id.clone(),
+        realm: document.realm.clone(),
+        data: data.clone(),
+    };
+    let payload =
+        serde_json::to_string_pretty(&envelope).map_err(|error| WikiStorageError::Serialize {
+            message: error.to_string(),
+        })?;
+
+    let mut lines = vec![
+        format!(
+            "= {} =",
+            document.title.rsplit('/').next().unwrap_or(PROJECT_NAME)
+        ),
+        String::new(),
+        document.description.clone(),
+    ];
+
+    if !human_summary.is_empty() {
+        lines.push(String::new());
+        lines.push("== Summary ==".to_string());
+        for line in human_summary {
+            lines.push(format!("* {line}"));
+        }
+    }
+
+    lines.push(String::new());
+    lines.push("== Machine payload ==".to_string());
+    lines.push(PAYLOAD_BEGIN_MARKER.to_string());
+    lines.push("<syntaxhighlight lang=\"json\">".to_string());
+    lines.push(payload);
+    lines.push("</syntaxhighlight>".to_string());
+    lines.push(PAYLOAD_END_MARKER.to_string());
+
+    Ok(lines.join("\n"))
+}
+
+fn build_shared_documents(
+    config: &WikiStorageConfig,
+    input: &WikiStoragePlanInput,
+) -> Vec<WikiStorageDocument> {
+    let team_slugs = default_if_empty(&input.team_slugs, "core");
+    let rule_set_slugs = default_if_empty(&input.rule_set_slugs, "default");
+    let training_dataset_slugs = default_if_empty(&input.training_dataset_slugs, "main");
+    let audit_period_slugs = default_if_empty(&input.audit_period_slugs, "current");
+
+    let mut documents = Vec::new();
+
+    for team_slug in team_slugs {
+        documents.push(WikiStorageDocument {
+            site_wiki_id: config.meta_wiki_id.clone(),
+            realm: WikiStorageRealm::SharedMetaUserSpace,
+            kind: WikiStorageDocumentKind::SharedTeam {
+                wiki_id: input.target_wiki_id.clone(),
+                team_slug: team_slug.clone(),
+            },
+            title: build_shared_title(
+                config,
+                &input.shared_owner_username,
+                [&input.target_wiki_id, "Teams", team_slug.as_str()],
+            ),
+            description: format!(
+                "Shared team definition `{team_slug}` for {}.",
+                input.target_wiki_id
+            ),
+        });
+    }
+
+    for rule_set_slug in rule_set_slugs {
+        documents.push(WikiStorageDocument {
+            site_wiki_id: config.meta_wiki_id.clone(),
+            realm: WikiStorageRealm::SharedMetaUserSpace,
+            kind: WikiStorageDocumentKind::SharedRuleSet {
+                wiki_id: input.target_wiki_id.clone(),
+                rule_set_slug: rule_set_slug.clone(),
+            },
+            title: build_shared_title(
+                config,
+                &input.shared_owner_username,
+                [&input.target_wiki_id, "Rules", rule_set_slug.as_str()],
+            ),
+            description: format!(
+                "Shared rule set `{rule_set_slug}` for {}.",
+                input.target_wiki_id
+            ),
+        });
+    }
+
+    for dataset_slug in training_dataset_slugs {
+        documents.push(WikiStorageDocument {
+            site_wiki_id: config.meta_wiki_id.clone(),
+            realm: WikiStorageRealm::SharedMetaUserSpace,
+            kind: WikiStorageDocumentKind::SharedTrainingDataset {
+                wiki_id: input.target_wiki_id.clone(),
+                dataset_slug: dataset_slug.clone(),
+            },
+            title: build_shared_title(
+                config,
+                &input.shared_owner_username,
+                [&input.target_wiki_id, "Training", dataset_slug.as_str()],
+            ),
+            description: format!(
+                "Shared public training dataset `{dataset_slug}` for {}.",
+                input.target_wiki_id
+            ),
+        });
+    }
+
+    for period_slug in audit_period_slugs {
+        documents.push(WikiStorageDocument {
+            site_wiki_id: config.meta_wiki_id.clone(),
+            realm: WikiStorageRealm::SharedMetaUserSpace,
+            kind: WikiStorageDocumentKind::SharedAuditPeriod {
+                wiki_id: input.target_wiki_id.clone(),
+                period_slug: period_slug.clone(),
+            },
+            title: build_shared_title(
+                config,
+                &input.shared_owner_username,
+                [&input.target_wiki_id, "Audit", period_slug.as_str()],
+            ),
+            description: format!(
+                "Shared public audit ledger `{period_slug}` for {}.",
+                input.target_wiki_id
+            ),
+        });
+    }
+
+    documents
+}
+
+fn build_personal_title<'a>(
+    config: &'a WikiStorageConfig,
+    username: &str,
+    segments: impl IntoIterator<Item = &'a str>,
+) -> String {
+    build_title(
+        &config.personal_namespace,
+        username,
+        std::iter::once(config.project_root_segment.as_str()).chain(segments),
+    )
+}
+
+fn build_shared_title<'a>(
+    config: &'a WikiStorageConfig,
+    owner_username: &str,
+    segments: impl IntoIterator<Item = &'a str>,
+) -> String {
+    build_title(
+        &config.shared_namespace,
+        owner_username,
+        std::iter::once(config.project_root_segment.as_str()).chain(segments),
+    )
+}
+
+fn build_title<'a>(
+    namespace: &str,
+    username: &str,
+    segments: impl IntoIterator<Item = &'a str>,
+) -> String {
+    let normalized_username = normalize_title_segment(username);
+    let normalized_segments = segments
+        .into_iter()
+        .map(normalize_title_segment)
+        .collect::<Vec<_>>();
+
+    format!(
+        "{namespace}:{normalized_username}/{}",
+        normalized_segments.join("/")
+    )
+}
+
+fn normalize_title_segment(raw: &str) -> String {
+    let mut segment = String::new();
+    let mut last_was_separator = false;
+
+    for character in raw.trim().chars() {
+        let mapped = match character {
+            '/' | '#' | '<' | '>' | '[' | ']' | '{' | '}' | '|' => '-',
+            c if c.is_whitespace() => '_',
+            c => c,
+        };
+
+        if (mapped == '_' || mapped == '-') && last_was_separator {
+            continue;
+        }
+
+        last_was_separator = mapped == '_' || mapped == '-';
+        segment.push(mapped);
+    }
+
+    segment.trim_matches(['_', '-']).to_string()
+}
+
+fn default_if_empty(values: &[String], default: &str) -> Vec<String> {
+    if values.is_empty() {
+        vec![default.to_string()]
+    } else {
+        values.to_vec()
+    }
+}
+
+fn document_kind_label(kind: &WikiStorageDocumentKind) -> &'static str {
+    match kind {
+        WikiStorageDocumentKind::PersonalIndex => "personal-index",
+        WikiStorageDocumentKind::PersonalProfile => "personal-profile",
+        WikiStorageDocumentKind::PersonalPreferences => "personal-preferences",
+        WikiStorageDocumentKind::PersonalQueue { .. } => "personal-queue",
+        WikiStorageDocumentKind::PersonalWorkspace { .. } => "personal-workspace",
+        WikiStorageDocumentKind::PersonalLabels { .. } => "personal-labels",
+        WikiStorageDocumentKind::SharedRegistry { .. } => "shared-registry",
+        WikiStorageDocumentKind::SharedTeam { .. } => "shared-team",
+        WikiStorageDocumentKind::SharedRuleSet { .. } => "shared-rule-set",
+        WikiStorageDocumentKind::SharedTrainingDataset { .. } => "shared-training-dataset",
+        WikiStorageDocumentKind::SharedAuditPeriod { .. } => "shared-audit-period",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::{
+        PAYLOAD_BEGIN_MARKER, PAYLOAD_END_MARKER, WikiStorageConfig, WikiStoragePlanInput,
+        build_wiki_storage_plan, render_wiki_storage_document_page, render_wiki_storage_index_page,
+    };
+
+    fn sample_input() -> WikiStoragePlanInput {
+        WikiStoragePlanInput {
+            username: "Schiste".to_string(),
+            home_wiki_id: "frwiki".to_string(),
+            target_wiki_id: "frwiki".to_string(),
+            shared_owner_username: "Schiste".to_string(),
+            team_slugs: vec!["moderators".to_string()],
+            rule_set_slugs: vec!["default".to_string()],
+            training_dataset_slugs: vec!["main".to_string()],
+            audit_period_slugs: vec!["2026-03".to_string()],
+        }
+    }
+
+    #[test]
+    fn builds_expected_personal_and_shared_titles() {
+        let plan = build_wiki_storage_plan(&WikiStorageConfig::default(), &sample_input());
+
+        assert_eq!(plan.personal_root.title, "User:Schiste/SP42");
+        assert!(
+            plan.personal_documents
+                .iter()
+                .any(|document| document.title == "User:Schiste/SP42/Queues/frwiki")
+        );
+        assert_eq!(plan.shared_root.title, "User:Schiste/SP42/frwiki/Registry");
+        assert!(
+            plan.shared_documents
+                .iter()
+                .any(|document| document.title == "User:Schiste/SP42/frwiki/Teams/moderators")
+        );
+    }
+
+    #[test]
+    fn index_page_renders_human_readable_links() {
+        let plan = build_wiki_storage_plan(&WikiStorageConfig::default(), &sample_input());
+        let body = render_wiki_storage_index_page(
+            &plan.personal_root,
+            &plan.personal_documents,
+            &plan.notes,
+        );
+
+        assert!(body.contains("== Linked Pages =="));
+        assert!(body.contains("[[User:Schiste/SP42/Profile]]"));
+        assert!(body.contains("Personal durable state lives on frwiki"));
+    }
+
+    #[test]
+    fn document_page_embeds_machine_payload_block() {
+        let plan = build_wiki_storage_plan(&WikiStorageConfig::default(), &sample_input());
+        let document = plan
+            .shared_documents
+            .iter()
+            .find(|document| document.title.ends_with("/Teams/moderators"))
+            .expect("team document should exist");
+        let page = render_wiki_storage_document_page(
+            document,
+            &["Public shared team definition.".to_string()],
+            &json!({
+                "name": "Moderators",
+                "members": ["Schiste"]
+            }),
+        )
+        .expect("document page should render");
+
+        assert!(page.contains(PAYLOAD_BEGIN_MARKER));
+        assert!(page.contains(PAYLOAD_END_MARKER));
+        assert!(page.contains("\"kind\": \"shared-team\""));
+        assert!(page.contains("\"members\": ["));
+    }
+
+    #[test]
+    fn normalizes_problematic_title_segments() {
+        let config = WikiStorageConfig::default();
+        let input = WikiStoragePlanInput {
+            username: "Schiste/Test".to_string(),
+            home_wiki_id: "frwiki".to_string(),
+            target_wiki_id: "fr wiki".to_string(),
+            shared_owner_username: "Schiste/Test".to_string(),
+            team_slugs: vec!["core team".to_string()],
+            rule_set_slugs: Vec::new(),
+            training_dataset_slugs: Vec::new(),
+            audit_period_slugs: Vec::new(),
+        };
+        let plan = build_wiki_storage_plan(&config, &input);
+
+        assert_eq!(plan.personal_root.title, "User:Schiste-Test/SP42");
+        assert!(
+            plan.personal_documents
+                .iter()
+                .any(|document| document.title == "User:Schiste-Test/SP42/Queues/fr_wiki")
+        );
+        assert!(
+            plan.shared_documents
+                .iter()
+                .any(|document| document.title == "User:Schiste-Test/SP42/fr_wiki/Teams/core_team")
+        );
+    }
+}

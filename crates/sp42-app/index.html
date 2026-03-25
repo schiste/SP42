@@ -1,0 +1,133 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, viewport-fit=cover"
+    />
+    <meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate, max-age=0" />
+    <meta http-equiv="Pragma" content="no-cache" />
+    <meta http-equiv="Expires" content="0" />
+    <meta name="theme-color" content="#0b1726" />
+    <meta name="description" content="SP42 Wikipedia patrolling workbench." />
+    <link rel="manifest" href="/manifest.json" />
+    <link rel="icon" href="/icons/sp42-icon-192.svg" />
+    <link rel="apple-touch-icon" href="/icons/sp42-icon-192.svg" />
+    <title>SP42</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        --bg: #08111d;
+        --bg-accent: #102138;
+        --panel: rgba(9, 21, 38, 0.9);
+        --text: #e5eef9;
+        --muted: #9db3c9;
+        --line: rgba(157, 179, 201, 0.24);
+        --accent: #52c7b8;
+      }
+
+      html,
+      body {
+        margin: 0;
+        min-height: 100%;
+        background:
+          radial-gradient(circle at top, rgba(82, 199, 184, 0.12), transparent 30%),
+          linear-gradient(180deg, var(--bg-accent), var(--bg));
+        color: var(--text);
+        font-family:
+          "IBM Plex Sans", "Avenir Next", "Segoe UI", sans-serif;
+      }
+
+      body {
+        min-height: 100vh;
+      }
+
+      .sp42-loading-shell {
+        display: grid;
+        place-items: center;
+        min-height: 100vh;
+        padding: 2rem;
+      }
+
+      .sp42-loading-card {
+        width: min(38rem, 100%);
+        padding: 1.5rem;
+        border: 1px solid var(--line);
+        border-radius: 1.25rem;
+        background: var(--panel);
+        box-shadow: 0 24px 80px rgba(0, 0, 0, 0.28);
+      }
+
+      .sp42-loading-card h1 {
+        margin: 0 0 0.5rem;
+        font-size: clamp(1.8rem, 4vw, 2.8rem);
+        letter-spacing: 0.03em;
+      }
+
+      .sp42-loading-card p {
+        margin: 0.5rem 0 0;
+        color: var(--muted);
+        line-height: 1.5;
+      }
+
+      .sp42-loading-card strong {
+        color: var(--accent);
+      }
+    </style>
+    <link data-trunk rel="copy-file" href="static/manifest.json" />
+    <link data-trunk rel="copy-file" href="static/sw.js" />
+    <link data-trunk rel="copy-file" href="static/offline.html" />
+    <link data-trunk rel="copy-dir" href="static/icons" />
+    <script>
+      (async () => {
+        const isLocalhost =
+          location.hostname === "127.0.0.1" || location.hostname === "localhost";
+        if (!isLocalhost || !("serviceWorker" in navigator) || !("caches" in window)) {
+          return;
+        }
+
+        const cacheResetKey = "sp42-localhost-cache-reset";
+
+        try {
+          const registrations = await navigator.serviceWorker.getRegistrations();
+          const hadRegistrations = registrations.length > 0;
+          await Promise.all(registrations.map((registration) => registration.unregister()));
+
+          const cacheNames = await caches.keys();
+          const hadCaches = cacheNames.length > 0;
+          await Promise.all(cacheNames.map((cacheName) => caches.delete(cacheName)));
+
+          if ((hadRegistrations || hadCaches) && !sessionStorage.getItem(cacheResetKey)) {
+            sessionStorage.setItem(cacheResetKey, "1");
+            location.reload();
+            return;
+          }
+        } catch (_) {
+          // Local dev should keep booting even if cache cleanup fails.
+        }
+
+        sessionStorage.removeItem(cacheResetKey);
+      })();
+
+      window.addEventListener("TrunkApplicationStarted", () => {
+        document.getElementById("sp42-loading-shell")?.remove();
+      });
+    </script>
+    <link data-trunk rel="rust" data-target-name="sp42_app" data-wasm-opt="0" />
+  </head>
+  <body>
+    <div id="sp42-app-root"></div>
+    <main id="sp42-loading-shell" class="sp42-loading-shell">
+      <section class="sp42-loading-card">
+        <h1>SP42</h1>
+        <p><strong>Booting patrol workbench…</strong></p>
+        <p>
+          The browser shell mounts here once the Rust/Wasm bundle is ready. Run the
+          localhost server on <code>127.0.0.1:8788</code> for auth, coordination,
+          and debug surfaces.
+        </p>
+      </section>
+    </main>
+  </body>
+</html>

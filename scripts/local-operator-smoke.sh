@@ -4,10 +4,15 @@ set -euo pipefail
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$repo_root"
 
+scripts/clean-house.sh
+
 base_url="${SP42_OPERATOR_BASE_URL:-http://127.0.0.1:8788}"
 mkdir -p .tmp
 server_log="${SP42_OPERATOR_SERVER_LOG:-$repo_root/.tmp/sp42-operator-server.log}"
-CARGO_BIN="${CARGO_BIN:-$(rustup which cargo)}"
+CARGO_BIN="${CARGO_BIN:-$(command -v cargo)}"
+WORKSPACE_TARGET_DIR="${CARGO_TARGET_DIR_WORKSPACE:-$repo_root/target/workspace}"
+TAURI_TARGET_DIR="${CARGO_TARGET_DIR_TAURI:-$repo_root/target/tauri}"
+mkdir -p "$WORKSPACE_TARGET_DIR" "$TAURI_TARGET_DIR"
 
 cleanup() {
   if [[ -n "${server_pid:-}" ]]; then
@@ -227,6 +232,6 @@ run_step "coordination inspections" /usr/bin/curl -fsS "${base_url}/coordination
 run_step "cli parity report" "$CARGO_BIN" run -q -p sp42-cli -- --shell parity-report --format markdown
 run_step "cli session digest" "$CARGO_BIN" run -q -p sp42-cli -- --shell session-digest --workbench-token local-smoke-token --workbench-actor smoke-tester --format text
 run_step "desktop shell snapshot" "$CARGO_BIN" run -q -p sp42-desktop -- --format json
-run_step "tauri shell contract" "$CARGO_BIN" run -q --manifest-path crates/sp42-desktop/src-tauri/Cargo.toml
+run_step "tauri shell contract" env CARGO_TARGET_DIR="$TAURI_TARGET_DIR" "$CARGO_BIN" run -q --manifest-path crates/sp42-desktop/src-tauri/Cargo.toml
 
 printf '\nSP42 local operator smoke flow passed.\n'

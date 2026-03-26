@@ -29,9 +29,7 @@ pub fn ActionBar(
         });
     let undo_available = undo
         .as_ref()
-        .map_or(capabilities.capabilities.editing.can_undo, |r| {
-            r.available
-        });
+        .map_or(capabilities.capabilities.editing.can_undo, |r| r.available);
 
     let rollback_title = tooltip_from_reasons(rollback.as_ref());
     let patrol_title = tooltip_from_reasons(patrol.as_ref());
@@ -39,24 +37,26 @@ pub fn ActionBar(
 
     let preflight_notes = preflight.notes.join(" ");
 
-    let btn_base = "min-height:44px;padding:4px 17px;border:1px solid rgba(148,163,184,.18);\
-                    border-radius:4px;font:inherit;font-size:13px;font-weight:700;\
-                    cursor:pointer;transition:opacity 120ms;";
-
-    let ring = "box-shadow:0 0 0 2px rgba(143,183,255,.5);";
+    let rollback_class = if recommended == Some(SessionActionKind::Rollback) {
+        "btn btn-danger btn-recommended"
+    } else {
+        "btn btn-danger"
+    };
+    let undo_class = if recommended == Some(SessionActionKind::Undo) {
+        "btn btn-recommended"
+    } else {
+        "btn"
+    };
+    let patrol_class = if recommended == Some(SessionActionKind::Patrol) {
+        "btn btn-success btn-recommended"
+    } else {
+        "btn btn-success"
+    };
 
     view! {
-        <div
-            role="toolbar"
-            aria-label="Patrol actions"
-            style="display:flex;align-items:center;gap:7px;padding:0 10px;\
-                   background:#0b1324;border-block-start:1px solid rgba(148,163,184,.18);"
-        >
+        <div role="toolbar" aria-label="Patrol actions" class="action-bar">
             <button
-                style=format!(
-                    "{btn_base}background:rgba(239,68,68,.18);color:#fecaca;border-color:rgba(239,68,68,.3);{}",
-                    if recommended == Some(SessionActionKind::Rollback) { ring } else { "" },
-                )
+                class=rollback_class
                 title=rollback_title
                 aria-keyshortcuts="r"
                 disabled=move || !rollback_available || !has_selection.get() || action_pending.get()
@@ -66,10 +66,7 @@ pub fn ActionBar(
             </button>
 
             <button
-                style=format!(
-                    "{btn_base}background:transparent;color:#eff4ff;{}",
-                    if recommended == Some(SessionActionKind::Undo) { ring } else { "" },
-                )
+                class=undo_class
                 title=undo_title
                 aria-keyshortcuts="u"
                 disabled=move || !undo_available || !has_selection.get() || action_pending.get()
@@ -79,10 +76,7 @@ pub fn ActionBar(
             </button>
 
             <button
-                style=format!(
-                    "{btn_base}background:rgba(34,197,94,.14);color:#bbf7d0;border-color:rgba(34,197,94,.3);{}",
-                    if recommended == Some(SessionActionKind::Patrol) { ring } else { "" },
-                )
+                class=patrol_class
                 title=patrol_title
                 aria-keyshortcuts="p"
                 disabled=move || !patrol_available || !has_selection.get() || action_pending.get()
@@ -92,9 +86,7 @@ pub fn ActionBar(
             </button>
 
             <button
-                style=format!(
-                    "{btn_base}background:transparent;color:#8b9fc0;",
-                )
+                class="btn btn-ghost"
                 aria-keyshortcuts="s"
                 disabled=move || !has_selection.get()
                 on:click=move |_| on_skip.set(true)
@@ -102,8 +94,8 @@ pub fn ActionBar(
                 "S Skip"
             </button>
 
-            <div style="flex:1;"></div>
-            <div style="font-size:11px;color:#8b9fc0;">
+            <div class="flex-spacer"></div>
+            <div class="text-muted" style="font-size:11px;">
                 {move || {
                     if action_pending.get() {
                         "Executing...".to_string()

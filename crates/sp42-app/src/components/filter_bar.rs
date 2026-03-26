@@ -121,20 +121,17 @@ pub fn FilterBar(
         }
     };
 
-    let checkbox_style = "accent-color:#3b82f6;width:14px;height:14px;cursor:pointer;";
-    let label_style = "display:inline-flex;align-items:center;gap:4px;cursor:pointer;";
-    let select_style = "background:#111b2e;color:#eff4ff;border:1px solid rgba(148,163,184,.18);\
-                        border-radius:4px;padding:2px 4px;font:inherit;font-size:12px;";
+    let checkbox_class = "filter-checkbox";
+    let label_class = "filter-label";
+    let select_class = "filter-select";
 
     view! {
-        <div style="display:flex;align-items:center;gap:10px;padding:4px 10px;\
-                    background:#0b1324;border-block-end:1px solid rgba(148,163,184,.18);\
-                    font-size:12px;color:#8b9fc0;flex-wrap:wrap;min-height:34px;">
+        <div class="filter-bar">
 
-            <label style=label_style>
+            <label class=label_class>
                 "Limit:"
                 <select
-                    style=select_style
+                    class=select_class
                     on:change=move |ev| {
                         let value: u16 = event_target_value(&ev).parse().unwrap_or(15);
                         update_filter!(move |f| f.limit = value);
@@ -146,12 +143,12 @@ pub fn FilterBar(
                 </select>
             </label>
 
-            <span style="color:rgba(148,163,184,.3);">"|"</span>
+            <span class="filter-separator">"|"</span>
 
-            <label style=label_style>
+            <label class=label_class>
                 <input
                     type="checkbox"
-                    style=checkbox_style
+                    class=checkbox_class
                     prop:checked=move || filters.get().unpatrolled_only
                     on:change=move |ev| {
                         let checked = event_target_checked(&ev);
@@ -161,10 +158,10 @@ pub fn FilterBar(
                 "Unpatrolled only"
             </label>
 
-            <label style=label_style>
+            <label class=label_class>
                 <input
                     type="checkbox"
-                    style=checkbox_style
+                    class=checkbox_class
                     prop:checked=move || !filters.get().include_minor
                     on:change=move |ev| {
                         let checked = event_target_checked(&ev);
@@ -174,10 +171,10 @@ pub fn FilterBar(
                 "Hide minor"
             </label>
 
-            <label style=label_style>
+            <label class=label_class>
                 <input
                     type="checkbox"
-                    style=checkbox_style
+                    class=checkbox_class
                     prop:checked=move || filters.get().include_bots
                     on:change=move |ev| {
                         let checked = event_target_checked(&ev);
@@ -187,12 +184,12 @@ pub fn FilterBar(
                 "Bots"
             </label>
 
-            <span style="color:rgba(148,163,184,.3);">"|"</span>
+            <span class="filter-separator">"|"</span>
 
-            <label style=label_style>
+            <label class=label_class>
                 <input
                     type="checkbox"
-                    style=checkbox_style
+                    class=checkbox_class
                     prop:checked=move || filters.get().include_registered
                     on:change=move |ev| {
                         let checked = event_target_checked(&ev);
@@ -202,10 +199,10 @@ pub fn FilterBar(
                 "Registered"
             </label>
 
-            <label style=label_style>
+            <label class=label_class>
                 <input
                     type="checkbox"
-                    style=checkbox_style
+                    class=checkbox_class
                     prop:checked=move || filters.get().include_anonymous
                     on:change=move |ev| {
                         let checked = event_target_checked(&ev);
@@ -215,10 +212,10 @@ pub fn FilterBar(
                 "Anonymous"
             </label>
 
-            <label style=label_style>
+            <label class=label_class>
                 <input
                     type="checkbox"
-                    style=checkbox_style
+                    class=checkbox_class
                     prop:checked=move || filters.get().include_temporary
                     on:change=move |ev| {
                         let checked = event_target_checked(&ev);
@@ -228,10 +225,10 @@ pub fn FilterBar(
                 "Temporary"
             </label>
 
-            <label style=label_style>
+            <label class=label_class>
                 <input
                     type="checkbox"
-                    style=checkbox_style
+                    class=checkbox_class
                     prop:checked=move || !filters.get().include_new_pages
                     on:change=move |ev| {
                         let checked = event_target_checked(&ev);
@@ -241,12 +238,12 @@ pub fn FilterBar(
                 "Hide new pages"
             </label>
 
-            <span style="color:rgba(148,163,184,.3);">"|"</span>
+            <span class="filter-separator">"|"</span>
 
-            <label style=label_style>
+            <label class=label_class>
                 "Min score:"
                 <select
-                    style=select_style
+                    class=select_class
                     on:change=move |ev| {
                         let value: i32 = event_target_value(&ev).parse().unwrap_or(0);
                         update_filter!(move |f| f.min_score = if value == 0 { None } else { Some(value) });
@@ -261,11 +258,12 @@ pub fn FilterBar(
                 </select>
             </label>
 
-            <label style=label_style>
+            <label class=label_class>
                 "Tag:"
                 <input
                     type="text"
-                    style=format!("{select_style}width:100px;")
+                    class=select_class
+                    style="width:100px;"
                     placeholder="e.g. mw-reverted"
                     prop:value=move || filters.get().tag_filter.unwrap_or_default()
                     on:change=move |ev| {
@@ -281,7 +279,7 @@ pub fn FilterBar(
                 />
             </label>
 
-            <span style="color:rgba(148,163,184,.3);">"|"</span>
+            <span class="filter-separator">"|"</span>
 
             {NAMESPACE_OPTIONS
                 .iter()
@@ -294,10 +292,10 @@ pub fn FilterBar(
                             .map_or(DEFAULT_NAMESPACES.contains(&ns), |list| list.contains(&ns))
                     };
                     view! {
-                        <label style=format!("{label_style}font-size:11px;")>
+                        <label class=label_class style="font-size:11px;">
                             <input
                                 type="checkbox"
-                                style=checkbox_style
+                                class=checkbox_class
                                 prop:checked=is_active
                                 on:change=move |ev| {
                                     let checked = event_target_checked(&ev);
@@ -320,12 +318,10 @@ pub fn FilterBar(
                 })
                 .collect_view()}
 
-            <div style="flex:1;"></div>
+            <div class="flex-spacer"></div>
 
             <button
-                style="min-height:32px;padding:2px 10px;border:1px solid rgba(148,163,184,.18);\
-                       border-radius:4px;background:transparent;color:#8b9fc0;\
-                       font:inherit;font-size:12px;cursor:pointer;"
+                class="btn btn-ghost btn-compact"
                 disabled=move || next_continue.get().is_none()
                 on:click=load_older
             >

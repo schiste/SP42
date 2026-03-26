@@ -127,3 +127,74 @@ fn tooltip_from_reasons(
         .map(|r| r.reasons.join("; "))
         .unwrap_or_default()
 }
+
+#[cfg(test)]
+mod tests {
+    use sp42_core::{
+        LiveOperatorActionPreflight, LiveOperatorActionRecommendation, LiveOperatorRetryClass,
+        SessionActionKind,
+    };
+
+    use super::{find_recommendation, tooltip_from_reasons};
+
+    fn test_preflight() -> LiveOperatorActionPreflight {
+        LiveOperatorActionPreflight {
+            selected_rev_id: Some(123),
+            recommended_kind: Some(SessionActionKind::Patrol),
+            recommendations: vec![
+                LiveOperatorActionRecommendation {
+                    kind: SessionActionKind::Rollback,
+                    request: None,
+                    available: false,
+                    recommended: false,
+                    retry_class: LiveOperatorRetryClass::Never,
+                    reasons: vec!["missing token".to_string()],
+                },
+                LiveOperatorActionRecommendation {
+                    kind: SessionActionKind::Patrol,
+                    request: None,
+                    available: true,
+                    recommended: true,
+                    retry_class: LiveOperatorRetryClass::NotNeeded,
+                    reasons: vec![
+                        "edit is unpatrolled".to_string(),
+                        "user can patrol".to_string(),
+                    ],
+                },
+            ],
+            notes: vec!["patrol recommended".to_string()],
+        }
+    }
+
+    #[test]
+    fn find_recommendation_returns_matching_kind() {
+        let preflight = test_preflight();
+
+        let patrol = find_recommendation(&preflight, SessionActionKind::Patrol);
+        assert!(patrol.is_some());
+        assert!(patrol.expect("should exist").available);
+    }
+
+    #[test]
+    fn find_recommendation_returns_none_for_missing_kind() {
+        let preflight = test_preflight();
+
+        let undo = find_recommendation(&preflight, SessionActionKind::Undo);
+        assert!(undo.is_none());
+    }
+
+    #[test]
+    fn tooltip_from_reasons_joins_reasons() {
+        let preflight = test_preflight();
+        let patrol = find_recommendation(&preflight, SessionActionKind::Patrol);
+
+        let tooltip = tooltip_from_reasons(patrol.as_ref());
+        assert_eq!(tooltip, "edit is unpatrolled; user can patrol");
+    }
+
+    #[test]
+    fn tooltip_from_reasons_returns_empty_for_none() {
+        let tooltip = tooltip_from_reasons(None);
+        assert!(tooltip.is_empty());
+    }
+}

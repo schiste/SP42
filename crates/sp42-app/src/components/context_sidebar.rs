@@ -1,7 +1,8 @@
 use leptos::prelude::*;
 use sp42_core::{
-    DevAuthCapabilityReport, EditorIdentity, PatrolScenarioReadiness, PatrolScenarioReport,
-    PatrolSessionDigest, QueuedEdit, ReportSeverity, ScoringContext,
+    CoordinationRoomSummary, CoordinationStateSummary, DevAuthCapabilityReport, EditorIdentity,
+    PatrolScenarioReadiness, PatrolScenarioReport, PatrolSessionDigest, QueuedEdit,
+    ReportSeverity, ScoringContext,
 };
 
 #[component]
@@ -11,6 +12,8 @@ pub fn ContextSidebar(
     capabilities: DevAuthCapabilityReport,
     scenario_report: PatrolScenarioReport,
     session_digest: PatrolSessionDigest,
+    coordination_room: Option<CoordinationRoomSummary>,
+    coordination_state: Option<CoordinationStateSummary>,
 ) -> impl IntoView {
     let Some(edit) = edit else {
         return view! {
@@ -180,6 +183,9 @@ pub fn ContextSidebar(
 
             // Session digest
             {session_digest_section(&session_digest)}
+
+            // Coordination
+            {coordination_section(&edit, &coordination_room, &coordination_state)}
         </aside>
     }
     .into_any()
@@ -246,6 +252,54 @@ fn session_digest_section(digest: &PatrolSessionDigest) -> impl IntoView {
                 {lines.into_iter().collect_view()}
             </ul>
         </details>
+    }
+    .into_any()
+}
+
+fn coordination_section(
+    edit: &QueuedEdit,
+    room: &Option<CoordinationRoomSummary>,
+    state: &Option<CoordinationStateSummary>,
+) -> impl IntoView {
+    let Some(room) = room else {
+        return view! { <span></span> }.into_any();
+    };
+
+    let operators = room.presence_count;
+    let claims = room.claim_count;
+    let recent_actions = room.recent_action_count;
+    let rev_id = edit.event.rev_id;
+
+    let claimed_by_other = state
+        .as_ref()
+        .map(|s| {
+            s.claims
+                .iter()
+                .any(|c| c.rev_id == rev_id)
+        })
+        .unwrap_or(false);
+
+    view! {
+        <div style="display:grid;gap:3px;">
+            <div style="font-size:11px;font-weight:700;color:#8b9fc0;text-transform:uppercase;letter-spacing:.1em;">
+                "Coordination"
+            </div>
+            <div style="font-size:12px;color:#8b9fc0;">
+                {format!(
+                    "{} operator(s) online, {} claimed, {} recent actions",
+                    operators, claims, recent_actions,
+                )}
+            </div>
+            {if claimed_by_other {
+                view! {
+                    <div style="font-size:11px;color:#f59e0b;font-weight:700;">
+                        "This edit is claimed by another operator"
+                    </div>
+                }.into_any()
+            } else {
+                view! { <span></span> }.into_any()
+            }}
+        </div>
     }
     .into_any()
 }

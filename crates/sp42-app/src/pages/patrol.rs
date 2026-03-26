@@ -693,6 +693,8 @@ pub fn PatrolSurface() -> impl IntoView {
                                     capabilities=view.capabilities.clone()
                                     scenario_report=view.scenario_report.clone()
                                     session_digest=view.session_digest.clone()
+                                    coordination_room=view.coordination_room.clone()
+                                    coordination_state=view.coordination_state.clone()
                                 />
                             }
                                 .into_any()

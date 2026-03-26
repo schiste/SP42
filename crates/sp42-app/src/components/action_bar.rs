@@ -1,9 +1,10 @@
 use leptos::prelude::*;
-use sp42_core::{LiveOperatorActionPreflight, SessionActionKind};
+use sp42_core::{DevAuthCapabilityReport, LiveOperatorActionPreflight, SessionActionKind};
 
 #[component]
 pub fn ActionBar(
     preflight: LiveOperatorActionPreflight,
+    capabilities: DevAuthCapabilityReport,
     has_selection: Signal<bool>,
     action_pending: Signal<bool>,
     on_action: WriteSignal<Option<SessionActionKind>>,
@@ -15,9 +16,22 @@ pub fn ActionBar(
     let patrol = find_recommendation(&preflight, SessionActionKind::Patrol);
     let undo = find_recommendation(&preflight, SessionActionKind::Undo);
 
-    let rollback_available = rollback.as_ref().is_some_and(|r| r.available);
-    let patrol_available = patrol.as_ref().is_some_and(|r| r.available);
-    let undo_available = undo.as_ref().is_some_and(|r| r.available);
+    // Use preflight availability when present, fall back to raw capabilities
+    let rollback_available = rollback
+        .as_ref()
+        .map_or(capabilities.capabilities.moderation.can_rollback, |r| {
+            r.available
+        });
+    let patrol_available = patrol
+        .as_ref()
+        .map_or(capabilities.capabilities.moderation.can_patrol, |r| {
+            r.available
+        });
+    let undo_available = undo
+        .as_ref()
+        .map_or(capabilities.capabilities.editing.can_undo, |r| {
+            r.available
+        });
 
     let rollback_title = tooltip_from_reasons(rollback.as_ref());
     let patrol_title = tooltip_from_reasons(patrol.as_ref());

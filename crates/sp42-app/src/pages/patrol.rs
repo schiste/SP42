@@ -708,6 +708,7 @@ pub fn PatrolSurface() -> impl IntoView {
                                 view! {
                                     <ActionBar
                                         preflight=view.action_preflight.clone()
+                                        capabilities=view.capabilities.clone()
                                         has_selection=Signal::derive(move || has_selection.get())
                                         action_pending=Signal::derive(move || action_pending.get())
                                         on_action=set_action_trigger

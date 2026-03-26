@@ -23,6 +23,7 @@ use crate::{
     resolve_logical_storage_document, resolve_wiki_storage_document, resolved_wiki_config,
     save_storage_document_with_context, save_wiki_storage_document, storage_plan_input,
 };
+use sp42_core::PublicAuditLedgerReasoning;
 
 pub(crate) async fn get_storage_document(
     Path(wiki_id): Path<String>,
@@ -724,6 +725,17 @@ pub(crate) async fn append_public_audit_entry(
         actor: session.username.clone(),
         action: payload.kind.label().to_string(),
         summary: action_feedback_for_entry(entry),
+        rev_id: Some(payload.rev_id),
+        title: payload.title.clone(),
+        target_user: payload.target_user.clone(),
+        accepted: FlagState::from(entry.accepted),
+        http_status: entry.http_status,
+        api_code: entry.api_code.clone(),
+        retryable: FlagState::from(entry.retryable),
+        warnings: entry.warnings.clone(),
+        result: entry.result.clone(),
+        error: entry.error.clone(),
+        heuristic_reasoning: audit_heuristic_reasoning_from_summary(entry.summary.as_deref()),
     });
     let csrf_token = execute_fetch_token(&client, &config, TokenKind::Csrf)
         .await
@@ -757,6 +769,50 @@ pub(crate) async fn append_public_audit_entry(
     .map_err(|error| error.to_string())
 }
 
+fn audit_heuristic_reasoning_from_summary(
+    summary: Option<&str>,
+) -> Option<PublicAuditLedgerReasoning> {
+    let summary = summary
+        .and_then(|value| value.strip_prefix("SP42 rationale: "))
+        .map(str::trim)
+        .filter(|value| !value.is_empty())?;
+    let mut reasoning = PublicAuditLedgerReasoning::default();
+
+    for part in summary
+        .split(';')
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        if part == "obvious-vandalism" {
+            reasoning.obvious_vandalism = FlagState::Enabled;
+            continue;
+        }
+        if let Some(value) = part.strip_prefix("duplicate-cluster=") {
+            reasoning.duplicate_cluster_size = value.parse::<u32>().ok();
+            continue;
+        }
+        if let Some(value) = part.strip_prefix("trusted-source=") {
+            reasoning.matched_trusted_sources = value
+                .split('+')
+                .map(str::trim)
+                .filter(|entry| !entry.is_empty())
+                .map(ToString::to_string)
+                .collect();
+            continue;
+        }
+        if let Some(value) = part.strip_prefix("rules=") {
+            reasoning.applied_rule_sources = value
+                .split('+')
+                .map(str::trim)
+                .filter(|entry| !entry.is_empty())
+                .map(ToString::to_string)
+                .collect();
+        }
+    }
+
+    Some(reasoning)
+}
+
 pub(crate) fn public_document_human_summary(payload: &PublicStorageDocumentData) -> Vec<String> {
     match payload {
         PublicStorageDocumentData::Preferences(document) => vec![format!(
@@ -775,10 +831,14 @@ pub(crate) fn public_document_human_summary(payload: &PublicStorageDocumentData)
             document.trusted_users.len()
         )],
         PublicStorageDocumentData::RuleSet(document) => vec![format!(
-            "Public SP42 rule set `{}` for {} namespaces and {} trusted users.",
+            "Public SP42 rule set `{}` for {} namespaces, {} trusted users, min_score={}, duplicate_cluster_boost={}.",
             document.slug,
             document.namespace_allowlist.len(),
-            document.trusted_users.len()
+            document.trusted_users.len(),
+            document
+                .min_score
+                .map_or_else(|| "none".to_string(), |value| value.to_string()),
+            document.duplicate_cluster_boost
         )],
         PublicStorageDocumentData::AuditLedger(document) => vec![format!(
             "Public SP42 audit ledger `{}` with {} entries.",
@@ -874,7 +934,11 @@ pub(crate) async fn put_public_storage_document(
 
 #[cfg(test)]
 mod tests {
-    use super::{bootstrap_public_storage_document, humanize_slug, owner_username_from_title};
+    use super::{
+        audit_heuristic_reasoning_from_summary, bootstrap_public_storage_document, humanize_slug,
+        owner_username_from_title,
+    };
+    use crate::FlagState;
     use sp42_core::{PublicStorageDocumentData, WikiStorageDocumentKind, parse_wiki_config};
 
     #[test]
@@ -898,6 +962,8 @@ mod tests {
 
         assert_eq!(rule_set.namespace_allowlist, config.namespace_allowlist);
         assert!(rule_set.hide_bots);
+        assert!(rule_set.duplicate_cluster_boost.is_enabled());
+        assert_eq!(rule_set.min_score, None);
         assert!(rule_set.trusted_users.iter().any(|user| user == "Schiste"));
     }
 
@@ -936,5 +1002,25 @@ mod tests {
     #[test]
     fn humanizes_slug_for_bootstrap_titles() {
         assert_eq!(humanize_slug("core-patrol"), "Core Patrol");
+    }
+
+    #[test]
+    fn parses_structured_audit_reasoning_from_summary() {
+        let reasoning = audit_heuristic_reasoning_from_summary(Some(
+            "SP42 rationale: obvious-vandalism; duplicate-cluster=3; trusted-source=team:core+rule_set:default; rules=rule_set:default",
+        ))
+        .expect("reasoning should parse");
+
+        assert!(reasoning.obvious_vandalism.is_enabled());
+        assert_eq!(reasoning.duplicate_cluster_size, Some(3));
+        assert_eq!(
+            reasoning.matched_trusted_sources,
+            vec!["team:core".to_string(), "rule_set:default".to_string()]
+        );
+        assert_eq!(
+            reasoning.applied_rule_sources,
+            vec!["rule_set:default".to_string()]
+        );
+        assert_eq!(reasoning.obvious_vandalism, FlagState::Enabled);
     }
 }

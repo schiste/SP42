@@ -995,6 +995,7 @@ struct LiveOperatorProducts {
     debug_snapshot: sp42_core::DebugSnapshot,
     action_preflight: sp42_core::LiveOperatorActionPreflight,
     heuristic_provenance: Vec<LiveOperatorHeuristicProvenance>,
+    selected_heuristic_provenance: Option<LiveOperatorHeuristicProvenance>,
 }
 
 struct LiveOperatorProductContext<'a> {
@@ -1701,6 +1702,9 @@ fn apply_public_defaults_to_live_query(
         if query.tag_filter.is_none() {
             query.tag_filter = rule_set.tag_filters.first().cloned();
         }
+        if query.min_score.is_none() {
+            query.min_score = rule_set.min_score;
+        }
     }
 
     query
@@ -1710,6 +1714,7 @@ fn live_queue_policy_from_public_context(
     context: &LiveOperatorPublicContextState,
 ) -> QueueHeuristicPolicy {
     let mut trusted_usernames = Vec::new();
+    let mut duplicate_cluster_boost = FlagState::Enabled;
 
     if let Some(rule_set) =
         context
@@ -1721,6 +1726,7 @@ fn live_queue_policy_from_public_context(
             })
     {
         trusted_usernames.extend(rule_set.trusted_users.iter().cloned());
+        duplicate_cluster_boost = rule_set.duplicate_cluster_boost;
     }
 
     if let Some(team) = context
@@ -1739,7 +1745,7 @@ fn live_queue_policy_from_public_context(
 
     QueueHeuristicPolicy {
         trusted_usernames,
-        ..QueueHeuristicPolicy::default()
+        duplicate_cluster_boost,
     }
 }
 
@@ -2096,6 +2102,10 @@ fn build_live_operator_heuristic_provenance(
             LiveOperatorHeuristicProvenance {
                 rev_id: item.event.rev_id,
                 performer: item.event.performer.stable_label().to_string(),
+                resolved_team_slug: active_team_slug_from_context(public_context),
+                resolved_team_document_title: active_team_document_title(public_context),
+                resolved_rule_set_slug: active_rule_set_slug_from_context(public_context),
+                resolved_rule_set_document_title: active_rule_set_document_title(public_context),
                 applied_rule_sources,
                 matched_trusted_sources,
                 duplicate_cluster_size,
@@ -2104,6 +2114,40 @@ fn build_live_operator_heuristic_provenance(
             }
         })
         .collect()
+}
+
+fn active_team_slug_from_context(context: &LiveOperatorPublicContextState) -> Option<String> {
+    context
+        .active_team
+        .as_ref()
+        .and_then(|resolved| match &resolved.payload {
+            PublicStorageDocumentData::Team(value) => Some(value.slug.clone()),
+            _ => None,
+        })
+}
+
+fn active_team_document_title(context: &LiveOperatorPublicContextState) -> Option<String> {
+    context
+        .active_team
+        .as_ref()
+        .map(|resolved| resolved.document.title.clone())
+}
+
+fn active_rule_set_slug_from_context(context: &LiveOperatorPublicContextState) -> Option<String> {
+    context
+        .active_rule_set
+        .as_ref()
+        .and_then(|resolved| match &resolved.payload {
+            PublicStorageDocumentData::RuleSet(value) => Some(value.slug.clone()),
+            _ => None,
+        })
+}
+
+fn active_rule_set_document_title(context: &LiveOperatorPublicContextState) -> Option<String> {
+    context
+        .active_rule_set
+        .as_ref()
+        .map(|resolved| resolved.document.title.clone())
 }
 
 fn applied_rule_sources(public_context: &LiveOperatorPublicContextState) -> Vec<String> {
@@ -2251,12 +2295,14 @@ fn build_live_operator_products(
         coordination: selected_review.coordination_state.as_ref(),
     });
     let heuristic_provenance = build_live_operator_heuristic_provenance(queue, public_context);
-    let selected_provenance = selected.and_then(|item| {
+    let selected_heuristic_provenance = selected.and_then(|item| {
         heuristic_provenance
             .iter()
             .find(|entry| entry.rev_id == item.event.rev_id)
+            .cloned()
     });
-    let selected_note = selected.and_then(|item| action_reason_note(item, selected_provenance));
+    let selected_note =
+        selected.and_then(|item| action_reason_note(item, selected_heuristic_provenance.as_ref()));
     let action_preflight = build_live_operator_action_preflight(
         selected,
         context.capabilities,
@@ -2272,6 +2318,7 @@ fn build_live_operator_products(
         debug_snapshot,
         action_preflight,
         heuristic_provenance,
+        selected_heuristic_provenance,
     }
 }
 
@@ -2314,6 +2361,7 @@ fn finalize_live_operator_view(
         action_preflight: products.action_preflight,
         public_documents,
         heuristic_provenance: products.heuristic_provenance,
+        selected_heuristic_provenance: products.selected_heuristic_provenance,
         ingestion_supervisor,
         coordination_room: selected_review.coordination_room,
         coordination_state: selected_review.coordination_state,

@@ -159,11 +159,9 @@ pub fn PatrolSurface() -> impl IntoView {
     Effect::new(move |_| {
         if skip_trigger.get() {
             set_skip_trigger.set(false);
-            if let Some(view) = view_data.get() {
-                let idx = selected_index.get();
-                if idx + 1 < view.queue.len() {
-                    set_selected_index.set(idx + 1);
-                }
+            let idx = selected_index.get();
+            if idx + 1 < queue_len.get() {
+                set_selected_index.set(idx + 1);
             }
         }
     });
@@ -195,11 +193,9 @@ pub fn PatrolSurface() -> impl IntoView {
             }
             "ArrowDown" => {
                 event.prevent_default();
-                if let Some(view) = view_data.get() {
-                    let idx = selected_index.get();
-                    if idx + 1 < view.queue.len() {
-                        set_selected_index.set(idx + 1);
-                    }
+                let idx = selected_index.get();
+                if idx + 1 < queue_len.get() {
+                    set_selected_index.set(idx + 1);
                 }
             }
             "D" if event.ctrl_key() && event.shift_key() => {
@@ -215,11 +211,10 @@ pub fn PatrolSurface() -> impl IntoView {
         }
     };
 
-    let has_selection = Memo::new(move |_| {
-        view_data
-            .get()
-            .is_some_and(|v| selected_index.get() < v.queue.len())
+    let queue_len = Memo::new(move |_| {
+        view_data.get().map_or(0, |v| v.queue.len())
     });
+    let has_selection = Memo::new(move |_| selected_index.get() < queue_len.get());
 
     view! {
         {move || {

@@ -191,3 +191,13 @@ pub enum WikiStorageError {
     #[error("wiki storage write conflict on `{title}`: {message}")]
     Conflict { title: String, message: String },
 }
+
+#[derive(Debug, Error)]
+pub enum PublicDocumentError {
+    #[error("public document kind is invalid: {message}")]
+    InvalidDocumentKind { message: String },
+    #[error("public document validation failed: {message}")]
+    Validation { message: String },
+    #[error("public document serialization failed: {message}")]
+    Serialize { message: String },
+}

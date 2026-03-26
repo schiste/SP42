@@ -56,6 +56,7 @@ pub mod operator_summary;
 pub mod patrol_scenario_report;
 pub mod patrol_session_digest;
 pub mod priority_queue;
+pub mod public_documents;
 pub mod queue_builder;
 pub mod recent_changes;
 pub mod report_document;
@@ -103,9 +104,9 @@ pub use diff_engine::{
 };
 pub use errors::{
     ActionError, BacklogRuntimeError, CodecError, ConfigError, CoordinationError, DevAuthError,
-    DiffError, EventSourceError, HttpClientError, LiftWingError, OAuthError, RecentChangesError,
-    ReviewWorkbenchError, ScoringError, StorageError, StreamIngestorError, StreamRuntimeError,
-    TrainingDataError, UserAnalysisError, WebSocketError, WikiStorageError,
+    DiffError, EventSourceError, HttpClientError, LiftWingError, OAuthError, PublicDocumentError,
+    RecentChangesError, ReviewWorkbenchError, ScoringError, StorageError, StreamIngestorError,
+    StreamRuntimeError, TrainingDataError, UserAnalysisError, WebSocketError, WikiStorageError,
 };
 pub use liftwing::{
     LiftWingRequest, build_liftwing_score_request, execute_liftwing_score,
@@ -139,6 +140,12 @@ pub use patrol_session_digest::{
     render_patrol_session_digest_text,
 };
 pub use priority_queue::{PriorityQueue, QueueEntry};
+pub use public_documents::{
+    PublicAuditLedgerDocument, PublicAuditLedgerEntry, PublicRuleSetDocument,
+    PublicStorageDocumentData, PublicTeamDefinitionDocument, PublicTeamRegistryDocument,
+    PublicTeamRegistryEntry, PublicUserPreferencesDocument, default_public_storage_document,
+    parse_public_storage_document, validate_public_storage_document,
+};
 pub use queue_builder::{build_ranked_queue, build_ranked_queue_with_contexts};
 pub use recent_changes::{
     RecentChangesBatch, RecentChangesQuery, build_recent_changes_request, execute_recent_changes,

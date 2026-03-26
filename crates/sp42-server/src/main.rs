@@ -39,19 +39,20 @@ use sp42_core::{
     FileStorage, FlagState, LiftWingRequest, LiveOperatorBackendStatus, LiveOperatorPhaseTiming,
     LiveOperatorQuery, LiveOperatorTelemetry, LiveOperatorView, LocalOAuthConfigStatus,
     LocalOAuthSourceReport, OAuthCallback, OAuthClientConfig, OAuthTokenResponse,
-    PatrolScenarioReportInputs, PatrolSessionDigestInputs, QueuedEdit, RecentChangesQuery,
-    ServerDebugSummary, SessionActionExecutionRequest, SessionActionExecutionResponse,
-    SessionActionKind, ShellStateInputs, Storage, StreamRuntimeStatus, SystemClock, TokenKind,
-    UndoRequest, WikiConfig, WikiStorageConfig, WikiStorageDocument, WikiStorageDocumentKind,
-    WikiStorageLoadedDocument, WikiStoragePlan, WikiStoragePlanInput, WikiStorageWriteOutcome,
-    WikiStorageWriteRequest, build_authorization_url, build_debug_snapshot,
-    build_live_operator_action_preflight, build_patrol_scenario_report,
-    build_patrol_session_digest, build_ranked_queue, build_review_workbench, build_scoring_context,
-    build_shell_state_model, build_wiki_storage_plan, diff_lines, execute_fetch_token,
+    PatrolScenarioReportInputs, PatrolSessionDigestInputs, PublicStorageDocumentData, QueuedEdit,
+    RecentChangesQuery, ServerDebugSummary, SessionActionExecutionRequest,
+    SessionActionExecutionResponse, SessionActionKind, ShellStateInputs, Storage,
+    StreamRuntimeStatus, SystemClock, TokenKind, UndoRequest, WikiConfig, WikiStorageConfig,
+    WikiStorageDocument, WikiStorageDocumentKind, WikiStorageLoadedDocument, WikiStoragePlan,
+    WikiStoragePlanInput, WikiStorageWriteOutcome, WikiStorageWriteRequest,
+    build_authorization_url, build_debug_snapshot, build_live_operator_action_preflight,
+    build_patrol_scenario_report, build_patrol_session_digest, build_ranked_queue,
+    build_review_workbench, build_scoring_context, build_shell_state_model,
+    build_wiki_storage_plan, default_public_storage_document, diff_lines, execute_fetch_token,
     execute_liftwing_score, execute_patrol, execute_recent_changes, execute_rollback, execute_undo,
     generate_oauth_state, generate_pkce_verifier, load_wiki_storage_document, parse_callback_query,
-    render_wiki_storage_document_page, render_wiki_storage_index_page,
-    resolve_wiki_storage_document, save_wiki_storage_document,
+    parse_public_storage_document, render_wiki_storage_document_page,
+    render_wiki_storage_index_page, resolve_wiki_storage_document, save_wiki_storage_document,
 };
 
 use crate::coordination::{
@@ -381,6 +382,53 @@ struct LogicalStorageDocumentView {
 #[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize, serde::Serialize)]
 struct LogicalStorageDocumentWriteView {
     document: WikiStorageDocument,
+    outcome: WikiStorageWriteOutcome,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+enum PublicStorageDocumentRouteKind {
+    Preferences,
+    Registry,
+    Team,
+    RuleSet,
+    AuditPeriod,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Deserialize, serde::Serialize)]
+struct PublicStorageDocumentQuery {
+    username: Option<String>,
+    home_wiki_id: Option<String>,
+    shared_owner_username: Option<String>,
+    slug: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, serde::Deserialize, serde::Serialize)]
+struct PublicStorageDocumentSavePayload {
+    payload: PublicStorageDocumentData,
+    #[serde(default)]
+    human_summary: Vec<String>,
+    baserevid: Option<u64>,
+    #[serde(default)]
+    tags: Vec<String>,
+    watchlist: Option<String>,
+    create_only: FlagState,
+    minor: FlagState,
+    summary: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, serde::Deserialize, serde::Serialize)]
+struct PublicStorageDocumentView {
+    document: WikiStorageDocument,
+    loaded: WikiStorageLoadedDocument,
+    payload: PublicStorageDocumentData,
+    defaulted: FlagState,
+}
+
+#[derive(Debug, Clone, PartialEq, serde::Deserialize, serde::Serialize)]
+struct PublicStorageDocumentWriteView {
+    document: WikiStorageDocument,
+    payload: PublicStorageDocumentData,
     outcome: WikiStorageWriteOutcome,
 }
 
@@ -726,6 +774,10 @@ fn build_router(state: AppState) -> Router {
         .route(
             "/operator/storage/logical/{wiki_id}/{realm}/{kind}",
             get(get_logical_storage_document).put(put_logical_storage_document),
+        )
+        .route(
+            "/operator/storage/public/{wiki_id}/{kind}",
+            get(get_public_storage_document).put(put_public_storage_document),
         )
         .route("/ws/{wiki_id}", get(coordination_socket))
         .route("/dev/auth/session", get(get_session).delete(delete_session))
@@ -1304,6 +1356,229 @@ async fn put_logical_storage_document(
 
     match result {
         Ok(outcome) => Ok(Json(LogicalStorageDocumentWriteView { document, outcome })),
+        Err(error) => {
+            Err(wiki_storage_save_error_response(&client, &config, &document, error).await)
+        }
+    }
+}
+
+fn public_storage_document_kind(
+    wiki_id: &str,
+    kind: &PublicStorageDocumentRouteKind,
+    slug: Option<String>,
+) -> Result<WikiStorageDocumentKind, String> {
+    match kind {
+        PublicStorageDocumentRouteKind::Preferences => {
+            Ok(WikiStorageDocumentKind::PersonalPreferences)
+        }
+        PublicStorageDocumentRouteKind::Registry => Ok(WikiStorageDocumentKind::SharedRegistry {
+            wiki_id: wiki_id.to_string(),
+        }),
+        PublicStorageDocumentRouteKind::Team => Ok(WikiStorageDocumentKind::SharedTeam {
+            wiki_id: wiki_id.to_string(),
+            team_slug: require_logical_storage_slug(&StorageDocumentKindInput::Team, slug)?,
+        }),
+        PublicStorageDocumentRouteKind::RuleSet => Ok(WikiStorageDocumentKind::SharedRuleSet {
+            wiki_id: wiki_id.to_string(),
+            rule_set_slug: require_logical_storage_slug(&StorageDocumentKindInput::RuleSet, slug)?,
+        }),
+        PublicStorageDocumentRouteKind::AuditPeriod => {
+            Ok(WikiStorageDocumentKind::SharedAuditPeriod {
+                wiki_id: wiki_id.to_string(),
+                period_slug: require_logical_storage_slug(
+                    &StorageDocumentKindInput::AuditPeriod,
+                    slug,
+                )?,
+            })
+        }
+    }
+}
+
+async fn resolve_public_storage_document(
+    state: &AppState,
+    headers: &HeaderMap,
+    wiki_id: &str,
+    kind: &PublicStorageDocumentRouteKind,
+    query: &PublicStorageDocumentQuery,
+) -> Result<WikiStorageDocument, String> {
+    let slug = query
+        .slug
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned);
+    let input = storage_plan_input(
+        state,
+        headers,
+        wiki_id,
+        StoragePlanRequest {
+            username_override: query.username.clone(),
+            home_wiki_id_override: query.home_wiki_id.clone(),
+            shared_owner_username_override: query.shared_owner_username.clone(),
+            team_slugs: slug.clone().into_iter().collect(),
+            rule_set_slugs: slug.clone().into_iter().collect(),
+            training_dataset_slugs: Vec::new(),
+            audit_period_slugs: slug.clone().into_iter().collect(),
+        },
+    )
+    .await?;
+    let plan = build_wiki_storage_plan(&WikiStorageConfig::default(), &input);
+    let document_kind = public_storage_document_kind(wiki_id, kind, slug)?;
+
+    resolve_wiki_storage_document(&plan, &document_kind)
+        .ok_or_else(|| format!("no public storage document matched `{document_kind:?}`"))
+}
+
+fn public_payload_for_loaded_document(
+    document: &WikiStorageDocument,
+    loaded: &WikiStorageLoadedDocument,
+) -> Result<(PublicStorageDocumentData, FlagState), String> {
+    match loaded.envelope.as_ref() {
+        Some(envelope) => parse_public_storage_document(&document.kind, envelope.data.clone())
+            .map(|payload| (payload, FlagState::Disabled))
+            .map_err(|error| error.to_string()),
+        None => default_public_storage_document(&document.kind)
+            .map(|payload| (payload, FlagState::Enabled))
+            .map_err(|error| error.to_string()),
+    }
+}
+
+fn public_document_human_summary(payload: &PublicStorageDocumentData) -> Vec<String> {
+    match payload {
+        PublicStorageDocumentData::Preferences(document) => vec![format!(
+            "Public SP42 preferences for {} with queue limit {}.",
+            document.preferred_wiki_id, document.queue_limit
+        )],
+        PublicStorageDocumentData::Registry(document) => vec![format!(
+            "Public SP42 team registry for {} with {} teams.",
+            document.wiki_id,
+            document.teams.len()
+        )],
+        PublicStorageDocumentData::Team(document) => vec![format!(
+            "Public SP42 team definition `{}` with {} members.",
+            document.slug,
+            document.members.len()
+        )],
+        PublicStorageDocumentData::RuleSet(document) => vec![format!(
+            "Public SP42 rule set `{}` for {} namespaces.",
+            document.slug,
+            document.namespace_allowlist.len()
+        )],
+        PublicStorageDocumentData::AuditLedger(document) => vec![format!(
+            "Public SP42 audit ledger `{}` with {} entries.",
+            document.period_slug,
+            document.entries.len()
+        )],
+    }
+}
+
+async fn get_public_storage_document(
+    Path((wiki_id, kind)): Path<(String, PublicStorageDocumentRouteKind)>,
+    Query(query): Query<PublicStorageDocumentQuery>,
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Result<Json<PublicStorageDocumentView>, (StatusCode, Json<serde_json::Value>)> {
+    let document = resolve_public_storage_document(&state, &headers, &wiki_id, &kind, &query)
+        .await
+        .map_err(|message| invalid_payload(&message))?;
+    let access_token = access_token_for_request(&state, &headers)
+        .await
+        .ok_or_else(|| unauthorized_error("No authenticated Wikimedia session is active."))?;
+    let config =
+        resolved_wiki_config(&state, &wiki_id).map_err(|message| invalid_payload(&message))?;
+    let client = BearerHttpClient::new(state.http_client.clone(), access_token);
+    let loaded = load_wiki_storage_document(&client, &config, &document.title)
+        .await
+        .map_err(|error| {
+            (
+                StatusCode::BAD_GATEWAY,
+                Json(serde_json::json!({ "error": error.to_string(), "document": document })),
+            )
+        })?;
+    let (payload, defaulted) =
+        public_payload_for_loaded_document(&document, &loaded).map_err(|message| {
+            (
+                StatusCode::BAD_GATEWAY,
+                Json(serde_json::json!({
+                    "error": message,
+                    "document": document,
+                    "loaded": loaded,
+                })),
+            )
+        })?;
+
+    Ok(Json(PublicStorageDocumentView {
+        document,
+        loaded,
+        payload,
+        defaulted,
+    }))
+}
+
+async fn put_public_storage_document(
+    Path((wiki_id, kind)): Path<(String, PublicStorageDocumentRouteKind)>,
+    Query(query): Query<PublicStorageDocumentQuery>,
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(payload): Json<PublicStorageDocumentSavePayload>,
+) -> Result<Json<PublicStorageDocumentWriteView>, (StatusCode, Json<serde_json::Value>)> {
+    let document = resolve_public_storage_document(&state, &headers, &wiki_id, &kind, &query)
+        .await
+        .map_err(|message| invalid_payload(&message))?;
+    payload
+        .payload
+        .ensure_matches_document_kind(&document.kind)
+        .map_err(|error| invalid_payload(&error.to_string()))?;
+
+    let access_token = access_token_for_request(&state, &headers)
+        .await
+        .ok_or_else(|| unauthorized_error("No authenticated Wikimedia session is active."))?;
+    let config =
+        resolved_wiki_config(&state, &wiki_id).map_err(|message| invalid_payload(&message))?;
+    let client = BearerHttpClient::new(state.http_client.clone(), access_token);
+    let csrf_token = execute_fetch_token(&client, &config, TokenKind::Csrf)
+        .await
+        .map_err(|error| {
+            (
+                StatusCode::BAD_GATEWAY,
+                Json(serde_json::json!({ "error": format!("csrf token fetch failed: {error}") })),
+            )
+        })?;
+
+    let json_data = payload
+        .payload
+        .clone()
+        .into_json_value()
+        .map_err(|error| invalid_payload(&error.to_string()))?;
+    let human_summary = if payload.human_summary.is_empty() {
+        public_document_human_summary(&payload.payload)
+    } else {
+        payload.human_summary
+    };
+    let result = save_wiki_storage_document(
+        &client,
+        &config,
+        &WikiStorageWriteRequest {
+            document: document.clone(),
+            human_summary,
+            data: json_data,
+            token: csrf_token,
+            baserevid: payload.baserevid,
+            tags: payload.tags,
+            watchlist: payload.watchlist,
+            create_only: payload.create_only,
+            minor: payload.minor,
+            summary: payload.summary,
+        },
+    )
+    .await;
+
+    match result {
+        Ok(outcome) => Ok(Json(PublicStorageDocumentWriteView {
+            document,
+            payload: payload.payload,
+            outcome,
+        })),
         Err(error) => {
             Err(wiki_storage_save_error_response(&client, &config, &document, error).await)
         }
@@ -2392,6 +2667,18 @@ fn operator_storage_endpoints() -> Vec<OperatorEndpointDescriptor> {
             method: "PUT".to_string(),
             path: "/operator/storage/logical/{wiki_id}/{realm}/{kind}".to_string(),
             purpose: "Save a canonical SP42 public document by logical kind without exposing raw wiki titles to clients.".to_string(),
+            available: true,
+        },
+        OperatorEndpointDescriptor {
+            method: "GET".to_string(),
+            path: "/operator/storage/public/{wiki_id}/{kind}".to_string(),
+            purpose: "Load a typed public SP42 document like preferences, registry, team, rules, or audit ledger.".to_string(),
+            available: true,
+        },
+        OperatorEndpointDescriptor {
+            method: "PUT".to_string(),
+            path: "/operator/storage/public/{wiki_id}/{kind}".to_string(),
+            purpose: "Save a typed public SP42 document while keeping durable state on canonical wiki pages.".to_string(),
             available: true,
         },
     ]
@@ -4244,8 +4531,32 @@ mod tests {
     }
 
     fn mock_storage_page(title: &str) -> String {
+        let (kind, document) = if title.ends_with("/Preferences") {
+            (
+                "preferences",
+                serde_json::json!({
+                    "type": "preferences",
+                    "document": {
+                        "preferred_wiki_id": "frwiki",
+                        "queue_limit": 25,
+                        "hide_minor": false,
+                        "hide_bots": true,
+                        "editor_types": ["anonymous", "temporary"],
+                        "tag_filters": [],
+                    }
+                }),
+            )
+        } else {
+            (
+                "personal-profile",
+                serde_json::json!({
+                    "owner": "Schiste",
+                    "document": title
+                }),
+            )
+        };
         format!(
-            "== SP42 Document ==\nLoaded by the logical storage route.\n<!-- SP42:BEGIN -->\n<syntaxhighlight lang=\"json\">\n{{\n  \"project\": \"SP42\",\n  \"version\": 1,\n  \"title\": \"{title}\",\n  \"kind\": \"personal-profile\",\n  \"site_wiki_id\": \"frwiki\",\n  \"realm\": \"PersonalUserSpace\",\n  \"data\": {{\n    \"owner\": \"Schiste\",\n    \"document\": \"{title}\"\n  }}\n}}\n</syntaxhighlight>\n<!-- SP42:END -->"
+            "== SP42 Document ==\nLoaded by the logical storage route.\n<!-- SP42:BEGIN -->\n<syntaxhighlight lang=\"json\">\n{{\n  \"project\": \"SP42\",\n  \"version\": 1,\n  \"title\": \"{title}\",\n  \"kind\": \"{kind}\",\n  \"site_wiki_id\": \"frwiki\",\n  \"realm\": \"PersonalUserSpace\",\n  \"data\": {document}\n}}\n</syntaxhighlight>\n<!-- SP42:END -->"
         )
     }
 
@@ -5555,6 +5866,88 @@ mod tests {
         assert_eq!(view.document.title, "User:Schiste/SP42/Profile");
         assert_eq!(view.loaded.title, "User:Schiste/SP42/Profile");
         assert!(view.loaded.exists);
+
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn public_storage_document_route_returns_typed_preferences() {
+        let (profile_base, server) = mock_capability_server().await;
+        let clock: Arc<dyn Clock> = Arc::new(SystemClock);
+        let state = AppState {
+            capability_cache: Arc::new(tokio::sync::RwLock::new(None)),
+            sessions: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
+            pending_oauth_logins: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
+            http_client: reqwest::Client::builder()
+                .timeout(Duration::from_secs(5))
+                .user_agent(sp42_core::branding::USER_AGENT)
+                .build()
+                .expect("reqwest client should build"),
+            local_oauth: LocalOAuthConfig::default(),
+            runtime_storage_root: std::env::temp_dir()
+                .join("sp42-server-runtime-public-storage-route"),
+            ingestion_supervisor: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
+            capability_targets: CapabilityProbeTargets {
+                api_url: Some(format!("{profile_base}/w/api.php")),
+                profile_url: format!("{profile_base}/oauth2/resource/profile"),
+            },
+            clock: clock.clone(),
+            coordination: CoordinationRegistry::new(clock),
+            next_client_id: Arc::new(AtomicU64::new(1)),
+            next_session_id: Arc::new(AtomicU64::new(1)),
+            started_at: Instant::now(),
+        };
+        let current_ms = state.clock.now_ms();
+        let session_id = crate::install_session(
+            &state,
+            None,
+            StoredSession {
+                username: "Schiste".to_string(),
+                scopes: vec!["basic".to_string(), "patrol".to_string()],
+                expires_at_ms: Some(current_ms + 60_000),
+                access_token: "token-value".to_string(),
+                refresh_token: None,
+                upstream_access_expires_at_ms: Some(current_ms + 60_000),
+                bridge_mode: "oauth".to_string(),
+                created_at_ms: current_ms,
+                last_seen_at_ms: current_ms,
+                capability_cache: HashMap::new(),
+                action_history: Vec::new(),
+            },
+            current_ms,
+        )
+        .await;
+
+        let router = build_router(state);
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .method(Method::GET)
+                    .uri("/operator/storage/public/frwiki/preferences?username=Schiste")
+                    .header(
+                        axum::http::header::COOKIE,
+                        format!("{}={session_id}", crate::SESSION_COOKIE_NAME),
+                    )
+                    .body(Body::empty())
+                    .expect("request should build"),
+            )
+            .await
+            .expect("public storage request should succeed");
+
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let body = to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("response body should read");
+        let view: crate::PublicStorageDocumentView =
+            serde_json::from_slice(&body).expect("public storage view should parse");
+
+        assert_eq!(view.document.title, "User:Schiste/SP42/Preferences");
+        assert_eq!(view.loaded.title, "User:Schiste/SP42/Preferences");
+        assert!(matches!(
+            view.payload,
+            crate::PublicStorageDocumentData::Preferences(_)
+        ));
 
         server.abort();
     }

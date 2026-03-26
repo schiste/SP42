@@ -1,6 +1,8 @@
 use leptos::prelude::*;
 use sp42_core::QueuedEdit;
 
+use super::style::score_tier;
+
 #[component]
 pub fn QueueColumn(
     queue: Vec<QueuedEdit>,
@@ -76,12 +78,3 @@ pub fn QueueColumn(
     }
 }
 
-fn score_tier(score: i32) -> (&'static str, &'static str) {
-    if score >= 70 {
-        ("#ef4444", "!!")
-    } else if score >= 30 {
-        ("#f59e0b", "?")
-    } else {
-        ("#22c55e", "\u{2713}")
-    }
-}

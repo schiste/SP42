@@ -1,9 +1,11 @@
 use leptos::prelude::*;
 use sp42_core::{
     CoordinationRoomSummary, CoordinationStateSummary, DevAuthCapabilityReport, EditorIdentity,
-    PatrolScenarioReadiness, PatrolScenarioReport, PatrolSessionDigest, QueuedEdit,
-    ReportSeverity, ScoringContext,
+    PatrolScenarioReadiness, PatrolScenarioReport, PatrolSessionDigest, QueuedEdit, ReportSeverity,
+    ScoringContext,
 };
+
+use super::style::{SECTION_HEADER, score_tier, wiki_base_url};
 
 #[component]
 pub fn ContextSidebar(
@@ -102,11 +104,13 @@ fn metadata_section(edit: &QueuedEdit, scoring_context: &Option<ScoringContext>)
         .unwrap_or_else(|| "(no edit summary)".to_string());
     let rev_id = edit.event.rev_id;
     let old_rev_id = edit.event.old_rev_id.unwrap_or(0);
+    let base = wiki_base_url(&edit.event.wiki_id);
     let article_url = format!(
-        "https://fr.wikipedia.org/wiki/{}",
+        "{}/wiki/{}",
+        base,
         edit.event.title.replace(' ', "_")
     );
-    let diff_url = format!("https://fr.wikipedia.org/w/index.php?diff={rev_id}&oldid={old_rev_id}");
+    let diff_url = format!("{base}/w/index.php?diff={rev_id}&oldid={old_rev_id}");
     let liftwing = scoring_context
         .as_ref()
         .and_then(|ctx| ctx.liftwing_risk)
@@ -159,7 +163,7 @@ fn metadata_section(edit: &QueuedEdit, scoring_context: &Option<ScoringContext>)
 fn signals_section(edit: &QueuedEdit) -> impl IntoView {
     view! {
         <div style="display:grid;gap:3px;">
-            <div style="font-size:11px;font-weight:700;color:#8b9fc0;text-transform:uppercase;letter-spacing:.1em;">
+            <div style=SECTION_HEADER>
                 "Signals"
             </div>
             {edit
@@ -191,7 +195,7 @@ fn capabilities_section(capabilities: &DevAuthCapabilityReport) -> impl IntoView
     let can_undo = capabilities.capabilities.editing.can_undo;
     view! {
         <div style="display:grid;gap:3px;font-size:11px;color:#8b9fc0;">
-            <div style="font-weight:700;text-transform:uppercase;letter-spacing:.1em;">
+            <div style=SECTION_HEADER>
                 "Capabilities"
             </div>
             <div>{format!("rollback: {}", if can_rollback { "yes" } else { "no" })}</div>
@@ -206,29 +210,20 @@ fn session_digest_section(digest: &PatrolSessionDigest) -> impl IntoView {
         return view! { <span></span> }.into_any();
     }
 
-    let lines: Vec<_> = digest
-        .explanation_lines
-        .iter()
-        .map(|line| {
-            view! {
-                <li style="font-size:11px;color:#8b9fc0;line-height:1.4;">
-                    {line.clone()}
-                </li>
-            }
-        })
-        .collect();
-
     let headline = digest_headline(digest);
 
     view! {
         <details style="display:grid;gap:3px;">
-            <summary style="font-size:11px;font-weight:700;color:#8b9fc0;\
-                            text-transform:uppercase;letter-spacing:.1em;cursor:pointer;">
+            <summary style=format!("{SECTION_HEADER}cursor:pointer;")>
                 "Session Digest"
             </summary>
             <p style="margin:0;font-size:12px;color:#eff4ff;">{headline}</p>
             <ul style="margin:0;padding-inline-start:17px;">
-                {lines.into_iter().collect_view()}
+                {digest.explanation_lines.iter().map(|line| view! {
+                    <li style="font-size:11px;color:#8b9fc0;line-height:1.4;">
+                        {line.clone()}
+                    </li>
+                }).collect_view()}
             </ul>
         </details>
     }
@@ -251,7 +246,7 @@ fn coordination_section(
 
     view! {
         <div style="display:grid;gap:3px;">
-            <div style="font-size:11px;font-weight:700;color:#8b9fc0;text-transform:uppercase;letter-spacing:.1em;">
+            <div style=SECTION_HEADER>
                 "Coordination"
             </div>
             <div style="font-size:12px;color:#8b9fc0;">
@@ -312,7 +307,7 @@ fn scenario_readiness_section(report: &PatrolScenarioReport) -> impl IntoView {
 
     view! {
         <div style="display:grid;gap:3px;">
-            <div style="font-size:11px;font-weight:700;color:#8b9fc0;text-transform:uppercase;letter-spacing:.1em;">
+            <div style=SECTION_HEADER>
                 "Scenario"
             </div>
             <div style="display:flex;align-items:center;gap:7px;">
@@ -347,16 +342,6 @@ fn scenario_readiness_section(report: &PatrolScenarioReport) -> impl IntoView {
             }}
             {findings_view.into_iter().collect_view()}
         </div>
-    }
-}
-
-fn score_tier(score: i32) -> (&'static str, &'static str) {
-    if score >= 70 {
-        ("#ef4444", "!!")
-    } else if score >= 30 {
-        ("#f59e0b", "?")
-    } else {
-        ("#22c55e", "\u{2713}")
     }
 }
 

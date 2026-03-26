@@ -6,9 +6,10 @@ use crate::{
     ActionExecutionHistoryReport, ActionExecutionStatusReport, BacklogRuntimeStatus,
     CoordinationRoomSummary, CoordinationStateSummary, DebugSnapshot, DevAuthCapabilityReport,
     DevAuthSessionStatus, FlagState, LocalOAuthConfigStatus, LocalOAuthSourceReport,
-    PatrolScenarioReport, PatrolSessionDigest, QueuedEdit, ReviewWorkbench, ScoringContext,
-    SessionActionExecutionRequest, SessionActionKind, ShellStateModel, StreamRuntimeStatus,
-    StructuredDiff, build_session_action_execution_requests,
+    PatrolScenarioReport, PatrolSessionDigest, PublicRuleSetDocument, PublicTeamDefinitionDocument,
+    PublicTeamRegistryDocument, PublicUserPreferencesDocument, QueuedEdit, ReviewWorkbench,
+    ScoringContext, SessionActionExecutionRequest, SessionActionKind, ShellStateModel,
+    StreamRuntimeStatus, StructuredDiff, build_session_action_execution_requests,
 };
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -108,6 +109,21 @@ pub struct LiveIngestionSupervisorStatus {
     pub notes: Vec<String>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct LiveOperatorPublicDocuments {
+    pub preferences: Option<PublicUserPreferencesDocument>,
+    pub preferences_defaulted: FlagState,
+    pub registry: Option<PublicTeamRegistryDocument>,
+    pub registry_defaulted: FlagState,
+    pub active_team: Option<PublicTeamDefinitionDocument>,
+    pub active_team_defaulted: FlagState,
+    pub active_rule_set: Option<PublicRuleSetDocument>,
+    pub active_rule_set_defaulted: FlagState,
+    pub audit_period_slug: Option<String>,
+    #[serde(default)]
+    pub notes: Vec<String>,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct LiveOperatorView {
     pub project: String,
@@ -130,6 +146,8 @@ pub struct LiveOperatorView {
     pub action_status: ActionExecutionStatusReport,
     pub action_history: ActionExecutionHistoryReport,
     pub action_preflight: LiveOperatorActionPreflight,
+    #[serde(default)]
+    pub public_documents: LiveOperatorPublicDocuments,
     pub ingestion_supervisor: Option<LiveIngestionSupervisorStatus>,
     pub coordination_room: Option<CoordinationRoomSummary>,
     pub coordination_state: Option<CoordinationStateSummary>,

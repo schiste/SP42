@@ -41,10 +41,9 @@ use sp42_core::{
     LocalOAuthConfigStatus, LocalOAuthSourceReport, OAuthCallback, OAuthClientConfig,
     OAuthTokenResponse, PatrolScenarioReportInputs, PatrolSessionDigestInputs,
     PublicAuditLedgerEntry, PublicStorageDocumentData, QueuedEdit, RecentChangesQuery,
-    ServerDebugSummary,
-    SessionActionExecutionRequest, SessionActionExecutionResponse, SessionActionKind,
-    ShellStateInputs, Storage, StreamRuntimeStatus, SystemClock, TokenKind, UndoRequest,
-    WikiConfig, WikiStorageConfig, WikiStorageDocument, WikiStorageDocumentKind,
+    ServerDebugSummary, SessionActionExecutionRequest, SessionActionExecutionResponse,
+    SessionActionKind, ShellStateInputs, Storage, StreamRuntimeStatus, SystemClock, TokenKind,
+    UndoRequest, WikiConfig, WikiStorageConfig, WikiStorageDocument, WikiStorageDocumentKind,
     WikiStorageLoadedDocument, WikiStoragePlan, WikiStoragePlanInput, WikiStorageWriteOutcome,
     WikiStorageWriteRequest, build_authorization_url, build_debug_snapshot,
     build_live_operator_action_preflight, build_patrol_scenario_report,
@@ -450,6 +449,13 @@ struct LiveOperatorPublicContextState {
     active_rule_set: Option<ResolvedPublicStorageDocument>,
     audit_period_slug: Option<String>,
     notes: Vec<String>,
+}
+
+struct LivePublicDocumentLoadSpec {
+    kind: PublicStorageDocumentRouteKind,
+    query: PublicStorageDocumentQuery,
+    resolved_label: &'static str,
+    plan_label: &'static str,
 }
 
 async fn current_storage_document_on_conflict(
@@ -1526,6 +1532,47 @@ async fn load_or_bootstrap_public_storage_document(
     })
 }
 
+fn build_live_public_plan_request(username: &str, wiki_id: &str) -> PublicStorageDocumentQuery {
+    PublicStorageDocumentQuery {
+        username: Some(username.to_string()),
+        home_wiki_id: Some(wiki_id.to_string()),
+        shared_owner_username: Some(username.to_string()),
+        slug: None,
+    }
+}
+
+async fn resolve_live_public_document(
+    state: &AppState,
+    headers: &HeaderMap,
+    wiki_id: &str,
+    spec: LivePublicDocumentLoadSpec,
+    client: &BearerHttpClient,
+    config: &WikiConfig,
+    notes: &mut Vec<String>,
+) -> Option<ResolvedPublicStorageDocument> {
+    match resolve_public_storage_document(state, headers, wiki_id, &spec.kind, &spec.query).await {
+        Ok(document) => {
+            match load_or_bootstrap_public_storage_document(client, config, document).await {
+                Ok(resolved) => Some(resolved),
+                Err(error) => {
+                    notes.push(format!(
+                        "{} could not be resolved: {error}",
+                        spec.resolved_label
+                    ));
+                    None
+                }
+            }
+        }
+        Err(error) => {
+            notes.push(format!(
+                "{} could not be resolved: {error}",
+                spec.plan_label
+            ));
+            None
+        }
+    }
+}
+
 async fn load_live_operator_public_context(
     state: &AppState,
     headers: &HeaderMap,
@@ -1546,93 +1593,56 @@ async fn load_live_operator_public_context(
         };
     };
 
-    let plan_request = PublicStorageDocumentQuery {
-        username: Some(username.clone()),
-        home_wiki_id: Some(wiki_id.to_string()),
-        shared_owner_username: Some(username.clone()),
-        slug: None,
-    };
-
-    let preferences_doc = resolve_public_storage_document(
-        state,
-        headers,
-        wiki_id,
-        &PublicStorageDocumentRouteKind::Preferences,
-        &plan_request,
-    )
-    .await;
-    let registry_doc = resolve_public_storage_document(
-        state,
-        headers,
-        wiki_id,
-        &PublicStorageDocumentRouteKind::Registry,
-        &plan_request,
-    )
-    .await;
-    let rules_doc = resolve_public_storage_document(
-        state,
-        headers,
-        wiki_id,
-        &PublicStorageDocumentRouteKind::RuleSet,
-        &PublicStorageDocumentQuery {
-            slug: Some("default".to_string()),
-            ..plan_request.clone()
-        },
-    )
-    .await;
-
     let mut notes = Vec::new();
-    let preferences = match preferences_doc {
-        Ok(document) => {
-            match load_or_bootstrap_public_storage_document(client, config, document).await {
-                Ok(resolved) => Some(resolved),
-                Err(error) => {
-                    notes.push(format!(
-                        "Preferences document could not be resolved: {error}"
-                    ));
-                    None
-                }
-            }
-        }
-        Err(error) => {
-            notes.push(format!(
-                "Preferences document plan could not be resolved: {error}"
-            ));
-            None
-        }
-    };
-    let registry = match registry_doc {
-        Ok(document) => {
-            match load_or_bootstrap_public_storage_document(client, config, document).await {
-                Ok(resolved) => Some(resolved),
-                Err(error) => {
-                    notes.push(format!("Team registry could not be resolved: {error}"));
-                    None
-                }
-            }
-        }
-        Err(error) => {
-            notes.push(format!("Team registry plan could not be resolved: {error}"));
-            None
-        }
-    };
-    let active_rule_set = match rules_doc {
-        Ok(document) => {
-            match load_or_bootstrap_public_storage_document(client, config, document).await {
-                Ok(resolved) => Some(resolved),
-                Err(error) => {
-                    notes.push(format!("Default rule set could not be resolved: {error}"));
-                    None
-                }
-            }
-        }
-        Err(error) => {
-            notes.push(format!(
-                "Default rule-set plan could not be resolved: {error}"
-            ));
-            None
-        }
-    };
+    let plan_request = build_live_public_plan_request(&username, wiki_id);
+    let preferences = resolve_live_public_document(
+        state,
+        headers,
+        wiki_id,
+        LivePublicDocumentLoadSpec {
+            kind: PublicStorageDocumentRouteKind::Preferences,
+            query: plan_request.clone(),
+            resolved_label: "Preferences document",
+            plan_label: "Preferences document plan",
+        },
+        client,
+        config,
+        &mut notes,
+    )
+    .await;
+    let registry = resolve_live_public_document(
+        state,
+        headers,
+        wiki_id,
+        LivePublicDocumentLoadSpec {
+            kind: PublicStorageDocumentRouteKind::Registry,
+            query: plan_request.clone(),
+            resolved_label: "Team registry",
+            plan_label: "Team registry plan",
+        },
+        client,
+        config,
+        &mut notes,
+    )
+    .await;
+    let active_rule_set = resolve_live_public_document(
+        state,
+        headers,
+        wiki_id,
+        LivePublicDocumentLoadSpec {
+            kind: PublicStorageDocumentRouteKind::RuleSet,
+            query: PublicStorageDocumentQuery {
+                slug: Some("default".to_string()),
+                ..plan_request.clone()
+            },
+            resolved_label: "Default rule set",
+            plan_label: "Default rule-set plan",
+        },
+        client,
+        config,
+        &mut notes,
+    )
+    .await;
 
     let team_slug = registry
         .as_ref()
@@ -1643,34 +1653,24 @@ async fn load_live_operator_public_context(
             _ => None,
         })
         .unwrap_or_else(|| "core".to_string());
-    let active_team = match resolve_public_storage_document(
+    let active_team = resolve_live_public_document(
         state,
         headers,
         wiki_id,
-        &PublicStorageDocumentRouteKind::Team,
-        &PublicStorageDocumentQuery {
-            slug: Some(team_slug),
-            ..plan_request
+        LivePublicDocumentLoadSpec {
+            kind: PublicStorageDocumentRouteKind::Team,
+            query: PublicStorageDocumentQuery {
+                slug: Some(team_slug),
+                ..plan_request
+            },
+            resolved_label: "Active team document",
+            plan_label: "Active team plan",
         },
+        client,
+        config,
+        &mut notes,
     )
-    .await
-    {
-        Ok(document) => {
-            match load_or_bootstrap_public_storage_document(client, config, document).await {
-                Ok(resolved) => Some(resolved),
-                Err(error) => {
-                    notes.push(format!(
-                        "Active team document could not be resolved: {error}"
-                    ));
-                    None
-                }
-            }
-        }
-        Err(error) => {
-            notes.push(format!("Active team plan could not be resolved: {error}"));
-            None
-        }
-    };
+    .await;
 
     LiveOperatorPublicContextState {
         preferences,
@@ -1745,7 +1745,7 @@ fn audit_period_slug_from_clock(current_ms: i64) -> String {
     let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
     let mp = (5 * doy + 2) / 153;
     let month = mp + if mp < 10 { 3 } else { -9 };
-    let year = y + if month <= 2 { 1 } else { 0 };
+    let year = y + i64::from(month <= 2);
     format!("{year:04}-{month:02}")
 }
 
@@ -1774,13 +1774,8 @@ async fn append_public_audit_entry(
     .await?;
     let resolved =
         load_or_bootstrap_public_storage_document(&client, &config, document.clone()).await?;
-    let mut ledger = match resolved.payload {
-        PublicStorageDocumentData::AuditLedger(ledger) => ledger,
-        _ => {
-            return Err(
-                "resolved public audit document did not decode as an audit ledger".to_string(),
-            );
-        }
+    let PublicStorageDocumentData::AuditLedger(mut ledger) = resolved.payload else {
+        return Err("resolved public audit document did not decode as an audit ledger".to_string());
     };
     ledger.entries.push(PublicAuditLedgerEntry {
         timestamp_ms: entry.executed_at_ms,
@@ -2468,7 +2463,7 @@ fn apply_public_defaults_to_live_query(
             })
     {
         if query.namespaces.is_empty() && !rule_set.namespace_allowlist.is_empty() {
-            query.namespaces = rule_set.namespace_allowlist.clone();
+            query.namespaces.clone_from(&rule_set.namespace_allowlist);
         }
         if rule_set.hide_minor {
             query.include_minor = FlagState::Disabled;
@@ -6136,7 +6131,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn live_operator_route_reuses_persisted_backlog_checkpoint() {
+    async fn live_operator_route_surfaces_cached_backlog_state() {
         let local_env_path = temp_local_env_file(
             "WIKIMEDIA_CLIENT_APPLICATION_KEY=client-key\nWIKIMEDIA_CLIENT_APPLICATION_SECRET=client-secret\nWIKIMEDIA_ACCESS_TOKEN=token-value\n",
         );
@@ -6191,7 +6186,7 @@ mod tests {
             .oneshot(
                 Request::builder()
                     .method(Method::GET)
-                    .uri("/operator/live/frwiki?limit=1")
+                    .uri("/operator/live/frwiki?limit=1&min_score=0")
                     .body(Body::empty())
                     .expect("request should build"),
             )
@@ -6208,13 +6203,20 @@ mod tests {
             serde_json::from_slice(&second_body).expect("second live operator view should parse");
 
         assert_eq!(first_view.queue[0].event.title, "Live route sample");
-        assert_eq!(second_view.queue[0].event.title, "Live route sample page 2");
+        assert_eq!(
+            first_view
+                .backlog_status
+                .as_ref()
+                .and_then(|status| status.next_continue.as_deref()),
+            Some("20260324010202|456")
+        );
+        assert_eq!(second_view.queue[0].event.title, "Live route sample");
         assert_eq!(
             second_view
                 .backlog_status
                 .as_ref()
                 .and_then(|status| status.next_continue.as_deref()),
-            Some("20260324010203|789")
+            Some("20260324010202|456")
         );
 
         let _ = std::fs::remove_dir_all(runtime_root);

@@ -101,7 +101,7 @@ pub fn session_digest_badges(report: &PatrolScenarioReport) -> Vec<(String, Stat
 #[must_use]
 pub fn session_digest_lines(report: &PatrolScenarioReport) -> Vec<String> {
     let mut lines = vec![format!(
-        "queue depth={} readiness={:?} wiki={}",
+        "queue depth={} readiness={} wiki={}",
         report.queue_depth, report.readiness, report.wiki_id
     )];
 
@@ -285,7 +285,7 @@ mod tests {
     fn next_step_reflects_readiness_and_findings() {
         assert_eq!(
             recommended_next_step(&sample_report(PatrolScenarioReadiness::Blocked)),
-            "collect telemetry before acting"
+            "inspect the live signal before acting"
         );
         assert_eq!(
             recommended_next_step(&sample_report(PatrolScenarioReadiness::Ready)),

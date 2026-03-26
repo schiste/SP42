@@ -51,6 +51,16 @@ pub enum PatrolScenarioReadiness {
     Ready,
 }
 
+impl std::fmt::Display for PatrolScenarioReadiness {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::Blocked => "Blocked",
+            Self::Limited => "Limited",
+            Self::Ready => "Ready",
+        })
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PatrolScenarioSelectedEdit {
     pub wiki_id: String,
@@ -846,5 +856,12 @@ mod tests {
         assert_eq!(ReportSeverity::Info.to_string(), "Info");
         assert_eq!(ReportSeverity::Warning.to_string(), "Warning");
         assert_eq!(ReportSeverity::Blocker.to_string(), "Blocker");
+    }
+
+    #[test]
+    fn patrol_scenario_readiness_display_produces_human_readable_labels() {
+        assert_eq!(PatrolScenarioReadiness::Blocked.to_string(), "Blocked");
+        assert_eq!(PatrolScenarioReadiness::Limited.to_string(), "Limited");
+        assert_eq!(PatrolScenarioReadiness::Ready.to_string(), "Ready");
     }
 }

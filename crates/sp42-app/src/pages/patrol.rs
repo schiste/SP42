@@ -10,6 +10,8 @@ use crate::components::{PatrolScenarioPanel, PatrolSessionDigestPanel, ShellStat
 use crate::platform::auth::{bootstrap_dev_auth_session, execute_dev_auth_action};
 use crate::platform::live::fetch_live_operator_view;
 
+const DEFAULT_WIKI_ID: &str = "frwiki";
+
 #[component]
 pub fn PatrolSurface() -> impl IntoView {
     let (view_data, set_view_data) = signal(None::<LiveOperatorView>);
@@ -34,7 +36,7 @@ pub fn PatrolSurface() -> impl IntoView {
         let set_next_continue = set_next_continue;
         async move {
             let current_filters = filters.get();
-            match fetch_live_operator_view("frwiki", &current_filters).await {
+            match fetch_live_operator_view(DEFAULT_WIKI_ID, &current_filters).await {
                 Ok(view) => {
                     if view.auth.username.is_none() && !bootstrap_attempted.get_untracked() {
                         // Auto-bootstrap: try the local token bridge
@@ -48,7 +50,7 @@ pub fn PatrolSurface() -> impl IntoView {
                             Ok(status) if status.authenticated => {
                                 set_bootstrap_error.set(None);
                                 // Re-fetch now that we have a session
-                                match fetch_live_operator_view("frwiki", &current_filters).await {
+                                match fetch_live_operator_view(DEFAULT_WIKI_ID, &current_filters).await {
                                     Ok(view2) => {
                                         set_load_error.set(None);
                                         set_next_continue.set(view2.next_continue.clone());
@@ -118,7 +120,7 @@ pub fn PatrolSurface() -> impl IntoView {
                 Ok(response) => {
                     if response.accepted {
                         set_action_status
-                            .set(format!("{:?} accepted for rev {}", kind, edit.event.rev_id));
+                            .set(format!("{} accepted for rev {}", kind.label(), edit.event.rev_id));
                         let queue_len = view.queue.len();
                         if idx + 1 < queue_len {
                             set_selected_index.set(idx + 1);
@@ -128,8 +130,8 @@ pub fn PatrolSurface() -> impl IntoView {
                         load_action.dispatch_local(());
                     } else {
                         set_action_status.set(format!(
-                            "{:?} rejected: {}",
-                            kind,
+                            "{} rejected: {}",
+                            kind.label(),
                             response.message.unwrap_or_default()
                         ));
                     }

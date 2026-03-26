@@ -168,7 +168,7 @@ pub fn scenario_badges(report: &PatrolScenarioReport) -> Vec<(String, StatusTone
 #[must_use]
 pub fn scenario_storyboard_lines(report: &PatrolScenarioReport) -> Vec<String> {
     let mut lines = vec![format!(
-        "queue depth={} wiki={} readiness={:?}",
+        "queue depth={} wiki={} readiness={}",
         report.queue_depth, report.wiki_id, report.readiness
     )];
 

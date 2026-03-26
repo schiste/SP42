@@ -426,10 +426,58 @@ pub fn PatrolSurface() -> impl IntoView {
                                         </button>
                                     </div>
                                     {if let Some(ref v) = view {
+                                        let history_entries = v.action_history.entries.clone();
                                         view! {
                                             <PatrolScenarioPanel report=v.scenario_report.clone() />
                                             <PatrolSessionDigestPanel report=v.scenario_report.clone() />
                                             <ShellStatePanel model=v.shell_state.clone() />
+                                            {if history_entries.is_empty() {
+                                                view! { <span></span> }.into_any()
+                                            } else {
+                                                view! {
+                                                    <section
+                                                        style="display:grid;gap:10px;padding:17px;border-radius:6px;\
+                                                               border:1px solid rgba(148,163,184,.18);\
+                                                               background:rgba(15,23,42,.88);"
+                                                    >
+                                                        <h3 style="margin:0;font-size:13px;font-weight:700;color:#eff4ff;">
+                                                            "Action History"
+                                                        </h3>
+                                                        <div style="display:grid;gap:4px;">
+                                                            {history_entries.into_iter().map(|entry| {
+                                                                let label = entry.kind.label().to_string();
+                                                                let status_color = if entry.accepted { "#22c55e" } else { "#ef4444" };
+                                                                let status_text = if entry.accepted { "OK" } else { "Failed" };
+                                                                let detail = entry.error.or(entry.api_code).unwrap_or_default();
+                                                                view! {
+                                                                    <div style="display:flex;align-items:center;gap:7px;\
+                                                                                font-size:12px;padding:4px 0;\
+                                                                                border-block-end:1px solid rgba(148,163,184,.12);">
+                                                                        <span style="font-weight:700;color:#eff4ff;text-transform:capitalize;">
+                                                                            {label}
+                                                                        </span>
+                                                                        <span style="color:#8b9fc0;">
+                                                                            {format!("r{}", entry.rev_id)}
+                                                                        </span>
+                                                                        <span style=format!("color:{status_color};font-weight:700;")>
+                                                                            {status_text}
+                                                                        </span>
+                                                                        {if !detail.is_empty() {
+                                                                            view! {
+                                                                                <span style="color:#f59e0b;font-size:11px;">
+                                                                                    {detail}
+                                                                                </span>
+                                                                            }.into_any()
+                                                                        } else {
+                                                                            view! { <span></span> }.into_any()
+                                                                        }}
+                                                                    </div>
+                                                                }
+                                                            }).collect_view()}
+                                                        </div>
+                                                    </section>
+                                                }.into_any()
+                                            }}
                                         }.into_any()
                                     } else {
                                         view! {

@@ -1,5 +1,8 @@
+mod auth_routes;
 mod coordination;
 mod local_env;
+mod operator_live;
+mod storage_routes;
 mod wikimedia_capabilities;
 
 use std::collections::HashMap;
@@ -15,7 +18,7 @@ use axum::extract::Path;
 use axum::extract::Query;
 use axum::extract::State;
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
-use axum::http::header::{CACHE_CONTROL, CONTENT_TYPE, COOKIE, HOST, PRAGMA, SET_COOKIE};
+use axum::http::header::{CACHE_CONTROL, CONTENT_TYPE, COOKIE, HOST, PRAGMA};
 use axum::http::{HeaderMap, HeaderValue, Method, StatusCode};
 use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Redirect, Response};
@@ -51,7 +54,7 @@ use sp42_core::{
     build_shell_state_model, build_wiki_storage_plan, default_public_storage_document, diff_lines,
     execute_fetch_token, execute_liftwing_score, execute_patrol, execute_recent_changes,
     execute_rollback, execute_undo, generate_oauth_state, generate_pkce_verifier,
-    load_wiki_storage_document, parse_callback_query, parse_public_storage_document,
+    load_wiki_storage_document, parse_callback_query,
     render_wiki_storage_document_page, render_wiki_storage_index_page,
     resolve_wiki_storage_document, save_wiki_storage_document,
 };
@@ -1223,34 +1226,12 @@ enum CapabilityProbeSubject<'a> {
     Session(&'a SessionSnapshot),
 }
 
-fn operator_phase_timing(phase: &str, started_at: Instant) -> LiveOperatorPhaseTiming {
-    LiveOperatorPhaseTiming {
-        phase: phase.to_string(),
-        duration_ms: u64::try_from(started_at.elapsed().as_millis()).unwrap_or(u64::MAX),
-    }
-}
-
 const fn default_limit() -> u16 {
     15
 }
 
 const fn default_true() -> FlagState {
     FlagState::Enabled
-}
-
-async fn get_live_operator_view(
-    Path(wiki_id): Path<String>,
-    axum::extract::Query(filters): axum::extract::Query<LiveViewFilterParams>,
-    State(state): State<AppState>,
-    headers: HeaderMap,
-) -> impl IntoResponse {
-    match live_operator_view(&state, &headers, &wiki_id, &filters).await {
-        Ok(view) => Ok::<_, (StatusCode, Json<serde_json::Value>)>(Json(view)),
-        Err(error) => Err((
-            StatusCode::BAD_GATEWAY,
-            Json(serde_json::json!({ "error": error })),
-        )),
-    }
 }
 
 async fn get_operator_runtime(
@@ -1285,21 +1266,28 @@ async fn get_operator_storage_layout(
         })
 }
 
+async fn get_live_operator_view(
+    Path(wiki_id): Path<String>,
+    axum::extract::Query(filters): axum::extract::Query<LiveViewFilterParams>,
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> impl IntoResponse {
+    operator_live::get_live_operator_view(
+        Path(wiki_id),
+        axum::extract::Query(filters),
+        State(state),
+        headers,
+    )
+    .await
+}
+
 async fn get_storage_document(
     Path(wiki_id): Path<String>,
     Query(query): Query<StorageDocumentQuery>,
     State(state): State<AppState>,
     headers: HeaderMap,
 ) -> Result<Json<WikiStorageLoadedDocument>, (StatusCode, Json<serde_json::Value>)> {
-    let title = query
-        .title
-        .as_deref()
-        .filter(|value| !value.trim().is_empty())
-        .ok_or_else(|| invalid_payload("title query parameter is required"))?;
-    let context = authenticated_wiki_context(&state, &headers, &wiki_id).await?;
-    load_storage_document_with_context(&context, title)
-        .await
-        .map(Json)
+    storage_routes::get_storage_document(Path(wiki_id), Query(query), State(state), headers).await
 }
 
 async fn put_storage_document(
@@ -1308,40 +1296,7 @@ async fn put_storage_document(
     headers: HeaderMap,
     Json(payload): Json<StorageDocumentSavePayload>,
 ) -> Result<Json<WikiStorageWriteOutcome>, (StatusCode, Json<serde_json::Value>)> {
-    let StorageDocumentSavePayload {
-        document,
-        human_summary,
-        data,
-        baserevid,
-        tags,
-        watchlist,
-        create_only,
-        minor,
-        summary,
-    } = payload;
-
-    if document.title.trim().is_empty() {
-        return Err(invalid_payload("document.title is required"));
-    }
-
-    let context = authenticated_wiki_context(&state, &headers, &wiki_id).await?;
-    let csrf_token = required_csrf_token(&context).await?;
-    let request = WikiStorageWriteRequest {
-        document: document.clone(),
-        human_summary,
-        data,
-        token: csrf_token,
-        baserevid,
-        tags,
-        watchlist,
-        create_only,
-        minor,
-        summary,
-    };
-
-    save_storage_document_with_context(&context, document, request)
-        .await
-        .map(Json)
+    storage_routes::put_storage_document(Path(wiki_id), State(state), headers, Json(payload)).await
 }
 
 async fn get_logical_storage_document(
@@ -1354,14 +1309,13 @@ async fn get_logical_storage_document(
     State(state): State<AppState>,
     headers: HeaderMap,
 ) -> Result<Json<LogicalStorageDocumentView>, (StatusCode, Json<serde_json::Value>)> {
-    let document =
-        resolve_logical_storage_document(&state, &headers, &wiki_id, &realm, &kind, &query)
-            .await
-            .map_err(|message| invalid_payload(&message))?;
-    let context = authenticated_wiki_context(&state, &headers, &wiki_id).await?;
-    let loaded = load_storage_document_with_context(&context, &document.title).await?;
-
-    Ok(Json(LogicalStorageDocumentView { document, loaded }))
+    storage_routes::get_logical_storage_document(
+        Path((wiki_id, realm, kind)),
+        Query(query),
+        State(state),
+        headers,
+    )
+    .await
 }
 
 async fn put_logical_storage_document(
@@ -1375,483 +1329,14 @@ async fn put_logical_storage_document(
     headers: HeaderMap,
     Json(payload): Json<LogicalStorageDocumentSavePayload>,
 ) -> Result<Json<LogicalStorageDocumentWriteView>, (StatusCode, Json<serde_json::Value>)> {
-    let document =
-        resolve_logical_storage_document(&state, &headers, &wiki_id, &realm, &kind, &query)
-            .await
-            .map_err(|message| invalid_payload(&message))?;
-    let context = authenticated_wiki_context(&state, &headers, &wiki_id).await?;
-    let csrf_token = required_csrf_token(&context).await?;
-    let request = WikiStorageWriteRequest {
-        document: document.clone(),
-        human_summary: payload.human_summary,
-        data: payload.data,
-        token: csrf_token,
-        baserevid: payload.baserevid,
-        tags: payload.tags,
-        watchlist: payload.watchlist,
-        create_only: payload.create_only,
-        minor: payload.minor,
-        summary: payload.summary,
-    };
-
-    save_storage_document_with_context(&context, document.clone(), request)
-        .await
-        .map(|outcome| Json(LogicalStorageDocumentWriteView { document, outcome }))
-}
-
-fn public_storage_document_kind(
-    wiki_id: &str,
-    kind: &PublicStorageDocumentRouteKind,
-    slug: Option<String>,
-) -> Result<WikiStorageDocumentKind, String> {
-    match kind {
-        PublicStorageDocumentRouteKind::Preferences => {
-            Ok(WikiStorageDocumentKind::PersonalPreferences)
-        }
-        PublicStorageDocumentRouteKind::Registry => Ok(WikiStorageDocumentKind::SharedRegistry {
-            wiki_id: wiki_id.to_string(),
-        }),
-        PublicStorageDocumentRouteKind::Team => Ok(WikiStorageDocumentKind::SharedTeam {
-            wiki_id: wiki_id.to_string(),
-            team_slug: require_logical_storage_slug(&StorageDocumentKindInput::Team, slug)?,
-        }),
-        PublicStorageDocumentRouteKind::RuleSet => Ok(WikiStorageDocumentKind::SharedRuleSet {
-            wiki_id: wiki_id.to_string(),
-            rule_set_slug: require_logical_storage_slug(&StorageDocumentKindInput::RuleSet, slug)?,
-        }),
-        PublicStorageDocumentRouteKind::AuditPeriod => {
-            Ok(WikiStorageDocumentKind::SharedAuditPeriod {
-                wiki_id: wiki_id.to_string(),
-                period_slug: require_logical_storage_slug(
-                    &StorageDocumentKindInput::AuditPeriod,
-                    slug,
-                )?,
-            })
-        }
-    }
-}
-
-async fn resolve_public_storage_document(
-    state: &AppState,
-    headers: &HeaderMap,
-    wiki_id: &str,
-    kind: &PublicStorageDocumentRouteKind,
-    query: &PublicStorageDocumentQuery,
-) -> Result<WikiStorageDocument, String> {
-    let slug = query
-        .slug
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(ToOwned::to_owned);
-    let input = storage_plan_input(
-        state,
+    storage_routes::put_logical_storage_document(
+        Path((wiki_id, realm, kind)),
+        Query(query),
+        State(state),
         headers,
-        wiki_id,
-        StoragePlanRequest {
-            username_override: query.username.clone(),
-            home_wiki_id_override: query.home_wiki_id.clone(),
-            shared_owner_username_override: query.shared_owner_username.clone(),
-            team_slugs: slug.clone().into_iter().collect(),
-            rule_set_slugs: slug.clone().into_iter().collect(),
-            training_dataset_slugs: Vec::new(),
-            audit_period_slugs: slug.clone().into_iter().collect(),
-        },
-    )
-    .await?;
-    let plan = build_wiki_storage_plan(&WikiStorageConfig::default(), &input);
-    let document_kind = public_storage_document_kind(wiki_id, kind, slug)?;
-
-    resolve_wiki_storage_document(&plan, &document_kind)
-        .ok_or_else(|| format!("no public storage document matched `{document_kind:?}`"))
-}
-
-fn public_payload_for_loaded_document(
-    document: &WikiStorageDocument,
-    loaded: &WikiStorageLoadedDocument,
-) -> Result<(PublicStorageDocumentData, FlagState), String> {
-    match loaded.envelope.as_ref() {
-        Some(envelope) => parse_public_storage_document(&document.kind, envelope.data.clone())
-            .map(|payload| (payload, FlagState::Disabled))
-            .map_err(|error| error.to_string()),
-        None => default_public_storage_document(&document.kind)
-            .map(|payload| (payload, FlagState::Enabled))
-            .map_err(|error| error.to_string()),
-    }
-}
-
-async fn load_or_bootstrap_public_storage_document(
-    client: &BearerHttpClient,
-    config: &WikiConfig,
-    document: WikiStorageDocument,
-) -> Result<ResolvedPublicStorageDocument, String> {
-    let loaded = load_wiki_storage_document(client, config, &document.title)
-        .await
-        .map_err(|error| error.to_string())?;
-    if loaded.exists {
-        let (payload, defaulted) = public_payload_for_loaded_document(&document, &loaded)?;
-        return Ok(ResolvedPublicStorageDocument {
-            document,
-            loaded,
-            payload,
-            defaulted,
-        });
-    }
-
-    let payload =
-        default_public_storage_document(&document.kind).map_err(|error| error.to_string())?;
-    let csrf_token = execute_fetch_token(client, config, TokenKind::Csrf)
-        .await
-        .map_err(|error| format!("csrf token fetch failed: {error}"))?;
-    let human_summary = public_document_human_summary(&payload);
-    let save_result = save_wiki_storage_document(
-        client,
-        config,
-        &WikiStorageWriteRequest {
-            document: document.clone(),
-            human_summary,
-            data: payload
-                .clone()
-                .into_json_value()
-                .map_err(|error| error.to_string())?,
-            token: csrf_token,
-            baserevid: None,
-            tags: Vec::new(),
-            watchlist: None,
-            create_only: FlagState::Enabled,
-            minor: FlagState::Disabled,
-            summary: Some("Bootstrap SP42 public document".to_string()),
-        },
-    )
-    .await;
-    if let Err(error) = save_result
-        && !matches!(error, sp42_core::WikiStorageError::Conflict { .. })
-    {
-        return Err(error.to_string());
-    }
-
-    let loaded = load_wiki_storage_document(client, config, &document.title)
-        .await
-        .map_err(|error| error.to_string())?;
-    let (payload, _) = public_payload_for_loaded_document(&document, &loaded)?;
-    Ok(ResolvedPublicStorageDocument {
-        document,
-        loaded,
-        payload,
-        defaulted: FlagState::Enabled,
-    })
-}
-
-fn build_live_public_plan_request(username: &str, wiki_id: &str) -> PublicStorageDocumentQuery {
-    PublicStorageDocumentQuery {
-        username: Some(username.to_string()),
-        home_wiki_id: Some(wiki_id.to_string()),
-        shared_owner_username: Some(username.to_string()),
-        slug: None,
-    }
-}
-
-async fn resolve_live_public_document(
-    state: &AppState,
-    headers: &HeaderMap,
-    wiki_id: &str,
-    spec: LivePublicDocumentLoadSpec,
-    client: &BearerHttpClient,
-    config: &WikiConfig,
-    notes: &mut Vec<String>,
-) -> Option<ResolvedPublicStorageDocument> {
-    match resolve_public_storage_document(state, headers, wiki_id, &spec.kind, &spec.query).await {
-        Ok(document) => {
-            match load_or_bootstrap_public_storage_document(client, config, document).await {
-                Ok(resolved) => Some(resolved),
-                Err(error) => {
-                    notes.push(format!(
-                        "{} could not be resolved: {error}",
-                        spec.resolved_label
-                    ));
-                    None
-                }
-            }
-        }
-        Err(error) => {
-            notes.push(format!(
-                "{} could not be resolved: {error}",
-                spec.plan_label
-            ));
-            None
-        }
-    }
-}
-
-async fn load_live_operator_public_context(
-    state: &AppState,
-    headers: &HeaderMap,
-    wiki_id: &str,
-    auth: &DevAuthSessionStatus,
-    capabilities: &DevAuthCapabilityReport,
-    client: &BearerHttpClient,
-    config: &WikiConfig,
-) -> LiveOperatorPublicContextState {
-    let Some(username) = auth
-        .username
-        .clone()
-        .or_else(|| capabilities.username.clone())
-    else {
-        return LiveOperatorPublicContextState {
-            notes: vec!["Public SP42 documents were not resolved because no operator username is available yet.".to_string()],
-            ..LiveOperatorPublicContextState::default()
-        };
-    };
-
-    let mut notes = Vec::new();
-    let plan_request = build_live_public_plan_request(&username, wiki_id);
-    let preferences = resolve_live_public_document(
-        state,
-        headers,
-        wiki_id,
-        LivePublicDocumentLoadSpec {
-            kind: PublicStorageDocumentRouteKind::Preferences,
-            query: plan_request.clone(),
-            resolved_label: "Preferences document",
-            plan_label: "Preferences document plan",
-        },
-        client,
-        config,
-        &mut notes,
-    )
-    .await;
-    let registry = resolve_live_public_document(
-        state,
-        headers,
-        wiki_id,
-        LivePublicDocumentLoadSpec {
-            kind: PublicStorageDocumentRouteKind::Registry,
-            query: plan_request.clone(),
-            resolved_label: "Team registry",
-            plan_label: "Team registry plan",
-        },
-        client,
-        config,
-        &mut notes,
-    )
-    .await;
-    let active_rule_set = resolve_live_public_document(
-        state,
-        headers,
-        wiki_id,
-        LivePublicDocumentLoadSpec {
-            kind: PublicStorageDocumentRouteKind::RuleSet,
-            query: PublicStorageDocumentQuery {
-                slug: Some("default".to_string()),
-                ..plan_request.clone()
-            },
-            resolved_label: "Default rule set",
-            plan_label: "Default rule-set plan",
-        },
-        client,
-        config,
-        &mut notes,
-    )
-    .await;
-
-    let team_slug = registry
-        .as_ref()
-        .and_then(|resolved| match &resolved.payload {
-            PublicStorageDocumentData::Registry(registry) => {
-                registry.teams.first().map(|team| team.slug.clone())
-            }
-            _ => None,
-        })
-        .unwrap_or_else(|| "core".to_string());
-    let active_team = resolve_live_public_document(
-        state,
-        headers,
-        wiki_id,
-        LivePublicDocumentLoadSpec {
-            kind: PublicStorageDocumentRouteKind::Team,
-            query: PublicStorageDocumentQuery {
-                slug: Some(team_slug),
-                ..plan_request
-            },
-            resolved_label: "Active team document",
-            plan_label: "Active team plan",
-        },
-        client,
-        config,
-        &mut notes,
-    )
-    .await;
-
-    LiveOperatorPublicContextState {
-        preferences,
-        registry,
-        active_team,
-        active_rule_set,
-        audit_period_slug: Some(audit_period_slug_from_clock(state.clock.now_ms())),
-        notes,
-    }
-}
-
-fn live_operator_public_documents_model(
-    context: &LiveOperatorPublicContextState,
-) -> LiveOperatorPublicDocuments {
-    LiveOperatorPublicDocuments {
-        preferences: context
-            .preferences
-            .as_ref()
-            .and_then(|resolved| match &resolved.payload {
-                PublicStorageDocumentData::Preferences(value) => Some(value.clone()),
-                _ => None,
-            }),
-        preferences_defaulted: context
-            .preferences
-            .as_ref()
-            .map_or(FlagState::Disabled, |resolved| resolved.defaulted),
-        registry: context
-            .registry
-            .as_ref()
-            .and_then(|resolved| match &resolved.payload {
-                PublicStorageDocumentData::Registry(value) => Some(value.clone()),
-                _ => None,
-            }),
-        registry_defaulted: context
-            .registry
-            .as_ref()
-            .map_or(FlagState::Disabled, |resolved| resolved.defaulted),
-        active_team: context
-            .active_team
-            .as_ref()
-            .and_then(|resolved| match &resolved.payload {
-                PublicStorageDocumentData::Team(value) => Some(value.clone()),
-                _ => None,
-            }),
-        active_team_defaulted: context
-            .active_team
-            .as_ref()
-            .map_or(FlagState::Disabled, |resolved| resolved.defaulted),
-        active_rule_set: context.active_rule_set.as_ref().and_then(|resolved| {
-            match &resolved.payload {
-                PublicStorageDocumentData::RuleSet(value) => Some(value.clone()),
-                _ => None,
-            }
-        }),
-        active_rule_set_defaulted: context
-            .active_rule_set
-            .as_ref()
-            .map_or(FlagState::Disabled, |resolved| resolved.defaulted),
-        audit_period_slug: context.audit_period_slug.clone(),
-        notes: context.notes.clone(),
-    }
-}
-
-fn audit_period_slug_from_clock(current_ms: i64) -> String {
-    let seconds = current_ms.div_euclid(1_000);
-    let days = seconds.div_euclid(86_400);
-    let z = days + 719_468;
-    let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
-    let doe = z - era * 146_097;
-    let yoe = (doe - doe / 1_460 + doe / 36_524 - doe / 146_096) / 365;
-    let y = yoe + era * 400;
-    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-    let mp = (5 * doy + 2) / 153;
-    let month = mp + if mp < 10 { 3 } else { -9 };
-    let year = y + i64::from(month <= 2);
-    format!("{year:04}-{month:02}")
-}
-
-async fn append_public_audit_entry(
-    state: &AppState,
-    headers: &HeaderMap,
-    session: &SessionSnapshot,
-    payload: &SessionActionExecutionRequest,
-    entry: &ActionExecutionLogEntry,
-) -> Result<(), String> {
-    let config = resolved_wiki_config(state, &payload.wiki_id)?;
-    let client = BearerHttpClient::new(state.http_client.clone(), session.access_token.clone());
-    let period_slug = audit_period_slug_from_clock(entry.executed_at_ms);
-    let document = resolve_public_storage_document(
-        state,
-        headers,
-        &payload.wiki_id,
-        &PublicStorageDocumentRouteKind::AuditPeriod,
-        &PublicStorageDocumentQuery {
-            username: Some(session.username.clone()),
-            home_wiki_id: Some(payload.wiki_id.clone()),
-            shared_owner_username: Some(session.username.clone()),
-            slug: Some(period_slug.clone()),
-        },
-    )
-    .await?;
-    let resolved =
-        load_or_bootstrap_public_storage_document(&client, &config, document.clone()).await?;
-    let PublicStorageDocumentData::AuditLedger(mut ledger) = resolved.payload else {
-        return Err("resolved public audit document did not decode as an audit ledger".to_string());
-    };
-    ledger.entries.push(PublicAuditLedgerEntry {
-        timestamp_ms: entry.executed_at_ms,
-        actor: session.username.clone(),
-        action: payload.kind.label().to_string(),
-        summary: action_feedback_for_entry(entry),
-    });
-    let csrf_token = execute_fetch_token(&client, &config, TokenKind::Csrf)
-        .await
-        .map_err(|error| format!("csrf token fetch failed: {error}"))?;
-    save_wiki_storage_document(
-        &client,
-        &config,
-        &WikiStorageWriteRequest {
-            document,
-            human_summary: public_document_human_summary(&PublicStorageDocumentData::AuditLedger(
-                ledger.clone(),
-            )),
-            data: PublicStorageDocumentData::AuditLedger(ledger)
-                .into_json_value()
-                .map_err(|error| error.to_string())?,
-            token: csrf_token,
-            baserevid: resolved.loaded.revision_id,
-            tags: Vec::new(),
-            watchlist: None,
-            create_only: FlagState::Disabled,
-            minor: FlagState::Disabled,
-            summary: Some(format!(
-                "Record SP42 {} on rev {}",
-                payload.kind.label(),
-                payload.rev_id
-            )),
-        },
+        Json(payload),
     )
     .await
-    .map(|_| ())
-    .map_err(|error| error.to_string())
-}
-
-fn public_document_human_summary(payload: &PublicStorageDocumentData) -> Vec<String> {
-    match payload {
-        PublicStorageDocumentData::Preferences(document) => vec![format!(
-            "Public SP42 preferences for {} with queue limit {}.",
-            document.preferred_wiki_id, document.queue_limit
-        )],
-        PublicStorageDocumentData::Registry(document) => vec![format!(
-            "Public SP42 team registry for {} with {} teams.",
-            document.wiki_id,
-            document.teams.len()
-        )],
-        PublicStorageDocumentData::Team(document) => vec![format!(
-            "Public SP42 team definition `{}` with {} members.",
-            document.slug,
-            document.members.len()
-        )],
-        PublicStorageDocumentData::RuleSet(document) => vec![format!(
-            "Public SP42 rule set `{}` for {} namespaces.",
-            document.slug,
-            document.namespace_allowlist.len()
-        )],
-        PublicStorageDocumentData::AuditLedger(document) => vec![format!(
-            "Public SP42 audit ledger `{}` with {} entries.",
-            document.period_slug,
-            document.entries.len()
-        )],
-    }
 }
 
 async fn get_public_storage_document(
@@ -1860,29 +1345,13 @@ async fn get_public_storage_document(
     State(state): State<AppState>,
     headers: HeaderMap,
 ) -> Result<Json<PublicStorageDocumentView>, (StatusCode, Json<serde_json::Value>)> {
-    let document = resolve_public_storage_document(&state, &headers, &wiki_id, &kind, &query)
-        .await
-        .map_err(|message| invalid_payload(&message))?;
-    let context = authenticated_wiki_context(&state, &headers, &wiki_id).await?;
-    let resolved = load_or_bootstrap_public_storage_document(
-        &context.client,
-        &context.config,
-        document.clone(),
+    storage_routes::get_public_storage_document(
+        Path((wiki_id, kind)),
+        Query(query),
+        State(state),
+        headers,
     )
     .await
-    .map_err(|error| {
-        (
-            StatusCode::BAD_GATEWAY,
-            Json(serde_json::json!({ "error": error, "document": document })),
-        )
-    })?;
-
-    Ok(Json(PublicStorageDocumentView {
-        document: resolved.document,
-        loaded: resolved.loaded,
-        payload: resolved.payload,
-        defaulted: resolved.defaulted,
-    }))
 }
 
 async fn put_public_storage_document(
@@ -1892,49 +1361,14 @@ async fn put_public_storage_document(
     headers: HeaderMap,
     Json(payload): Json<PublicStorageDocumentSavePayload>,
 ) -> Result<Json<PublicStorageDocumentWriteView>, (StatusCode, Json<serde_json::Value>)> {
-    let document = resolve_public_storage_document(&state, &headers, &wiki_id, &kind, &query)
-        .await
-        .map_err(|message| invalid_payload(&message))?;
-    payload
-        .payload
-        .ensure_matches_document_kind(&document.kind)
-        .map_err(|error| invalid_payload(&error.to_string()))?;
-
-    let context = authenticated_wiki_context(&state, &headers, &wiki_id).await?;
-    let csrf_token = required_csrf_token(&context).await?;
-
-    let json_data = payload
-        .payload
-        .clone()
-        .into_json_value()
-        .map_err(|error| invalid_payload(&error.to_string()))?;
-    let human_summary = if payload.human_summary.is_empty() {
-        public_document_human_summary(&payload.payload)
-    } else {
-        payload.human_summary
-    };
-    let request = WikiStorageWriteRequest {
-        document: document.clone(),
-        human_summary,
-        data: json_data,
-        token: csrf_token,
-        baserevid: payload.baserevid,
-        tags: payload.tags,
-        watchlist: payload.watchlist,
-        create_only: payload.create_only,
-        minor: payload.minor,
-        summary: payload.summary,
-    };
-
-    save_storage_document_with_context(&context, document.clone(), request)
-        .await
-        .map(|outcome| {
-            Json(PublicStorageDocumentWriteView {
-                document,
-                payload: payload.payload,
-                outcome,
-            })
-        })
+    storage_routes::put_public_storage_document(
+        Path((wiki_id, kind)),
+        Query(query),
+        State(state),
+        headers,
+        Json(payload),
+    )
+    .await
 }
 
 async fn server_debug_summary(state: &AppState, headers: &HeaderMap) -> ServerDebugSummary {
@@ -2845,138 +2279,6 @@ fn finalize_live_operator_view(
     }
 }
 
-async fn load_live_operator_assembly(
-    state: &AppState,
-    headers: &HeaderMap,
-    wiki_id: &str,
-    filters: &LiveViewFilterParams,
-) -> Result<LiveOperatorAssembly, String> {
-    let mut phase_timings = Vec::new();
-
-    let phase_started = Instant::now();
-    let bootstrap = load_live_operator_bootstrap(state, headers, wiki_id).await?;
-    phase_timings.push(operator_phase_timing("bootstrap", phase_started));
-
-    let phase_started = Instant::now();
-    let access_token = access_token_for_request(state, headers)
-        .await
-        .ok_or_else(|| "No local Wikimedia access token is available.".to_string())?;
-    let client = BearerHttpClient::new(state.http_client.clone(), access_token.clone());
-    let public_context = load_live_operator_public_context(
-        state,
-        headers,
-        wiki_id,
-        &bootstrap.auth,
-        &bootstrap.capabilities,
-        &client,
-        &bootstrap.config,
-    )
-    .await;
-    phase_timings.push(operator_phase_timing("public-documents", phase_started));
-
-    let phase_started = Instant::now();
-    let queue_state = load_live_queue_state(
-        state,
-        wiki_id,
-        filters,
-        &bootstrap.config,
-        &client,
-        &public_context,
-    )
-    .await?;
-    phase_timings.push(operator_phase_timing("recentchanges", phase_started));
-
-    let phase_started = Instant::now();
-    let selected = queue_state
-        .selected_index
-        .and_then(|index| queue_state.queue.get(index));
-    phase_timings.push(operator_phase_timing("queue", phase_started));
-
-    let phase_started = Instant::now();
-    let selected_review = load_selected_review_state(
-        state,
-        headers,
-        wiki_id,
-        &bootstrap.config,
-        &access_token,
-        &bootstrap.auth,
-        selected,
-    )
-    .await?;
-    phase_timings.push(operator_phase_timing("selection", phase_started));
-
-    Ok(LiveOperatorAssembly {
-        bootstrap,
-        public_context,
-        queue_state,
-        selected_review,
-        telemetry_phase_timings: phase_timings,
-    })
-}
-
-fn build_live_operator_finalization(
-    wiki_id: &str,
-    total_started: Instant,
-    assembly: LiveOperatorAssembly,
-) -> LiveOperatorFinalization {
-    let selected = assembly
-        .queue_state
-        .selected_index
-        .and_then(|index| assembly.queue_state.queue.get(index));
-    let products = build_live_operator_products(
-        wiki_id,
-        &assembly.queue_state.queue,
-        selected,
-        &assembly.selected_review,
-        &LiveOperatorProductContext {
-            stream_status: &assembly.bootstrap.stream_status,
-            backlog_status: &assembly.queue_state.backlog_status,
-            auth: &assembly.bootstrap.auth,
-            action_status: &assembly.bootstrap.action_status,
-            capabilities: &assembly.bootstrap.capabilities,
-        },
-    );
-    let mut notes = build_live_operator_notes(
-        &assembly.queue_state.query,
-        &assembly.queue_state.backlog_status,
-        &assembly.queue_state.queue,
-        assembly.selected_review.scoring_context.as_ref(),
-        assembly.selected_review.diff.as_ref(),
-        assembly.selected_review.review_workbench.as_ref(),
-    );
-    notes.extend(assembly.public_context.notes.clone());
-    let telemetry = LiveOperatorTelemetry {
-        total_duration_ms: u64::try_from(total_started.elapsed().as_millis()).unwrap_or(u64::MAX),
-        phase_timings: assembly.telemetry_phase_timings,
-    };
-
-    LiveOperatorFinalization {
-        queue_state: assembly.queue_state,
-        bootstrap: assembly.bootstrap,
-        selected_review: assembly.selected_review,
-        products,
-        public_documents: live_operator_public_documents_model(&assembly.public_context),
-        telemetry,
-        notes,
-        ingestion_supervisor: None,
-    }
-}
-
-async fn live_operator_view(
-    state: &AppState,
-    headers: &HeaderMap,
-    wiki_id: &str,
-    filters: &LiveViewFilterParams,
-) -> Result<LiveOperatorView, String> {
-    let total_started = Instant::now();
-    let assembly = load_live_operator_assembly(state, headers, wiki_id, filters).await?;
-    let mut finalization = build_live_operator_finalization(wiki_id, total_started, assembly);
-    finalization.ingestion_supervisor = supervisor_snapshot_for_wiki(state, wiki_id)
-        .await
-        .map(|snapshot| snapshot.status);
-    Ok(finalize_live_operator_view(state, wiki_id, finalization))
-}
-
 async fn access_token_for_request(state: &AppState, headers: &HeaderMap) -> Option<String> {
     current_session_snapshot(state, headers, true)
         .await
@@ -3438,7 +2740,7 @@ async fn get_runtime_debug(
     State(state): State<AppState>,
     headers: HeaderMap,
 ) -> Json<RuntimeDebugStatus> {
-    Json(runtime_debug(&state, &headers).await)
+    auth_routes::get_runtime_debug(State(state), headers).await
 }
 
 async fn get_auth_login(
@@ -3446,133 +2748,7 @@ async fn get_auth_login(
     headers: HeaderMap,
     Query(query): Query<AuthLoginQuery>,
 ) -> Result<Redirect, (StatusCode, Json<serde_json::Value>)> {
-    if !state.local_oauth.has_confidential_oauth_client() {
-        return Err((
-            StatusCode::PRECONDITION_FAILED,
-            Json(serde_json::json!({
-                "error": "WIKIMEDIA_CLIENT_APPLICATION_KEY and WIKIMEDIA_CLIENT_APPLICATION_SECRET are required for OAuth login"
-            })),
-        ));
-    }
-
-    let wiki_id = query.wiki_id.as_deref().unwrap_or("frwiki");
-    let oauth_config = oauth_client_config_for_request(&state, &headers, wiki_id)?;
-    let redirect_after_login = sanitize_redirect_target(query.next.as_deref());
-    let mut rng = ServerRng;
-    let state_token = generate_oauth_state(&mut rng);
-    let verifier = generate_pkce_verifier(&mut rng);
-    let challenge = sp42_core::code_challenge_from_verifier(&verifier)
-        .map_err(|error| invalid_payload(&error.to_string()))?;
-    let authorization_url = build_authorization_url(&oauth_config, &state_token, &challenge)
-        .map_err(|error| invalid_payload(&error.to_string()))?;
-    let now = state.clock.now_ms();
-    let pending = PendingOAuthLogin {
-        wiki_id: wiki_id.to_string(),
-        state: state_token.clone(),
-        verifier,
-        redirect_uri: oauth_config.redirect_uri.to_string(),
-        redirect_after_login,
-        expires_at_ms: now.saturating_add(PENDING_OAUTH_TTL_MS),
-    };
-    store_pending_oauth_login(&state, pending).await;
-
-    Ok(Redirect::temporary(authorization_url.as_ref()))
-}
-
-fn oauth_redirect_target(pending: Option<&PendingOAuthLogin>) -> String {
-    pending.map_or_else(
-        || "/".to_string(),
-        |entry| entry.redirect_after_login.clone(),
-    )
-}
-
-fn oauth_error_redirect_response(pending: Option<&PendingOAuthLogin>, message: &str) -> Response {
-    Redirect::temporary(&redirect_with_status(
-        &oauth_redirect_target(pending),
-        "auth_error",
-        message,
-    ))
-    .into_response()
-}
-
-async fn complete_auth_callback(
-    state: &AppState,
-    headers: &HeaderMap,
-    pending: PendingOAuthLogin,
-    code: String,
-) -> Result<Response, (StatusCode, Json<serde_json::Value>)> {
-    let oauth_config = oauth_client_config_from_pending(state, &pending)?;
-    let token_response = exchange_authorization_code(
-        &state.http_client,
-        &state.local_oauth,
-        &oauth_config,
-        &code,
-        &pending.verifier,
-    )
-    .await
-    .map_err(|message| invalid_payload(&message))?;
-    let profile = fetch_oauth_profile(
-        &state.http_client,
-        &token_response.access_token,
-        &state.capability_targets.profile_url,
-    )
-    .await
-    .map_err(|message| invalid_payload(&message))?;
-    let capability_report = probe_with_targets(
-        &state.http_client,
-        Some(&token_response.access_token),
-        &state.local_oauth.status(),
-        &pending.wiki_id,
-        &state.capability_targets,
-    )
-    .await;
-    let current_ms = state.clock.now_ms();
-    let stored = StoredSession {
-        username: profile.username,
-        scopes: if capability_report.checked && capability_report.error.is_none() {
-            effective_session_scopes(&capability_report)
-        } else if !profile.grants.is_empty() {
-            profile.grants
-        } else {
-            token_response
-                .scope
-                .as_deref()
-                .map_or_else(Vec::new, split_scope_string)
-        },
-        expires_at_ms: Some(current_ms + SESSION_IDLE_TIMEOUT_MS),
-        access_token: token_response.access_token,
-        refresh_token: token_response.refresh_token,
-        upstream_access_expires_at_ms: token_response
-            .expires_in
-            .and_then(|seconds| i64::try_from(seconds).ok())
-            .map(|seconds| current_ms.saturating_add(seconds.saturating_mul(1000))),
-        bridge_mode: "wikimedia-oauth".to_string(),
-        created_at_ms: current_ms,
-        last_seen_at_ms: current_ms,
-        capability_cache: HashMap::from([(
-            pending.wiki_id.clone(),
-            CachedCapabilityReport {
-                fetched_at_ms: current_ms,
-                report: capability_report,
-            },
-        )]),
-        action_history: Vec::new(),
-    };
-    let session_id =
-        install_session(state, session_cookie_value(headers), stored, current_ms).await;
-
-    let cookie = session_cookie_header(&session_id)
-        .ok_or_else(|| internal_error("failed to build session cookie header"))?;
-
-    Ok((
-        [(SET_COOKIE, cookie)],
-        Redirect::temporary(&redirect_with_status(
-            &pending.redirect_after_login,
-            "auth",
-            "oauth-ok",
-        )),
-    )
-        .into_response())
+    auth_routes::get_auth_login(State(state), headers, Query(query)).await
 }
 
 async fn get_auth_callback(
@@ -3580,68 +2756,25 @@ async fn get_auth_callback(
     headers: HeaderMap,
     OriginalUri(uri): OriginalUri,
 ) -> Result<Response, (StatusCode, Json<serde_json::Value>)> {
-    let query = uri.query().unwrap_or_default();
-    let callback =
-        parse_callback_query(query).map_err(|error| invalid_payload(&error.to_string()))?;
-
-    let callback_state = match &callback {
-        OAuthCallback::AuthorizationCode { state, .. } => Some(state.as_str()),
-        OAuthCallback::AuthorizationError { state, .. } => state.as_deref(),
-    };
-    let pending = match callback_state {
-        Some(state_token) => take_pending_oauth_login(&state, state_token).await,
-        None => None,
-    };
-
-    match callback {
-        OAuthCallback::AuthorizationError {
-            error,
-            error_description,
-            ..
-        } => Ok(oauth_error_redirect_response(
-            pending.as_ref(),
-            &error_description.unwrap_or(error),
-        )),
-        OAuthCallback::AuthorizationCode {
-            code,
-            state: callback_state,
-        } => {
-            let Some(pending) = pending else {
-                return Err(invalid_payload("oauth callback state was not recognized"));
-            };
-            if pending.state != callback_state {
-                return Err(invalid_payload("oauth callback state mismatch"));
-            }
-            complete_auth_callback(&state, &headers, pending, code).await
-        }
-    }
+    auth_routes::get_auth_callback(State(state), headers, OriginalUri(uri)).await
 }
 
 async fn get_auth_session(
     State(state): State<AppState>,
     headers: HeaderMap,
 ) -> Json<OAuthSessionView> {
-    Json(auth_session_view(&state, &headers, true).await)
+    auth_routes::get_auth_session(State(state), headers).await
 }
 
 async fn post_auth_logout(
     State(state): State<AppState>,
     headers: HeaderMap,
 ) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
-    if let Some(session_id) = session_cookie_value(&headers) {
-        let mut sessions = state.sessions.write().await;
-        sessions.remove(&session_id);
-    }
-
-    Ok((
-        StatusCode::OK,
-        [(SET_COOKIE, expired_session_cookie_header())],
-        Json(auth_session_view_without_session(&state)),
-    ))
+    auth_routes::post_auth_logout(State(state), headers).await
 }
 
 async fn get_session(State(state): State<AppState>, headers: HeaderMap) -> impl IntoResponse {
-    Json(current_status(&state, &headers, true).await)
+    auth_routes::get_session(State(state), headers).await
 }
 
 async fn get_capabilities(
@@ -3649,7 +2782,7 @@ async fn get_capabilities(
     State(state): State<AppState>,
     headers: HeaderMap,
 ) -> Json<DevAuthCapabilityReport> {
-    Json(capability_report_for_request(&state, &headers, &wiki_id, true).await)
+    auth_routes::get_capabilities(Path(wiki_id), State(state), headers).await
 }
 
 async fn get_action_status(
@@ -3672,98 +2805,21 @@ async fn post_bootstrap_session(
     headers: HeaderMap,
     Json(payload): Json<DevAuthBootstrapRequest>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
-    validate_bootstrap_payload(&payload)?;
-
-    let Some(access_token) = state.local_oauth.access_token() else {
-        return Err((
-            StatusCode::PRECONDITION_FAILED,
-            Json(serde_json::json!({
-                "error": "WIKIMEDIA_ACCESS_TOKEN is not available in process environment, .env.wikimedia.local, or .env"
-            })),
-        ));
-    };
-
-    let capabilities = capability_report_for_local_token(&state, "frwiki", true).await;
-    let Some(username) = capabilities.username.clone() else {
-        let message = capabilities
-            .error
-            .unwrap_or_else(|| "token validation did not return a Wikimedia username".to_string());
-        return Err((
-            StatusCode::PRECONDITION_FAILED,
-            Json(serde_json::json!({ "error": message })),
-        ));
-    };
-
-    let current_ms = state.clock.now_ms();
-    let session_id = next_session_id(&state, current_ms);
-    let stored = StoredSession {
-        username,
-        scopes: effective_session_scopes(&capabilities),
-        expires_at_ms: Some(current_ms + SESSION_IDLE_TIMEOUT_MS),
-        access_token: access_token.to_string(),
-        refresh_token: None,
-        upstream_access_expires_at_ms: None,
-        bridge_mode: "local-env-token".to_string(),
-        created_at_ms: current_ms,
-        last_seen_at_ms: current_ms,
-        capability_cache: HashMap::from([(
-            "frwiki".to_string(),
-            CachedCapabilityReport {
-                fetched_at_ms: current_ms,
-                report: capabilities,
-            },
-        )]),
-        action_history: Vec::new(),
-    };
-
-    let prior_session_id = session_cookie_value(&headers);
-    let mut sessions = state.sessions.write().await;
-    prune_expired_sessions(&mut sessions, current_ms);
-    if let Some(prior_session_id) = prior_session_id {
-        sessions.remove(&prior_session_id);
-    }
-    sessions.insert(session_id.clone(), stored);
-    let status = to_status(sessions.get(&session_id), &state.local_oauth, current_ms);
-    drop(sessions);
-    info!(
-        session_id = session_id.as_str(),
-        bridge_mode = "local-env-token",
-        "bootstrapped local dev-auth session"
-    );
-
-    let cookie = session_cookie_header(&session_id)
-        .ok_or_else(|| internal_error("failed to build session cookie header"))?;
-
-    Ok((StatusCode::OK, [(SET_COOKIE, cookie)], Json(status)))
+    auth_routes::post_bootstrap_session(State(state), headers, Json(payload)).await
 }
 
 async fn delete_session(
     State(state): State<AppState>,
     headers: HeaderMap,
 ) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
-    if let Some(session_id) = session_cookie_value(&headers) {
-        let mut sessions = state.sessions.write().await;
-        sessions.remove(&session_id);
-        info!(
-            session_id = session_id.as_str(),
-            "cleared local dev-auth session"
-        );
-    }
-
-    Ok((
-        StatusCode::OK,
-        [(SET_COOKIE, expired_session_cookie_header())],
-        Json(to_status(None, &state.local_oauth, state.clock.now_ms())),
-    ))
+    auth_routes::delete_session(State(state), headers).await
 }
 
 async fn get_bootstrap_status(
     State(state): State<AppState>,
     headers: HeaderMap,
 ) -> Json<DevAuthBootstrapStatus> {
-    let auth = current_status(&state, &headers, true).await;
-
-    Json(bootstrap_status(&state, &auth))
+    auth_routes::get_bootstrap_status(State(state), headers).await
 }
 
 fn action_response_payload(
@@ -3799,7 +2855,7 @@ async fn record_action_side_effects(
     log_entry: &ActionExecutionLogEntry,
 ) -> Option<String> {
     record_action_execution(state, &session.session_id, log_entry.clone()).await;
-    append_public_audit_entry(state, headers, session, payload, log_entry)
+    storage_routes::append_public_audit_entry(state, headers, session, payload, log_entry)
         .await
         .err()
 }

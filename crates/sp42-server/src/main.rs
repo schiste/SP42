@@ -37,22 +37,24 @@ use sp42_core::{
     CoordinationRoomSummary, CoordinationSnapshot, CoordinationState, DebugSnapshotInputs,
     DevAuthBootstrapRequest, DevAuthCapabilityReport, DevAuthSessionStatus, EditorIdentity,
     FileStorage, FlagState, LiftWingRequest, LiveOperatorBackendStatus, LiveOperatorPhaseTiming,
-    LiveOperatorQuery, LiveOperatorTelemetry, LiveOperatorView, LocalOAuthConfigStatus,
-    LocalOAuthSourceReport, OAuthCallback, OAuthClientConfig, OAuthTokenResponse,
-    PatrolScenarioReportInputs, PatrolSessionDigestInputs, PublicStorageDocumentData, QueuedEdit,
-    RecentChangesQuery, ServerDebugSummary, SessionActionExecutionRequest,
-    SessionActionExecutionResponse, SessionActionKind, ShellStateInputs, Storage,
-    StreamRuntimeStatus, SystemClock, TokenKind, UndoRequest, WikiConfig, WikiStorageConfig,
-    WikiStorageDocument, WikiStorageDocumentKind, WikiStorageLoadedDocument, WikiStoragePlan,
-    WikiStoragePlanInput, WikiStorageWriteOutcome, WikiStorageWriteRequest,
-    build_authorization_url, build_debug_snapshot, build_live_operator_action_preflight,
-    build_patrol_scenario_report, build_patrol_session_digest, build_ranked_queue,
-    build_review_workbench, build_scoring_context, build_shell_state_model,
-    build_wiki_storage_plan, default_public_storage_document, diff_lines, execute_fetch_token,
-    execute_liftwing_score, execute_patrol, execute_recent_changes, execute_rollback, execute_undo,
-    generate_oauth_state, generate_pkce_verifier, load_wiki_storage_document, parse_callback_query,
-    parse_public_storage_document, render_wiki_storage_document_page,
-    render_wiki_storage_index_page, resolve_wiki_storage_document, save_wiki_storage_document,
+    LiveOperatorPublicDocuments, LiveOperatorQuery, LiveOperatorTelemetry, LiveOperatorView,
+    LocalOAuthConfigStatus, LocalOAuthSourceReport, OAuthCallback, OAuthClientConfig,
+    OAuthTokenResponse, PatrolScenarioReportInputs, PatrolSessionDigestInputs,
+    PublicAuditLedgerEntry, PublicStorageDocumentData, QueuedEdit, RecentChangesQuery,
+    ServerDebugSummary,
+    SessionActionExecutionRequest, SessionActionExecutionResponse, SessionActionKind,
+    ShellStateInputs, Storage, StreamRuntimeStatus, SystemClock, TokenKind, UndoRequest,
+    WikiConfig, WikiStorageConfig, WikiStorageDocument, WikiStorageDocumentKind,
+    WikiStorageLoadedDocument, WikiStoragePlan, WikiStoragePlanInput, WikiStorageWriteOutcome,
+    WikiStorageWriteRequest, build_authorization_url, build_debug_snapshot,
+    build_live_operator_action_preflight, build_patrol_scenario_report,
+    build_patrol_session_digest, build_ranked_queue, build_review_workbench, build_scoring_context,
+    build_shell_state_model, build_wiki_storage_plan, default_public_storage_document, diff_lines,
+    execute_fetch_token, execute_liftwing_score, execute_patrol, execute_recent_changes,
+    execute_rollback, execute_undo, generate_oauth_state, generate_pkce_verifier,
+    load_wiki_storage_document, parse_callback_query, parse_public_storage_document,
+    render_wiki_storage_document_page, render_wiki_storage_index_page,
+    resolve_wiki_storage_document, save_wiki_storage_document,
 };
 
 use crate::coordination::{
@@ -430,6 +432,24 @@ struct PublicStorageDocumentWriteView {
     document: WikiStorageDocument,
     payload: PublicStorageDocumentData,
     outcome: WikiStorageWriteOutcome,
+}
+
+#[derive(Debug, Clone)]
+struct ResolvedPublicStorageDocument {
+    document: WikiStorageDocument,
+    loaded: WikiStorageLoadedDocument,
+    payload: PublicStorageDocumentData,
+    defaulted: FlagState,
+}
+
+#[derive(Debug, Clone, Default)]
+struct LiveOperatorPublicContextState {
+    preferences: Option<ResolvedPublicStorageDocument>,
+    registry: Option<ResolvedPublicStorageDocument>,
+    active_team: Option<ResolvedPublicStorageDocument>,
+    active_rule_set: Option<ResolvedPublicStorageDocument>,
+    audit_period_slug: Option<String>,
+    notes: Vec<String>,
 }
 
 async fn current_storage_document_on_conflict(
@@ -1115,6 +1135,7 @@ struct LiveOperatorFinalization {
     bootstrap: LiveOperatorBootstrap,
     selected_review: SelectedReviewState,
     products: LiveOperatorProducts,
+    public_documents: LiveOperatorPublicDocuments,
     telemetry: LiveOperatorTelemetry,
     notes: Vec<String>,
     ingestion_supervisor: Option<sp42_core::LiveIngestionSupervisorStatus>,
@@ -1443,6 +1464,362 @@ fn public_payload_for_loaded_document(
     }
 }
 
+async fn load_or_bootstrap_public_storage_document(
+    client: &BearerHttpClient,
+    config: &WikiConfig,
+    document: WikiStorageDocument,
+) -> Result<ResolvedPublicStorageDocument, String> {
+    let loaded = load_wiki_storage_document(client, config, &document.title)
+        .await
+        .map_err(|error| error.to_string())?;
+    if loaded.exists {
+        let (payload, defaulted) = public_payload_for_loaded_document(&document, &loaded)?;
+        return Ok(ResolvedPublicStorageDocument {
+            document,
+            loaded,
+            payload,
+            defaulted,
+        });
+    }
+
+    let payload =
+        default_public_storage_document(&document.kind).map_err(|error| error.to_string())?;
+    let csrf_token = execute_fetch_token(client, config, TokenKind::Csrf)
+        .await
+        .map_err(|error| format!("csrf token fetch failed: {error}"))?;
+    let human_summary = public_document_human_summary(&payload);
+    let save_result = save_wiki_storage_document(
+        client,
+        config,
+        &WikiStorageWriteRequest {
+            document: document.clone(),
+            human_summary,
+            data: payload
+                .clone()
+                .into_json_value()
+                .map_err(|error| error.to_string())?,
+            token: csrf_token,
+            baserevid: None,
+            tags: Vec::new(),
+            watchlist: None,
+            create_only: FlagState::Enabled,
+            minor: FlagState::Disabled,
+            summary: Some("Bootstrap SP42 public document".to_string()),
+        },
+    )
+    .await;
+    if let Err(error) = save_result
+        && !matches!(error, sp42_core::WikiStorageError::Conflict { .. })
+    {
+        return Err(error.to_string());
+    }
+
+    let loaded = load_wiki_storage_document(client, config, &document.title)
+        .await
+        .map_err(|error| error.to_string())?;
+    let (payload, _) = public_payload_for_loaded_document(&document, &loaded)?;
+    Ok(ResolvedPublicStorageDocument {
+        document,
+        loaded,
+        payload,
+        defaulted: FlagState::Enabled,
+    })
+}
+
+async fn load_live_operator_public_context(
+    state: &AppState,
+    headers: &HeaderMap,
+    wiki_id: &str,
+    auth: &DevAuthSessionStatus,
+    capabilities: &DevAuthCapabilityReport,
+    client: &BearerHttpClient,
+    config: &WikiConfig,
+) -> LiveOperatorPublicContextState {
+    let Some(username) = auth
+        .username
+        .clone()
+        .or_else(|| capabilities.username.clone())
+    else {
+        return LiveOperatorPublicContextState {
+            notes: vec!["Public SP42 documents were not resolved because no operator username is available yet.".to_string()],
+            ..LiveOperatorPublicContextState::default()
+        };
+    };
+
+    let plan_request = PublicStorageDocumentQuery {
+        username: Some(username.clone()),
+        home_wiki_id: Some(wiki_id.to_string()),
+        shared_owner_username: Some(username.clone()),
+        slug: None,
+    };
+
+    let preferences_doc = resolve_public_storage_document(
+        state,
+        headers,
+        wiki_id,
+        &PublicStorageDocumentRouteKind::Preferences,
+        &plan_request,
+    )
+    .await;
+    let registry_doc = resolve_public_storage_document(
+        state,
+        headers,
+        wiki_id,
+        &PublicStorageDocumentRouteKind::Registry,
+        &plan_request,
+    )
+    .await;
+    let rules_doc = resolve_public_storage_document(
+        state,
+        headers,
+        wiki_id,
+        &PublicStorageDocumentRouteKind::RuleSet,
+        &PublicStorageDocumentQuery {
+            slug: Some("default".to_string()),
+            ..plan_request.clone()
+        },
+    )
+    .await;
+
+    let mut notes = Vec::new();
+    let preferences = match preferences_doc {
+        Ok(document) => {
+            match load_or_bootstrap_public_storage_document(client, config, document).await {
+                Ok(resolved) => Some(resolved),
+                Err(error) => {
+                    notes.push(format!(
+                        "Preferences document could not be resolved: {error}"
+                    ));
+                    None
+                }
+            }
+        }
+        Err(error) => {
+            notes.push(format!(
+                "Preferences document plan could not be resolved: {error}"
+            ));
+            None
+        }
+    };
+    let registry = match registry_doc {
+        Ok(document) => {
+            match load_or_bootstrap_public_storage_document(client, config, document).await {
+                Ok(resolved) => Some(resolved),
+                Err(error) => {
+                    notes.push(format!("Team registry could not be resolved: {error}"));
+                    None
+                }
+            }
+        }
+        Err(error) => {
+            notes.push(format!("Team registry plan could not be resolved: {error}"));
+            None
+        }
+    };
+    let active_rule_set = match rules_doc {
+        Ok(document) => {
+            match load_or_bootstrap_public_storage_document(client, config, document).await {
+                Ok(resolved) => Some(resolved),
+                Err(error) => {
+                    notes.push(format!("Default rule set could not be resolved: {error}"));
+                    None
+                }
+            }
+        }
+        Err(error) => {
+            notes.push(format!(
+                "Default rule-set plan could not be resolved: {error}"
+            ));
+            None
+        }
+    };
+
+    let team_slug = registry
+        .as_ref()
+        .and_then(|resolved| match &resolved.payload {
+            PublicStorageDocumentData::Registry(registry) => {
+                registry.teams.first().map(|team| team.slug.clone())
+            }
+            _ => None,
+        })
+        .unwrap_or_else(|| "core".to_string());
+    let active_team = match resolve_public_storage_document(
+        state,
+        headers,
+        wiki_id,
+        &PublicStorageDocumentRouteKind::Team,
+        &PublicStorageDocumentQuery {
+            slug: Some(team_slug),
+            ..plan_request
+        },
+    )
+    .await
+    {
+        Ok(document) => {
+            match load_or_bootstrap_public_storage_document(client, config, document).await {
+                Ok(resolved) => Some(resolved),
+                Err(error) => {
+                    notes.push(format!(
+                        "Active team document could not be resolved: {error}"
+                    ));
+                    None
+                }
+            }
+        }
+        Err(error) => {
+            notes.push(format!("Active team plan could not be resolved: {error}"));
+            None
+        }
+    };
+
+    LiveOperatorPublicContextState {
+        preferences,
+        registry,
+        active_team,
+        active_rule_set,
+        audit_period_slug: Some(audit_period_slug_from_clock(state.clock.now_ms())),
+        notes,
+    }
+}
+
+fn live_operator_public_documents_model(
+    context: &LiveOperatorPublicContextState,
+) -> LiveOperatorPublicDocuments {
+    LiveOperatorPublicDocuments {
+        preferences: context
+            .preferences
+            .as_ref()
+            .and_then(|resolved| match &resolved.payload {
+                PublicStorageDocumentData::Preferences(value) => Some(value.clone()),
+                _ => None,
+            }),
+        preferences_defaulted: context
+            .preferences
+            .as_ref()
+            .map_or(FlagState::Disabled, |resolved| resolved.defaulted),
+        registry: context
+            .registry
+            .as_ref()
+            .and_then(|resolved| match &resolved.payload {
+                PublicStorageDocumentData::Registry(value) => Some(value.clone()),
+                _ => None,
+            }),
+        registry_defaulted: context
+            .registry
+            .as_ref()
+            .map_or(FlagState::Disabled, |resolved| resolved.defaulted),
+        active_team: context
+            .active_team
+            .as_ref()
+            .and_then(|resolved| match &resolved.payload {
+                PublicStorageDocumentData::Team(value) => Some(value.clone()),
+                _ => None,
+            }),
+        active_team_defaulted: context
+            .active_team
+            .as_ref()
+            .map_or(FlagState::Disabled, |resolved| resolved.defaulted),
+        active_rule_set: context.active_rule_set.as_ref().and_then(|resolved| {
+            match &resolved.payload {
+                PublicStorageDocumentData::RuleSet(value) => Some(value.clone()),
+                _ => None,
+            }
+        }),
+        active_rule_set_defaulted: context
+            .active_rule_set
+            .as_ref()
+            .map_or(FlagState::Disabled, |resolved| resolved.defaulted),
+        audit_period_slug: context.audit_period_slug.clone(),
+        notes: context.notes.clone(),
+    }
+}
+
+fn audit_period_slug_from_clock(current_ms: i64) -> String {
+    let seconds = current_ms.div_euclid(1_000);
+    let days = seconds.div_euclid(86_400);
+    let z = days + 719_468;
+    let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
+    let doe = z - era * 146_097;
+    let yoe = (doe - doe / 1_460 + doe / 36_524 - doe / 146_096) / 365;
+    let y = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let month = mp + if mp < 10 { 3 } else { -9 };
+    let year = y + if month <= 2 { 1 } else { 0 };
+    format!("{year:04}-{month:02}")
+}
+
+async fn append_public_audit_entry(
+    state: &AppState,
+    headers: &HeaderMap,
+    session: &SessionSnapshot,
+    payload: &SessionActionExecutionRequest,
+    entry: &ActionExecutionLogEntry,
+) -> Result<(), String> {
+    let config = resolved_wiki_config(state, &payload.wiki_id)?;
+    let client = BearerHttpClient::new(state.http_client.clone(), session.access_token.clone());
+    let period_slug = audit_period_slug_from_clock(entry.executed_at_ms);
+    let document = resolve_public_storage_document(
+        state,
+        headers,
+        &payload.wiki_id,
+        &PublicStorageDocumentRouteKind::AuditPeriod,
+        &PublicStorageDocumentQuery {
+            username: Some(session.username.clone()),
+            home_wiki_id: Some(payload.wiki_id.clone()),
+            shared_owner_username: Some(session.username.clone()),
+            slug: Some(period_slug.clone()),
+        },
+    )
+    .await?;
+    let resolved =
+        load_or_bootstrap_public_storage_document(&client, &config, document.clone()).await?;
+    let mut ledger = match resolved.payload {
+        PublicStorageDocumentData::AuditLedger(ledger) => ledger,
+        _ => {
+            return Err(
+                "resolved public audit document did not decode as an audit ledger".to_string(),
+            );
+        }
+    };
+    ledger.entries.push(PublicAuditLedgerEntry {
+        timestamp_ms: entry.executed_at_ms,
+        actor: session.username.clone(),
+        action: payload.kind.label().to_string(),
+        summary: action_feedback_for_entry(entry),
+    });
+    let csrf_token = execute_fetch_token(&client, &config, TokenKind::Csrf)
+        .await
+        .map_err(|error| format!("csrf token fetch failed: {error}"))?;
+    save_wiki_storage_document(
+        &client,
+        &config,
+        &WikiStorageWriteRequest {
+            document,
+            human_summary: public_document_human_summary(&PublicStorageDocumentData::AuditLedger(
+                ledger.clone(),
+            )),
+            data: PublicStorageDocumentData::AuditLedger(ledger)
+                .into_json_value()
+                .map_err(|error| error.to_string())?,
+            token: csrf_token,
+            baserevid: resolved.loaded.revision_id,
+            tags: Vec::new(),
+            watchlist: None,
+            create_only: FlagState::Disabled,
+            minor: FlagState::Disabled,
+            summary: Some(format!(
+                "Record SP42 {} on rev {}",
+                payload.kind.label(),
+                payload.rev_id
+            )),
+        },
+    )
+    .await
+    .map(|_| ())
+    .map_err(|error| error.to_string())
+}
+
 fn public_document_human_summary(payload: &PublicStorageDocumentData) -> Vec<String> {
     match payload {
         PublicStorageDocumentData::Preferences(document) => vec![format!(
@@ -1487,31 +1864,20 @@ async fn get_public_storage_document(
     let config =
         resolved_wiki_config(&state, &wiki_id).map_err(|message| invalid_payload(&message))?;
     let client = BearerHttpClient::new(state.http_client.clone(), access_token);
-    let loaded = load_wiki_storage_document(&client, &config, &document.title)
+    let resolved = load_or_bootstrap_public_storage_document(&client, &config, document.clone())
         .await
         .map_err(|error| {
             (
                 StatusCode::BAD_GATEWAY,
-                Json(serde_json::json!({ "error": error.to_string(), "document": document })),
-            )
-        })?;
-    let (payload, defaulted) =
-        public_payload_for_loaded_document(&document, &loaded).map_err(|message| {
-            (
-                StatusCode::BAD_GATEWAY,
-                Json(serde_json::json!({
-                    "error": message,
-                    "document": document,
-                    "loaded": loaded,
-                })),
+                Json(serde_json::json!({ "error": error, "document": document })),
             )
         })?;
 
     Ok(Json(PublicStorageDocumentView {
-        document,
-        loaded,
-        payload,
-        defaulted,
+        document: resolved.document,
+        loaded: resolved.loaded,
+        payload: resolved.payload,
+        defaulted: resolved.defaulted,
     }))
 }
 
@@ -2045,13 +2411,120 @@ fn live_operator_query_from_filters(filters: &LiveViewFilterParams) -> LiveOpera
     }
 }
 
+fn apply_public_defaults_to_live_query(
+    mut query: LiveOperatorQuery,
+    context: &LiveOperatorPublicContextState,
+) -> LiveOperatorQuery {
+    if let Some(preferences) =
+        context
+            .preferences
+            .as_ref()
+            .and_then(|resolved| match &resolved.payload {
+                PublicStorageDocumentData::Preferences(value) => Some(value),
+                _ => None,
+            })
+    {
+        if query.limit == default_limit() {
+            query.limit = preferences.queue_limit.clamp(1, 500);
+        }
+        if !preferences.hide_bots {
+            query.include_bots = FlagState::Enabled;
+        }
+        if preferences.hide_minor {
+            query.include_minor = FlagState::Disabled;
+        }
+        if !preferences.editor_types.is_empty() {
+            query.include_registered = FlagState::from(
+                preferences
+                    .editor_types
+                    .iter()
+                    .any(|value| value == "registered"),
+            );
+            query.include_anonymous = FlagState::from(
+                preferences
+                    .editor_types
+                    .iter()
+                    .any(|value| value == "anonymous"),
+            );
+            query.include_temporary = FlagState::from(
+                preferences
+                    .editor_types
+                    .iter()
+                    .any(|value| value == "temporary"),
+            );
+        }
+        if query.tag_filter.is_none() {
+            query.tag_filter = preferences.tag_filters.first().cloned();
+        }
+    }
+
+    if let Some(rule_set) =
+        context
+            .active_rule_set
+            .as_ref()
+            .and_then(|resolved| match &resolved.payload {
+                PublicStorageDocumentData::RuleSet(value) => Some(value),
+                _ => None,
+            })
+    {
+        if query.namespaces.is_empty() && !rule_set.namespace_allowlist.is_empty() {
+            query.namespaces = rule_set.namespace_allowlist.clone();
+        }
+        if rule_set.hide_minor {
+            query.include_minor = FlagState::Disabled;
+        }
+        if rule_set.hide_bots {
+            query.include_bots = FlagState::Disabled;
+        }
+        if query.tag_filter.is_none() {
+            query.tag_filter = rule_set.tag_filters.first().cloned();
+        }
+    }
+
+    query
+}
+
+fn filter_ranked_queue(mut queue: Vec<QueuedEdit>, query: &LiveOperatorQuery) -> Vec<QueuedEdit> {
+    if let Some(min_score) = query.min_score {
+        queue.retain(|item| item.score.total >= min_score);
+    }
+    if !query.include_registered.is_enabled() {
+        queue.retain(|item| !matches!(item.event.performer, EditorIdentity::Registered { .. }));
+    }
+    if !query.include_temporary.is_enabled() {
+        queue.retain(|item| !matches!(item.event.performer, EditorIdentity::Temporary { .. }));
+    }
+    if !query.include_anonymous.is_enabled() {
+        queue.retain(|item| !matches!(item.event.performer, EditorIdentity::Anonymous { .. }));
+    }
+    if !query.include_bots.is_enabled() {
+        queue.retain(|item| !item.event.is_bot.is_enabled());
+    }
+    if !query.include_minor.is_enabled() {
+        queue.retain(|item| !item.event.is_minor.is_enabled());
+    }
+    if !query.include_new_pages.is_enabled() {
+        queue.retain(|item| !item.event.is_new_page.is_enabled());
+    }
+    if query.unpatrolled_only.is_enabled() {
+        queue.retain(|item| !item.event.is_patrolled.is_enabled());
+    }
+    if !query.namespaces.is_empty() {
+        queue.retain(|item| query.namespaces.contains(&item.event.namespace));
+    }
+    if let Some(tag_filter) = query.tag_filter.as_ref() {
+        queue.retain(|item| item.event.tags.iter().any(|tag| tag == tag_filter));
+    }
+    queue.truncate(usize::from(query.limit));
+    queue
+}
+
 fn queue_state_from_supervisor(
     wiki_id: &str,
     query: LiveOperatorQuery,
     snapshot: IngestionSupervisorSnapshot,
 ) -> LiveQueueState {
-    let mut queue = snapshot.queue;
-    queue.truncate(usize::from(query.limit));
+    let queue = filter_ranked_queue(snapshot.queue, &query);
     LiveQueueState {
         query,
         batch: sp42_core::RecentChangesBatch {
@@ -2133,17 +2606,11 @@ async fn queue_state_from_recentchanges(
             .map_err(|error| format!("recentchanges fetch failed: {error}"))?
     };
     let backlog_status = backlog_runtime.status();
-    let mut queue = build_ranked_queue(batch.events.clone(), &config.scoring)
-        .map_err(|error| format!("queue build failed: {error}"))?;
-    if let Some(min_score) = query.min_score {
-        queue.retain(|item| item.score.total >= min_score);
-    }
-    if !query.include_registered.is_enabled() {
-        queue.retain(|item| !matches!(item.event.performer, EditorIdentity::Registered { .. }));
-    }
-    if !query.include_temporary.is_enabled() {
-        queue.retain(|item| !matches!(item.event.performer, EditorIdentity::Temporary { .. }));
-    }
+    let queue = filter_ranked_queue(
+        build_ranked_queue(batch.events.clone(), &config.scoring)
+            .map_err(|error| format!("queue build failed: {error}"))?,
+        &query,
+    );
 
     Ok(LiveQueueState {
         query,
@@ -2160,8 +2627,12 @@ async fn load_live_queue_state(
     filters: &LiveViewFilterParams,
     config: &WikiConfig,
     client: &BearerHttpClient,
+    public_context: &LiveOperatorPublicContextState,
 ) -> Result<LiveQueueState, String> {
-    let query = live_operator_query_from_filters(filters);
+    let query = apply_public_defaults_to_live_query(
+        live_operator_query_from_filters(filters),
+        public_context,
+    );
     if uses_default_live_filters(&query)
         && let Some(snapshot) = supervisor_snapshot_for_wiki(state, wiki_id).await
         && snapshot.status.active
@@ -2350,6 +2821,7 @@ fn finalize_live_operator_view(
         bootstrap,
         selected_review,
         products,
+        public_documents,
         telemetry,
         notes,
         ingestion_supervisor,
@@ -2376,6 +2848,7 @@ fn finalize_live_operator_view(
         action_status: bootstrap.action_status,
         action_history: bootstrap.action_history,
         action_preflight: products.action_preflight,
+        public_documents,
         ingestion_supervisor,
         coordination_room: selected_review.coordination_room,
         coordination_state: selected_review.coordination_state,
@@ -2405,8 +2878,28 @@ async fn live_operator_view(
         .await
         .ok_or_else(|| "No local Wikimedia access token is available.".to_string())?;
     let client = BearerHttpClient::new(state.http_client.clone(), access_token.clone());
-    let queue_state =
-        load_live_queue_state(state, wiki_id, filters, &bootstrap.config, &client).await?;
+    let public_context = load_live_operator_public_context(
+        state,
+        headers,
+        wiki_id,
+        &bootstrap.auth,
+        &bootstrap.capabilities,
+        &client,
+        &bootstrap.config,
+    )
+    .await;
+    phase_timings.push(operator_phase_timing("public-documents", phase_started));
+
+    let phase_started = Instant::now();
+    let queue_state = load_live_queue_state(
+        state,
+        wiki_id,
+        filters,
+        &bootstrap.config,
+        &client,
+        &public_context,
+    )
+    .await?;
     phase_timings.push(operator_phase_timing("recentchanges", phase_started));
 
     let phase_started = Instant::now();
@@ -2453,6 +2946,8 @@ async fn live_operator_view(
         selected_review.diff.as_ref(),
         selected_review.review_workbench.as_ref(),
     );
+    let mut notes = notes;
+    notes.extend(public_context.notes.clone());
     let ingestion_supervisor = supervisor_snapshot_for_wiki(state, wiki_id)
         .await
         .map(|snapshot| snapshot.status);
@@ -2465,6 +2960,7 @@ async fn live_operator_view(
             bootstrap,
             selected_review,
             products,
+            public_documents: live_operator_public_documents_model(&public_context),
             telemetry,
             notes,
             ingestion_supervisor,
@@ -3206,6 +3702,7 @@ fn action_response_payload(
 async fn handle_action_success(
     state: &AppState,
     session: &SessionSnapshot,
+    headers: &HeaderMap,
     payload: &SessionActionExecutionRequest,
     executed_at_ms: i64,
     response: sp42_core::HttpResponse,
@@ -3215,41 +3712,44 @@ async fn handle_action_success(
     let response_summary =
         sp42_core::parse_action_response_summary(&response, payload.kind.label())
             .map_err(|error| action_error_response(&error))?;
-    record_action_execution(
-        state,
-        &session.session_id,
-        build_action_log_entry(
-            executed_at_ms,
-            payload,
-            ActionLogOutcome {
-                accepted: true,
-                http_status: Some(response.status),
-                api_code: response_summary.api_code.clone(),
-                retryable: response_summary.retryable,
-                warnings: response_summary.warnings.clone(),
-                result: response_summary.result.clone(),
-                response_preview: Some(response_preview.clone()),
-                error: None,
-            },
-        ),
-    )
-    .await;
+    let log_entry = build_action_log_entry(
+        executed_at_ms,
+        payload,
+        ActionLogOutcome {
+            accepted: true,
+            http_status: Some(response.status),
+            api_code: response_summary.api_code.clone(),
+            retryable: response_summary.retryable,
+            warnings: response_summary.warnings.clone(),
+            result: response_summary.result.clone(),
+            response_preview: Some(response_preview.clone()),
+            error: None,
+        },
+    );
+    record_action_execution(state, &session.session_id, log_entry.clone()).await;
+    let audit_warning = append_public_audit_entry(state, headers, session, payload, &log_entry)
+        .await
+        .err();
+    let mut response_payload = action_response_payload(
+        payload,
+        session.username.clone(),
+        &response,
+        &response_summary,
+        &response_preview,
+    );
+    if let Some(warning) = audit_warning {
+        response_payload
+            .warnings
+            .push(format!("public audit write failed: {warning}"));
+    }
 
-    Ok((
-        StatusCode::OK,
-        Json(action_response_payload(
-            payload,
-            session.username.clone(),
-            &response,
-            &response_summary,
-            &response_preview,
-        )),
-    ))
+    Ok((StatusCode::OK, Json(response_payload)))
 }
 
 async fn handle_action_failure(
     state: &AppState,
     session: &SessionSnapshot,
+    headers: &HeaderMap,
     payload: &SessionActionExecutionRequest,
     executed_at_ms: i64,
     error: ActionError,
@@ -3265,26 +3765,31 @@ async fn handle_action_failure(
     let api_error = action_error_response(&error);
     let status = api_error.0.as_u16();
     let error_message = action_error_message(&api_error.1);
-    record_action_execution(
-        state,
-        &session.session_id,
-        build_action_log_entry(
-            executed_at_ms,
-            payload,
-            ActionLogOutcome {
-                accepted: false,
-                http_status: logged_http_status.or(Some(status)),
-                api_code,
-                retryable,
-                warnings: Vec::new(),
-                result: None,
-                response_preview: None,
-                error: Some(error_message),
-            },
-        ),
-    )
-    .await;
-    api_error
+    let log_entry = build_action_log_entry(
+        executed_at_ms,
+        payload,
+        ActionLogOutcome {
+            accepted: false,
+            http_status: logged_http_status.or(Some(status)),
+            api_code,
+            retryable,
+            warnings: Vec::new(),
+            result: None,
+            response_preview: None,
+            error: Some(error_message),
+        },
+    );
+    record_action_execution(state, &session.session_id, log_entry.clone()).await;
+    let audit_warning = append_public_audit_entry(state, headers, session, payload, &log_entry)
+        .await
+        .err();
+    if let Some(warning) = audit_warning {
+        let mut body = api_error.1.0;
+        body["audit_warning"] = serde_json::Value::String(warning);
+        (api_error.0, Json(body))
+    } else {
+        api_error
+    }
 }
 
 async fn post_execute_action(
@@ -3318,12 +3823,22 @@ async fn post_execute_action(
 
     match outcome {
         Ok(response) => {
-            let result =
-                handle_action_success(&state, &session, &payload, executed_at_ms, response).await?;
+            let result = handle_action_success(
+                &state,
+                &session,
+                &headers,
+                &payload,
+                executed_at_ms,
+                response,
+            )
+            .await?;
             Ok(result)
         }
         Err(error) => {
-            Err(handle_action_failure(&state, &session, &payload, executed_at_ms, error).await)
+            Err(
+                handle_action_failure(&state, &session, &headers, &payload, executed_at_ms, error)
+                    .await,
+            )
         }
     }
 }

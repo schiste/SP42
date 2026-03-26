@@ -182,5 +182,5 @@ pub use wiki_storage::{
     WikiStorageWriteOutcome, WikiStorageWriteRequest, build_wiki_storage_document_load_request,
     build_wiki_storage_plan, load_wiki_storage_document, parse_wiki_storage_document_response,
     parse_wiki_storage_payload_envelope, render_wiki_storage_document_page,
-    render_wiki_storage_index_page, save_wiki_storage_document,
+    render_wiki_storage_index_page, resolve_wiki_storage_document, save_wiki_storage_document,
 };

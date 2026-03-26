@@ -214,6 +214,25 @@ pub fn build_wiki_storage_plan(
     }
 }
 
+#[must_use]
+pub fn resolve_wiki_storage_document(
+    plan: &WikiStoragePlan,
+    kind: &WikiStorageDocumentKind,
+) -> Option<WikiStorageDocument> {
+    if &plan.personal_root.kind == kind {
+        return Some(plan.personal_root.clone());
+    }
+    if &plan.shared_root.kind == kind {
+        return Some(plan.shared_root.clone());
+    }
+
+    plan.personal_documents
+        .iter()
+        .chain(plan.shared_documents.iter())
+        .find(|document| &document.kind == kind)
+        .cloned()
+}
+
 fn build_personal_documents(
     config: &WikiStorageConfig,
     input: &WikiStoragePlanInput,
@@ -826,11 +845,11 @@ mod tests {
         PAYLOAD_BEGIN_MARKER, PAYLOAD_END_MARKER, WikiStorageConfig, WikiStoragePlanInput,
         WikiStorageWriteRequest, build_wiki_storage_plan, load_wiki_storage_document,
         parse_wiki_storage_payload_envelope, render_wiki_storage_document_page,
-        render_wiki_storage_index_page, save_wiki_storage_document,
+        render_wiki_storage_index_page, resolve_wiki_storage_document, save_wiki_storage_document,
     };
     use crate::config_parser::parse_wiki_config;
     use crate::traits::StubHttpClient;
-    use crate::{FlagState, HttpResponse, WikiStorageError};
+    use crate::{FlagState, HttpResponse, WikiStorageDocumentKind, WikiStorageError};
 
     fn sample_input() -> WikiStoragePlanInput {
         WikiStoragePlanInput {
@@ -875,6 +894,24 @@ mod tests {
         assert!(body.contains("== Linked Pages =="));
         assert!(body.contains("[[User:Schiste/SP42/Profile]]"));
         assert!(body.contains("Personal durable state lives on frwiki"));
+    }
+
+    #[test]
+    fn resolves_documents_by_kind_from_plan() {
+        let plan = build_wiki_storage_plan(&WikiStorageConfig::default(), &sample_input());
+        let profile =
+            resolve_wiki_storage_document(&plan, &WikiStorageDocumentKind::PersonalProfile)
+                .expect("profile should resolve");
+        assert_eq!(profile.title, "User:Schiste/SP42/Profile");
+
+        let shared_registry = resolve_wiki_storage_document(
+            &plan,
+            &WikiStorageDocumentKind::SharedRegistry {
+                wiki_id: "frwiki".to_string(),
+            },
+        )
+        .expect("shared registry should resolve");
+        assert_eq!(shared_registry.title, "User:Schiste/SP42/frwiki/Registry");
     }
 
     #[test]

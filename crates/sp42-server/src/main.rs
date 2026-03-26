@@ -42,15 +42,16 @@ use sp42_core::{
     PatrolScenarioReportInputs, PatrolSessionDigestInputs, QueuedEdit, RecentChangesQuery,
     ServerDebugSummary, SessionActionExecutionRequest, SessionActionExecutionResponse,
     SessionActionKind, ShellStateInputs, Storage, StreamRuntimeStatus, SystemClock, TokenKind,
-    UndoRequest, WikiConfig, WikiStorageConfig, WikiStorageLoadedDocument, WikiStoragePlan,
-    WikiStoragePlanInput, WikiStorageWriteOutcome, WikiStorageWriteRequest,
-    build_authorization_url, build_debug_snapshot, build_live_operator_action_preflight,
-    build_patrol_scenario_report, build_patrol_session_digest, build_ranked_queue,
-    build_review_workbench, build_scoring_context, build_shell_state_model,
-    build_wiki_storage_plan, diff_lines, execute_fetch_token, execute_liftwing_score,
-    execute_patrol, execute_recent_changes, execute_rollback, execute_undo, generate_oauth_state,
-    generate_pkce_verifier, load_wiki_storage_document, parse_callback_query,
-    render_wiki_storage_document_page, render_wiki_storage_index_page, save_wiki_storage_document,
+    UndoRequest, WikiConfig, WikiStorageConfig, WikiStorageDocument, WikiStorageDocumentKind,
+    WikiStorageLoadedDocument, WikiStoragePlan, WikiStoragePlanInput, WikiStorageWriteOutcome,
+    WikiStorageWriteRequest, build_authorization_url, build_debug_snapshot,
+    build_live_operator_action_preflight, build_patrol_scenario_report,
+    build_patrol_session_digest, build_ranked_queue, build_review_workbench, build_scoring_context,
+    build_shell_state_model, build_wiki_storage_plan, diff_lines, execute_fetch_token,
+    execute_liftwing_score, execute_patrol, execute_recent_changes, execute_rollback, execute_undo,
+    generate_oauth_state, generate_pkce_verifier, load_wiki_storage_document, parse_callback_query,
+    render_wiki_storage_document_page, render_wiki_storage_index_page,
+    resolve_wiki_storage_document, save_wiki_storage_document,
 };
 
 use crate::coordination::{
@@ -300,6 +301,37 @@ struct StorageDocumentQuery {
     title: Option<String>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+enum StorageDocumentRealmInput {
+    Personal,
+    Shared,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+enum StorageDocumentKindInput {
+    Index,
+    Profile,
+    Preferences,
+    Queue,
+    Workspace,
+    Labels,
+    Registry,
+    Team,
+    RuleSet,
+    TrainingDataset,
+    AuditPeriod,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Deserialize, serde::Serialize)]
+struct LogicalStorageDocumentQuery {
+    username: Option<String>,
+    home_wiki_id: Option<String>,
+    shared_owner_username: Option<String>,
+    slug: Option<String>,
+}
+
 #[derive(Debug, Clone, PartialEq, serde::Deserialize, serde::Serialize)]
 struct StorageDocumentSavePayload {
     document: sp42_core::WikiStorageDocument,
@@ -313,6 +345,43 @@ struct StorageDocumentSavePayload {
     create_only: FlagState,
     minor: FlagState,
     summary: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+struct StoragePlanRequest {
+    username_override: Option<String>,
+    home_wiki_id_override: Option<String>,
+    shared_owner_username_override: Option<String>,
+    team_slugs: Vec<String>,
+    rule_set_slugs: Vec<String>,
+    training_dataset_slugs: Vec<String>,
+    audit_period_slugs: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, serde::Deserialize, serde::Serialize)]
+struct LogicalStorageDocumentSavePayload {
+    #[serde(default)]
+    human_summary: Vec<String>,
+    data: serde_json::Value,
+    baserevid: Option<u64>,
+    #[serde(default)]
+    tags: Vec<String>,
+    watchlist: Option<String>,
+    create_only: FlagState,
+    minor: FlagState,
+    summary: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize, serde::Serialize)]
+struct LogicalStorageDocumentView {
+    document: WikiStorageDocument,
+    loaded: WikiStorageLoadedDocument,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize, serde::Serialize)]
+struct LogicalStorageDocumentWriteView {
+    document: WikiStorageDocument,
+    outcome: WikiStorageWriteOutcome,
 }
 
 #[tokio::main]
@@ -617,6 +686,10 @@ fn build_router(state: AppState) -> Router {
         .route(
             "/operator/storage/document/{wiki_id}",
             get(get_storage_document).put(put_storage_document),
+        )
+        .route(
+            "/operator/storage/logical/{wiki_id}/{realm}/{kind}",
+            get(get_logical_storage_document).put(put_logical_storage_document),
         )
         .route("/ws/{wiki_id}", get(coordination_socket))
         .route("/dev/auth/session", get(get_session).delete(delete_session))
@@ -1105,6 +1178,106 @@ async fn put_storage_document(
     })
 }
 
+async fn get_logical_storage_document(
+    Path((wiki_id, realm, kind)): Path<(
+        String,
+        StorageDocumentRealmInput,
+        StorageDocumentKindInput,
+    )>,
+    Query(query): Query<LogicalStorageDocumentQuery>,
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Result<Json<LogicalStorageDocumentView>, (StatusCode, Json<serde_json::Value>)> {
+    let document =
+        resolve_logical_storage_document(&state, &headers, &wiki_id, &realm, &kind, &query)
+            .await
+            .map_err(|message| invalid_payload(&message))?;
+    let access_token = access_token_for_request(&state, &headers)
+        .await
+        .ok_or_else(|| unauthorized_error("No authenticated Wikimedia session is active."))?;
+    let config =
+        resolved_wiki_config(&state, &wiki_id).map_err(|message| invalid_payload(&message))?;
+    let client = BearerHttpClient::new(state.http_client.clone(), access_token);
+    let loaded = load_wiki_storage_document(&client, &config, &document.title)
+        .await
+        .map_err(|error| {
+            (
+                StatusCode::BAD_GATEWAY,
+                Json(serde_json::json!({ "error": error.to_string() })),
+            )
+        })?;
+
+    Ok(Json(LogicalStorageDocumentView { document, loaded }))
+}
+
+async fn put_logical_storage_document(
+    Path((wiki_id, realm, kind)): Path<(
+        String,
+        StorageDocumentRealmInput,
+        StorageDocumentKindInput,
+    )>,
+    Query(query): Query<LogicalStorageDocumentQuery>,
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(payload): Json<LogicalStorageDocumentSavePayload>,
+) -> Result<Json<LogicalStorageDocumentWriteView>, (StatusCode, Json<serde_json::Value>)> {
+    let document =
+        resolve_logical_storage_document(&state, &headers, &wiki_id, &realm, &kind, &query)
+            .await
+            .map_err(|message| invalid_payload(&message))?;
+    let access_token = access_token_for_request(&state, &headers)
+        .await
+        .ok_or_else(|| unauthorized_error("No authenticated Wikimedia session is active."))?;
+    let config =
+        resolved_wiki_config(&state, &wiki_id).map_err(|message| invalid_payload(&message))?;
+    let client = BearerHttpClient::new(state.http_client.clone(), access_token);
+    let csrf_token = execute_fetch_token(&client, &config, TokenKind::Csrf)
+        .await
+        .map_err(|error| {
+            (
+                StatusCode::BAD_GATEWAY,
+                Json(serde_json::json!({ "error": format!("csrf token fetch failed: {error}") })),
+            )
+        })?;
+
+    save_wiki_storage_document(
+        &client,
+        &config,
+        &WikiStorageWriteRequest {
+            document: document.clone(),
+            human_summary: payload.human_summary,
+            data: payload.data,
+            token: csrf_token,
+            baserevid: payload.baserevid,
+            tags: payload.tags,
+            watchlist: payload.watchlist,
+            create_only: payload.create_only,
+            minor: payload.minor,
+            summary: payload.summary,
+        },
+    )
+    .await
+    .map(|outcome| {
+        Json(LogicalStorageDocumentWriteView {
+            document: document.clone(),
+            outcome,
+        })
+    })
+    .map_err(|error| {
+        let status = match error {
+            sp42_core::WikiStorageError::Conflict { .. } => StatusCode::CONFLICT,
+            _ => StatusCode::BAD_GATEWAY,
+        };
+        (
+            status,
+            Json(serde_json::json!({
+                "error": error.to_string(),
+                "document": document,
+            })),
+        )
+    })
+}
+
 async fn server_debug_summary(state: &AppState, headers: &HeaderMap) -> ServerDebugSummary {
     let auth = current_status(state, headers, true).await;
     let oauth = state.local_oauth.status();
@@ -1190,31 +1363,21 @@ async fn operator_storage_layout_view(
     wiki_id: &str,
     query: &StorageLayoutQuery,
 ) -> Result<OperatorStorageLayoutView, String> {
-    let session = current_session_snapshot(state, headers, false).await;
-    let username = query
-        .username
-        .clone()
-        .or_else(|| session.as_ref().map(|session| session.username.clone()))
-        .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty())
-        .ok_or_else(|| "username is required via query or authenticated session".to_string())?;
-    let shared_owner_username = query
-        .shared_owner_username
-        .clone()
-        .unwrap_or_else(|| username.clone());
-    let input = WikiStoragePlanInput {
-        username: username.clone(),
-        home_wiki_id: query
-            .home_wiki_id
-            .clone()
-            .unwrap_or_else(|| wiki_id.to_string()),
-        target_wiki_id: wiki_id.to_string(),
-        shared_owner_username,
-        team_slugs: query.team_slug.clone().into_iter().collect(),
-        rule_set_slugs: query.rule_set_slug.clone().into_iter().collect(),
-        training_dataset_slugs: query.training_dataset_slug.clone().into_iter().collect(),
-        audit_period_slugs: query.audit_period_slug.clone().into_iter().collect(),
-    };
+    let input = storage_plan_input(
+        state,
+        headers,
+        wiki_id,
+        StoragePlanRequest {
+            username_override: query.username.clone(),
+            home_wiki_id_override: query.home_wiki_id.clone(),
+            shared_owner_username_override: query.shared_owner_username.clone(),
+            team_slugs: query.team_slug.clone().into_iter().collect(),
+            rule_set_slugs: query.rule_set_slug.clone().into_iter().collect(),
+            training_dataset_slugs: query.training_dataset_slug.clone().into_iter().collect(),
+            audit_period_slugs: query.audit_period_slug.clone().into_iter().collect(),
+        },
+    )
+    .await?;
     let plan = build_wiki_storage_plan(&WikiStorageConfig::default(), &input);
     let personal_index_page =
         render_wiki_storage_index_page(&plan.personal_root, &plan.personal_documents, &plan.notes);
@@ -1235,7 +1398,7 @@ async fn operator_storage_layout_view(
                 &serde_json::json!({
                     "wiki_id": wiki_id,
                     "owner": input.shared_owner_username,
-                    "subject": username,
+                    "subject": input.username,
                     "document": document.title,
                 }),
             )
@@ -1253,6 +1416,146 @@ async fn operator_storage_layout_view(
         shared_registry_page,
         sample_document_pages,
     })
+}
+
+async fn storage_plan_input(
+    state: &AppState,
+    headers: &HeaderMap,
+    wiki_id: &str,
+    request: StoragePlanRequest,
+) -> Result<WikiStoragePlanInput, String> {
+    let session = current_session_snapshot(state, headers, false).await;
+    let username = request
+        .username_override
+        .or_else(|| session.as_ref().map(|session| session.username.clone()))
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| "username is required via query or authenticated session".to_string())?;
+    let shared_owner_username = request
+        .shared_owner_username_override
+        .unwrap_or_else(|| username.clone());
+
+    Ok(WikiStoragePlanInput {
+        username,
+        home_wiki_id: request
+            .home_wiki_id_override
+            .unwrap_or_else(|| wiki_id.to_string()),
+        target_wiki_id: wiki_id.to_string(),
+        shared_owner_username,
+        team_slugs: request.team_slugs,
+        rule_set_slugs: request.rule_set_slugs,
+        training_dataset_slugs: request.training_dataset_slugs,
+        audit_period_slugs: request.audit_period_slugs,
+    })
+}
+
+async fn resolve_logical_storage_document(
+    state: &AppState,
+    headers: &HeaderMap,
+    wiki_id: &str,
+    realm: &StorageDocumentRealmInput,
+    kind: &StorageDocumentKindInput,
+    query: &LogicalStorageDocumentQuery,
+) -> Result<WikiStorageDocument, String> {
+    let slug = query
+        .slug
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned);
+    let input = storage_plan_input(
+        state,
+        headers,
+        wiki_id,
+        StoragePlanRequest {
+            username_override: query.username.clone(),
+            home_wiki_id_override: query.home_wiki_id.clone(),
+            shared_owner_username_override: query.shared_owner_username.clone(),
+            team_slugs: slug.clone().into_iter().collect(),
+            rule_set_slugs: slug.clone().into_iter().collect(),
+            training_dataset_slugs: slug.clone().into_iter().collect(),
+            audit_period_slugs: slug.clone().into_iter().collect(),
+        },
+    )
+    .await?;
+    let plan = build_wiki_storage_plan(&WikiStorageConfig::default(), &input);
+    let document_kind = logical_storage_document_kind(wiki_id, realm, kind, slug)?;
+
+    resolve_wiki_storage_document(&plan, &document_kind)
+        .ok_or_else(|| format!("no canonical storage document matched `{document_kind:?}`"))
+}
+
+fn logical_storage_document_kind(
+    wiki_id: &str,
+    realm: &StorageDocumentRealmInput,
+    kind: &StorageDocumentKindInput,
+    slug: Option<String>,
+) -> Result<WikiStorageDocumentKind, String> {
+    match (realm, kind) {
+        (StorageDocumentRealmInput::Personal, StorageDocumentKindInput::Index) => {
+            Ok(WikiStorageDocumentKind::PersonalIndex)
+        }
+        (StorageDocumentRealmInput::Personal, StorageDocumentKindInput::Profile) => {
+            Ok(WikiStorageDocumentKind::PersonalProfile)
+        }
+        (StorageDocumentRealmInput::Personal, StorageDocumentKindInput::Preferences) => {
+            Ok(WikiStorageDocumentKind::PersonalPreferences)
+        }
+        (StorageDocumentRealmInput::Personal, StorageDocumentKindInput::Queue) => {
+            Ok(WikiStorageDocumentKind::PersonalQueue {
+                wiki_id: wiki_id.to_string(),
+            })
+        }
+        (StorageDocumentRealmInput::Personal, StorageDocumentKindInput::Workspace) => {
+            Ok(WikiStorageDocumentKind::PersonalWorkspace {
+                wiki_id: wiki_id.to_string(),
+            })
+        }
+        (StorageDocumentRealmInput::Personal, StorageDocumentKindInput::Labels) => {
+            Ok(WikiStorageDocumentKind::PersonalLabels {
+                wiki_id: wiki_id.to_string(),
+            })
+        }
+        (StorageDocumentRealmInput::Shared, StorageDocumentKindInput::Registry) => {
+            Ok(WikiStorageDocumentKind::SharedRegistry {
+                wiki_id: wiki_id.to_string(),
+            })
+        }
+        (StorageDocumentRealmInput::Shared, StorageDocumentKindInput::Team) => {
+            Ok(WikiStorageDocumentKind::SharedTeam {
+                wiki_id: wiki_id.to_string(),
+                team_slug: require_logical_storage_slug(kind, slug)?,
+            })
+        }
+        (StorageDocumentRealmInput::Shared, StorageDocumentKindInput::RuleSet) => {
+            Ok(WikiStorageDocumentKind::SharedRuleSet {
+                wiki_id: wiki_id.to_string(),
+                rule_set_slug: require_logical_storage_slug(kind, slug)?,
+            })
+        }
+        (StorageDocumentRealmInput::Shared, StorageDocumentKindInput::TrainingDataset) => {
+            Ok(WikiStorageDocumentKind::SharedTrainingDataset {
+                wiki_id: wiki_id.to_string(),
+                dataset_slug: require_logical_storage_slug(kind, slug)?,
+            })
+        }
+        (StorageDocumentRealmInput::Shared, StorageDocumentKindInput::AuditPeriod) => {
+            Ok(WikiStorageDocumentKind::SharedAuditPeriod {
+                wiki_id: wiki_id.to_string(),
+                period_slug: require_logical_storage_slug(kind, slug)?,
+            })
+        }
+        _ => Err(format!(
+            "logical storage document `{realm:?}/{kind:?}` is not supported"
+        )),
+    }
+}
+
+fn require_logical_storage_slug(
+    kind: &StorageDocumentKindInput,
+    slug: Option<String>,
+) -> Result<String, String> {
+    slug.ok_or_else(|| format!("slug is required for shared `{kind:?}` documents"))
 }
 
 async fn operator_report(state: &AppState, headers: &HeaderMap) -> OperatorReport {
@@ -1972,6 +2275,13 @@ async fn fetch_revision_texts(
 }
 
 fn operator_endpoint_manifest() -> Vec<OperatorEndpointDescriptor> {
+    let mut endpoints = operator_core_endpoints();
+    endpoints.extend(operator_storage_endpoints());
+    endpoints.extend(operator_dev_endpoints());
+    endpoints
+}
+
+fn operator_core_endpoints() -> Vec<OperatorEndpointDescriptor> {
     vec![
         OperatorEndpointDescriptor {
             method: "GET".to_string(),
@@ -2021,6 +2331,11 @@ fn operator_endpoint_manifest() -> Vec<OperatorEndpointDescriptor> {
             purpose: "Canonical personal/shared on-wiki storage layout and sample page renderings.".to_string(),
             available: true,
         },
+    ]
+}
+
+fn operator_storage_endpoints() -> Vec<OperatorEndpointDescriptor> {
+    vec![
         OperatorEndpointDescriptor {
             method: "GET".to_string(),
             path: "/operator/storage/document/{wiki_id}?title=...".to_string(),
@@ -2035,6 +2350,23 @@ fn operator_endpoint_manifest() -> Vec<OperatorEndpointDescriptor> {
                 .to_string(),
             available: true,
         },
+        OperatorEndpointDescriptor {
+            method: "GET".to_string(),
+            path: "/operator/storage/logical/{wiki_id}/{realm}/{kind}".to_string(),
+            purpose: "Resolve a canonical SP42 public document by logical kind and load its current on-wiki content.".to_string(),
+            available: true,
+        },
+        OperatorEndpointDescriptor {
+            method: "PUT".to_string(),
+            path: "/operator/storage/logical/{wiki_id}/{realm}/{kind}".to_string(),
+            purpose: "Save a canonical SP42 public document by logical kind without exposing raw wiki titles to clients.".to_string(),
+            available: true,
+        },
+    ]
+}
+
+fn operator_dev_endpoints() -> Vec<OperatorEndpointDescriptor> {
+    vec![
         OperatorEndpointDescriptor {
             method: "GET".to_string(),
             path: "/dev/auth/bootstrap/status".to_string(),
@@ -3853,6 +4185,85 @@ mod tests {
         path
     }
 
+    fn mock_recentchanges_response(continued: bool) -> serde_json::Value {
+        serde_json::json!({
+            "continue": { "rccontinue": if continued { "20260324010203|789" } else { "20260324010202|456" } },
+            "query": {
+                "recentchanges": [
+                    {
+                        "type": "edit",
+                        "title": if continued { "Live route sample page 2" } else { "Live route sample" },
+                        "ns": 0,
+                        "revid": if continued { 123_457 } else { 123_456 },
+                        "old_revid": if continued { 123_456 } else { 123_455 },
+                        "user": "192.0.2.44",
+                        "timestamp": "2026-03-24T01:02:03Z",
+                        "bot": false,
+                        "minor": false,
+                        "new": false,
+                        "oldlen": 120,
+                        "newlen": 80,
+                        "comment": "sample edit",
+                        "tags": ["mw-reverted"]
+                    }
+                ]
+            }
+        })
+    }
+
+    fn mock_storage_page(title: &str) -> String {
+        format!(
+            "== SP42 Document ==\nLoaded by the logical storage route.\n<!-- SP42:BEGIN -->\n<syntaxhighlight lang=\"json\">\n{{\n  \"project\": \"SP42\",\n  \"version\": 1,\n  \"title\": \"{title}\",\n  \"kind\": \"personal-profile\",\n  \"site_wiki_id\": \"frwiki\",\n  \"realm\": \"PersonalUserSpace\",\n  \"data\": {{\n    \"owner\": \"Schiste\",\n    \"document\": \"{title}\"\n  }}\n}}\n</syntaxhighlight>\n<!-- SP42:END -->"
+        )
+    }
+
+    fn mock_revisions_response(
+        title: &str,
+        include_second: bool,
+        title_query: bool,
+    ) -> serde_json::Value {
+        serde_json::json!({
+            "query": {
+                "pages": [
+                    {
+                        "pageid": 1,
+                        "title": title,
+                        "revisions": if title_query {
+                            serde_json::json!([
+                                {
+                                    "revid": 123_456,
+                                    "slots": { "main": { "content": mock_storage_page(title) } }
+                                }
+                            ])
+                        } else if include_second {
+                            serde_json::json!([
+                                {
+                                    "revid": 123_456,
+                                    "slots": { "main": { "content": "After text with removal" } }
+                                },
+                                {
+                                    "revid": 123_457,
+                                    "slots": { "main": { "content": "Page 2 after text" } }
+                                }
+                            ])
+                        } else {
+                            serde_json::json!([
+                                {
+                                    "revid": 123_455,
+                                    "slots": { "main": { "content": "Before text" } }
+                                },
+                                {
+                                    "revid": 123_456,
+                                    "slots": { "main": { "content": "After text with removal" } }
+                                }
+                            ])
+                        }
+                    }
+                ]
+            }
+        })
+    }
+
     fn mock_api_response(params: &std::collections::HashMap<String, String>) -> serde_json::Value {
         match (
             params.get("meta"),
@@ -3883,67 +4294,19 @@ mod tests {
                 })
             }
             (_, _, Some(list), _) if list == "recentchanges" => {
-                let continued = params.contains_key("rccontinue");
-                serde_json::json!({
-                    "continue": { "rccontinue": if continued { "20260324010203|789" } else { "20260324010202|456" } },
-                    "query": {
-                        "recentchanges": [
-                            {
-                                "type": "edit",
-                                "title": if continued { "Live route sample page 2" } else { "Live route sample" },
-                                "ns": 0,
-                                "revid": if continued { 123_457 } else { 123_456 },
-                                "old_revid": if continued { 123_456 } else { 123_455 },
-                                "user": "192.0.2.44",
-                                "timestamp": "2026-03-24T01:02:03Z",
-                                "bot": false,
-                                "minor": false,
-                                "new": false,
-                                "oldlen": 120,
-                                "newlen": 80,
-                                "comment": "sample edit",
-                                "tags": ["mw-reverted"]
-                            }
-                        ]
-                    }
-                })
+                mock_recentchanges_response(params.contains_key("rccontinue"))
             }
             (_, _, _, Some(prop)) if prop == "revisions" => {
                 let revids = params.get("revids").cloned().unwrap_or_default();
                 let include_second = revids.contains("123457");
-                serde_json::json!({
-                    "query": {
-                        "pages": [
-                            {
-                                "pageid": 1,
-                                "title": if include_second { "Live route sample page 2" } else { "Live route sample" },
-                                "revisions": if include_second {
-                                    serde_json::json!([
-                                        {
-                                            "revid": 123_456,
-                                            "slots": { "main": { "content": "After text with removal" } }
-                                        },
-                                        {
-                                            "revid": 123_457,
-                                            "slots": { "main": { "content": "Page 2 after text" } }
-                                        }
-                                    ])
-                                } else {
-                                    serde_json::json!([
-                                        {
-                                            "revid": 123_455,
-                                            "slots": { "main": { "content": "Before text" } }
-                                        },
-                                        {
-                                            "revid": 123_456,
-                                            "slots": { "main": { "content": "After text with removal" } }
-                                        }
-                                    ])
-                                }
-                            }
-                        ]
+                let title = params.get("titles").cloned().unwrap_or_else(|| {
+                    if include_second {
+                        "Live route sample page 2".to_string()
+                    } else {
+                        "Live route sample".to_string()
                     }
-                })
+                });
+                mock_revisions_response(&title, include_second, params.contains_key("titles"))
             }
             _ => serde_json::json!({ "error": "unexpected request" }),
         }
@@ -5083,6 +5446,85 @@ mod tests {
                 .contains("[[User:Schiste/SP42/Profile]]")
         );
         assert_eq!(view.sample_document_pages.len(), 3);
+    }
+
+    #[tokio::test]
+    async fn logical_storage_document_route_resolves_profile_page() {
+        let (profile_base, server) = mock_capability_server().await;
+        let clock: Arc<dyn Clock> = Arc::new(SystemClock);
+        let state = AppState {
+            capability_cache: Arc::new(tokio::sync::RwLock::new(None)),
+            sessions: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
+            pending_oauth_logins: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
+            http_client: reqwest::Client::builder()
+                .timeout(Duration::from_secs(5))
+                .user_agent(sp42_core::branding::USER_AGENT)
+                .build()
+                .expect("reqwest client should build"),
+            local_oauth: LocalOAuthConfig::default(),
+            runtime_storage_root: std::env::temp_dir()
+                .join("sp42-server-runtime-logical-storage-route"),
+            ingestion_supervisor: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
+            capability_targets: CapabilityProbeTargets {
+                api_url: Some(format!("{profile_base}/w/api.php")),
+                profile_url: format!("{profile_base}/oauth2/resource/profile"),
+            },
+            clock: clock.clone(),
+            coordination: CoordinationRegistry::new(clock),
+            next_client_id: Arc::new(AtomicU64::new(1)),
+            next_session_id: Arc::new(AtomicU64::new(1)),
+            started_at: Instant::now(),
+        };
+        let current_ms = state.clock.now_ms();
+        let session_id = crate::install_session(
+            &state,
+            None,
+            StoredSession {
+                username: "Schiste".to_string(),
+                scopes: vec!["basic".to_string(), "patrol".to_string()],
+                expires_at_ms: Some(current_ms + 60_000),
+                access_token: "token-value".to_string(),
+                refresh_token: None,
+                upstream_access_expires_at_ms: Some(current_ms + 60_000),
+                bridge_mode: "oauth".to_string(),
+                created_at_ms: current_ms,
+                last_seen_at_ms: current_ms,
+                capability_cache: HashMap::new(),
+                action_history: Vec::new(),
+            },
+            current_ms,
+        )
+        .await;
+
+        let router = build_router(state);
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .method(Method::GET)
+                    .uri("/operator/storage/logical/frwiki/personal/profile?username=Schiste")
+                    .header(
+                        axum::http::header::COOKIE,
+                        format!("{}={session_id}", crate::SESSION_COOKIE_NAME),
+                    )
+                    .body(Body::empty())
+                    .expect("request should build"),
+            )
+            .await
+            .expect("logical storage request should succeed");
+
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let body = to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("response body should read");
+        let view: crate::LogicalStorageDocumentView =
+            serde_json::from_slice(&body).expect("logical storage view should parse");
+
+        assert_eq!(view.document.title, "User:Schiste/SP42/Profile");
+        assert_eq!(view.loaded.title, "User:Schiste/SP42/Profile");
+        assert!(view.loaded.exists);
+
+        server.abort();
     }
 
     #[tokio::test]

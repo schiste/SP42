@@ -279,19 +279,14 @@ pub fn PatrolSurface() -> impl IntoView {
                                 }}
                                 <div style="display:flex;gap:10px;justify-content:center;">
                                     <button
-                                        style="min-height:44px;padding:4px 17px;\
-                                               border:1px solid rgba(59,130,246,.5);border-radius:4px;\
-                                               background:rgba(59,130,246,.15);color:#eff4ff;font:inherit;\
-                                               cursor:pointer;"
+                                        class="btn"
+                                        style="border-color:rgba(59,130,246,.5);background:rgba(59,130,246,.15);"
                                         on:click=move |_| { bootstrap_btn_action.dispatch_local(()); }
                                     >
                                         "Bootstrap session"
                                     </button>
                                     <button
-                                        style="min-height:44px;padding:4px 17px;\
-                                               border:1px solid rgba(148,163,184,.18);border-radius:4px;\
-                                               background:transparent;color:#eff4ff;font:inherit;\
-                                               cursor:pointer;"
+                                        class="btn"
                                         on:click=move |_| { load_action.dispatch_local(()); }
                                     >
                                         "Retry"
@@ -307,23 +302,8 @@ pub fn PatrolSurface() -> impl IntoView {
                 <div
                     tabindex="0"
                     on:keydown=on_keydown
-                    class="sp42-patrol-grid"
-                    style="display:grid;grid-template-columns:min(220px,25vw) 1fr min(220px,25vw);\
-                           grid-template-rows:auto auto 1fr auto;\
-                           height:100vh;background:#08111f;color:#eff4ff;\
-                           font-family:system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',\
-                           Roboto,'Noto Sans','Liberation Sans',sans-serif;"
+                    class="patrol-grid"
                 >
-                    <style>
-                        {"@media (max-width: 768px) { \
-                           .sp42-patrol-grid { \
-                             grid-template-columns: 1fr !important; \
-                             grid-template-rows: auto auto auto 1fr auto auto !important; \
-                           } \
-                           .sp42-patrol-grid nav { max-height: 30vh; } \
-                           .sp42-patrol-grid aside { max-height: 25vh; } \
-                         }"}
-                    </style>
 
                     {move || {
                         if !show_help.get() {
@@ -331,15 +311,11 @@ pub fn PatrolSurface() -> impl IntoView {
                         }
                         view! {
                             <div
-                                style="position:fixed;inset:0;z-index:100;\
-                                       display:grid;place-items:center;\
-                                       background:rgba(8,17,31,.85);"
+                                class="modal-backdrop"
                                 on:click=move |_| set_show_help.set(false)
                             >
                                 <div
-                                    style="max-width:400px;width:90%;padding:27px;\
-                                           background:#0b1324;border:1px solid rgba(148,163,184,.18);\
-                                           border-radius:6px;"
+                                    class="modal"
                                     on:click=move |ev| ev.stop_propagation()
                                 >
                                     <h2 style="margin:0 0 17px;font-size:17px;">"Keyboard Shortcuts"</h2>
@@ -378,10 +354,8 @@ pub fn PatrolSurface() -> impl IntoView {
                                         </div>
                                     </div>
                                     <button
-                                        style="margin-top:17px;min-height:44px;width:100%;padding:4px 17px;\
-                                               border:1px solid rgba(148,163,184,.18);border-radius:4px;\
-                                               background:transparent;color:#eff4ff;font:inherit;\
-                                               font-size:13px;cursor:pointer;"
+                                        class="btn"
+                                        style="margin-top:17px;width:100%;"
                                         on:click=move |_| set_show_help.set(false)
                                     >
                                         "Close"
@@ -397,22 +371,12 @@ pub fn PatrolSurface() -> impl IntoView {
                         }
                         let view = view_data.get();
                         view! {
-                            <div
-                                style="position:fixed;inset:0;z-index:90;\
-                                       overflow-y:auto;\
-                                       background:rgba(8,17,31,.95);"
-                            >
-                                <div style="max-width:1200px;margin:0 auto;padding:27px;\
-                                            display:grid;gap:17px;">
+                            <div class="modal-backdrop-opaque">
+                                <div style="max-width:1200px;margin:0 auto;padding:27px;display:grid;gap:17px;">
                                     <div style="display:flex;align-items:center;justify-content:space-between;">
-                                        <h2 style="margin:0;font-size:17px;color:#eff4ff;">
-                                            "Back-office"
-                                        </h2>
+                                        <h2 style="margin:0;font-size:17px;">"Back-office"</h2>
                                         <button
-                                            style="min-height:44px;padding:4px 17px;\
-                                                   border:1px solid rgba(148,163,184,.18);border-radius:4px;\
-                                                   background:transparent;color:#eff4ff;font:inherit;\
-                                                   font-size:13px;cursor:pointer;"
+                                            class="btn"
                                             on:click=move |_| set_show_backoffice.set(false)
                                         >
                                             "Close (Esc)"
@@ -428,12 +392,8 @@ pub fn PatrolSurface() -> impl IntoView {
                                                 view! { <span></span> }.into_any()
                                             } else {
                                                 view! {
-                                                    <section
-                                                        style="display:grid;gap:10px;padding:17px;border-radius:6px;\
-                                                               border:1px solid rgba(148,163,184,.18);\
-                                                               background:rgba(15,23,42,.88);"
-                                                    >
-                                                        <h3 style="margin:0;font-size:13px;font-weight:700;color:#eff4ff;">
+                                                    <section class="panel">
+                                                        <h3 style="margin:0;font-size:13px;font-weight:700;">
                                                             "Action History"
                                                         </h3>
                                                         <div style="display:grid;gap:4px;">
@@ -482,11 +442,8 @@ pub fn PatrolSurface() -> impl IntoView {
                         }.into_any()
                     }}
 
-                    <div style="grid-column:1/-1;display:flex;align-items:center;gap:10px;\
-                                padding:4px 10px;height:28px;\
-                                background:#0b1324;border-block-end:1px solid rgba(148,163,184,.18);\
-                                font-size:12px;color:#8b9fc0;">
-                        <span style="font-weight:700;color:#8fb7ff;">
+                    <div class="session-bar">
+                        <span style="font-weight:700;color:var(--accent);">
                             {sp42_core::branding::PROJECT_NAME}
                         </span>
                         {move || {
@@ -506,7 +463,7 @@ pub fn PatrolSurface() -> impl IntoView {
                                 })
                                 .unwrap_or_else(|| view! { <span>"loading..."</span> }.into_any())
                         }}
-                        <div style="flex:1;"></div>
+                        <div class="flex-spacer"></div>
                         // Connection indicator
                         <span style="width:10px;height:10px;border-radius:4px;\
                                      background:{};display:inline-block;"
@@ -588,10 +545,7 @@ pub fn PatrolSurface() -> impl IntoView {
                             view! { <span style="font-size:11px;color:#8b9fc0;">"0 actions"</span> }.into_any()
                         }}
                         <button
-                            style="min-height:32px;padding:2px 8px;\
-                                   border:1px solid rgba(148,163,184,.18);border-radius:4px;\
-                                   background:transparent;color:#8b9fc0;font:inherit;\
-                                   font-size:12px;cursor:pointer;"
+                            class="btn btn-ghost btn-compact"
                             on:click=move |_| set_show_help.set(true)
                         >
                             "?"
@@ -622,10 +576,8 @@ pub fn PatrolSurface() -> impl IntoView {
                                     <p style="font-weight:700;">"Queue unavailable"</p>
                                     <p style="font-size:12px;">{error}</p>
                                     <button
-                                        style="margin-top:10px;min-height:44px;padding:4px 17px;\
-                                               border:1px solid rgba(148,163,184,.18);border-radius:4px;\
-                                               background:transparent;color:#eff4ff;font:inherit;\
-                                               cursor:pointer;"
+                                        class="btn"
+                                        style="margin-top:10px;"
                                         on:click=move |_| { load_action.dispatch_local(()); }
                                     >
                                         "Retry"
@@ -693,17 +645,12 @@ pub fn PatrolSurface() -> impl IntoView {
                     }}
 
                     <div style="grid-column:1/-1;">
-                        <div style="display:flex;align-items:center;gap:7px;\
-                                    padding:4px 10px;background:#0b1324;\
-                                    border-block-start:1px solid rgba(148,163,184,.18);">
+                        <div class="review-note-bar">
                             <input
                                 type="text"
                                 placeholder="Review note (optional)"
                                 aria-label="Review note"
-                                style="flex:1;min-height:32px;padding:4px 10px;\
-                                       background:#111b2e;color:#eff4ff;\
-                                       border:1px solid rgba(148,163,184,.18);\
-                                       border-radius:4px;font:inherit;font-size:12px;"
+                                class="review-note-input"
                                 prop:value=move || review_note.get()
                                 on:input=move |ev| {
                                     use wasm_bindgen::JsCast;
@@ -730,10 +677,7 @@ pub fn PatrolSurface() -> impl IntoView {
                                     .into_any()
                             } else {
                                 view! {
-                                    <div style="display:flex;align-items:center;padding:0 10px;\
-                                                height:44px;background:#0b1324;\
-                                                border-block-start:1px solid rgba(148,163,184,.18);\
-                                                font-size:12px;color:#8b9fc0;">
+                                    <div class="action-bar text-muted" style="font-size:12px;">
                                         "Actions available after queue loads."
                                     </div>
                                 }

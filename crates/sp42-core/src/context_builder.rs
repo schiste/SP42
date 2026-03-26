@@ -21,6 +21,8 @@ pub fn build_scoring_context(inputs: &ContextInputs) -> ScoringContext {
             .filter(|value| !value.is_empty())
             .map(build_user_risk_profile),
         liftwing_risk: normalize_liftwing_probability(inputs.liftwing_probability),
+        trust_override: Default::default(),
+        duplicate_cluster_size: None,
     }
 }
 

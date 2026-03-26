@@ -2,15 +2,18 @@
 
 use crate::errors::ScoringError;
 use crate::types::{
-    CompositeScore, EditEvent, EditorIdentity, ScoreWeights, ScoringConfig, ScoringContext,
+    CompositeScore, EditEvent, ScoreWeights, ScoringConfig, ScoringContext,
     ScoringSignal, SignalContribution,
 };
 
 const LARGE_REMOVAL_THRESHOLD: i32 = -500;
+const MASSIVE_BLANKING_THRESHOLD: i32 = -900;
 const PROFANITY_MARKERS: [&str; 4] = ["fuck", "merde", "shit", "putain"];
 const LINK_MARKERS: [&str; 2] = ["http://", "https://"];
 const TRUSTED_TAGS: [&str; 3] = ["mw-manual-revert", "mw-rollback", "trusted"];
 const REVERT_TAGS: [&str; 2] = ["mw-reverted", "mw-undo"];
+const SUSPICIOUS_COMMENT_MARKERS: [&str; 7] =
+    ["rvv", "vandalisme", "vandalism", "spam", "test", "blanking", "nonsense"];
 
 /// Score an edit event from deterministic local signals.
 ///
@@ -97,15 +100,19 @@ pub fn score_edit_with_context(
         );
     }
 
-    if event
-        .tags
-        .iter()
-        .any(|tag| contains_tag(tag, &TRUSTED_TAGS))
-    {
+    let trusted_tag_detected = event.tags.iter().any(|tag| contains_tag(tag, &TRUSTED_TAGS));
+    let trusted_override_detected = context.trust_override.is_enabled();
+    if trusted_tag_detected || trusted_override_detected {
+        let note = match (trusted_tag_detected, trusted_override_detected) {
+            (true, true) => Some("trusted tag and public trusted-user rule matched".to_string()),
+            (true, false) => Some("trusted tag detected".to_string()),
+            (false, true) => Some("public trusted-user rule matched".to_string()),
+            (false, false) => None,
+        };
         push_signal(
             ScoringSignal::TrustedUser,
             config.weights.trusted_user,
-            Some("trusted tag detected".to_string()),
+            note,
             &mut total,
             &mut contributions,
         );
@@ -116,6 +123,16 @@ pub fn score_edit_with_context(
             ScoringSignal::RevertedBefore,
             config.weights.reverted_before,
             Some("revert-related tag detected".to_string()),
+            &mut total,
+            &mut contributions,
+        );
+    }
+
+    if let Some(reason) = detect_obvious_vandalism(event) {
+        push_signal(
+            ScoringSignal::ObviousVandalism,
+            config.weights.obvious_vandalism,
+            Some(reason),
             &mut total,
             &mut contributions,
         );
@@ -173,6 +190,20 @@ fn apply_context_signals(
             );
         }
     }
+
+    if let Some(cluster_size) = context.duplicate_cluster_size {
+        if cluster_size > 1 {
+            let numerator = i32::try_from(cluster_size.saturating_sub(1)).unwrap_or(i32::MAX);
+            let scaled_weight = scale_weight(weights.duplicate_pattern, numerator.min(4), 4);
+            push_signal(
+                ScoringSignal::DuplicatePattern,
+                scaled_weight,
+                Some(format!("duplicate cluster size {cluster_size}")),
+                total,
+                contributions,
+            );
+        }
+    }
 }
 
 fn scale_weight(weight: i32, numerator: i32, denominator: i32) -> i32 {
@@ -203,14 +234,21 @@ fn apply_editor_signal(
     total: &mut i32,
     contributions: &mut Vec<SignalContribution>,
 ) {
-    if matches!(
-        event.performer,
-        EditorIdentity::Anonymous { .. } | EditorIdentity::Temporary { .. }
-    ) {
+    if event.performer.is_anonymous() {
         push_signal(
             ScoringSignal::AnonymousUser,
             weights.anonymous_user,
             None,
+            total,
+            contributions,
+        );
+    }
+
+    if event.performer.is_temporary() {
+        push_signal(
+            ScoringSignal::TemporaryAccount,
+            weights.temporary_account,
+            Some("temporary account editors are newcomer-like but not raw IPs".to_string()),
             total,
             contributions,
         );
@@ -225,11 +263,12 @@ fn push_signal(
     contributions: &mut Vec<SignalContribution>,
 ) {
     *total = total.saturating_add(weight);
-    contributions.push(SignalContribution {
-        signal,
-        weight,
-        note,
-    });
+    if let Some(existing) = contributions.iter_mut().find(|entry| entry.signal == signal) {
+        existing.weight = existing.weight.saturating_add(weight);
+        existing.note = merge_notes(existing.note.take(), note);
+        return;
+    }
+    contributions.push(SignalContribution { signal, weight, note });
 }
 
 fn normalize_probability(probability: f32) -> Option<f32> {
@@ -251,6 +290,72 @@ fn contains_any(haystack: Option<&str>, markers: &[&str]) -> bool {
 fn contains_tag(tag: &str, markers: &[&str]) -> bool {
     let lowercase = tag.to_ascii_lowercase();
     markers.iter().any(|marker| lowercase.contains(marker))
+}
+
+fn detect_obvious_vandalism(event: &EditEvent) -> Option<String> {
+    let mut reasons = Vec::new();
+
+    if event.byte_delta <= MASSIVE_BLANKING_THRESHOLD {
+        reasons.push(format!("massive blanking byte_delta={}", event.byte_delta));
+    }
+
+    if contains_any(event.comment.as_deref(), &PROFANITY_MARKERS) {
+        reasons.push("profanity marker in comment".to_string());
+    }
+
+    if contains_any(event.comment.as_deref(), &LINK_MARKERS) {
+        reasons.push("external link marker in comment".to_string());
+    }
+
+    if contains_any(event.comment.as_deref(), &SUSPICIOUS_COMMENT_MARKERS) {
+        reasons.push("suspicious moderation-style comment marker".to_string());
+    }
+
+    if has_repeated_character_run(event.comment.as_deref()) || has_repeated_character_run(Some(&event.title)) {
+        reasons.push("repeated-character noise detected".to_string());
+    }
+
+    if reasons.is_empty() {
+        return None;
+    }
+
+    let severe_blanking = event.byte_delta <= MASSIVE_BLANKING_THRESHOLD;
+    let layered_signals = reasons.len() >= 2;
+    if severe_blanking || layered_signals {
+        Some(reasons.join("; "))
+    } else {
+        None
+    }
+}
+
+fn has_repeated_character_run(value: Option<&str>) -> bool {
+    let Some(value) = value else {
+        return false;
+    };
+
+    let mut last = '\0';
+    let mut run = 0u8;
+    for ch in value.chars().flat_map(char::to_lowercase) {
+        if ch.is_ascii_alphanumeric() && ch == last {
+            run = run.saturating_add(1);
+            if run >= 5 {
+                return true;
+            }
+        } else {
+            last = ch;
+            run = 1;
+        }
+    }
+    false
+}
+
+fn merge_notes(existing: Option<String>, incoming: Option<String>) -> Option<String> {
+    match (existing, incoming) {
+        (None, None) => None,
+        (Some(note), None) | (None, Some(note)) => Some(note),
+        (Some(existing), Some(incoming)) if existing == incoming => Some(existing),
+        (Some(existing), Some(incoming)) => Some(format!("{existing}; {incoming}")),
+    }
 }
 
 #[cfg(test)]

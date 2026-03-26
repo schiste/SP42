@@ -13,7 +13,7 @@ pub fn ActionBar(
     let can_patrol = capabilities.capabilities.moderation.can_patrol;
     let can_undo = capabilities.capabilities.editing.can_undo;
 
-    let btn_base = "min-height:44px;padding:4px 17px;border:1px solid rgba(148,163,184,.14);\
+    let btn_base = "min-height:44px;padding:4px 17px;border:1px solid rgba(148,163,184,.18);\
                     border-radius:4px;font:inherit;font-size:13px;font-weight:700;\
                     cursor:pointer;transition:opacity 120ms;";
 
@@ -22,7 +22,7 @@ pub fn ActionBar(
             role="toolbar"
             aria-label="Patrol actions"
             style="display:flex;align-items:center;gap:7px;padding:0 10px;\
-                   background:#0b1324;border-block-start:1px solid rgba(148,163,184,.14);"
+                   background:#0b1324;border-block-start:1px solid rgba(148,163,184,.18);"
         >
             // Rollback — destructive, filled red-tinted
             <button

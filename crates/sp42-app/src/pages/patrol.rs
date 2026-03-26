@@ -294,7 +294,7 @@ pub fn PatrolSurface() -> impl IntoView {
                                     </button>
                                     <button
                                         style="min-height:44px;padding:4px 17px;\
-                                               border:1px solid rgba(148,163,184,.14);border-radius:4px;\
+                                               border:1px solid rgba(148,163,184,.18);border-radius:4px;\
                                                background:transparent;color:#eff4ff;font:inherit;\
                                                cursor:pointer;"
                                         on:click=move |_| { load_action.dispatch_local(()); }
@@ -344,7 +344,7 @@ pub fn PatrolSurface() -> impl IntoView {
                             >
                                 <div
                                     style="max-width:400px;width:90%;padding:27px;\
-                                           background:#0b1324;border:1px solid rgba(148,163,184,.14);\
+                                           background:#0b1324;border:1px solid rgba(148,163,184,.18);\
                                            border-radius:6px;"
                                     on:click=move |ev| ev.stop_propagation()
                                 >
@@ -385,7 +385,7 @@ pub fn PatrolSurface() -> impl IntoView {
                                     </div>
                                     <button
                                         style="margin-top:17px;min-height:44px;width:100%;padding:4px 17px;\
-                                               border:1px solid rgba(148,163,184,.14);border-radius:4px;\
+                                               border:1px solid rgba(148,163,184,.18);border-radius:4px;\
                                                background:transparent;color:#eff4ff;font:inherit;\
                                                font-size:13px;cursor:pointer;"
                                         on:click=move |_| set_show_help.set(false)
@@ -417,7 +417,7 @@ pub fn PatrolSurface() -> impl IntoView {
                                         </h2>
                                         <button
                                             style="min-height:44px;padding:4px 17px;\
-                                                   border:1px solid rgba(148,163,184,.14);border-radius:4px;\
+                                                   border:1px solid rgba(148,163,184,.18);border-radius:4px;\
                                                    background:transparent;color:#eff4ff;font:inherit;\
                                                    font-size:13px;cursor:pointer;"
                                             on:click=move |_| set_show_backoffice.set(false)
@@ -444,7 +444,7 @@ pub fn PatrolSurface() -> impl IntoView {
                     // Row 1: Session bar (spans all 3 columns)
                     <div style="grid-column:1/-1;display:flex;align-items:center;gap:10px;\
                                 padding:4px 10px;height:28px;\
-                                background:#0b1324;border-block-end:1px solid rgba(148,163,184,.14);\
+                                background:#0b1324;border-block-end:1px solid rgba(148,163,184,.18);\
                                 font-size:12px;color:#8b9fc0;">
                         <span style="font-weight:700;color:#8fb7ff;">
                             {sp42_core::branding::PROJECT_NAME}
@@ -537,7 +537,7 @@ pub fn PatrolSurface() -> impl IntoView {
                         // Help button
                         <button
                             style="min-height:32px;padding:2px 8px;\
-                                   border:1px solid rgba(148,163,184,.14);border-radius:4px;\
+                                   border:1px solid rgba(148,163,184,.18);border-radius:4px;\
                                    background:transparent;color:#8b9fc0;font:inherit;\
                                    font-size:12px;cursor:pointer;"
                             on:click=move |_| set_show_help.set(true)
@@ -573,7 +573,7 @@ pub fn PatrolSurface() -> impl IntoView {
                                     <p style="font-size:12px;">{error}</p>
                                     <button
                                         style="margin-top:10px;min-height:44px;padding:4px 17px;\
-                                               border:1px solid rgba(148,163,184,.14);border-radius:4px;\
+                                               border:1px solid rgba(148,163,184,.18);border-radius:4px;\
                                                background:transparent;color:#eff4ff;font:inherit;\
                                                cursor:pointer;"
                                         on:click=move |_| { load_action.dispatch_local(()); }
@@ -637,7 +637,7 @@ pub fn PatrolSurface() -> impl IntoView {
                                     role="complementary"
                                     aria-label="Edit context"
                                     style="padding:10px;color:#8b9fc0;\
-                                           border-inline-start:1px solid rgba(148,163,184,.14);"
+                                           border-inline-start:1px solid rgba(148,163,184,.18);"
                                 >
                                     "Loading..."
                                 </aside>
@@ -650,14 +650,14 @@ pub fn PatrolSurface() -> impl IntoView {
                     <div style="grid-column:1/-1;">
                         <div style="display:flex;align-items:center;gap:7px;\
                                     padding:4px 10px;background:#0b1324;\
-                                    border-block-start:1px solid rgba(148,163,184,.14);">
+                                    border-block-start:1px solid rgba(148,163,184,.18);">
                             <input
                                 type="text"
                                 placeholder="Review note (optional)"
                                 aria-label="Review note"
                                 style="flex:1;min-height:32px;padding:4px 10px;\
                                        background:#111b2e;color:#eff4ff;\
-                                       border:1px solid rgba(148,163,184,.14);\
+                                       border:1px solid rgba(148,163,184,.18);\
                                        border-radius:4px;font:inherit;font-size:12px;"
                                 prop:value=move || review_note.get()
                                 on:input=move |ev| {
@@ -686,7 +686,7 @@ pub fn PatrolSurface() -> impl IntoView {
                                 view! {
                                     <div style="display:flex;align-items:center;padding:0 10px;\
                                                 height:44px;background:#0b1324;\
-                                                border-block-start:1px solid rgba(148,163,184,.14);\
+                                                border-block-start:1px solid rgba(148,163,184,.18);\
                                                 font-size:12px;color:#8b9fc0;">
                                         "Actions available after queue loads."
                                     </div>

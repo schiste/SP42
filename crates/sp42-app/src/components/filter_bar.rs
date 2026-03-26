@@ -118,12 +118,12 @@ pub fn FilterBar(
 
     let checkbox_style = "accent-color:#3b82f6;width:14px;height:14px;cursor:pointer;";
     let label_style = "display:inline-flex;align-items:center;gap:4px;cursor:pointer;";
-    let select_style = "background:#111b2e;color:#eff4ff;border:1px solid rgba(148,163,184,.14);\
+    let select_style = "background:#111b2e;color:#eff4ff;border:1px solid rgba(148,163,184,.18);\
                         border-radius:4px;padding:2px 4px;font:inherit;font-size:12px;";
 
     view! {
         <div style="display:flex;align-items:center;gap:10px;padding:4px 10px;\
-                    background:#0b1324;border-block-end:1px solid rgba(148,163,184,.14);\
+                    background:#0b1324;border-block-end:1px solid rgba(148,163,184,.18);\
                     font-size:12px;color:#8b9fc0;flex-wrap:wrap;min-height:34px;">
 
             // Limit
@@ -330,7 +330,7 @@ pub fn FilterBar(
 
             // Load older (backlog pagination)
             <button
-                style="min-height:32px;padding:2px 10px;border:1px solid rgba(148,163,184,.14);\
+                style="min-height:32px;padding:2px 10px;border:1px solid rgba(148,163,184,.18);\
                        border-radius:4px;background:transparent;color:#8b9fc0;\
                        font:inherit;font-size:12px;cursor:pointer;"
                 disabled=move || next_continue.get().is_none()

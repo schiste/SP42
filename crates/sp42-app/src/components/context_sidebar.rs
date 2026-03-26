@@ -16,7 +16,7 @@ pub fn ContextSidebar(
             <aside
                 role="complementary"
                 aria-label="Edit context"
-                style="padding:10px;color:#8b9fc0;border-inline-start:1px solid rgba(148,163,184,.14);"
+                style="padding:10px;color:#8b9fc0;border-inline-start:1px solid rgba(148,163,184,.12);"
             >
                 <p>"Select an edit to see context."</p>
             </aside>
@@ -78,7 +78,7 @@ pub fn ContextSidebar(
             aria-label="Edit context"
             aria-live="polite"
             style="overflow-y:auto;min-height:0;padding:10px;display:grid;gap:17px;align-content:start;\
-                   border-inline-start:1px solid rgba(148,163,184,.14);"
+                   border-inline-start:1px solid rgba(148,163,184,.12);"
         >
             // Score (largest element per Rule 6.1)
             <div style="text-align:center;">

@@ -14,7 +14,7 @@ pub fn TelemetryPanel(
 
     view! {
         <section
-            style="display:grid;gap:10px;padding:17px;border-radius:6px;border:1px solid rgba(148,163,184,.14);background:rgba(15,23,42,.88);"
+            style="display:grid;gap:10px;padding:17px;border-radius:6px;border:1px solid rgba(148,163,184,.18);background:rgba(15,23,42,.88);"
         >
             <header style="display:grid;gap:7px;">
                 <div style="display:flex;align-items:center;gap:7px;flex-wrap:wrap;">

@@ -139,7 +139,7 @@ pub fn DiffViewer(diff: Option<StructuredDiff>) -> impl IntoView {
         >
             // Diff stats summary + toggle
             <div style="display:flex;gap:10px;align-items:center;padding:4px 10px;\
-                        font-size:11px;color:#8b9fc0;border-block-end:1px solid rgba(148,163,184,.14);">
+                        font-size:11px;color:#8b9fc0;border-block-end:1px solid rgba(148,163,184,.12);">
                 <span style="color:#22c55e;">
                     {format!("+{stats_added} added")}
                 </span>
@@ -179,7 +179,7 @@ pub fn DiffViewer(diff: Option<StructuredDiff>) -> impl IntoView {
                                     let n = *n;
                                     view! {
                                         <div style="text-align:center;padding:4px;color:#4f6280;\
-                                                    font-size:11px;border-block:1px dashed rgba(148,163,184,.14);">
+                                                    font-size:11px;border-block:1px dashed rgba(148,163,184,.12);">
                                             {format!("... {n} unchanged lines ...")}
                                         </div>
                                     }

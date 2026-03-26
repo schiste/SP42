@@ -11,7 +11,7 @@ pub fn QueueColumn(
         <nav
             role="navigation"
             aria-label="Edit queue"
-            style="overflow-y:auto;min-height:0;background:#0b1324;border-inline-end:1px solid rgba(148,163,184,.14);"
+            style="overflow-y:auto;min-height:0;background:#0b1324;border-inline-end:1px solid rgba(148,163,184,.12);"
         >
             {queue
                 .into_iter()
@@ -27,7 +27,7 @@ pub fn QueueColumn(
                             style=move || {
                                 format!(
                                     "display:grid;gap:2px;width:100%;padding:7px 10px;\
-                                     border:none;border-block-end:1px solid rgba(148,163,184,.08);\
+                                     border:none;border-block-end:1px solid rgba(148,163,184,.12);\
                                      text-align:start;cursor:pointer;\
                                      font:inherit;color:#eff4ff;min-height:44px;\
                                      background:{};transition:background 120ms;{opacity}",

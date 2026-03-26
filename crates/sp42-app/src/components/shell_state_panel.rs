@@ -12,7 +12,7 @@ pub fn ShellStatePanel(model: ShellStateModel) -> impl IntoView {
 
     view! {
         <section
-            style="display:grid;gap:10px;padding:17px;border-radius:6px;border:1px solid rgba(148,163,184,.2);background:rgba(8,16,30,.96);"
+            style="display:grid;gap:10px;padding:17px;border-radius:6px;border:1px solid rgba(148,163,184,.18);background:rgba(8,16,30,.96);"
         >
             <header style="display:grid;gap:7px;">
                 <div style="display:flex;align-items:center;gap:7px;flex-wrap:wrap;">
@@ -29,7 +29,7 @@ pub fn ShellStatePanel(model: ShellStateModel) -> impl IntoView {
 
             <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:10px;">
                 <article
-                    style="display:grid;gap:7px;padding:10px 17px;border-radius:4px;border:1px solid rgba(148,163,184,.16);background:rgba(15,23,42,.58);"
+                    style="display:grid;gap:7px;padding:10px 17px;border-radius:4px;border:1px solid rgba(148,163,184,.18);background:rgba(15,23,42,.58);"
                 >
                     <div style="display:flex;align-items:center;justify-content:space-between;gap:7px;flex-wrap:wrap;">
                         <h3 style="margin:0;font-size:1rem;">"Timeline"</h3>
@@ -42,7 +42,7 @@ pub fn ShellStatePanel(model: ShellStateModel) -> impl IntoView {
                 </article>
 
                 <article
-                    style="display:grid;gap:7px;padding:10px 17px;border-radius:4px;border:1px solid rgba(148,163,184,.16);background:rgba(15,23,42,.58);"
+                    style="display:grid;gap:7px;padding:10px 17px;border-radius:4px;border:1px solid rgba(148,163,184,.18);background:rgba(15,23,42,.58);"
                 >
                     <div style="display:flex;align-items:center;justify-content:space-between;gap:7px;flex-wrap:wrap;">
                         <h3 style="margin:0;font-size:1rem;">"Surface Coverage"</h3>
@@ -56,7 +56,7 @@ pub fn ShellStatePanel(model: ShellStateModel) -> impl IntoView {
             </div>
 
             <article
-                style="display:grid;gap:7px;padding:10px 17px;border-radius:4px;border:1px solid rgba(148,163,184,.16);background:rgba(15,23,42,.46);"
+                style="display:grid;gap:7px;padding:10px 17px;border-radius:4px;border:1px solid rgba(148,163,184,.18);background:rgba(15,23,42,.46);"
             >
                 <div style="display:flex;align-items:center;justify-content:space-between;gap:7px;flex-wrap:wrap;">
                     <h3 style="margin:0;font-size:1rem;">"Operator Notes"</h3>

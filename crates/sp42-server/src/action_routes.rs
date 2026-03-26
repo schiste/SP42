@@ -1,23 +1,23 @@
 use axum::{
+    Json,
     extract::{Query, State},
     http::{HeaderMap, StatusCode},
     response::IntoResponse,
-    Json,
 };
 use tracing::info;
 
 use sp42_core::{
-    execute_patrol, execute_rollback, execute_undo, parse_action_response_summary, ActionError,
-    ActionResponseSummary, HttpResponse, PatrolRequest, RollbackRequest, TokenKind, UndoRequest,
+    ActionError, ActionResponseSummary, HttpResponse, PatrolRequest, RollbackRequest, TokenKind,
+    UndoRequest, execute_patrol, execute_rollback, execute_undo, parse_action_response_summary,
 };
 
 use crate::{
-    capability_report_for_session, config_for_state_wiki, current_session_snapshot,
-    execute_fetch_token, forbidden_error, invalid_payload, storage_routes,
-    unauthorized_error, ActionExecutionHistoryReport, ActionExecutionLogEntry,
+    ACTION_HISTORY_LIMIT, ActionExecutionHistoryReport, ActionExecutionLogEntry,
     ActionExecutionStatusReport, ActionHistoryQuery, AppState, BearerHttpClient,
-    DevAuthCapabilityReport, SessionActionExecutionRequest, SessionActionExecutionResponse,
-    SessionActionKind, SessionSnapshot, ACTION_HISTORY_LIMIT, RESPONSE_BODY_PREVIEW_LIMIT,
+    DevAuthCapabilityReport, RESPONSE_BODY_PREVIEW_LIMIT, SessionActionExecutionRequest,
+    SessionActionExecutionResponse, SessionActionKind, SessionSnapshot,
+    capability_report_for_session, config_for_state_wiki, current_session_snapshot,
+    execute_fetch_token, forbidden_error, invalid_payload, storage_routes, unauthorized_error,
 };
 
 pub(crate) async fn get_action_status(
@@ -93,21 +93,29 @@ fn action_response_payload(
     summary: &ActionResponseSummary,
     response_preview: &str,
 ) -> SessionActionExecutionResponse {
+    let mut warnings = summary.warnings.clone();
+    if summary.nochange {
+        warnings.push("no change — the edit may have already been reverted".to_string());
+    }
     SessionActionExecutionResponse {
         wiki_id: payload.wiki_id.clone(),
         kind: payload.kind,
         rev_id: payload.rev_id,
-        accepted: true,
+        accepted: !summary.nochange,
         actor: Some(actor),
         http_status: Some(response.status),
         api_code: summary.api_code.clone(),
         retryable: summary.retryable,
-        warnings: summary.warnings.clone(),
+        warnings,
         result: summary.result.clone(),
-        message: Some(format!(
-            "MediaWiki HTTP {} {}",
-            response.status, response_preview
-        )),
+        message: if summary.nochange {
+            Some("no change — the edit may have already been reverted".to_string())
+        } else {
+            Some(format!(
+                "MediaWiki HTTP {} {}",
+                response.status, response_preview
+            ))
+        },
     }
 }
 
@@ -134,21 +142,28 @@ async fn handle_action_success(
 ) -> Result<(StatusCode, Json<SessionActionExecutionResponse>), (StatusCode, Json<serde_json::Value>)>
 {
     let response_preview = truncate_response_body(&response.body);
-    let response_summary =
-        parse_action_response_summary(&response, payload.kind.label())
-            .map_err(|error| action_error_response(&error))?;
+    let response_summary = parse_action_response_summary(&response, payload.kind.label())
+        .map_err(|error| action_error_response(&error))?;
+    let mut warnings = response_summary.warnings.clone();
+    if response_summary.nochange {
+        warnings.push("no change — the edit may have already been reverted".to_string());
+    }
     let log_entry = build_action_log_entry(
         executed_at_ms,
         payload,
         ActionLogOutcome {
-            accepted: true,
+            accepted: !response_summary.nochange,
             http_status: Some(response.status),
             api_code: response_summary.api_code.clone(),
             retryable: response_summary.retryable,
-            warnings: response_summary.warnings.clone(),
+            warnings,
             result: response_summary.result.clone(),
             response_preview: Some(response_preview.clone()),
-            error: None,
+            error: if response_summary.nochange {
+                Some("no change — the edit may have already been reverted".to_string())
+            } else {
+                None
+            },
         },
     );
     let audit_warning =
@@ -335,10 +350,16 @@ pub(crate) fn action_feedback_for_entry(entry: &ActionExecutionLogEntry) -> Stri
         SessionActionKind::Patrol => "Patrol",
         SessionActionKind::Undo => "Undo",
     };
+    let rationale = entry
+        .summary
+        .as_ref()
+        .filter(|value| !value.trim().is_empty())
+        .map(|value| format!(" rationale: {value}"))
+        .unwrap_or_default();
 
     if entry.accepted {
         format!(
-            "{verb} on {} rev {} accepted{}{}{}.",
+            "{verb} on {} rev {} accepted{}{}{}{}.",
             entry.wiki_id,
             entry.rev_id,
             entry
@@ -355,10 +376,11 @@ pub(crate) fn action_feedback_for_entry(entry: &ActionExecutionLogEntry) -> Stri
                 .as_ref()
                 .map(|preview| format!(" {preview}"))
                 .unwrap_or_default(),
+            rationale,
         )
     } else {
         format!(
-            "{verb} on {} rev {} failed{}{}.",
+            "{verb} on {} rev {} failed{}{}{}.",
             entry.wiki_id,
             entry.rev_id,
             entry
@@ -371,6 +393,7 @@ pub(crate) fn action_feedback_for_entry(entry: &ActionExecutionLogEntry) -> Stri
                 .as_ref()
                 .map(|error| format!(": {error}"))
                 .unwrap_or_default(),
+            rationale,
         )
     }
 }
@@ -567,9 +590,7 @@ pub(crate) fn validate_action_request(
     Ok(())
 }
 
-pub(crate) fn action_error_response(
-    error: &ActionError,
-) -> (StatusCode, Json<serde_json::Value>) {
+pub(crate) fn action_error_response(error: &ActionError) -> (StatusCode, Json<serde_json::Value>) {
     let (message, code, http_status, retryable) = match error {
         ActionError::Execution {
             message,
@@ -610,4 +631,35 @@ fn action_error_message(body: &Json<serde_json::Value>) -> String {
         .get("error")
         .and_then(serde_json::Value::as_str)
         .map_or_else(|| "wiki action failed".to_string(), ToString::to_string)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::action_feedback_for_entry;
+    use sp42_core::SessionActionKind;
+
+    #[test]
+    fn action_feedback_includes_rationale_summary() {
+        let entry = crate::ActionExecutionLogEntry {
+            executed_at_ms: 1_710_000_000_000,
+            wiki_id: "frwiki".to_string(),
+            kind: SessionActionKind::Rollback,
+            rev_id: 42,
+            title: Some("Exemple".to_string()),
+            target_user: Some("Example".to_string()),
+            summary: Some("SP42 rationale: obvious-vandalism; rules=rule_set:default".to_string()),
+            accepted: true,
+            http_status: Some(200),
+            api_code: None,
+            retryable: false,
+            warnings: Vec::new(),
+            result: Some("Success".to_string()),
+            response_preview: None,
+            error: None,
+        };
+
+        let feedback = action_feedback_for_entry(&entry);
+
+        assert!(feedback.contains("SP42 rationale: obvious-vandalism"));
+    }
 }

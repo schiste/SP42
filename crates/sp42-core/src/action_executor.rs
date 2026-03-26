@@ -590,6 +590,12 @@ pub fn parse_action_response_summary(
         message
     });
 
+    let nochange = parsed
+        .edit
+        .as_ref()
+        .and_then(|value| value.get("nochange"))
+        .is_some();
+
     Ok(ActionResponseSummary {
         status: response.status,
         warnings,
@@ -597,6 +603,7 @@ pub fn parse_action_response_summary(
         error,
         api_code,
         retryable,
+        nochange,
     })
 }
 
@@ -650,6 +657,7 @@ pub struct ActionResponseSummary {
     pub error: Option<String>,
     pub api_code: Option<String>,
     pub retryable: bool,
+    pub nochange: bool,
 }
 
 const fn token_field_name(token_kind: TokenKind) -> &'static str {

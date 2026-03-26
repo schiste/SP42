@@ -634,7 +634,19 @@ pub fn PatrolSurface() -> impl IntoView {
                     <div style="min-width:0;min-height:0;overflow-y:auto;overflow-x:hidden;">
                         {move || {
                             if let Some(view) = view_data.get() {
-                                view! { <DiffViewer diff=view.diff.clone() /> }.into_any()
+                                let idx = selected_index.get();
+                                let server_idx = view.selected_index.unwrap_or(0);
+                                // Diff is only valid for the server-selected edit
+                                if idx == server_idx {
+                                    view! { <DiffViewer diff=view.diff.clone() /> }.into_any()
+                                } else {
+                                    // Server only provides the diff for the top-ranked edit
+                                    view! {
+                                        <div style="display:grid;place-items:center;height:100%;color:#8b9fc0;font-size:12px;">
+                                            <p>"Diff available for the top-ranked edit only."</p>
+                                        </div>
+                                    }.into_any()
+                                }
                             } else {
                                 view! {
                                     <div

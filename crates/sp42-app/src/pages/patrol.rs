@@ -674,7 +674,7 @@ pub fn PatrolSurface() -> impl IntoView {
                             if let Some(view) = view_data.get() {
                                 view! {
                                     <ActionBar
-                                        capabilities=view.capabilities.clone()
+                                        preflight=view.action_preflight.clone()
                                         has_selection=Signal::derive(move || has_selection.get())
                                         action_pending=Signal::derive(move || action_pending.get())
                                         on_action=set_action_trigger

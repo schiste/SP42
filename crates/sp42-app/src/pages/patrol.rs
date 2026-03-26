@@ -536,7 +536,7 @@ pub fn PatrolSurface() -> impl IntoView {
                         </span>
                         // Help button
                         <button
-                            style="min-height:22px;padding:2px 8px;\
+                            style="min-height:32px;padding:2px 8px;\
                                    border:1px solid rgba(148,163,184,.14);border-radius:4px;\
                                    background:transparent;color:#8b9fc0;font:inherit;\
                                    font-size:12px;cursor:pointer;"
@@ -655,7 +655,7 @@ pub fn PatrolSurface() -> impl IntoView {
                                 type="text"
                                 placeholder="Review note (optional)"
                                 aria-label="Review note"
-                                style="flex:1;min-height:27px;padding:4px 10px;\
+                                style="flex:1;min-height:32px;padding:4px 10px;\
                                        background:#111b2e;color:#eff4ff;\
                                        border:1px solid rgba(148,163,184,.14);\
                                        border-radius:4px;font:inherit;font-size:12px;"

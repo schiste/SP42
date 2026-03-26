@@ -330,7 +330,7 @@ pub fn FilterBar(
 
             // Load older (backlog pagination)
             <button
-                style="min-height:27px;padding:2px 10px;border:1px solid rgba(148,163,184,.14);\
+                style="min-height:32px;padding:2px 10px;border:1px solid rgba(148,163,184,.14);\
                        border-radius:4px;background:transparent;color:#8b9fc0;\
                        font:inherit;font-size:12px;cursor:pointer;"
                 disabled=move || next_continue.get().is_none()

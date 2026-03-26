@@ -1,7 +1,10 @@
+mod action_routes;
 mod auth_routes;
 mod coordination;
+mod ingestion_supervisor;
 mod local_env;
 mod operator_live;
+mod session_runtime;
 mod storage_routes;
 mod wikimedia_capabilities;
 
@@ -35,8 +38,8 @@ use tracing::{info, warn};
 use tracing_subscriber::EnvFilter;
 
 use sp42_core::{
-    ActionError, ActionExecutionHistoryReport, ActionExecutionLogEntry,
-    ActionExecutionStatusReport, BacklogRuntime, BacklogRuntimeConfig, Clock, ContextInputs,
+    ActionExecutionHistoryReport, ActionExecutionLogEntry, ActionExecutionStatusReport,
+    BacklogRuntime, BacklogRuntimeConfig, Clock, ContextInputs,
     CoordinationRoomSummary, CoordinationSnapshot, CoordinationState, DebugSnapshotInputs,
     DevAuthBootstrapRequest, DevAuthCapabilityReport, DevAuthSessionStatus, EditorIdentity,
     FileStorage, FlagState, LiftWingRequest, LiveOperatorBackendStatus, LiveOperatorPhaseTiming,
@@ -46,14 +49,14 @@ use sp42_core::{
     PublicAuditLedgerEntry, PublicStorageDocumentData, QueuedEdit, RecentChangesQuery,
     ServerDebugSummary, SessionActionExecutionRequest, SessionActionExecutionResponse,
     SessionActionKind, ShellStateInputs, Storage, StreamRuntimeStatus, SystemClock, TokenKind,
-    UndoRequest, WikiConfig, WikiStorageConfig, WikiStorageDocument, WikiStorageDocumentKind,
+    WikiConfig, WikiStorageConfig, WikiStorageDocument, WikiStorageDocumentKind,
     WikiStorageLoadedDocument, WikiStoragePlan, WikiStoragePlanInput, WikiStorageWriteOutcome,
     WikiStorageWriteRequest, build_authorization_url, build_debug_snapshot,
     build_live_operator_action_preflight, build_patrol_scenario_report,
     build_patrol_session_digest, build_ranked_queue, build_review_workbench, build_scoring_context,
     build_shell_state_model, build_wiki_storage_plan, default_public_storage_document, diff_lines,
-    execute_fetch_token, execute_liftwing_score, execute_patrol, execute_recent_changes,
-    execute_rollback, execute_undo, generate_oauth_state, generate_pkce_verifier,
+    execute_fetch_token, execute_liftwing_score, execute_recent_changes, generate_oauth_state,
+    generate_pkce_verifier,
     load_wiki_storage_document, parse_callback_query,
     render_wiki_storage_document_page, render_wiki_storage_index_page,
     resolve_wiki_storage_document, save_wiki_storage_document,
@@ -545,211 +548,8 @@ fn build_http_client() -> io::Result<reqwest::Client> {
         .map_err(|error| io::Error::other(format!("failed to build reqwest client: {error}")))
 }
 
-fn supervisor_poll_interval_ms() -> u64 {
-    std::env::var("SP42_INGESTION_POLL_MS")
-        .ok()
-        .and_then(|value| value.parse::<u64>().ok())
-        .filter(|value| *value > 0)
-        .unwrap_or(15_000)
-}
-
-fn supervisor_wiki_ids() -> Vec<String> {
-    let configured = std::env::var("SP42_SUPERVISOR_WIKIS")
-        .ok()
-        .filter(|value| !value.trim().is_empty())
-        .unwrap_or_else(|| "frwiki".to_string());
-
-    configured
-        .split(',')
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(ToString::to_string)
-        .collect()
-}
-
 fn spawn_ingestion_supervisors(state: &AppState) {
-    let poll_interval_ms = supervisor_poll_interval_ms();
-    for wiki_id in supervisor_wiki_ids() {
-        let state_clone = state.clone();
-        tokio::spawn(async move {
-            run_ingestion_supervisor_for_wiki(state_clone, wiki_id, poll_interval_ms).await;
-        });
-    }
-}
-
-async fn run_ingestion_supervisor_for_wiki(
-    state: AppState,
-    wiki_id: String,
-    poll_interval_ms: u64,
-) {
-    loop {
-        let started_at_ms = state.clock.now_ms();
-        let snapshot =
-            supervisor_snapshot_iteration(&state, &wiki_id, poll_interval_ms, started_at_ms).await;
-        let sleep_ms = poll_interval_ms.max(1_000);
-        {
-            let mut guard = state.ingestion_supervisor.write().await;
-            guard.insert(wiki_id.clone(), snapshot);
-        }
-        tokio::time::sleep(Duration::from_millis(sleep_ms)).await;
-    }
-}
-
-async fn supervisor_snapshot_iteration(
-    state: &AppState,
-    wiki_id: &str,
-    poll_interval_ms: u64,
-    started_at_ms: i64,
-) -> IngestionSupervisorSnapshot {
-    let previous = {
-        let guard = state.ingestion_supervisor.read().await;
-        guard.get(wiki_id).cloned()
-    };
-    let previous_run_count = previous
-        .as_ref()
-        .map_or(0, |snapshot| snapshot.status.run_count);
-    let previous_success = previous
-        .as_ref()
-        .and_then(|snapshot| snapshot.status.last_success_at_ms);
-
-    let Some(access_token) = state.local_oauth.access_token().map(ToString::to_string) else {
-        return supervisor_inactive_snapshot(
-            wiki_id,
-            poll_interval_ms,
-            previous_run_count,
-            started_at_ms,
-            previous_success,
-            "No local Wikimedia access token is available.".to_string(),
-            "Supervisor is idle until a local token is configured.".to_string(),
-        );
-    };
-
-    let config = match resolved_wiki_config(state, wiki_id) {
-        Ok(config) => config,
-        Err(error) => {
-            return supervisor_inactive_snapshot(
-                wiki_id,
-                poll_interval_ms,
-                previous_run_count,
-                started_at_ms,
-                previous_success,
-                error,
-                "Supervisor could not resolve wiki configuration.".to_string(),
-            );
-        }
-    };
-
-    let poll_result = perform_supervisor_poll(state, wiki_id, &config, access_token).await;
-
-    match poll_result {
-        Ok((batch, backlog_status, stream_status, queue)) => {
-            let mut notes = vec![format!(
-                "Supervisor polled {} edits.",
-                backlog_status.last_batch_size
-            )];
-            if stream_status.last_event_id.is_none() && backlog_status.next_continue.is_some() {
-                notes.push(
-                    "Stream checkpoint is empty; backlog checkpoint is currently authoritative."
-                        .to_string(),
-                );
-            }
-            IngestionSupervisorSnapshot {
-                status: sp42_core::LiveIngestionSupervisorStatus {
-                    wiki_id: wiki_id.to_string(),
-                    active: true,
-                    poll_interval_ms,
-                    run_count: previous_run_count.saturating_add(1),
-                    latest_queue_depth: queue.len(),
-                    last_started_at_ms: Some(started_at_ms),
-                    last_success_at_ms: Some(state.clock.now_ms()),
-                    last_error: None,
-                    stream_status: Some(stream_status),
-                    backlog_status: Some(backlog_status),
-                    notes,
-                },
-                queue,
-                next_continue: batch.next_continue,
-            }
-        }
-        Err(error) => supervisor_inactive_snapshot(
-            wiki_id,
-            poll_interval_ms,
-            previous_run_count,
-            started_at_ms,
-            previous_success,
-            error.to_string(),
-            "Supervisor poll failed; request path will continue to fall back.".to_string(),
-        ),
-    }
-}
-
-fn supervisor_inactive_snapshot(
-    wiki_id: &str,
-    poll_interval_ms: u64,
-    previous_run_count: u64,
-    started_at_ms: i64,
-    previous_success: Option<i64>,
-    error: String,
-    note: String,
-) -> IngestionSupervisorSnapshot {
-    IngestionSupervisorSnapshot {
-        status: sp42_core::LiveIngestionSupervisorStatus {
-            wiki_id: wiki_id.to_string(),
-            active: false,
-            poll_interval_ms,
-            run_count: previous_run_count.saturating_add(1),
-            latest_queue_depth: 0,
-            last_started_at_ms: Some(started_at_ms),
-            last_success_at_ms: previous_success,
-            last_error: Some(error),
-            stream_status: None,
-            backlog_status: None,
-            notes: vec![note],
-        },
-        queue: Vec::new(),
-        next_continue: None,
-    }
-}
-
-async fn perform_supervisor_poll(
-    state: &AppState,
-    wiki_id: &str,
-    config: &WikiConfig,
-    access_token: String,
-) -> Result<
-    (
-        sp42_core::RecentChangesBatch,
-        sp42_core::BacklogRuntimeStatus,
-        StreamRuntimeStatus,
-        Vec<QueuedEdit>,
-    ),
-    sp42_core::BacklogRuntimeError,
-> {
-    let client = BearerHttpClient::new(state.http_client.clone(), access_token);
-    let storage = runtime_storage_for(state);
-    let mut backlog_runtime = BacklogRuntime::new(
-        config.clone(),
-        storage,
-        BacklogRuntimeConfig {
-            limit: default_limit(),
-            include_bots: false,
-        },
-        format!("recentchanges.rccontinue.{wiki_id}"),
-    );
-    backlog_runtime.initialize().await?;
-    let batch = backlog_runtime.poll(&client).await?;
-    let backlog_status = backlog_runtime.status();
-    let stream_status = persisted_stream_status(state, wiki_id)
-        .await
-        .map_err(|message| {
-            sp42_core::BacklogRuntimeError::Storage(sp42_core::StorageError::Operation { message })
-        })?;
-    let queue = build_ranked_queue(batch.events.clone(), &config.scoring).map_err(|error| {
-        sp42_core::BacklogRuntimeError::Storage(sp42_core::StorageError::Operation {
-            message: error.to_string(),
-        })
-    })?;
-    Ok((batch, backlog_status, stream_status, queue))
+    ingestion_supervisor::spawn_ingestion_supervisors(state);
 }
 
 fn init_tracing() {
@@ -1810,8 +1610,7 @@ async fn supervisor_snapshot_for_wiki(
     state: &AppState,
     wiki_id: &str,
 ) -> Option<IngestionSupervisorSnapshot> {
-    let guard = state.ingestion_supervisor.read().await;
-    guard.get(wiki_id).cloned()
+    ingestion_supervisor::supervisor_snapshot_for_wiki(state, wiki_id).await
 }
 
 fn live_operator_query_from_filters(filters: &LiveViewFilterParams) -> LiveOperatorQuery {
@@ -2789,7 +2588,7 @@ async fn get_action_status(
     State(state): State<AppState>,
     headers: HeaderMap,
 ) -> Json<ActionExecutionStatusReport> {
-    Json(action_status_report(&state, &headers).await)
+    action_routes::get_action_status(State(state), headers).await
 }
 
 async fn get_action_history(
@@ -2797,7 +2596,7 @@ async fn get_action_history(
     headers: HeaderMap,
     Query(query): Query<ActionHistoryQuery>,
 ) -> Json<ActionExecutionHistoryReport> {
-    Json(action_history_report(&state, &headers, query.limit).await)
+    action_routes::get_action_history(State(state), headers, Query(query)).await
 }
 
 async fn post_bootstrap_session(
@@ -2822,357 +2621,16 @@ async fn get_bootstrap_status(
     auth_routes::get_bootstrap_status(State(state), headers).await
 }
 
-fn action_response_payload(
-    payload: &SessionActionExecutionRequest,
-    actor: String,
-    response: &sp42_core::HttpResponse,
-    summary: &sp42_core::ActionResponseSummary,
-    response_preview: &str,
-) -> SessionActionExecutionResponse {
-    SessionActionExecutionResponse {
-        wiki_id: payload.wiki_id.clone(),
-        kind: payload.kind,
-        rev_id: payload.rev_id,
-        accepted: true,
-        actor: Some(actor),
-        http_status: Some(response.status),
-        api_code: summary.api_code.clone(),
-        retryable: summary.retryable,
-        warnings: summary.warnings.clone(),
-        result: summary.result.clone(),
-        message: Some(format!(
-            "MediaWiki HTTP {} {}",
-            response.status, response_preview
-        )),
-    }
-}
-
-async fn record_action_side_effects(
-    state: &AppState,
-    session: &SessionSnapshot,
-    headers: &HeaderMap,
-    payload: &SessionActionExecutionRequest,
-    log_entry: &ActionExecutionLogEntry,
-) -> Option<String> {
-    record_action_execution(state, &session.session_id, log_entry.clone()).await;
-    storage_routes::append_public_audit_entry(state, headers, session, payload, log_entry)
-        .await
-        .err()
-}
-
-async fn handle_action_success(
-    state: &AppState,
-    session: &SessionSnapshot,
-    headers: &HeaderMap,
-    payload: &SessionActionExecutionRequest,
-    executed_at_ms: i64,
-    response: sp42_core::HttpResponse,
-) -> Result<(StatusCode, Json<SessionActionExecutionResponse>), (StatusCode, Json<serde_json::Value>)>
-{
-    let response_preview = truncate_response_body(&response.body);
-    let response_summary =
-        sp42_core::parse_action_response_summary(&response, payload.kind.label())
-            .map_err(|error| action_error_response(&error))?;
-    let log_entry = build_action_log_entry(
-        executed_at_ms,
-        payload,
-        ActionLogOutcome {
-            accepted: true,
-            http_status: Some(response.status),
-            api_code: response_summary.api_code.clone(),
-            retryable: response_summary.retryable,
-            warnings: response_summary.warnings.clone(),
-            result: response_summary.result.clone(),
-            response_preview: Some(response_preview.clone()),
-            error: None,
-        },
-    );
-    let audit_warning =
-        record_action_side_effects(state, session, headers, payload, &log_entry).await;
-    let mut response_payload = action_response_payload(
-        payload,
-        session.username.clone(),
-        &response,
-        &response_summary,
-        &response_preview,
-    );
-    if let Some(warning) = audit_warning {
-        response_payload
-            .warnings
-            .push(format!("public audit write failed: {warning}"));
-    }
-
-    Ok((StatusCode::OK, Json(response_payload)))
-}
-
-async fn handle_action_failure(
-    state: &AppState,
-    session: &SessionSnapshot,
-    headers: &HeaderMap,
-    payload: &SessionActionExecutionRequest,
-    executed_at_ms: i64,
-    error: ActionError,
-) -> (StatusCode, Json<serde_json::Value>) {
-    let (api_code, retryable, logged_http_status) = match &error {
-        ActionError::Execution {
-            code,
-            http_status,
-            retryable,
-            ..
-        } => (code.clone(), *retryable, *http_status),
-    };
-    let api_error = action_error_response(&error);
-    let status = api_error.0.as_u16();
-    let error_message = action_error_message(&api_error.1);
-    let log_entry = build_action_log_entry(
-        executed_at_ms,
-        payload,
-        ActionLogOutcome {
-            accepted: false,
-            http_status: logged_http_status.or(Some(status)),
-            api_code,
-            retryable,
-            warnings: Vec::new(),
-            result: None,
-            response_preview: None,
-            error: Some(error_message),
-        },
-    );
-    let audit_warning =
-        record_action_side_effects(state, session, headers, payload, &log_entry).await;
-    if let Some(warning) = audit_warning {
-        let mut body = api_error.1.0;
-        body["audit_warning"] = serde_json::Value::String(warning);
-        (api_error.0, Json(body))
-    } else {
-        api_error
-    }
-}
-
 async fn post_execute_action(
     State(state): State<AppState>,
     headers: HeaderMap,
     Json(payload): Json<SessionActionExecutionRequest>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
-    let Some(session) = current_session_snapshot(&state, &headers, true).await else {
-        return Err(unauthorized_error(
-            "No authenticated bridge session is active.",
-        ));
-    };
-
-    let capabilities =
-        capability_report_for_session(&state, &session, &payload.wiki_id, false).await;
-    validate_action_request(&payload, &capabilities)?;
-    if matches!(payload.kind, SessionActionKind::Undo) && payload.undo_after_rev_id.is_none() {
-        return Err(invalid_payload("undo_after_rev_id is required for undo"));
-    }
-    let config = config_for_state_wiki(&state, &payload.wiki_id)?;
-    let client = BearerHttpClient::new(state.http_client.clone(), session.access_token.clone());
-    let executed_at_ms = state.clock.now_ms();
-    let outcome = execute_session_action(&client, &config, &payload).await;
-    info!(
-        session_id = session.session_id.as_str(),
-        wiki_id = payload.wiki_id.as_str(),
-        rev_id = payload.rev_id,
-        kind = ?payload.kind,
-        "executing session action"
-    );
-
-    match outcome {
-        Ok(response) => {
-            let result = handle_action_success(
-                &state,
-                &session,
-                &headers,
-                &payload,
-                executed_at_ms,
-                response,
-            )
-            .await?;
-            Ok(result)
-        }
-        Err(error) => {
-            Err(
-                handle_action_failure(&state, &session, &headers, &payload, executed_at_ms, error)
-                    .await,
-            )
-        }
-    }
-}
-
-async fn execute_session_action(
-    client: &BearerHttpClient,
-    config: &sp42_core::WikiConfig,
-    payload: &SessionActionExecutionRequest,
-) -> Result<sp42_core::HttpResponse, ActionError> {
-    match payload.kind {
-        SessionActionKind::Rollback => {
-            let token = execute_fetch_token(client, config, TokenKind::Rollback).await?;
-            execute_rollback(
-                client,
-                config,
-                &sp42_core::RollbackRequest {
-                    title: payload.title.clone().unwrap_or_default(),
-                    user: payload.target_user.clone().unwrap_or_default(),
-                    token,
-                    summary: payload.summary.clone(),
-                },
-            )
-            .await
-        }
-        SessionActionKind::Patrol => {
-            let token = execute_fetch_token(client, config, TokenKind::Patrol).await?;
-            execute_patrol(
-                client,
-                config,
-                &sp42_core::PatrolRequest {
-                    rev_id: payload.rev_id,
-                    token,
-                },
-            )
-            .await
-        }
-        SessionActionKind::Undo => {
-            let token = execute_fetch_token(client, config, TokenKind::Csrf).await?;
-            let Some(undo_after_rev_id) = payload.undo_after_rev_id else {
-                return Err(ActionError::Execution {
-                    message: "undo actions require undo_after_rev_id to be present".to_string(),
-                    code: Some("invalid-input".to_string()),
-                    http_status: None,
-                    retryable: false,
-                });
-            };
-            execute_undo(
-                client,
-                config,
-                &UndoRequest {
-                    title: payload.title.clone().unwrap_or_default(),
-                    undo_rev_id: payload.rev_id,
-                    undo_after_rev_id,
-                    token,
-                    summary: payload.summary.clone(),
-                },
-            )
-            .await
-        }
-    }
-}
-
-fn build_action_log_entry(
-    executed_at_ms: i64,
-    payload: &SessionActionExecutionRequest,
-    outcome: ActionLogOutcome,
-) -> ActionExecutionLogEntry {
-    ActionExecutionLogEntry {
-        executed_at_ms,
-        wiki_id: payload.wiki_id.clone(),
-        kind: payload.kind,
-        rev_id: payload.rev_id,
-        title: payload.title.clone(),
-        target_user: payload.target_user.clone(),
-        summary: payload.summary.clone(),
-        accepted: outcome.accepted,
-        http_status: outcome.http_status,
-        api_code: outcome.api_code,
-        retryable: outcome.retryable,
-        warnings: outcome.warnings,
-        result: outcome.result,
-        response_preview: outcome.response_preview,
-        error: outcome.error,
-    }
-}
-
-struct ActionLogOutcome {
-    accepted: bool,
-    http_status: Option<u16>,
-    api_code: Option<String>,
-    retryable: bool,
-    warnings: Vec<String>,
-    result: Option<String>,
-    response_preview: Option<String>,
-    error: Option<String>,
-}
-
-struct ActionHistoryStats {
-    total_actions: usize,
-    successful_actions: usize,
-    retryable_failures: usize,
-    last_execution: Option<ActionExecutionLogEntry>,
-}
-
-async fn record_action_execution(
-    state: &AppState,
-    session_id: &str,
-    entry: ActionExecutionLogEntry,
-) {
-    let mut sessions = state.sessions.write().await;
-    prune_expired_sessions(&mut sessions, state.clock.now_ms());
-    if let Some(session) = sessions.get_mut(session_id) {
-        session.action_history.push(entry);
-        if session.action_history.len() > ACTION_HISTORY_LIMIT {
-            let overflow = session.action_history.len() - ACTION_HISTORY_LIMIT;
-            session.action_history.drain(0..overflow);
-        }
-    }
+    action_routes::post_execute_action(State(state), headers, Json(payload)).await
 }
 
 fn action_feedback_for_entry(entry: &ActionExecutionLogEntry) -> String {
-    let verb = match entry.kind {
-        SessionActionKind::Rollback => "Rollback",
-        SessionActionKind::Patrol => "Patrol",
-        SessionActionKind::Undo => "Undo",
-    };
-
-    if entry.accepted {
-        format!(
-            "{verb} on {} rev {} accepted{}{}{}.",
-            entry.wiki_id,
-            entry.rev_id,
-            entry
-                .http_status
-                .map(|status| format!(" with HTTP {status}"))
-                .unwrap_or_default(),
-            entry
-                .result
-                .as_ref()
-                .map(|result| format!(" ({result})"))
-                .unwrap_or_default(),
-            if entry.warnings.is_empty() {
-                String::new()
-            } else {
-                format!(" warnings={}", entry.warnings.join(" | "))
-            }
-        )
-    } else {
-        format!(
-            "{verb} on {} rev {} failed{}{}{}.",
-            entry.wiki_id,
-            entry.rev_id,
-            entry
-                .error
-                .as_ref()
-                .map(|error| format!(": {error}"))
-                .unwrap_or_default(),
-            entry
-                .api_code
-                .as_ref()
-                .map(|code| format!(" code={code}"))
-                .unwrap_or_default(),
-            if entry.retryable {
-                " retryable=true".to_string()
-            } else {
-                String::new()
-            }
-        )
-    }
-}
-
-fn action_error_message(error: &Json<serde_json::Value>) -> String {
-    error
-        .0
-        .get("error")
-        .and_then(|value| value.as_str())
-        .map_or_else(|| error.0.to_string(), ToString::to_string)
+    action_routes::action_feedback_for_entry(entry)
 }
 
 fn internal_error(message: &str) -> (StatusCode, Json<serde_json::Value>) {
@@ -3186,37 +2644,7 @@ async fn action_status_report(
     state: &AppState,
     headers: &HeaderMap,
 ) -> ActionExecutionStatusReport {
-    let current = current_session_snapshot(state, headers, false).await;
-    let Some(session) = current else {
-        return ActionExecutionStatusReport {
-            authenticated: false,
-            session_id: None,
-            username: None,
-            total_actions: 0,
-            successful_actions: 0,
-            failed_actions: 0,
-            retryable_failures: 0,
-            last_execution: None,
-            shell_feedback: vec!["No authenticated shell session is active.".to_string()],
-        };
-    };
-
-    let history_summary = action_history_stats_for_session(state, &session.session_id).await;
-    let last_execution = history_summary.last_execution.clone();
-    let total_actions = history_summary.total_actions;
-    let successful_actions = history_summary.successful_actions;
-    let failed_actions = total_actions.saturating_sub(successful_actions);
-    ActionExecutionStatusReport {
-        authenticated: true,
-        session_id: Some(session.session_id),
-        username: Some(session.username),
-        total_actions,
-        successful_actions,
-        failed_actions,
-        retryable_failures: history_summary.retryable_failures,
-        last_execution: last_execution.clone(),
-        shell_feedback: action_shell_feedback(total_actions, last_execution.as_ref()),
-    }
+    action_routes::action_status_report(state, headers).await
 }
 
 async fn action_history_report(
@@ -3224,104 +2652,7 @@ async fn action_history_report(
     headers: &HeaderMap,
     limit: Option<usize>,
 ) -> ActionExecutionHistoryReport {
-    let current = current_session_snapshot(state, headers, false).await;
-    let Some(session) = current else {
-        return ActionExecutionHistoryReport {
-            authenticated: false,
-            session_id: None,
-            username: None,
-            entries: Vec::new(),
-        };
-    };
-
-    let entries = action_history_for_session(
-        state,
-        &session.session_id,
-        limit.unwrap_or(10).min(ACTION_HISTORY_LIMIT),
-    )
-    .await;
-    ActionExecutionHistoryReport {
-        authenticated: true,
-        session_id: Some(session.session_id),
-        username: Some(session.username),
-        entries,
-    }
-}
-
-async fn action_history_for_session(
-    state: &AppState,
-    session_id: &str,
-    limit: usize,
-) -> Vec<ActionExecutionLogEntry> {
-    let sessions = state.sessions.read().await;
-    if let Some(session) = sessions.get(session_id) {
-        session
-            .action_history
-            .iter()
-            .rev()
-            .take(limit)
-            .cloned()
-            .collect::<Vec<_>>()
-    } else {
-        Vec::new()
-    }
-}
-
-async fn action_history_stats_for_session(
-    state: &AppState,
-    session_id: &str,
-) -> ActionHistoryStats {
-    let sessions = state.sessions.read().await;
-    sessions.get(session_id).map_or(
-        ActionHistoryStats {
-            total_actions: 0,
-            successful_actions: 0,
-            retryable_failures: 0,
-            last_execution: None,
-        },
-        |session| {
-            let mut successful_actions = 0usize;
-            let mut retryable_failures = 0usize;
-            for entry in &session.action_history {
-                if entry.accepted {
-                    successful_actions = successful_actions.saturating_add(1);
-                } else if entry.retryable {
-                    retryable_failures = retryable_failures.saturating_add(1);
-                }
-            }
-
-            ActionHistoryStats {
-                total_actions: session.action_history.len(),
-                successful_actions,
-                retryable_failures,
-                last_execution: session.action_history.last().cloned(),
-            }
-        },
-    )
-}
-
-fn action_shell_feedback(
-    total_actions: usize,
-    last_execution: Option<&ActionExecutionLogEntry>,
-) -> Vec<String> {
-    let mut feedback = Vec::new();
-    feedback.push(format!(
-        "{total_actions} action(s) recorded in this shell session."
-    ));
-
-    if let Some(last) = last_execution {
-        feedback.push(action_feedback_for_entry(last));
-        if let Some(preview) = &last.response_preview {
-            feedback.push(format!("Latest response excerpt: {preview}"));
-        }
-        if let Some(code) = &last.api_code {
-            feedback.push(format!("Latest API code: {code}"));
-        }
-    } else {
-        feedback.push("No actions have been executed yet.".to_string());
-    }
-
-    feedback
+    action_routes::action_history_report(state, headers, limit).await
 }
 
 fn invalid_payload(message: &str) -> (StatusCode, Json<serde_json::Value>) {
@@ -3332,22 +2663,7 @@ fn invalid_payload(message: &str) -> (StatusCode, Json<serde_json::Value>) {
 }
 
 fn effective_session_scopes(report: &DevAuthCapabilityReport) -> Vec<String> {
-    let mut scopes = Vec::new();
-
-    if report.capabilities.read.can_authenticate {
-        scopes.push("basic".to_string());
-    }
-    if report.capabilities.editing.can_edit {
-        scopes.push("editpage".to_string());
-    }
-    if report.capabilities.moderation.can_patrol {
-        scopes.push("patrol".to_string());
-    }
-    if report.capabilities.moderation.can_rollback {
-        scopes.push("rollback".to_string());
-    }
-
-    scopes
+    session_runtime::effective_session_scopes(report)
 }
 
 fn split_scope_string(value: &str) -> Vec<String> {
@@ -3359,38 +2675,11 @@ fn split_scope_string(value: &str) -> Vec<String> {
 }
 
 fn auth_session_view_without_session(state: &AppState) -> OAuthSessionView {
-    OAuthSessionView {
-        authenticated: FlagState::Disabled,
-        username: None,
-        scopes: Vec::new(),
-        expires_at_ms: None,
-        upstream_access_expires_at_ms: None,
-        refresh_available: FlagState::Disabled,
-        bridge_mode: "inactive".to_string(),
-        local_token_available: FlagState::from(state.local_oauth.access_token().is_some()),
-        oauth_client_ready: FlagState::from(state.local_oauth.has_confidential_oauth_client()),
-        login_path: AUTH_LOGIN_PATH.to_string(),
-        logout_path: AUTH_LOGOUT_PATH.to_string(),
-    }
+    session_runtime::auth_session_view_without_session(state)
 }
 
 async fn auth_session_view(state: &AppState, headers: &HeaderMap, touch: bool) -> OAuthSessionView {
-    match current_session_snapshot(state, headers, touch).await {
-        Some(session) => OAuthSessionView {
-            authenticated: FlagState::Enabled,
-            username: Some(session.username),
-            scopes: session.scopes,
-            expires_at_ms: session.expires_at_ms,
-            upstream_access_expires_at_ms: sessions_upstream_access_expiry(state, headers).await,
-            refresh_available: FlagState::from(sessions_refresh_available(state, headers).await),
-            bridge_mode: session.bridge_mode,
-            local_token_available: FlagState::from(state.local_oauth.access_token().is_some()),
-            oauth_client_ready: FlagState::from(state.local_oauth.has_confidential_oauth_client()),
-            login_path: AUTH_LOGIN_PATH.to_string(),
-            logout_path: AUTH_LOGOUT_PATH.to_string(),
-        },
-        None => auth_session_view_without_session(state),
-    }
+    session_runtime::auth_session_view(state, headers, touch).await
 }
 
 fn sanitize_redirect_target(next: Option<&str>) -> String {
@@ -3503,25 +2792,14 @@ fn oauth_client_config_from_pending(
 }
 
 async fn store_pending_oauth_login(state: &AppState, pending: PendingOAuthLogin) {
-    let mut pending_logins = state.pending_oauth_logins.write().await;
-    prune_expired_pending_oauth_logins(&mut pending_logins, state.clock.now_ms());
-    pending_logins.insert(pending.state.clone(), pending);
+    session_runtime::store_pending_oauth_login(state, pending).await;
 }
 
 async fn take_pending_oauth_login(
     state: &AppState,
     state_token: &str,
 ) -> Option<PendingOAuthLogin> {
-    let mut pending_logins = state.pending_oauth_logins.write().await;
-    prune_expired_pending_oauth_logins(&mut pending_logins, state.clock.now_ms());
-    pending_logins.remove(state_token)
-}
-
-fn prune_expired_pending_oauth_logins(
-    pending_logins: &mut HashMap<String, PendingOAuthLogin>,
-    current_time_ms: i64,
-) {
-    pending_logins.retain(|_, pending| pending.expires_at_ms > current_time_ms);
+    session_runtime::take_pending_oauth_login(state, state_token).await
 }
 
 async fn install_session(
@@ -3530,14 +2808,7 @@ async fn install_session(
     stored: StoredSession,
     current_ms: i64,
 ) -> String {
-    let session_id = next_session_id(state, current_ms);
-    let mut sessions = state.sessions.write().await;
-    prune_expired_sessions(&mut sessions, current_ms);
-    if let Some(prior_session_id) = prior_session_id {
-        sessions.remove(&prior_session_id);
-    }
-    sessions.insert(session_id.clone(), stored);
-    session_id
+    session_runtime::install_session(state, prior_session_id, stored, current_ms).await
 }
 
 async fn exchange_authorization_code(
@@ -3607,30 +2878,11 @@ fn to_status(
     local_oauth: &LocalOAuthConfig,
     now_ms: i64,
 ) -> DevAuthSessionStatus {
-    DevAuthSessionStatus {
-        authenticated: session.is_some(),
-        username: session.map(|entry| entry.username.clone()),
-        scopes: session.map_or_else(Vec::new, |entry| entry.scopes.clone()),
-        expires_at_ms: session.map(|entry| session_expires_at_ms(entry, now_ms)),
-        token_present: session.is_some_and(|entry| !entry.access_token.is_empty()),
-        bridge_mode: session
-            .map_or_else(|| "inactive".to_string(), |entry| entry.bridge_mode.clone()),
-        local_token_available: local_oauth.access_token().is_some(),
-    }
+    session_runtime::to_status(session, local_oauth, now_ms)
 }
 
 fn bootstrap_status(state: &AppState, auth: &DevAuthSessionStatus) -> DevAuthBootstrapStatus {
-    let source_report = state.local_oauth.source_report();
-
-    DevAuthBootstrapStatus {
-        bootstrap_ready: state.local_oauth.access_token().is_some(),
-        oauth: state.local_oauth.status(),
-        session: auth.clone(),
-        source_path: source_report
-            .loaded_from_source
-            .then_some(source_report.file_name.clone()),
-        source_report,
-    }
+    session_runtime::bootstrap_status(state, auth)
 }
 
 fn live_operator_backend_status(
@@ -3679,57 +2931,27 @@ fn now_ms() -> i64 {
 }
 
 fn session_cookie_value(headers: &HeaderMap) -> Option<String> {
-    headers
-        .get(COOKIE)
-        .and_then(|value| value.to_str().ok())
-        .and_then(|value| {
-            value.split(';').find_map(|entry| {
-                let mut parts = entry.trim().splitn(2, '=');
-                let key = parts.next()?.trim();
-                let value = parts.next()?.trim();
-                (key == SESSION_COOKIE_NAME && !value.is_empty()).then(|| value.to_string())
-            })
-        })
+    session_runtime::session_cookie_value(headers)
 }
 
 fn next_session_id(state: &AppState, current_ms: i64) -> String {
-    let counter = state.next_session_id.fetch_add(1, Ordering::Relaxed);
-    format!(
-        "{:016x}{:016x}{:08x}",
-        u64::try_from(current_ms).unwrap_or(u64::MAX),
-        counter,
-        std::process::id()
-    )
+    session_runtime::next_session_id(state, current_ms)
 }
 
 fn session_cookie_header(session_id: &str) -> Option<HeaderValue> {
-    HeaderValue::from_str(&format!(
-        "{SESSION_COOKIE_NAME}={session_id}; HttpOnly; SameSite=Lax; Path=/; Max-Age={SESSION_COOKIE_MAX_AGE_SECONDS}"
-    ))
-    .ok()
+    session_runtime::session_cookie_header(session_id)
 }
 
 fn expired_session_cookie_header() -> HeaderValue {
-    HeaderValue::from_static("sp42_dev_session=deleted; HttpOnly; SameSite=Lax; Path=/; Max-Age=0")
+    session_runtime::expired_session_cookie_header()
 }
 
 fn session_expires_at_ms(session: &StoredSession, current_time_ms: i64) -> i64 {
-    let idle_deadline = session
-        .last_seen_at_ms
-        .saturating_add(SESSION_IDLE_TIMEOUT_MS);
-    let absolute_deadline = session
-        .created_at_ms
-        .saturating_add(SESSION_ABSOLUTE_TIMEOUT_MS);
-    let deadline = idle_deadline.min(absolute_deadline);
-    deadline.max(current_time_ms)
-}
-
-fn session_is_expired(session: &StoredSession, current_time_ms: i64) -> bool {
-    current_time_ms >= session_expires_at_ms(session, current_time_ms)
+    session_runtime::session_expires_at_ms(session, current_time_ms)
 }
 
 fn prune_expired_sessions(sessions: &mut HashMap<String, StoredSession>, current_time_ms: i64) {
-    sessions.retain(|_, session| !session_is_expired(session, current_time_ms));
+    session_runtime::prune_expired_sessions(sessions, current_time_ms);
 }
 
 async fn current_session_snapshot(
@@ -3737,43 +2959,7 @@ async fn current_session_snapshot(
     headers: &HeaderMap,
     touch: bool,
 ) -> Option<SessionSnapshot> {
-    let session_id = session_cookie_value(headers)?;
-    let mut sessions = state.sessions.write().await;
-    let current_time_ms = state.clock.now_ms();
-    prune_expired_sessions(&mut sessions, current_time_ms);
-    let session = sessions.get_mut(&session_id)?;
-    if touch {
-        session.last_seen_at_ms = current_time_ms;
-        session.expires_at_ms = Some(session_expires_at_ms(session, current_time_ms));
-    }
-
-    Some(SessionSnapshot {
-        session_id,
-        username: session.username.clone(),
-        scopes: session.scopes.clone(),
-        expires_at_ms: session.expires_at_ms,
-        access_token: session.access_token.clone(),
-        bridge_mode: session.bridge_mode.clone(),
-    })
-}
-
-async fn sessions_upstream_access_expiry(state: &AppState, headers: &HeaderMap) -> Option<i64> {
-    let session_id = session_cookie_value(headers)?;
-    let sessions = state.sessions.read().await;
-    sessions
-        .get(&session_id)
-        .and_then(|session| session.upstream_access_expires_at_ms)
-}
-
-async fn sessions_refresh_available(state: &AppState, headers: &HeaderMap) -> bool {
-    let Some(session_id) = session_cookie_value(headers) else {
-        return false;
-    };
-    let sessions = state.sessions.read().await;
-    sessions
-        .get(&session_id)
-        .and_then(|session| session.refresh_token.as_ref())
-        .is_some_and(|token| !token.is_empty())
+    session_runtime::current_session_snapshot(state, headers, touch).await
 }
 
 async fn current_status(
@@ -3781,18 +2967,7 @@ async fn current_status(
     headers: &HeaderMap,
     touch: bool,
 ) -> DevAuthSessionStatus {
-    match current_session_snapshot(state, headers, touch).await {
-        Some(session) => DevAuthSessionStatus {
-            authenticated: true,
-            username: Some(session.username),
-            scopes: session.scopes,
-            expires_at_ms: session.expires_at_ms,
-            token_present: true,
-            bridge_mode: session.bridge_mode,
-            local_token_available: state.local_oauth.access_token().is_some(),
-        },
-        None => to_status(None, &state.local_oauth, state.clock.now_ms()),
-    }
+    session_runtime::current_status(state, headers, touch).await
 }
 
 async fn cached_capabilities_for_session(
@@ -3899,56 +3074,6 @@ fn resolved_wiki_config(state: &AppState, wiki_id: &str) -> Result<sp42_core::Wi
     Ok(config)
 }
 
-fn validate_action_request(
-    payload: &SessionActionExecutionRequest,
-    capabilities: &DevAuthCapabilityReport,
-) -> Result<(), (StatusCode, Json<serde_json::Value>)> {
-    if payload.wiki_id.trim().is_empty() {
-        return Err(invalid_payload("wiki_id is required"));
-    }
-    if payload.rev_id == 0 {
-        return Err(invalid_payload("rev_id must be non-zero"));
-    }
-
-    match payload.kind {
-        SessionActionKind::Rollback => {
-            if payload.title.as_deref().is_none_or(str::is_empty) {
-                return Err(invalid_payload("title is required for rollback"));
-            }
-            if payload.target_user.as_deref().is_none_or(str::is_empty) {
-                return Err(invalid_payload("target_user is required for rollback"));
-            }
-            if !capabilities.capabilities.moderation.can_rollback {
-                return Err(forbidden_error(
-                    "The authenticated session does not currently have rollback capability on this wiki.",
-                ));
-            }
-        }
-        SessionActionKind::Patrol => {
-            if !capabilities.capabilities.moderation.can_patrol {
-                return Err(forbidden_error(
-                    "The authenticated session does not currently have patrol capability on this wiki.",
-                ));
-            }
-        }
-        SessionActionKind::Undo => {
-            if payload.title.as_deref().is_none_or(str::is_empty) {
-                return Err(invalid_payload("title is required for undo"));
-            }
-            if payload.undo_after_rev_id.is_none() {
-                return Err(invalid_payload("undo_after_rev_id is required for undo"));
-            }
-            if !capabilities.capabilities.editing.can_undo {
-                return Err(forbidden_error(
-                    "The authenticated session does not currently have undo capability on this wiki.",
-                ));
-            }
-        }
-    }
-
-    Ok(())
-}
-
 fn forbidden_error(message: &str) -> (StatusCode, Json<serde_json::Value>) {
     (
         StatusCode::FORBIDDEN,
@@ -3963,40 +3088,8 @@ fn unauthorized_error(message: &str) -> (StatusCode, Json<serde_json::Value>) {
     )
 }
 
-fn action_error_response(error: &ActionError) -> (StatusCode, Json<serde_json::Value>) {
-    let (message, code, http_status, retryable) = match error {
-        ActionError::Execution {
-            message,
-            code,
-            http_status,
-            retryable,
-        } => (message.clone(), code.clone(), *http_status, *retryable),
-    };
-    (
-        match http_status {
-            Some(400..=499) => StatusCode::BAD_REQUEST,
-            _ => StatusCode::BAD_GATEWAY,
-        },
-        Json(serde_json::json!({
-            "error": format!("wiki action failed: {message}"),
-            "code": code,
-            "http_status": http_status,
-            "retryable": retryable,
-        })),
-    )
-}
-
 fn truncate_response_body(body: &[u8]) -> String {
-    let text = String::from_utf8_lossy(body);
-    if text.chars().count() > RESPONSE_BODY_PREVIEW_LIMIT {
-        let truncated = text
-            .chars()
-            .take(RESPONSE_BODY_PREVIEW_LIMIT)
-            .collect::<String>();
-        format!("{truncated}...")
-    } else {
-        text.into_owned()
-    }
+    action_routes::truncate_response_body(body)
 }
 
 #[derive(Debug, Clone)]

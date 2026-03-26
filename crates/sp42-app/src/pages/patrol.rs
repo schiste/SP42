@@ -24,7 +24,6 @@ pub fn PatrolSurface() -> impl IntoView {
     let (review_note, set_review_note) = signal(String::new());
     let (show_help, set_show_help) = signal(false);
     let (show_backoffice, set_show_backoffice) = signal(false);
-    let (action_log, set_action_log) = signal(Vec::<String>::new());
     let (bootstrap_attempted, set_bootstrap_attempted) = signal(false);
     let (bootstrap_error, set_bootstrap_error) = signal(None::<String>);
 
@@ -120,9 +119,6 @@ pub fn PatrolSurface() -> impl IntoView {
                     if response.accepted {
                         set_action_status
                             .set(format!("{:?} accepted for rev {}", kind, edit.event.rev_id));
-                        let mut log = action_log.get();
-                        log.push(format!("{:?} rev {} OK", kind, edit.event.rev_id));
-                        set_action_log.set(log);
                         let queue_len = view.queue.len();
                         if idx + 1 < queue_len {
                             set_selected_index.set(idx + 1);
@@ -540,9 +536,10 @@ pub fn PatrolSurface() -> impl IntoView {
                             view! { <span></span> }.into_any()
                         }}
                         {move || {
-                            if !action_status.get().is_empty() {
+                            let status = action_status.get();
+                            if !status.is_empty() {
                                 view! {
-                                    <span style="font-size:11px;">{action_status.get()}</span>
+                                    <span style="font-size:11px;">{status}</span>
                                 }
                                     .into_any()
                             } else {
@@ -579,7 +576,7 @@ pub fn PatrolSurface() -> impl IntoView {
                                     }.into_any();
                                 }
                             }
-                            view! { <span style="font-size:11px;color:#8b9fc0;">{move || format!("{} actions", action_log.get().len())}</span> }.into_any()
+                            view! { <span style="font-size:11px;color:#8b9fc0;">"0 actions"</span> }.into_any()
                         }}
                         <button
                             style="min-height:32px;padding:2px 8px;\

@@ -26,6 +26,7 @@ pub fn PatrolSurface() -> impl IntoView {
     let (review_note, set_review_note) = signal(String::new());
     let (show_help, set_show_help) = signal(false);
     let (show_backoffice, set_show_backoffice) = signal(false);
+    let (diff_loading, set_diff_loading) = signal(false);
     let (bootstrap_attempted, set_bootstrap_attempted) = signal(false);
     let (bootstrap_error, set_bootstrap_error) = signal(None::<String>);
 
@@ -51,7 +52,9 @@ pub fn PatrolSurface() -> impl IntoView {
                             Ok(status) if status.authenticated => {
                                 set_bootstrap_error.set(None);
                                 // Re-fetch now that we have a session
-                                match fetch_live_operator_view(DEFAULT_WIKI_ID, &current_filters).await {
+                                match fetch_live_operator_view(DEFAULT_WIKI_ID, &current_filters)
+                                    .await
+                                {
                                     Ok(view2) => {
                                         set_load_error.set(None);
                                         set_next_continue.set(view2.next_continue.clone());
@@ -74,9 +77,11 @@ pub fn PatrolSurface() -> impl IntoView {
                     set_load_error.set(None);
                     set_next_continue.set(view.next_continue.clone());
                     set_view_data.set(Some(view));
+                    set_diff_loading.set(false);
                 }
                 Err(error) => {
                     set_load_error.set(Some(error));
+                    set_diff_loading.set(false);
                 }
             }
         }
@@ -120,8 +125,11 @@ pub fn PatrolSurface() -> impl IntoView {
             match execute_dev_auth_action(&request).await {
                 Ok(response) => {
                     if response.accepted {
-                        set_action_status
-                            .set(format!("{} accepted for rev {}", kind.label(), edit.event.rev_id));
+                        set_action_status.set(format!(
+                            "{} accepted for rev {}",
+                            kind.label(),
+                            edit.event.rev_id
+                        ));
                         let queue_len = view.queue.len();
                         if idx + 1 < queue_len {
                             set_selected_index.set(idx + 1);
@@ -147,9 +155,7 @@ pub fn PatrolSurface() -> impl IntoView {
         }
     });
 
-    let queue_len = Memo::new(move |_| {
-        view_data.get().map_or(0, |v| v.queue.len())
-    });
+    let queue_len = Memo::new(move |_| view_data.get().map_or(0, |v| v.queue.len()));
     let has_selection = Memo::new(move |_| selected_index.get() < queue_len.get());
 
     Effect::new(move |_| {
@@ -163,6 +169,7 @@ pub fn PatrolSurface() -> impl IntoView {
         let idx = selected_index.get();
         if let Some(prev_idx) = prev {
             if prev_idx != idx {
+                set_diff_loading.set(true);
                 load_action.dispatch_local(());
             }
         }
@@ -597,15 +604,20 @@ pub fn PatrolSurface() -> impl IntoView {
 
                     <div style="min-width:0;min-height:0;overflow-y:auto;overflow-x:hidden;">
                         {move || {
-                            if let Some(view) = view_data.get() {
+                            if diff_loading.get() {
+                                view! {
+                                    <div class="grid-center" role="main" aria-label="Diff viewer" style="height:100%;">
+                                        <div style="text-align:center;">
+                                            <div class="spinner" style="margin:0 auto;"></div>
+                                            <p class="text-muted" style="margin-top:10px;font-size:12px;">"Loading diff..."</p>
+                                        </div>
+                                    </div>
+                                }.into_any()
+                            } else if let Some(view) = view_data.get() {
                                 view! { <DiffViewer diff=view.diff.clone() /> }.into_any()
                             } else {
                                 view! {
-                                    <div
-                                        role="main"
-                                        aria-label="Diff viewer"
-                                        style="display:grid;place-items:center;color:#8b9fc0;"
-                                    >
+                                    <div role="main" aria-label="Diff viewer" class="grid-center text-muted">
                                         {if load_error.get().is_some() {
                                             "Diff unavailable."
                                         } else {

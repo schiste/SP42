@@ -1,21 +1,16 @@
 use leptos::prelude::*;
 use sp42_core::{
     CoordinationRoomSummary, CoordinationStateSummary, DevAuthCapabilityReport, EditorIdentity,
-    PatrolScenarioReadiness, PatrolScenarioReport, PatrolSessionDigest, QueuedEdit, ReportSeverity,
-    ScoringContext,
+    LiveOperatorView, PatrolScenarioReadiness, PatrolScenarioReport, PatrolSessionDigest,
+    QueuedEdit, ReportSeverity, ScoringContext,
 };
 
 use super::style::{SECTION_HEADER, score_tier, wiki_base_url};
 
 #[component]
 pub fn ContextSidebar(
+    view: LiveOperatorView,
     edit: Option<QueuedEdit>,
-    scoring_context: Option<ScoringContext>,
-    capabilities: DevAuthCapabilityReport,
-    scenario_report: PatrolScenarioReport,
-    session_digest: PatrolSessionDigest,
-    coordination_room: Option<CoordinationRoomSummary>,
-    coordination_state: Option<CoordinationStateSummary>,
 ) -> impl IntoView {
     let Some(edit) = edit else {
         return view! {
@@ -40,12 +35,12 @@ pub fn ContextSidebar(
         >
             {score_section(&edit)}
             {user_section(&edit)}
-            {metadata_section(&edit, &scoring_context)}
+            {metadata_section(&edit, &view.scoring_context)}
             {signals_section(&edit)}
-            {capabilities_section(&capabilities)}
-            {scenario_readiness_section(&scenario_report)}
-            {session_digest_section(&session_digest)}
-            {coordination_section(&edit, &coordination_room, &coordination_state)}
+            {capabilities_section(&view.capabilities)}
+            {scenario_readiness_section(&view.scenario_report)}
+            {session_digest_section(&view.session_digest)}
+            {coordination_section(&edit, &view.coordination_room, &view.coordination_state)}
         </aside>
     }
     .into_any()

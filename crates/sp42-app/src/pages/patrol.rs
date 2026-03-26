@@ -663,13 +663,8 @@ pub fn PatrolSurface() -> impl IntoView {
                             let edit = view.queue.get(idx).cloned();
                             view! {
                                 <ContextSidebar
+                                    view=view.clone()
                                     edit=edit
-                                    scoring_context=view.scoring_context.clone()
-                                    capabilities=view.capabilities.clone()
-                                    scenario_report=view.scenario_report.clone()
-                                    session_digest=view.session_digest.clone()
-                                    coordination_room=view.coordination_room.clone()
-                                    coordination_state=view.coordination_state.clone()
                                 />
                             }
                                 .into_any()

@@ -840,4 +840,11 @@ mod tests {
             prop_assert_ne!(report.readiness, PatrolScenarioReadiness::Blocked);
         }
     }
+
+    #[test]
+    fn report_severity_display_produces_human_readable_labels() {
+        assert_eq!(ReportSeverity::Info.to_string(), "Info");
+        assert_eq!(ReportSeverity::Warning.to_string(), "Warning");
+        assert_eq!(ReportSeverity::Blocker.to_string(), "Blocker");
+    }
 }

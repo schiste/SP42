@@ -376,7 +376,7 @@ pub struct ServerDebugSummary {
 
 #[cfg(test)]
 mod tests {
-    use super::LocalOAuthSourceReport;
+    use super::{LocalOAuthSourceReport, ScoringSignal, WarningLevel};
 
     #[test]
     fn local_oauth_source_report_serializes_without_requiring_path_disclosure() {
@@ -398,5 +398,32 @@ mod tests {
                 .and_then(serde_json::Value::as_bool),
             Some(true)
         );
+    }
+
+    #[test]
+    fn scoring_signal_display_produces_human_readable_labels() {
+        assert_eq!(ScoringSignal::AnonymousUser.to_string(), "Anonymous user");
+        assert_eq!(ScoringSignal::NewPage.to_string(), "New page");
+        assert_eq!(ScoringSignal::RevertedBefore.to_string(), "Reverted before");
+        assert_eq!(
+            ScoringSignal::LargeContentRemoval.to_string(),
+            "Large content removal"
+        );
+        assert_eq!(ScoringSignal::Profanity.to_string(), "Profanity");
+        assert_eq!(ScoringSignal::LinkSpam.to_string(), "Link spam");
+        assert_eq!(ScoringSignal::TrustedUser.to_string(), "Trusted user");
+        assert_eq!(ScoringSignal::BotLikeEdit.to_string(), "Bot-like edit");
+        assert_eq!(ScoringSignal::LiftWingRisk.to_string(), "LiftWing risk");
+        assert_eq!(ScoringSignal::WarningHistory.to_string(), "Warning history");
+    }
+
+    #[test]
+    fn warning_level_display_produces_human_readable_labels() {
+        assert_eq!(WarningLevel::None.to_string(), "None");
+        assert_eq!(WarningLevel::Level1.to_string(), "Level 1");
+        assert_eq!(WarningLevel::Level2.to_string(), "Level 2");
+        assert_eq!(WarningLevel::Level3.to_string(), "Level 3");
+        assert_eq!(WarningLevel::Level4.to_string(), "Level 4");
+        assert_eq!(WarningLevel::Final.to_string(), "Final");
     }
 }

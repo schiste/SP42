@@ -27,6 +27,7 @@ pub fn PatrolSurface() -> impl IntoView {
     let (show_help, set_show_help) = signal(false);
     let (show_backoffice, set_show_backoffice) = signal(false);
     let (diff_loading, set_diff_loading) = signal(false);
+    let (selection_only_refetch, set_selection_only_refetch) = signal(false);
     let (bootstrap_attempted, set_bootstrap_attempted) = signal(false);
     let (bootstrap_error, set_bootstrap_error) = signal(None::<String>);
 
@@ -76,7 +77,23 @@ pub fn PatrolSurface() -> impl IntoView {
                     }
                     set_load_error.set(None);
                     set_next_continue.set(view.next_continue.clone());
-                    set_view_data.set(Some(view));
+                    // On selection-only re-fetches, keep the existing queue
+                    // so items don't jump around; only update diff/context.
+                    if selection_only_refetch.get_untracked() {
+                        set_selection_only_refetch.set(false);
+                        if let Some(mut existing) = view_data.get_untracked() {
+                            existing.diff = view.diff;
+                            existing.scoring_context = view.scoring_context;
+                            existing.review_workbench = view.review_workbench;
+                            existing.action_preflight = view.action_preflight;
+                            existing.selected_index = view.selected_index;
+                            set_view_data.set(Some(existing));
+                        } else {
+                            set_view_data.set(Some(view));
+                        }
+                    } else {
+                        set_view_data.set(Some(view));
+                    }
                     set_diff_loading.set(false);
                 }
                 Err(error) => {
@@ -170,6 +187,7 @@ pub fn PatrolSurface() -> impl IntoView {
         if let Some(prev_idx) = prev {
             if prev_idx != idx {
                 set_diff_loading.set(true);
+                set_selection_only_refetch.set(true);
                 load_action.dispatch_local(());
             }
         }
@@ -559,13 +577,11 @@ pub fn PatrolSurface() -> impl IntoView {
                         </button>
                     </div>
 
-                    <div style="grid-column:1/-1;">
-                        <FilterBar
-                            filters=filters
-                            set_filters=set_filters
-                            next_continue=next_continue
-                        />
-                    </div>
+                    <FilterBar
+                        filters=filters
+                        set_filters=set_filters
+                        next_continue=next_continue
+                    />
 
                     {move || {
                         if let Some(view) = view_data.get() {
@@ -656,8 +672,7 @@ pub fn PatrolSurface() -> impl IntoView {
                         }
                     }}
 
-                    <div style="grid-column:1/-1;">
-                        <div class="review-note-bar">
+                    <div class="review-note-bar">
                             <input
                                 type="text"
                                 placeholder="Review note (optional)"
@@ -696,7 +711,6 @@ pub fn PatrolSurface() -> impl IntoView {
                                     .into_any()
                             }
                         }}
-                    </div>
                 </div>
             }.into_any()
         }}

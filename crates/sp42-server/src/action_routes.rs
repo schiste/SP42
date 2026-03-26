@@ -166,8 +166,12 @@ async fn handle_action_success(
             },
         },
     );
-    let audit_warning =
-        record_action_side_effects(state, session, headers, payload, &log_entry).await;
+    // Skip the audit log write when the action produced no change on wiki
+    let audit_warning = if response_summary.nochange {
+        None
+    } else {
+        record_action_side_effects(state, session, headers, payload, &log_entry).await
+    };
     let mut response_payload = action_response_payload(
         payload,
         session.username.clone(),

@@ -51,6 +51,37 @@ pub enum EditorIdentity {
     Temporary { label: String },
 }
 
+impl EditorIdentity {
+    #[must_use]
+    pub fn stable_label(&self) -> &str {
+        match self {
+            Self::Registered { username }
+            | Self::Anonymous { label: username }
+            | Self::Temporary { label: username } => username,
+        }
+    }
+
+    #[must_use]
+    pub const fn is_registered(&self) -> bool {
+        matches!(self, Self::Registered { .. })
+    }
+
+    #[must_use]
+    pub const fn is_anonymous(&self) -> bool {
+        matches!(self, Self::Anonymous { .. })
+    }
+
+    #[must_use]
+    pub const fn is_temporary(&self) -> bool {
+        matches!(self, Self::Temporary { .. })
+    }
+
+    #[must_use]
+    pub const fn is_newcomer_like(&self) -> bool {
+        matches!(self, Self::Anonymous { .. } | Self::Temporary { .. })
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct EditEvent {
     pub wiki_id: String,
@@ -71,8 +102,10 @@ pub struct EditEvent {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct ScoreWeights {
     pub anonymous_user: i32,
+    pub temporary_account: i32,
     pub new_page: i32,
     pub reverted_before: i32,
     pub large_content_removal: i32,
@@ -82,12 +115,15 @@ pub struct ScoreWeights {
     pub bot_like_edit: i32,
     pub liftwing_risk: i32,
     pub warning_history: i32,
+    pub obvious_vandalism: i32,
+    pub duplicate_pattern: i32,
 }
 
 impl Default for ScoreWeights {
     fn default() -> Self {
         Self {
             anonymous_user: 25,
+            temporary_account: 20,
             new_page: 20,
             reverted_before: 30,
             large_content_removal: 15,
@@ -97,6 +133,8 @@ impl Default for ScoreWeights {
             bot_like_edit: -50,
             liftwing_risk: 35,
             warning_history: 25,
+            obvious_vandalism: 35,
+            duplicate_pattern: 18,
         }
     }
 }
@@ -121,6 +159,7 @@ impl Default for ScoringConfig {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ScoringSignal {
     AnonymousUser,
+    TemporaryAccount,
     NewPage,
     RevertedBefore,
     LargeContentRemoval,
@@ -130,12 +169,15 @@ pub enum ScoringSignal {
     BotLikeEdit,
     LiftWingRisk,
     WarningHistory,
+    ObviousVandalism,
+    DuplicatePattern,
 }
 
 impl std::fmt::Display for ScoringSignal {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(match self {
             Self::AnonymousUser => "Anonymous user",
+            Self::TemporaryAccount => "Temporary account",
             Self::NewPage => "New page",
             Self::RevertedBefore => "Reverted before",
             Self::LargeContentRemoval => "Large content removal",
@@ -145,6 +187,8 @@ impl std::fmt::Display for ScoringSignal {
             Self::BotLikeEdit => "Bot-like edit",
             Self::LiftWingRisk => "LiftWing risk",
             Self::WarningHistory => "Warning history",
+            Self::ObviousVandalism => "Obvious vandalism",
+            Self::DuplicatePattern => "Duplicate pattern",
         })
     }
 }
@@ -209,6 +253,30 @@ pub struct UserRiskProfile {
 pub struct ScoringContext {
     pub user_risk: Option<UserRiskProfile>,
     pub liftwing_risk: Option<f32>,
+    #[serde(default)]
+    pub trust_override: FlagState,
+    pub duplicate_cluster_size: Option<u32>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct QueueHeuristicPolicy {
+    #[serde(default)]
+    pub trusted_usernames: Vec<String>,
+    #[serde(default = "queue_heuristics_enabled")]
+    pub duplicate_cluster_boost: FlagState,
+}
+
+impl Default for QueueHeuristicPolicy {
+    fn default() -> Self {
+        Self {
+            trusted_usernames: Vec::new(),
+            duplicate_cluster_boost: FlagState::Enabled,
+        }
+    }
+}
+
+fn queue_heuristics_enabled() -> FlagState {
+    FlagState::Enabled
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

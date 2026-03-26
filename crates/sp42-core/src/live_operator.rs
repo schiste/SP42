@@ -8,8 +8,8 @@ use crate::{
     DevAuthSessionStatus, FlagState, LocalOAuthConfigStatus, LocalOAuthSourceReport,
     PatrolScenarioReport, PatrolSessionDigest, PublicRuleSetDocument, PublicTeamDefinitionDocument,
     PublicTeamRegistryDocument, PublicUserPreferencesDocument, QueuedEdit, ReviewWorkbench,
-    ScoringContext, SessionActionExecutionRequest, SessionActionKind, ShellStateModel,
-    StreamRuntimeStatus, StructuredDiff, build_session_action_execution_requests,
+    ScoringContext, ScoringSignal, SessionActionExecutionRequest, SessionActionKind,
+    ShellStateModel, StreamRuntimeStatus, StructuredDiff, build_session_action_execution_requests,
 };
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -338,10 +338,35 @@ fn action_availability(
 }
 
 fn is_recommended(kind: SessionActionKind, item: &QueuedEdit) -> bool {
+    let has_obvious_vandalism = item
+        .score
+        .contributions
+        .iter()
+        .any(|entry| matches!(entry.signal, ScoringSignal::ObviousVandalism));
+    let has_duplicate_pattern = item
+        .score
+        .contributions
+        .iter()
+        .any(|entry| matches!(entry.signal, ScoringSignal::DuplicatePattern));
+    let has_trusted_suppression = item
+        .score
+        .contributions
+        .iter()
+        .any(|entry| matches!(entry.signal, ScoringSignal::TrustedUser));
+
     match kind {
-        SessionActionKind::Rollback => item.score.total >= 70,
-        SessionActionKind::Patrol => !item.event.is_patrolled.is_enabled(),
-        SessionActionKind::Undo => item.score.total >= 40,
+        SessionActionKind::Rollback => {
+            has_obvious_vandalism || has_duplicate_pattern || item.score.total >= 70
+        }
+        SessionActionKind::Patrol => {
+            !item.event.is_patrolled.is_enabled()
+                && !has_obvious_vandalism
+                && !has_duplicate_pattern
+                && item.score.total < 60
+        }
+        SessionActionKind::Undo => {
+            !has_trusted_suppression && (has_duplicate_pattern || item.score.total >= 40)
+        }
     }
 }
 

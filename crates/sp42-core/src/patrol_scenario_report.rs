@@ -633,6 +633,7 @@ mod tests {
                 has_recent_vandalism_templates: true,
             }),
             liftwing_risk: Some(0.72),
+            ..ScoringContext::default()
         };
         let stream_status = StreamRuntimeStatus {
             checkpoint_key: "stream.last_event_id.frwiki".to_string(),

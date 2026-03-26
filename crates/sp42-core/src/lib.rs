@@ -147,7 +147,9 @@ pub use public_documents::{
     PublicTeamRegistryEntry, PublicUserPreferencesDocument, default_public_storage_document,
     parse_public_storage_document, validate_public_storage_document,
 };
-pub use queue_builder::{build_ranked_queue, build_ranked_queue_with_contexts};
+pub use queue_builder::{
+    build_ranked_queue, build_ranked_queue_with_contexts, build_ranked_queue_with_policy,
+};
 pub use recent_changes::{
     RecentChangesBatch, RecentChangesQuery, build_recent_changes_request, execute_recent_changes,
     parse_recent_changes_response,
@@ -176,10 +178,10 @@ pub use traits::{
 pub use types::{
     Action, ActionBroadcast, CompositeScore, CoordinationMessage, CoordinationRoomSummary,
     CoordinationSnapshot, EditClaim, EditEvent, EditorIdentity, FlagState, FlaggedEdit, HttpMethod,
-    HttpRequest, HttpResponse, LocalOAuthSourceReport, PresenceHeartbeat, QueuedEdit,
-    RaceResolution, ScoreDelta, ScoreWeights, ScoringConfig, ScoringContext, ScoringSignal,
-    ServerDebugSummary, ServerSentEvent, SignalContribution, UserRiskProfile, WarningLevel,
-    WebSocketFrame, WikiConfig,
+    HttpRequest, HttpResponse, LocalOAuthSourceReport, PresenceHeartbeat, QueueHeuristicPolicy,
+    QueuedEdit, RaceResolution, ScoreDelta, ScoreWeights, ScoringConfig, ScoringContext,
+    ScoringSignal, ServerDebugSummary, ServerSentEvent, SignalContribution, UserRiskProfile,
+    WarningLevel, WebSocketFrame, WikiConfig,
 };
 pub use user_analyzer::{
     UserRiskCache, build_user_risk_profile, count_warning_templates, parse_warning_level,

@@ -2,8 +2,8 @@
 
 use crate::errors::ScoringError;
 use crate::types::{
-    CompositeScore, EditEvent, ScoreWeights, ScoringConfig, ScoringContext,
-    ScoringSignal, SignalContribution,
+    CompositeScore, EditEvent, ScoreWeights, ScoringConfig, ScoringContext, ScoringSignal,
+    SignalContribution,
 };
 
 const LARGE_REMOVAL_THRESHOLD: i32 = -500;
@@ -12,8 +12,14 @@ const PROFANITY_MARKERS: [&str; 4] = ["fuck", "merde", "shit", "putain"];
 const LINK_MARKERS: [&str; 2] = ["http://", "https://"];
 const TRUSTED_TAGS: [&str; 3] = ["mw-manual-revert", "mw-rollback", "trusted"];
 const REVERT_TAGS: [&str; 2] = ["mw-reverted", "mw-undo"];
-const SUSPICIOUS_COMMENT_MARKERS: [&str; 7] =
-    ["rvv", "vandalisme", "vandalism", "spam", "test", "blanking", "nonsense"];
+const SUSPICIOUS_COMMENT_MARKERS: [&str; 6] = [
+    "rvv",
+    "vandalisme",
+    "vandalism",
+    "blanking",
+    "nonsense",
+    "self revert",
+];
 
 /// Score an edit event from deterministic local signals.
 ///
@@ -100,7 +106,10 @@ pub fn score_edit_with_context(
         );
     }
 
-    let trusted_tag_detected = event.tags.iter().any(|tag| contains_tag(tag, &TRUSTED_TAGS));
+    let trusted_tag_detected = event
+        .tags
+        .iter()
+        .any(|tag| contains_tag(tag, &TRUSTED_TAGS));
     let trusted_override_detected = context.trust_override.is_enabled();
     if trusted_tag_detected || trusted_override_detected {
         let note = match (trusted_tag_detected, trusted_override_detected) {
@@ -191,18 +200,18 @@ fn apply_context_signals(
         }
     }
 
-    if let Some(cluster_size) = context.duplicate_cluster_size {
-        if cluster_size > 1 {
-            let numerator = i32::try_from(cluster_size.saturating_sub(1)).unwrap_or(i32::MAX);
-            let scaled_weight = scale_weight(weights.duplicate_pattern, numerator.min(4), 4);
-            push_signal(
-                ScoringSignal::DuplicatePattern,
-                scaled_weight,
-                Some(format!("duplicate cluster size {cluster_size}")),
-                total,
-                contributions,
-            );
-        }
+    if let Some(cluster_size) = context.duplicate_cluster_size
+        && cluster_size > 1
+    {
+        let numerator = i32::try_from(cluster_size.saturating_sub(1)).unwrap_or(i32::MAX);
+        let scaled_weight = scale_weight(weights.duplicate_pattern, numerator.min(4), 4);
+        push_signal(
+            ScoringSignal::DuplicatePattern,
+            scaled_weight,
+            Some(format!("duplicate cluster size {cluster_size}")),
+            total,
+            contributions,
+        );
     }
 }
 
@@ -263,12 +272,19 @@ fn push_signal(
     contributions: &mut Vec<SignalContribution>,
 ) {
     *total = total.saturating_add(weight);
-    if let Some(existing) = contributions.iter_mut().find(|entry| entry.signal == signal) {
+    if let Some(existing) = contributions
+        .iter_mut()
+        .find(|entry| entry.signal == signal)
+    {
         existing.weight = existing.weight.saturating_add(weight);
         existing.note = merge_notes(existing.note.take(), note);
         return;
     }
-    contributions.push(SignalContribution { signal, weight, note });
+    contributions.push(SignalContribution {
+        signal,
+        weight,
+        note,
+    });
 }
 
 fn normalize_probability(probability: f32) -> Option<f32> {
@@ -311,7 +327,9 @@ fn detect_obvious_vandalism(event: &EditEvent) -> Option<String> {
         reasons.push("suspicious moderation-style comment marker".to_string());
     }
 
-    if has_repeated_character_run(event.comment.as_deref()) || has_repeated_character_run(Some(&event.title)) {
+    if has_repeated_character_run(event.comment.as_deref())
+        || has_repeated_character_run(Some(&event.title))
+    {
         reasons.push("repeated-character noise detected".to_string());
     }
 
@@ -452,6 +470,7 @@ mod tests {
                 has_recent_vandalism_templates: true,
             }),
             liftwing_risk: Some(0.5),
+            ..ScoringContext::default()
         };
 
         let score = score_edit_with_context(&event, &ScoringConfig::default(), &context)
@@ -478,6 +497,7 @@ mod tests {
         let context = ScoringContext {
             user_risk: None,
             liftwing_risk: Some(f32::NAN),
+            ..ScoringContext::default()
         };
 
         let score = score_edit_with_context(&event, &ScoringConfig::default(), &context)
@@ -503,6 +523,7 @@ mod tests {
             max_score: i32::MAX,
             weights: crate::types::ScoreWeights {
                 anonymous_user: i32::MAX,
+                temporary_account: i32::MAX,
                 new_page: i32::MAX,
                 reverted_before: i32::MAX,
                 large_content_removal: i32::MAX,
@@ -512,6 +533,8 @@ mod tests {
                 bot_like_edit: i32::MIN,
                 liftwing_risk: i32::MAX,
                 warning_history: i32::MAX,
+                obvious_vandalism: i32::MAX,
+                duplicate_pattern: i32::MAX,
             },
         };
         let context = ScoringContext {
@@ -521,6 +544,7 @@ mod tests {
                 has_recent_vandalism_templates: true,
             }),
             liftwing_risk: Some(1.0),
+            ..ScoringContext::default()
         };
 
         let score = score_edit_with_context(&event, &config, &context)
@@ -561,6 +585,43 @@ mod tests {
     }
 
     #[test]
+    fn temporary_accounts_get_distinct_identity_signal() {
+        let mut event = sample_event();
+        event.performer = EditorIdentity::Temporary {
+            label: "~2026-777".to_string(),
+        };
+
+        let score = score_edit(&event, &ScoringConfig::default()).expect("score should compute");
+
+        assert!(
+            score
+                .contributions
+                .iter()
+                .any(|entry| entry.signal == ScoringSignal::TemporaryAccount)
+        );
+    }
+
+    #[test]
+    fn obvious_vandalism_fast_lane_requires_high_confidence_combo() {
+        let mut event = sample_event();
+        event.performer = EditorIdentity::Anonymous {
+            label: "192.0.2.55".to_string(),
+        };
+        event.comment = Some("rvv vandalisme".to_string());
+        event.byte_delta = -1_200;
+
+        let score = score_edit(&event, &ScoringConfig::default()).expect("score should compute");
+
+        let obvious = score
+            .contributions
+            .iter()
+            .find(|entry| entry.signal == ScoringSignal::ObviousVandalism);
+
+        assert!(obvious.is_some());
+        assert!(obvious.and_then(|entry| entry.note.as_deref()).is_some());
+    }
+
+    #[test]
     fn rounds_negative_scaled_weights_symmetrically() {
         let event = sample_event();
         let context = ScoringContext {
@@ -570,6 +631,7 @@ mod tests {
                 has_recent_vandalism_templates: false,
             }),
             liftwing_risk: None,
+            ..ScoringContext::default()
         };
         let config = ScoringConfig {
             weights: crate::types::ScoreWeights {
@@ -683,6 +745,7 @@ mod tests {
                 max_score,
                 weights: crate::types::ScoreWeights {
                     anonymous_user,
+                    temporary_account: 0,
                     new_page,
                     reverted_before,
                     large_content_removal,
@@ -692,6 +755,8 @@ mod tests {
                     bot_like_edit,
                     liftwing_risk,
                     warning_history,
+                    obvious_vandalism: 0,
+                    duplicate_pattern: 0,
                 },
             };
             let context = ScoringContext {
@@ -701,6 +766,7 @@ mod tests {
                     has_recent_vandalism_templates: true,
                 }),
                 liftwing_risk: Some(liftwing_probability),
+                ..ScoringContext::default()
             };
 
             let score = score_edit_with_context(&event, &config, &context).expect("score should compute");

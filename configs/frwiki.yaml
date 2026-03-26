@@ -18,6 +18,7 @@ scoring:
   max_score: 100
   weights:
     anonymous_user: 25
+    temporary_account: 20
     new_page: 20
     reverted_before: 30
     large_content_removal: 15
@@ -27,4 +28,5 @@ scoring:
     bot_like_edit: -50
     liftwing_risk: 35
     warning_history: 25
-
+    obvious_vandalism: 35
+    duplicate_pattern: 18

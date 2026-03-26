@@ -43,6 +43,8 @@ pub struct PublicTeamDefinitionDocument {
     pub description: String,
     #[serde(default)]
     pub members: Vec<String>,
+    #[serde(default)]
+    pub trusted_users: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -58,6 +60,8 @@ pub struct PublicRuleSetDocument {
     pub hide_minor: bool,
     #[serde(default)]
     pub hide_bots: bool,
+    #[serde(default)]
+    pub trusted_users: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -195,6 +199,7 @@ pub fn default_public_storage_document(
                 title: team_slug.clone(),
                 description: String::new(),
                 members: Vec::new(),
+                trusted_users: Vec::new(),
             }),
         ),
         WikiStorageDocumentKind::SharedRuleSet {
@@ -208,6 +213,7 @@ pub fn default_public_storage_document(
             tag_filters: Vec::new(),
             hide_minor: false,
             hide_bots: false,
+            trusted_users: Vec::new(),
         })),
         WikiStorageDocumentKind::SharedAuditPeriod {
             wiki_id,
@@ -275,6 +281,7 @@ pub fn validate_public_storage_document(
                         .to_string(),
                 });
             }
+            validate_non_empty_unique_strings("team trusted_users", &value.trusted_users)?;
         }
         PublicStorageDocumentData::RuleSet(value) => {
             if value.wiki_id.trim().is_empty()
@@ -296,6 +303,7 @@ pub fn validate_public_storage_document(
                     });
                 }
             }
+            validate_non_empty_unique_strings("rule-set trusted_users", &value.trusted_users)?;
         }
         PublicStorageDocumentData::AuditLedger(value) => {
             if value.wiki_id.trim().is_empty() || value.period_slug.trim().is_empty() {
@@ -317,6 +325,27 @@ pub fn validate_public_storage_document(
         }
     }
 
+    Ok(())
+}
+
+fn validate_non_empty_unique_strings(
+    label: &str,
+    values: &[String],
+) -> Result<(), PublicDocumentError> {
+    let mut seen = BTreeSet::new();
+    for value in values {
+        let normalized = value.trim();
+        if normalized.is_empty() {
+            return Err(PublicDocumentError::Validation {
+                message: format!("{label} contains a blank value"),
+            });
+        }
+        if !seen.insert(normalized.to_string()) {
+            return Err(PublicDocumentError::Validation {
+                message: format!("{label} contains duplicate value `{normalized}`"),
+            });
+        }
+    }
     Ok(())
 }
 
@@ -404,5 +433,28 @@ mod tests {
             error,
             PublicDocumentError::InvalidDocumentKind { .. }
         ));
+    }
+
+    #[test]
+    fn rejects_duplicate_trusted_users_in_rule_set() {
+        let error = parse_public_storage_document(
+            &WikiStorageDocumentKind::SharedRuleSet {
+                wiki_id: "frwiki".to_string(),
+                rule_set_slug: "default".to_string(),
+            },
+            json!({
+                "type": "rule_set",
+                "document": {
+                    "wiki_id": "frwiki",
+                    "slug": "default",
+                    "title": "Default",
+                    "namespace_allowlist": [0],
+                    "trusted_users": ["Alice", "Alice"]
+                }
+            }),
+        )
+        .expect_err("duplicate trusted users should be rejected");
+
+        assert!(matches!(error, PublicDocumentError::Validation { .. }));
     }
 }

@@ -260,6 +260,7 @@ mod tests {
                 has_recent_vandalism_templates: true,
             }),
             liftwing_risk: Some(0.72),
+            ..ScoringContext::default()
         };
         let item = QueuedEdit {
             score: score_edit_with_context(&event, &ScoringConfig::default(), &context)

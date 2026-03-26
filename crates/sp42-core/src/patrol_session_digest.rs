@@ -332,6 +332,7 @@ mod tests {
                 has_recent_vandalism_templates: true,
             }),
             liftwing_risk: Some(0.81),
+            ..ScoringContext::default()
         };
         let diff = diff_lines("A", "B");
         let workbench = build_review_workbench(

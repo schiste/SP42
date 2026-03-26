@@ -1,5 +1,5 @@
 use leptos::prelude::*;
-use sp42_core::{DiffSegment, DiffSegmentKind, StructuredDiff};
+use sp42_core::{DiffSegment, DiffSegmentKind, InlineSpan, StructuredDiff};
 
 /// Describes whether a segment should be rendered or collapsed into a separator.
 #[derive(Clone)]
@@ -55,6 +55,7 @@ fn compute_visibility(segments: &[DiffSegment], context_lines: usize) -> Vec<Seg
 struct SegmentData {
     kind: DiffSegmentKind,
     text: String,
+    inline_highlights: Vec<InlineSpan>,
 }
 
 #[component]
@@ -90,6 +91,7 @@ pub fn DiffViewer(diff: Option<StructuredDiff>) -> impl IntoView {
         .map(|s| SegmentData {
             kind: s.kind,
             text: s.text,
+            inline_highlights: s.inline_highlights,
         })
         .collect();
 
@@ -168,6 +170,8 @@ fn render_segment_data(
     let aria_text = format!("{aria}{}", segment.text.trim_end());
     let text = segment.text.clone();
 
+    let has_highlights = !segment.inline_highlights.is_empty();
+
     view! {
         <div class="diff-line" aria-label=aria_text>
             <span class="diff-line-num">
@@ -177,7 +181,28 @@ fn render_segment_data(
                 {prefix}
             </span>
             <pre class=class style="margin:0;flex:1;white-space:pre-wrap;word-break:break-all;">
-                {text}
+                {if has_highlights {
+                    segment
+                        .inline_highlights
+                        .iter()
+                        .map(|span| {
+                            let highlight_style = match span.kind {
+                                DiffSegmentKind::Delete => "background:rgba(239,68,68,.35);border-radius:2px;",
+                                DiffSegmentKind::Insert => "background:rgba(34,197,94,.35);border-radius:2px;",
+                                DiffSegmentKind::Equal => "",
+                            };
+                            let t = span.text.clone();
+                            if highlight_style.is_empty() {
+                                view! { <span>{t}</span> }.into_any()
+                            } else {
+                                view! { <mark style=highlight_style>{t}</mark> }.into_any()
+                            }
+                        })
+                        .collect_view()
+                        .into_any()
+                } else {
+                    view! { <span>{text}</span> }.into_any()
+                }}
             </pre>
         </div>
     }

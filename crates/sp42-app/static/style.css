@@ -335,6 +335,22 @@ body {
   border-block: 1px dashed var(--border-light);
 }
 
+.diff-insert mark,
+.diff-delete mark {
+  background: inherit;
+  color: inherit;
+}
+
+.diff-insert mark {
+  background: rgba(34, 197, 94, 0.35);
+  border-radius: 2px;
+}
+
+.diff-delete mark {
+  background: rgba(239, 68, 68, 0.35);
+  border-radius: 2px;
+}
+
 /* ─── Modal ─── */
 .modal-backdrop {
   position: fixed;

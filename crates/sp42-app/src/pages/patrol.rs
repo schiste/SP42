@@ -530,10 +530,26 @@ pub fn PatrolSurface() -> impl IntoView {
                             }
                             view! { <span></span> }.into_any()
                         }}
-                        // Action log count
-                        <span style="font-size:11px;color:#8b9fc0;">
-                            {move || format!("{} actions", action_log.get().len())}
-                        </span>
+                        // Action log count (from server action_status)
+                        {move || {
+                            if let Some(ref view) = view_data.get() {
+                                let status = &view.action_status;
+                                if status.total_actions > 0 {
+                                    let label = format!(
+                                        "{} actions ({} OK)",
+                                        status.total_actions, status.successful_actions,
+                                    );
+                                    let has_failure = status.last_execution.as_ref().is_some_and(|e| !e.accepted);
+                                    let color = if has_failure { "#f59e0b" } else { "#8b9fc0" };
+                                    return view! {
+                                        <span style=format!("font-size:11px;color:{color};")>
+                                            {label}
+                                        </span>
+                                    }.into_any();
+                                }
+                            }
+                            view! { <span style="font-size:11px;color:#8b9fc0;">{move || format!("{} actions", action_log.get().len())}</span> }.into_any()
+                        }}
                         // Help button
                         <button
                             style="min-height:32px;padding:2px 8px;\

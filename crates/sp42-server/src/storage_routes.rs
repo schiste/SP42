@@ -1,27 +1,27 @@
 use axum::{
+    Json,
     extract::{Path, Query, State},
     http::{HeaderMap, StatusCode},
-    Json,
 };
 use sp42_core::parse_public_storage_document;
 
 use crate::{
-    action_feedback_for_entry, authenticated_wiki_context, build_wiki_storage_plan,
-    default_public_storage_document, execute_fetch_token, invalid_payload,
-    load_storage_document_with_context, load_wiki_storage_document, require_logical_storage_slug,
-    required_csrf_token, resolve_logical_storage_document, resolve_wiki_storage_document,
-    resolved_wiki_config, save_storage_document_with_context, save_wiki_storage_document,
-    storage_plan_input, ActionExecutionLogEntry, AppState, BearerHttpClient,
-    DevAuthCapabilityReport, DevAuthSessionStatus, FlagState,
-    LiveOperatorPublicContextState, LiveOperatorPublicDocuments, LivePublicDocumentLoadSpec,
-    LogicalStorageDocumentQuery, LogicalStorageDocumentSavePayload, LogicalStorageDocumentView,
-    LogicalStorageDocumentWriteView, PublicAuditLedgerEntry, PublicStorageDocumentData,
-    PublicStorageDocumentQuery, PublicStorageDocumentRouteKind, PublicStorageDocumentSavePayload,
-    PublicStorageDocumentView, PublicStorageDocumentWriteView, ResolvedPublicStorageDocument,
-    SessionActionExecutionRequest, SessionSnapshot, StorageDocumentKindInput,
-    StorageDocumentQuery, StorageDocumentRealmInput, StorageDocumentSavePayload,
-    StoragePlanRequest, TokenKind, WikiConfig, WikiStorageConfig, WikiStorageDocument,
-    WikiStorageDocumentKind, WikiStorageLoadedDocument, WikiStorageWriteOutcome, WikiStorageWriteRequest,
+    ActionExecutionLogEntry, AppState, BearerHttpClient, DevAuthCapabilityReport,
+    DevAuthSessionStatus, FlagState, LiveOperatorPublicContextState, LiveOperatorPublicDocuments,
+    LivePublicDocumentLoadSpec, LogicalStorageDocumentQuery, LogicalStorageDocumentSavePayload,
+    LogicalStorageDocumentView, LogicalStorageDocumentWriteView, PublicAuditLedgerEntry,
+    PublicStorageDocumentData, PublicStorageDocumentQuery, PublicStorageDocumentRouteKind,
+    PublicStorageDocumentSavePayload, PublicStorageDocumentView, PublicStorageDocumentWriteView,
+    ResolvedPublicStorageDocument, SessionActionExecutionRequest, SessionSnapshot,
+    StorageDocumentKindInput, StorageDocumentQuery, StorageDocumentRealmInput,
+    StorageDocumentSavePayload, StoragePlanRequest, TokenKind, WikiConfig, WikiStorageConfig,
+    WikiStorageDocument, WikiStorageDocumentKind, WikiStorageLoadedDocument,
+    WikiStorageWriteOutcome, WikiStorageWriteRequest, action_feedback_for_entry,
+    authenticated_wiki_context, build_wiki_storage_plan, default_public_storage_document,
+    execute_fetch_token, invalid_payload, load_storage_document_with_context,
+    load_wiki_storage_document, require_logical_storage_slug, required_csrf_token,
+    resolve_logical_storage_document, resolve_wiki_storage_document, resolved_wiki_config,
+    save_storage_document_with_context, save_wiki_storage_document, storage_plan_input,
 };
 
 pub(crate) async fn get_storage_document(
@@ -223,6 +223,7 @@ pub(crate) async fn load_or_bootstrap_public_storage_document(
     client: &BearerHttpClient,
     config: &WikiConfig,
     document: WikiStorageDocument,
+    bootstrap_actor: Option<&str>,
 ) -> Result<ResolvedPublicStorageDocument, String> {
     let loaded = load_wiki_storage_document(client, config, &document.title)
         .await
@@ -237,8 +238,12 @@ pub(crate) async fn load_or_bootstrap_public_storage_document(
         });
     }
 
-    let payload =
-        default_public_storage_document(&document.kind).map_err(|error| error.to_string())?;
+    let payload = bootstrap_public_storage_document(
+        &document.kind,
+        config,
+        bootstrap_actor.or_else(|| owner_username_from_title(&document.title)),
+    )
+    .map_err(|error| error.to_string())?;
     let csrf_token = execute_fetch_token(client, config, TokenKind::Csrf)
         .await
         .map_err(|error| format!("csrf token fetch failed: {error}"))?;
@@ -281,6 +286,97 @@ pub(crate) async fn load_or_bootstrap_public_storage_document(
     })
 }
 
+fn bootstrap_public_storage_document(
+    kind: &WikiStorageDocumentKind,
+    config: &WikiConfig,
+    bootstrap_actor: Option<&str>,
+) -> Result<PublicStorageDocumentData, sp42_core::PublicDocumentError> {
+    let actor = bootstrap_actor
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    let mut payload = default_public_storage_document(kind)?;
+
+    match &mut payload {
+        PublicStorageDocumentData::Preferences(document) => {
+            document.preferred_wiki_id.clone_from(&config.wiki_id);
+            document.hide_bots = true;
+            if document.editor_types.is_empty() {
+                document.editor_types = vec!["anonymous".to_string(), "temporary".to_string()];
+            }
+        }
+        PublicStorageDocumentData::Registry(document) => {
+            if document.teams.is_empty() {
+                document.teams.push(sp42_core::PublicTeamRegistryEntry {
+                    slug: "core".to_string(),
+                    title: "Core Patrol".to_string(),
+                });
+            }
+        }
+        PublicStorageDocumentData::Team(document) => {
+            if document.title == document.slug {
+                document.title = humanize_slug(&document.slug);
+            }
+            if document.description.trim().is_empty() {
+                document.description = format!(
+                    "Default SP42 patrol team for {} using public on-wiki coordination.",
+                    config.display_name
+                );
+            }
+            if let Some(actor) = actor {
+                if !document.members.iter().any(|member| member == actor) {
+                    document.members.push(actor.to_string());
+                }
+                if !document.trusted_users.iter().any(|member| member == actor) {
+                    document.trusted_users.push(actor.to_string());
+                }
+            }
+        }
+        PublicStorageDocumentData::RuleSet(document) => {
+            if document.title == document.slug {
+                document.title = humanize_slug(&document.slug);
+            }
+            document
+                .namespace_allowlist
+                .clone_from(&config.namespace_allowlist);
+            document.hide_bots = true;
+            if let Some(actor) = actor
+                && !document.trusted_users.iter().any(|member| member == actor)
+            {
+                document.trusted_users.push(actor.to_string());
+            }
+        }
+        PublicStorageDocumentData::AuditLedger(_) => {}
+    }
+
+    Ok(payload)
+}
+
+fn owner_username_from_title(title: &str) -> Option<&str> {
+    title
+        .strip_prefix("User:")
+        .and_then(|value| value.split('/').next())
+        .filter(|value| !value.trim().is_empty())
+}
+
+fn humanize_slug(slug: &str) -> String {
+    slug.split(['-', '_'])
+        .filter(|segment| !segment.is_empty())
+        .map(|segment| {
+            let mut chars = segment.chars();
+            match chars.next() {
+                Some(first) => {
+                    let mut word = String::new();
+                    word.extend(first.to_uppercase());
+                    word.push_str(chars.as_str());
+                    word
+                }
+                None => String::new(),
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
 pub(crate) fn build_live_public_plan_request(
     username: &str,
     wiki_id: &str,
@@ -304,7 +400,14 @@ pub(crate) async fn resolve_live_public_document(
 ) -> Option<ResolvedPublicStorageDocument> {
     match resolve_public_storage_document(state, headers, wiki_id, &spec.kind, &spec.query).await {
         Ok(document) => {
-            match load_or_bootstrap_public_storage_document(client, config, document).await {
+            match load_or_bootstrap_public_storage_document(
+                client,
+                config,
+                document,
+                spec.query.username.as_deref(),
+            )
+            .await
+            {
                 Ok(resolved) => Some(resolved),
                 Err(error) => {
                     notes.push(format!(
@@ -325,28 +428,28 @@ pub(crate) async fn resolve_live_public_document(
     }
 }
 
-pub(crate) async fn load_live_operator_public_context(
+fn live_operator_username(
+    auth: &DevAuthSessionStatus,
+    capabilities: &DevAuthCapabilityReport,
+) -> Option<String> {
+    auth.username
+        .clone()
+        .or_else(|| capabilities.username.clone())
+}
+
+async fn load_base_live_public_documents(
     state: &AppState,
     headers: &HeaderMap,
     wiki_id: &str,
-    auth: &DevAuthSessionStatus,
-    capabilities: &DevAuthCapabilityReport,
     client: &BearerHttpClient,
     config: &WikiConfig,
-) -> LiveOperatorPublicContextState {
-    let Some(username) = auth
-        .username
-        .clone()
-        .or_else(|| capabilities.username.clone())
-    else {
-        return LiveOperatorPublicContextState {
-            notes: vec!["Public SP42 documents were not resolved because no operator username is available yet.".to_string()],
-            ..LiveOperatorPublicContextState::default()
-        };
-    };
-
-    let mut notes = Vec::new();
-    let plan_request = build_live_public_plan_request(&username, wiki_id);
+    plan_request: &PublicStorageDocumentQuery,
+    notes: &mut Vec<String>,
+) -> (
+    Option<ResolvedPublicStorageDocument>,
+    Option<ResolvedPublicStorageDocument>,
+    Option<ResolvedPublicStorageDocument>,
+) {
     let preferences = resolve_live_public_document(
         state,
         headers,
@@ -359,7 +462,7 @@ pub(crate) async fn load_live_operator_public_context(
         },
         client,
         config,
-        &mut notes,
+        notes,
     )
     .await;
     let registry = resolve_live_public_document(
@@ -374,7 +477,7 @@ pub(crate) async fn load_live_operator_public_context(
         },
         client,
         config,
-        &mut notes,
+        notes,
     )
     .await;
     let active_rule_set = resolve_live_public_document(
@@ -392,37 +495,119 @@ pub(crate) async fn load_live_operator_public_context(
         },
         client,
         config,
-        &mut notes,
+        notes,
     )
     .await;
 
-    let team_slug = registry
-        .as_ref()
+    (preferences, registry, active_rule_set)
+}
+
+fn active_team_slug(registry: Option<&ResolvedPublicStorageDocument>) -> String {
+    registry
         .and_then(|resolved| match &resolved.payload {
             PublicStorageDocumentData::Registry(registry) => {
                 registry.teams.first().map(|team| team.slug.clone())
             }
             _ => None,
         })
-        .unwrap_or_else(|| "core".to_string());
-    let active_team = resolve_live_public_document(
+        .unwrap_or_else(|| "core".to_string())
+}
+
+async fn load_active_team_document(
+    state: &AppState,
+    headers: &HeaderMap,
+    wiki_id: &str,
+    client: &BearerHttpClient,
+    config: &WikiConfig,
+    query: PublicStorageDocumentQuery,
+    notes: &mut Vec<String>,
+) -> Option<ResolvedPublicStorageDocument> {
+    resolve_live_public_document(
         state,
         headers,
         wiki_id,
         LivePublicDocumentLoadSpec {
             kind: PublicStorageDocumentRouteKind::Team,
-            query: PublicStorageDocumentQuery {
-                slug: Some(team_slug),
-                ..plan_request
-            },
+            query,
             resolved_label: "Active team document",
             plan_label: "Active team plan",
         },
         client,
         config,
+        notes,
+    )
+    .await
+}
+
+fn append_bootstrap_notes(
+    notes: &mut Vec<String>,
+    preferences: Option<&ResolvedPublicStorageDocument>,
+    registry: Option<&ResolvedPublicStorageDocument>,
+    active_team: Option<&ResolvedPublicStorageDocument>,
+    active_rule_set: Option<&ResolvedPublicStorageDocument>,
+) {
+    for (label, resolved) in [
+        ("preferences", preferences),
+        ("registry", registry),
+        ("team", active_team),
+        ("rule-set", active_rule_set),
+    ] {
+        if resolved.is_some_and(|document| document.defaulted.is_enabled()) {
+            notes.push(format!(
+                "Public {label} document was auto-bootstrapped from SP42 defaults."
+            ));
+        }
+    }
+}
+
+pub(crate) async fn load_live_operator_public_context(
+    state: &AppState,
+    headers: &HeaderMap,
+    wiki_id: &str,
+    auth: &DevAuthSessionStatus,
+    capabilities: &DevAuthCapabilityReport,
+    client: &BearerHttpClient,
+    config: &WikiConfig,
+) -> LiveOperatorPublicContextState {
+    let Some(username) = live_operator_username(auth, capabilities) else {
+        return LiveOperatorPublicContextState {
+            notes: vec!["Public SP42 documents were not resolved because no operator username is available yet.".to_string()],
+            ..LiveOperatorPublicContextState::default()
+        };
+    };
+
+    let mut notes = Vec::new();
+    let plan_request = build_live_public_plan_request(&username, wiki_id);
+    let (preferences, registry, active_rule_set) = load_base_live_public_documents(
+        state,
+        headers,
+        wiki_id,
+        client,
+        config,
+        &plan_request,
         &mut notes,
     )
     .await;
+    let active_team = load_active_team_document(
+        state,
+        headers,
+        wiki_id,
+        client,
+        config,
+        PublicStorageDocumentQuery {
+            slug: Some(active_team_slug(registry.as_ref())),
+            ..plan_request
+        },
+        &mut notes,
+    )
+    .await;
+    append_bootstrap_notes(
+        &mut notes,
+        preferences.as_ref(),
+        registry.as_ref(),
+        active_team.as_ref(),
+        active_rule_set.as_ref(),
+    );
 
     LiveOperatorPublicContextState {
         preferences,
@@ -524,8 +709,13 @@ pub(crate) async fn append_public_audit_entry(
         },
     )
     .await?;
-    let resolved =
-        load_or_bootstrap_public_storage_document(&client, &config, document.clone()).await?;
+    let resolved = load_or_bootstrap_public_storage_document(
+        &client,
+        &config,
+        document.clone(),
+        Some(session.username.as_str()),
+    )
+    .await?;
     let PublicStorageDocumentData::AuditLedger(mut ledger) = resolved.payload else {
         return Err("resolved public audit document did not decode as an audit ledger".to_string());
     };
@@ -579,14 +769,16 @@ pub(crate) fn public_document_human_summary(payload: &PublicStorageDocumentData)
             document.teams.len()
         )],
         PublicStorageDocumentData::Team(document) => vec![format!(
-            "Public SP42 team definition `{}` with {} members.",
+            "Public SP42 team definition `{}` with {} members and {} trusted users.",
             document.slug,
-            document.members.len()
+            document.members.len(),
+            document.trusted_users.len()
         )],
         PublicStorageDocumentData::RuleSet(document) => vec![format!(
-            "Public SP42 rule set `{}` for {} namespaces.",
+            "Public SP42 rule set `{}` for {} namespaces and {} trusted users.",
             document.slug,
-            document.namespace_allowlist.len()
+            document.namespace_allowlist.len(),
+            document.trusted_users.len()
         )],
         PublicStorageDocumentData::AuditLedger(document) => vec![format!(
             "Public SP42 audit ledger `{}` with {} entries.",
@@ -610,6 +802,7 @@ pub(crate) async fn get_public_storage_document(
         &context.client,
         &context.config,
         document.clone(),
+        query.username.as_deref(),
     )
     .await
     .map_err(|error| {
@@ -677,4 +870,71 @@ pub(crate) async fn put_public_storage_document(
                 outcome,
             })
         })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{bootstrap_public_storage_document, humanize_slug, owner_username_from_title};
+    use sp42_core::{PublicStorageDocumentData, WikiStorageDocumentKind, parse_wiki_config};
+
+    #[test]
+    fn bootstrap_rule_set_uses_config_and_actor_defaults() {
+        let config = parse_wiki_config(include_str!("../../../configs/frwiki.yaml"))
+            .expect("config should parse");
+
+        let payload = bootstrap_public_storage_document(
+            &WikiStorageDocumentKind::SharedRuleSet {
+                wiki_id: "frwiki".to_string(),
+                rule_set_slug: "default".to_string(),
+            },
+            &config,
+            Some("Schiste"),
+        )
+        .expect("bootstrap should succeed");
+
+        let PublicStorageDocumentData::RuleSet(rule_set) = payload else {
+            panic!("expected rule set payload");
+        };
+
+        assert_eq!(rule_set.namespace_allowlist, config.namespace_allowlist);
+        assert!(rule_set.hide_bots);
+        assert!(rule_set.trusted_users.iter().any(|user| user == "Schiste"));
+    }
+
+    #[test]
+    fn bootstrap_team_populates_owner_as_member_and_trusted_user() {
+        let config = parse_wiki_config(include_str!("../../../configs/frwiki.yaml"))
+            .expect("config should parse");
+
+        let payload = bootstrap_public_storage_document(
+            &WikiStorageDocumentKind::SharedTeam {
+                wiki_id: "frwiki".to_string(),
+                team_slug: "core".to_string(),
+            },
+            &config,
+            Some("Schiste"),
+        )
+        .expect("bootstrap should succeed");
+
+        let PublicStorageDocumentData::Team(team) = payload else {
+            panic!("expected team payload");
+        };
+
+        assert!(team.members.iter().any(|member| member == "Schiste"));
+        assert!(team.trusted_users.iter().any(|member| member == "Schiste"));
+        assert_eq!(team.title, "Core");
+    }
+
+    #[test]
+    fn extracts_owner_username_from_storage_title() {
+        assert_eq!(
+            owner_username_from_title("User:Schiste/SP42/frwiki/Teams/core"),
+            Some("Schiste")
+        );
+    }
+
+    #[test]
+    fn humanizes_slug_for_bootstrap_titles() {
+        assert_eq!(humanize_slug("core-patrol"), "Core Patrol");
+    }
 }

@@ -22,7 +22,7 @@ pub fn DebugPanel(lines: Vec<String>) -> impl IntoView {
 
     view! {
         <section
-            style="display:grid;gap:10px;padding:17px;border-radius:6px;border:1px solid rgba(148,163,184,.18);background:rgba(15,23,42,.88);"
+            class="panel"
         >
             <header style="display:grid;gap:4px;">
                 <div style="display:flex;align-items:center;gap:7px;flex-wrap:wrap;">

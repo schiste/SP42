@@ -5,20 +5,13 @@ use sp42_core::{
     QueuedEdit, ReportSeverity, ScoringContext,
 };
 
-use super::style::{SECTION_HEADER, score_tier, wiki_base_url};
+use super::style::{score_tier, wiki_base_url};
 
 #[component]
-pub fn ContextSidebar(
-    view: LiveOperatorView,
-    edit: Option<QueuedEdit>,
-) -> impl IntoView {
+pub fn ContextSidebar(view: LiveOperatorView, edit: Option<QueuedEdit>) -> impl IntoView {
     let Some(edit) = edit else {
         return view! {
-            <aside
-                role="complementary"
-                aria-label="Edit context"
-                style="padding:10px;color:#8b9fc0;border-inline-start:1px solid rgba(148,163,184,.12);"
-            >
+            <aside role="complementary" aria-label="Edit context" class="context-sidebar-empty">
                 <p>"Select an edit to see context."</p>
             </aside>
         }
@@ -26,13 +19,7 @@ pub fn ContextSidebar(
     };
 
     view! {
-        <aside
-            role="complementary"
-            aria-label="Edit context"
-            aria-live="polite"
-            style="overflow-y:auto;min-height:0;padding:10px;display:grid;gap:17px;align-content:start;\
-                   border-inline-start:1px solid rgba(148,163,184,.12);"
-        >
+        <aside role="complementary" aria-label="Edit context" aria-live="polite" class="context-sidebar">
             {score_section(&edit)}
             {user_section(&edit)}
             {metadata_section(&edit, &view.scoring_context)}
@@ -51,12 +38,10 @@ fn score_section(edit: &QueuedEdit) -> impl IntoView {
     let (tier_color, tier_icon) = score_tier(score);
     view! {
         <div style="text-align:center;">
-            <div style=format!(
-                "font-size:44px;font-weight:700;line-height:1;color:{tier_color};",
-            )>
+            <div class="score-display" style=format!("color:{tier_color};")>
                 {score.to_string()}
             </div>
-            <div style="font-size:13px;color:#8b9fc0;margin-top:4px;">
+            <div class="score-label">
                 {tier_icon} " risk score"
             </div>
         </div>
@@ -100,11 +85,7 @@ fn metadata_section(edit: &QueuedEdit, scoring_context: &Option<ScoringContext>)
     let rev_id = edit.event.rev_id;
     let old_rev_id = edit.event.old_rev_id.unwrap_or(0);
     let base = wiki_base_url(&edit.event.wiki_id);
-    let article_url = format!(
-        "{}/wiki/{}",
-        base,
-        edit.event.title.replace(' ', "_")
-    );
+    let article_url = format!("{}/wiki/{}", base, edit.event.title.replace(' ', "_"));
     let diff_url = format!("{base}/w/index.php?diff={rev_id}&oldid={old_rev_id}");
     let liftwing = scoring_context
         .as_ref()
@@ -158,7 +139,7 @@ fn metadata_section(edit: &QueuedEdit, scoring_context: &Option<ScoringContext>)
 fn signals_section(edit: &QueuedEdit) -> impl IntoView {
     view! {
         <div style="display:grid;gap:3px;">
-            <div style=SECTION_HEADER>
+            <div class="section-header">
                 "Signals"
             </div>
             {edit
@@ -190,7 +171,7 @@ fn capabilities_section(capabilities: &DevAuthCapabilityReport) -> impl IntoView
     let can_undo = capabilities.capabilities.editing.can_undo;
     view! {
         <div style="display:grid;gap:3px;font-size:11px;color:#8b9fc0;">
-            <div style=SECTION_HEADER>
+            <div class="section-header">
                 "Capabilities"
             </div>
             <div>{format!("rollback: {}", if can_rollback { "yes" } else { "no" })}</div>
@@ -209,7 +190,7 @@ fn session_digest_section(digest: &PatrolSessionDigest) -> impl IntoView {
 
     view! {
         <details style="display:grid;gap:3px;">
-            <summary style=format!("{SECTION_HEADER}cursor:pointer;")>
+            <summary class="section-header" style="cursor:pointer;">
                 "Session Digest"
             </summary>
             <p style="margin:0;font-size:12px;color:#eff4ff;">{headline}</p>
@@ -241,7 +222,7 @@ fn coordination_section(
 
     view! {
         <div style="display:grid;gap:3px;">
-            <div style=SECTION_HEADER>
+            <div class="section-header">
                 "Coordination"
             </div>
             <div style="font-size:12px;color:#8b9fc0;">
@@ -302,7 +283,7 @@ fn scenario_readiness_section(report: &PatrolScenarioReport) -> impl IntoView {
 
     view! {
         <div style="display:grid;gap:3px;">
-            <div style=SECTION_HEADER>
+            <div class="section-header">
                 "Scenario"
             </div>
             <div style="display:flex;align-items:center;gap:7px;">

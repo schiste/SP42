@@ -1,8 +1,4 @@
-/// Shared UI constants for inline styles.
-
-/// Section header style used across sidebar sections and panels.
-pub const SECTION_HEADER: &str =
-    "font-size:11px;font-weight:700;color:#8b9fc0;text-transform:uppercase;letter-spacing:.1em;";
+/// Shared UI helpers for runtime-computed values that cannot live in CSS.
 
 /// Map a composite risk score to a (color, icon) pair for consistent tier
 /// rendering across the queue column and context sidebar.

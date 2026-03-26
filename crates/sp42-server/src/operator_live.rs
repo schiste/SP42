@@ -1,18 +1,18 @@
 use std::time::Instant;
 
 use axum::{
+    Json,
     extract::{Path, State},
     http::{HeaderMap, StatusCode},
-    Json,
 };
 
 use crate::{
-    access_token_for_request, build_live_operator_notes, build_live_operator_products,
-    finalize_live_operator_view, load_live_operator_bootstrap, load_live_queue_state,
-    load_selected_review_state, storage_routes, supervisor_snapshot_for_wiki, AppState,
-    BearerHttpClient, LiveOperatorAssembly, LiveOperatorFinalization,
-    LiveOperatorPhaseTiming, LiveOperatorProductContext, LiveOperatorTelemetry,
-    LiveOperatorView, LiveViewFilterParams,
+    AppState, BearerHttpClient, LiveOperatorAssembly, LiveOperatorFinalization,
+    LiveOperatorPhaseTiming, LiveOperatorProductContext, LiveOperatorTelemetry, LiveOperatorView,
+    LiveViewFilterParams, access_token_for_request, build_live_operator_notes,
+    build_live_operator_products, finalize_live_operator_view, load_live_operator_bootstrap,
+    load_live_queue_state, load_selected_review_state, storage_routes,
+    supervisor_snapshot_for_wiki,
 };
 
 pub(crate) fn operator_phase_timing(phase: &str, started_at: Instant) -> LiveOperatorPhaseTiming {
@@ -81,9 +81,7 @@ pub(crate) async fn load_live_operator_assembly(
     phase_timings.push(operator_phase_timing("recentchanges", phase_started));
 
     let phase_started = Instant::now();
-    let effective_index = filters
-        .selected_index
-        .or(queue_state.selected_index);
+    let effective_index = filters.selected_index.or(queue_state.selected_index);
     let selected = effective_index.and_then(|index| queue_state.queue.get(index));
     phase_timings.push(operator_phase_timing("queue", phase_started));
 
@@ -141,6 +139,7 @@ pub(crate) fn build_live_operator_finalization(
         assembly.selected_review.scoring_context.as_ref(),
         assembly.selected_review.diff.as_ref(),
         assembly.selected_review.review_workbench.as_ref(),
+        &assembly.public_context,
     );
     notes.extend(assembly.public_context.notes.clone());
     let telemetry = LiveOperatorTelemetry {
@@ -153,7 +152,9 @@ pub(crate) fn build_live_operator_finalization(
         bootstrap: assembly.bootstrap,
         selected_review: assembly.selected_review,
         products,
-        public_documents: storage_routes::live_operator_public_documents_model(&assembly.public_context),
+        public_documents: storage_routes::live_operator_public_documents_model(
+            &assembly.public_context,
+        ),
         telemetry,
         notes,
         ingestion_supervisor: None,

@@ -40,27 +40,26 @@ use tracing_subscriber::EnvFilter;
 
 use sp42_core::{
     ActionExecutionHistoryReport, ActionExecutionLogEntry, ActionExecutionStatusReport,
-    BacklogRuntime, BacklogRuntimeConfig, Clock, ContextInputs,
-    CoordinationRoomSummary, CoordinationSnapshot, CoordinationState, DebugSnapshotInputs,
-    DevAuthBootstrapRequest, DevAuthCapabilityReport, DevAuthSessionStatus, EditorIdentity,
-    FileStorage, FlagState, LiftWingRequest, LiveOperatorBackendStatus, LiveOperatorPhaseTiming,
+    BacklogRuntime, BacklogRuntimeConfig, Clock, ContextInputs, CoordinationRoomSummary,
+    CoordinationSnapshot, CoordinationState, DebugSnapshotInputs, DevAuthBootstrapRequest,
+    DevAuthCapabilityReport, DevAuthSessionStatus, EditorIdentity, FileStorage, FlagState,
+    LiftWingRequest, LiveOperatorBackendStatus, LiveOperatorPhaseTiming,
     LiveOperatorPublicDocuments, LiveOperatorQuery, LiveOperatorTelemetry, LiveOperatorView,
     LocalOAuthConfigStatus, LocalOAuthSourceReport, OAuthCallback, OAuthClientConfig,
     OAuthTokenResponse, PatrolScenarioReportInputs, PatrolSessionDigestInputs,
-    PublicAuditLedgerEntry, PublicStorageDocumentData, QueuedEdit, RecentChangesQuery,
-    ServerDebugSummary, SessionActionExecutionRequest, SessionActionExecutionResponse,
-    SessionActionKind, ShellStateInputs, Storage, StreamRuntimeStatus, SystemClock, TokenKind,
-    WikiConfig, WikiStorageConfig, WikiStorageDocument, WikiStorageDocumentKind,
-    WikiStorageLoadedDocument, WikiStoragePlan, WikiStoragePlanInput, WikiStorageWriteOutcome,
-    WikiStorageWriteRequest, build_authorization_url, build_debug_snapshot,
-    build_live_operator_action_preflight, build_patrol_scenario_report,
-    build_patrol_session_digest, build_ranked_queue, build_review_workbench, build_scoring_context,
-    build_shell_state_model, build_wiki_storage_plan, default_public_storage_document, diff_lines,
-    execute_fetch_token, execute_liftwing_score, execute_recent_changes, generate_oauth_state,
-    generate_pkce_verifier,
-    load_wiki_storage_document, parse_callback_query,
-    render_wiki_storage_document_page, render_wiki_storage_index_page,
-    resolve_wiki_storage_document, save_wiki_storage_document,
+    PublicAuditLedgerEntry, PublicStorageDocumentData, QueueHeuristicPolicy, QueuedEdit,
+    RecentChangesQuery, ServerDebugSummary, SessionActionExecutionRequest,
+    SessionActionExecutionResponse, SessionActionKind, ShellStateInputs, Storage,
+    StreamRuntimeStatus, SystemClock, TokenKind, WikiConfig, WikiStorageConfig,
+    WikiStorageDocument, WikiStorageDocumentKind, WikiStorageLoadedDocument, WikiStoragePlan,
+    WikiStoragePlanInput, WikiStorageWriteOutcome, WikiStorageWriteRequest,
+    build_authorization_url, build_debug_snapshot, build_live_operator_action_preflight,
+    build_patrol_scenario_report, build_patrol_session_digest, build_ranked_queue_with_policy,
+    build_review_workbench, build_scoring_context, build_shell_state_model,
+    build_wiki_storage_plan, default_public_storage_document, diff_lines, execute_fetch_token,
+    execute_liftwing_score, execute_recent_changes, generate_oauth_state, generate_pkce_verifier,
+    load_wiki_storage_document, parse_callback_query, render_wiki_storage_document_page,
+    render_wiki_storage_index_page, resolve_wiki_storage_document, save_wiki_storage_document,
 };
 
 use crate::coordination::{
@@ -1706,6 +1705,43 @@ fn apply_public_defaults_to_live_query(
     query
 }
 
+fn live_queue_policy_from_public_context(
+    context: &LiveOperatorPublicContextState,
+) -> QueueHeuristicPolicy {
+    let mut trusted_usernames = Vec::new();
+
+    if let Some(rule_set) =
+        context
+            .active_rule_set
+            .as_ref()
+            .and_then(|resolved| match &resolved.payload {
+                PublicStorageDocumentData::RuleSet(value) => Some(value),
+                _ => None,
+            })
+    {
+        trusted_usernames.extend(rule_set.trusted_users.iter().cloned());
+    }
+
+    if let Some(team) = context
+        .active_team
+        .as_ref()
+        .and_then(|resolved| match &resolved.payload {
+            PublicStorageDocumentData::Team(value) => Some(value),
+            _ => None,
+        })
+    {
+        trusted_usernames.extend(team.trusted_users.iter().cloned());
+    }
+
+    trusted_usernames.sort();
+    trusted_usernames.dedup();
+
+    QueueHeuristicPolicy {
+        trusted_usernames,
+        ..QueueHeuristicPolicy::default()
+    }
+}
+
 fn filter_ranked_queue(mut queue: Vec<QueuedEdit>, query: &LiveOperatorQuery) -> Vec<QueuedEdit> {
     if let Some(min_score) = query.min_score {
         queue.retain(|item| item.score.total >= min_score);
@@ -1745,8 +1781,18 @@ fn queue_state_from_supervisor(
     wiki_id: &str,
     query: LiveOperatorQuery,
     snapshot: IngestionSupervisorSnapshot,
+    scoring_config: &sp42_core::ScoringConfig,
+    public_context: &LiveOperatorPublicContextState,
 ) -> LiveQueueState {
-    let queue = filter_ranked_queue(snapshot.queue, &query);
+    let events = snapshot
+        .queue
+        .into_iter()
+        .map(|item| item.event)
+        .collect::<Vec<_>>();
+    let policy = live_queue_policy_from_public_context(public_context);
+    let rebuilt_queue =
+        build_ranked_queue_with_policy(events, scoring_config, &policy).unwrap_or_default();
+    let queue = filter_ranked_queue(rebuilt_queue, &query);
     LiveQueueState {
         query,
         batch: sp42_core::RecentChangesBatch {
@@ -1774,6 +1820,7 @@ async fn queue_state_from_recentchanges(
     query: LiveOperatorQuery,
     config: &WikiConfig,
     client: &BearerHttpClient,
+    public_context: &LiveOperatorPublicContextState,
 ) -> Result<LiveQueueState, String> {
     let namespace_override = (!query.namespaces.is_empty()).then(|| query.namespaces.clone());
     let mut backlog_runtime = BacklogRuntime::new(
@@ -1829,8 +1876,12 @@ async fn queue_state_from_recentchanges(
     };
     let backlog_status = backlog_runtime.status();
     let queue = filter_ranked_queue(
-        build_ranked_queue(batch.events.clone(), &config.scoring)
-            .map_err(|error| format!("queue build failed: {error}"))?,
+        build_ranked_queue_with_policy(
+            batch.events.clone(),
+            &config.scoring,
+            &live_queue_policy_from_public_context(public_context),
+        )
+        .map_err(|error| format!("queue build failed: {error}"))?,
         &query,
     );
 
@@ -1859,9 +1910,15 @@ async fn load_live_queue_state(
         && let Some(snapshot) = supervisor_snapshot_for_wiki(state, wiki_id).await
         && snapshot.status.active
     {
-        return Ok(queue_state_from_supervisor(wiki_id, query, snapshot));
+        return Ok(queue_state_from_supervisor(
+            wiki_id,
+            query,
+            snapshot,
+            &config.scoring,
+            public_context,
+        ));
     }
-    queue_state_from_recentchanges(state, wiki_id, query, config, client).await
+    queue_state_from_recentchanges(state, wiki_id, query, config, client, public_context).await
 }
 
 async fn load_selected_review_state(
@@ -1934,6 +1991,7 @@ fn build_live_operator_notes(
     scoring_context: Option<&sp42_core::ScoringContext>,
     diff: Option<&sp42_core::StructuredDiff>,
     review_workbench: Option<&sp42_core::ReviewWorkbench>,
+    public_context: &LiveOperatorPublicContextState,
 ) -> Vec<String> {
     let mut notes =
         vec!["Queue and selected review are built from live recent changes.".to_string()];
@@ -1979,6 +2037,27 @@ fn build_live_operator_notes(
     }
     if queue.is_empty() {
         notes.push("No edits matched the current live filter set.".to_string());
+    }
+    let trusted_user_count = live_queue_policy_from_public_context(public_context)
+        .trusted_usernames
+        .len();
+    if trusted_user_count > 0 {
+        notes.push(format!(
+            "Trusted-user suppression is active for {trusted_user_count} public usernames."
+        ));
+    }
+    if let Some(rule_set) = public_context
+        .active_rule_set
+        .as_ref()
+        .and_then(|resolved| match &resolved.payload {
+            PublicStorageDocumentData::RuleSet(value) => Some(value),
+            _ => None,
+        })
+    {
+        notes.push(format!(
+            "Active public rule set `{}` was applied to the live queue.",
+            rule_set.slug
+        ));
     }
     notes
 }
@@ -2697,7 +2776,6 @@ async fn install_session(
 ) -> String {
     session_runtime::install_session(state, prior_session_id, stored, current_ms).await
 }
-
 
 fn to_status(
     session: Option<&StoredSession>,
@@ -3853,8 +3931,8 @@ mod tests {
             axum::http::HeaderValue::from_static("127.0.0.1:8788"),
         );
 
-        let base =
-            crate::oauth_runtime::public_base_url(&headers).expect("loopback host should be accepted");
+        let base = crate::oauth_runtime::public_base_url(&headers)
+            .expect("loopback host should be accepted");
 
         assert_eq!(base, "http://127.0.0.1:8788");
     }

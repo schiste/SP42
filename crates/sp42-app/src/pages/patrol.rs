@@ -146,6 +146,11 @@ pub fn PatrolSurface() -> impl IntoView {
         }
     });
 
+    let queue_len = Memo::new(move |_| {
+        view_data.get().map_or(0, |v| v.queue.len())
+    });
+    let has_selection = Memo::new(move |_| selected_index.get() < queue_len.get());
+
     Effect::new(move |_| {
         let _ = filters.get(); // Track filter signal
         set_selected_index.set(0); // Reset selection on filter change
@@ -212,11 +217,6 @@ pub fn PatrolSurface() -> impl IntoView {
             _ => {}
         }
     };
-
-    let queue_len = Memo::new(move |_| {
-        view_data.get().map_or(0, |v| v.queue.len())
-    });
-    let has_selection = Memo::new(move |_| selected_index.get() < queue_len.get());
 
     view! {
         {move || {

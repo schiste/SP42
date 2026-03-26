@@ -54,7 +54,7 @@ fn score_section(edit: &QueuedEdit) -> impl IntoView {
             <div style=format!(
                 "font-size:44px;font-weight:700;line-height:1;color:{tier_color};",
             )>
-                {format!("{score}")}
+                {score.to_string()}
             </div>
             <div style="font-size:13px;color:#8b9fc0;margin-top:4px;">
                 {tier_icon} " risk score"
@@ -171,7 +171,7 @@ fn signals_section(edit: &QueuedEdit) -> impl IntoView {
                     view! {
                         <div style="display:flex;justify-content:space-between;font-size:12px;">
                             <span style="color:#8b9fc0;">
-                                {format!("{}", sig.signal)}
+                                {sig.signal.to_string()}
                             </span>
                             <span style=format!("color:{color};font-weight:700;")>
                                 {format!("{sign}{}", sig.weight)}

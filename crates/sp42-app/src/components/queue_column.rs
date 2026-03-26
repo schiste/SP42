@@ -56,7 +56,7 @@ pub fn QueueColumn(
                                 <span style=format!(
                                     "font-weight:700;font-size:13px;color:{tier_bg};",
                                 )>
-                                    {format!("{score}")}
+                                    {score.to_string()}
                                 </span>
                                 <span style="font-size:11px;color:#8b9fc0;">{tier_icon}</span>
                                 {if is_patrolled {

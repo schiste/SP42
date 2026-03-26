@@ -1,8 +1,8 @@
 use leptos::prelude::*;
 use sp42_core::{
     CoordinationRoomSummary, CoordinationStateSummary, DevAuthCapabilityReport, EditorIdentity,
-    PatrolScenarioReadiness, PatrolScenarioReport, PatrolSessionDigest, QueuedEdit,
-    ReportSeverity, ScoringContext,
+    PatrolScenarioReadiness, PatrolScenarioReport, PatrolSessionDigest, QueuedEdit, ReportSeverity,
+    ScoringContext,
 };
 
 #[component]
@@ -234,12 +234,7 @@ fn session_digest_section(digest: &PatrolSessionDigest) -> impl IntoView {
         })
         .collect();
 
-    let headline = digest
-        .operator_summary
-        .notes
-        .first()
-        .cloned()
-        .unwrap_or_else(|| "Session digest".to_string());
+    let headline = digest_headline(digest);
 
     view! {
         <details style="display:grid;gap:3px;">
@@ -270,14 +265,7 @@ fn coordination_section(
     let recent_actions = room.recent_action_count;
     let rev_id = edit.event.rev_id;
 
-    let claimed_by_other = state
-        .as_ref()
-        .map(|s| {
-            s.claims
-                .iter()
-                .any(|c| c.rev_id == rev_id)
-        })
-        .unwrap_or(false);
+    let claimed_by_other = is_claimed_by_other(rev_id, state);
 
     view! {
         <div style="display:grid;gap:3px;">
@@ -377,5 +365,95 @@ fn scenario_readiness_section(report: &PatrolScenarioReport) -> impl IntoView {
             }}
             {findings_view.into_iter().collect_view()}
         </div>
+    }
+}
+
+fn digest_headline(digest: &PatrolSessionDigest) -> String {
+    digest
+        .operator_summary
+        .notes
+        .first()
+        .cloned()
+        .unwrap_or_else(|| "Session digest".to_string())
+}
+
+fn is_claimed_by_other(rev_id: u64, state: &Option<CoordinationStateSummary>) -> bool {
+    state
+        .as_ref()
+        .map(|s| s.claims.iter().any(|c| c.rev_id == rev_id))
+        .unwrap_or(false)
+}
+
+#[cfg(test)]
+mod tests {
+    use sp42_core::{
+        CoordinationStateSummary, EditClaim, PatrolOperatorSummary, PatrolScenarioReadiness,
+        PatrolSessionDigest, PatrolSessionSelectedSummary,
+    };
+
+    use super::{digest_headline, is_claimed_by_other};
+
+    fn empty_digest() -> PatrolSessionDigest {
+        PatrolSessionDigest {
+            wiki_id: "frwiki".to_string(),
+            queue_depth: 0,
+            readiness: PatrolScenarioReadiness::Ready,
+            selected: None,
+            findings: Vec::new(),
+            severity_counts: Vec::new(),
+            operator_summary: PatrolOperatorSummary {
+                wiki_id: "frwiki".to_string(),
+                readiness: PatrolScenarioReadiness::Ready,
+                queue_depth: 0,
+                selected: None,
+                severity_counts: Vec::new(),
+                section_overview: Vec::new(),
+                workbench: None,
+                notes: Vec::new(),
+            },
+            sections: Vec::new(),
+            workbench: None,
+            explanation_lines: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn digest_headline_uses_first_operator_note() {
+        let mut digest = empty_digest();
+        digest.operator_summary.notes = vec!["inspect diff".to_string(), "extra".to_string()];
+
+        assert_eq!(digest_headline(&digest), "inspect diff");
+    }
+
+    #[test]
+    fn digest_headline_falls_back_when_no_notes() {
+        let digest = empty_digest();
+
+        assert_eq!(digest_headline(&digest), "Session digest");
+    }
+
+    #[test]
+    fn is_claimed_by_other_detects_matching_rev_id() {
+        let state = Some(CoordinationStateSummary {
+            wiki_id: "frwiki".to_string(),
+            claims: vec![EditClaim {
+                wiki_id: "frwiki".to_string(),
+                rev_id: 42,
+                actor: "other-user".to_string(),
+            }],
+            presence: Vec::new(),
+            flagged_edits: Vec::new(),
+            score_deltas: Vec::new(),
+            race_resolutions: Vec::new(),
+            recent_actions: Vec::new(),
+        });
+
+        assert!(is_claimed_by_other(42, &state));
+        assert!(!is_claimed_by_other(99, &state));
+    }
+
+    #[test]
+    fn is_claimed_by_other_returns_false_without_state() {
+        assert!(!is_claimed_by_other(42, &None));
     }
 }

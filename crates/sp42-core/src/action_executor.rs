@@ -1124,4 +1124,33 @@ mod tests {
         assert!(error.to_string().contains("badtoken"));
         assert!(error.to_string().contains("Invalid CSRF token"));
     }
+
+    #[test]
+    fn parse_action_response_detects_nochange() {
+        let response = HttpResponse {
+            status: 200,
+            headers: BTreeMap::new(),
+            body: br#"{"edit":{"result":"Success","nochange":""}}"#.to_vec(),
+        };
+
+        let summary =
+            parse_action_response_summary(&response, "undo").expect("summary should parse");
+
+        assert!(summary.nochange);
+        assert!(summary.error.is_none());
+    }
+
+    #[test]
+    fn parse_action_response_normal_edit_is_not_nochange() {
+        let response = HttpResponse {
+            status: 200,
+            headers: BTreeMap::new(),
+            body: br#"{"edit":{"result":"Success","newrevid":321}}"#.to_vec(),
+        };
+
+        let summary =
+            parse_action_response_summary(&response, "undo").expect("summary should parse");
+
+        assert!(!summary.nochange);
+    }
 }

@@ -124,6 +124,21 @@ pub struct LiveOperatorPublicDocuments {
     pub notes: Vec<String>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct LiveOperatorHeuristicProvenance {
+    pub rev_id: u64,
+    pub performer: String,
+    #[serde(default)]
+    pub applied_rule_sources: Vec<String>,
+    #[serde(default)]
+    pub matched_trusted_sources: Vec<String>,
+    pub duplicate_cluster_size: Option<u32>,
+    #[serde(default)]
+    pub obvious_vandalism: FlagState,
+    #[serde(default)]
+    pub notes: Vec<String>,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct LiveOperatorView {
     pub project: String,
@@ -148,6 +163,8 @@ pub struct LiveOperatorView {
     pub action_preflight: LiveOperatorActionPreflight,
     #[serde(default)]
     pub public_documents: LiveOperatorPublicDocuments,
+    #[serde(default)]
+    pub heuristic_provenance: Vec<LiveOperatorHeuristicProvenance>,
     pub ingestion_supervisor: Option<LiveIngestionSupervisorStatus>,
     pub coordination_room: Option<CoordinationRoomSummary>,
     pub coordination_state: Option<CoordinationStateSummary>,
@@ -164,6 +181,7 @@ pub fn build_live_operator_action_preflight(
     selected: Option<&QueuedEdit>,
     capabilities: &DevAuthCapabilityReport,
     action_status: &ActionExecutionStatusReport,
+    note: Option<&str>,
 ) -> LiveOperatorActionPreflight {
     let Some(item) = selected else {
         return LiveOperatorActionPreflight {
@@ -175,7 +193,7 @@ pub fn build_live_operator_action_preflight(
     };
 
     let requests =
-        build_session_action_execution_requests(item, None).unwrap_or_else(|_| Vec::new());
+        build_session_action_execution_requests(item, note).unwrap_or_else(|_| Vec::new());
     let rollback_request = requests
         .iter()
         .find(|request| matches!(request.kind, SessionActionKind::Rollback))
@@ -526,6 +544,7 @@ mod tests {
                 last_execution: None,
                 shell_feedback: vec![],
             },
+            None,
         );
 
         assert_eq!(
@@ -559,6 +578,7 @@ mod tests {
                 last_execution: None,
                 shell_feedback: vec![],
             },
+            None,
         );
 
         let rollback = preflight

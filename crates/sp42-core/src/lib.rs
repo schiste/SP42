@@ -114,9 +114,9 @@ pub use liftwing::{
 };
 pub use live_operator::{
     LiveIngestionSupervisorStatus, LiveOperatorActionPreflight, LiveOperatorActionRecommendation,
-    LiveOperatorBackendStatus, LiveOperatorPhaseTiming, LiveOperatorPublicDocuments,
-    LiveOperatorQuery, LiveOperatorRetryClass, LiveOperatorTelemetry, LiveOperatorView,
-    build_live_operator_action_preflight, classify_retry,
+    LiveOperatorBackendStatus, LiveOperatorHeuristicProvenance, LiveOperatorPhaseTiming,
+    LiveOperatorPublicDocuments, LiveOperatorQuery, LiveOperatorRetryClass, LiveOperatorTelemetry,
+    LiveOperatorView, build_live_operator_action_preflight, classify_retry,
 };
 pub use oauth::{
     OAuthCallback, OAuthClientConfig, OAuthLaunchContext, OAuthTokenResponse,

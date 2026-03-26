@@ -124,6 +124,7 @@ pub(crate) fn build_live_operator_finalization(
         &assembly.queue_state.queue,
         selected,
         &assembly.selected_review,
+        &assembly.public_context,
         &LiveOperatorProductContext {
             stream_status: &assembly.bootstrap.stream_status,
             backlog_status: &assembly.queue_state.backlog_status,

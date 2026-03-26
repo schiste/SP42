@@ -43,10 +43,10 @@ use sp42_core::{
     BacklogRuntime, BacklogRuntimeConfig, Clock, ContextInputs, CoordinationRoomSummary,
     CoordinationSnapshot, CoordinationState, DebugSnapshotInputs, DevAuthBootstrapRequest,
     DevAuthCapabilityReport, DevAuthSessionStatus, EditorIdentity, FileStorage, FlagState,
-    LiftWingRequest, LiveOperatorBackendStatus, LiveOperatorPhaseTiming,
-    LiveOperatorPublicDocuments, LiveOperatorQuery, LiveOperatorTelemetry, LiveOperatorView,
-    LocalOAuthConfigStatus, LocalOAuthSourceReport, OAuthCallback, OAuthClientConfig,
-    OAuthTokenResponse, PatrolScenarioReportInputs, PatrolSessionDigestInputs,
+    LiftWingRequest, LiveOperatorBackendStatus, LiveOperatorHeuristicProvenance,
+    LiveOperatorPhaseTiming, LiveOperatorPublicDocuments, LiveOperatorQuery, LiveOperatorTelemetry,
+    LiveOperatorView, LocalOAuthConfigStatus, LocalOAuthSourceReport, OAuthCallback,
+    OAuthClientConfig, OAuthTokenResponse, PatrolScenarioReportInputs, PatrolSessionDigestInputs,
     PublicAuditLedgerEntry, PublicStorageDocumentData, QueueHeuristicPolicy, QueuedEdit,
     RecentChangesQuery, ServerDebugSummary, SessionActionExecutionRequest,
     SessionActionExecutionResponse, SessionActionKind, ShellStateInputs, Storage,
@@ -994,6 +994,7 @@ struct LiveOperatorProducts {
     backend: LiveOperatorBackendStatus,
     debug_snapshot: sp42_core::DebugSnapshot,
     action_preflight: sp42_core::LiveOperatorActionPreflight,
+    heuristic_provenance: Vec<LiveOperatorHeuristicProvenance>,
 }
 
 struct LiveOperatorProductContext<'a> {
@@ -2062,11 +2063,161 @@ fn build_live_operator_notes(
     notes
 }
 
+fn build_live_operator_heuristic_provenance(
+    queue: &[QueuedEdit],
+    public_context: &LiveOperatorPublicContextState,
+) -> Vec<LiveOperatorHeuristicProvenance> {
+    queue
+        .iter()
+        .map(|item| {
+            let matched_trusted_sources = matched_trusted_sources_for_item(item, public_context);
+            let applied_rule_sources = applied_rule_sources(public_context);
+            let duplicate_cluster_size = duplicate_cluster_size_for_item(item);
+            let obvious_vandalism = FlagState::from(has_signal(
+                item,
+                &sp42_core::ScoringSignal::ObviousVandalism,
+            ));
+            let mut notes = item
+                .score
+                .contributions
+                .iter()
+                .map(|entry| match &entry.note {
+                    Some(note) => format!("{}: {}", entry.signal, note),
+                    None => entry.signal.to_string(),
+                })
+                .collect::<Vec<_>>();
+            if !matched_trusted_sources.is_empty() {
+                notes.push(format!(
+                    "trusted-user suppression matched {}",
+                    matched_trusted_sources.join(", ")
+                ));
+            }
+
+            LiveOperatorHeuristicProvenance {
+                rev_id: item.event.rev_id,
+                performer: item.event.performer.stable_label().to_string(),
+                applied_rule_sources,
+                matched_trusted_sources,
+                duplicate_cluster_size,
+                obvious_vandalism,
+                notes,
+            }
+        })
+        .collect()
+}
+
+fn applied_rule_sources(public_context: &LiveOperatorPublicContextState) -> Vec<String> {
+    let mut sources = Vec::new();
+    if let Some(rule_set) = public_context
+        .active_rule_set
+        .as_ref()
+        .and_then(|resolved| match &resolved.payload {
+            PublicStorageDocumentData::RuleSet(value) => Some(value),
+            _ => None,
+        })
+    {
+        sources.push(format!("rule_set:{}", rule_set.slug));
+    }
+    sources
+}
+
+fn matched_trusted_sources_for_item(
+    item: &QueuedEdit,
+    public_context: &LiveOperatorPublicContextState,
+) -> Vec<String> {
+    if !item.event.performer.is_registered() {
+        return Vec::new();
+    }
+
+    let username = item.event.performer.stable_label();
+    let mut sources = Vec::new();
+    if let Some(team) =
+        public_context
+            .active_team
+            .as_ref()
+            .and_then(|resolved| match &resolved.payload {
+                PublicStorageDocumentData::Team(value) => Some(value),
+                _ => None,
+            })
+        && team
+            .trusted_users
+            .iter()
+            .any(|candidate| candidate == username)
+    {
+        sources.push(format!("team:{}", team.slug));
+    }
+    if let Some(rule_set) = public_context
+        .active_rule_set
+        .as_ref()
+        .and_then(|resolved| match &resolved.payload {
+            PublicStorageDocumentData::RuleSet(value) => Some(value),
+            _ => None,
+        })
+        && rule_set
+            .trusted_users
+            .iter()
+            .any(|candidate| candidate == username)
+    {
+        sources.push(format!("rule_set:{}", rule_set.slug));
+    }
+    sources
+}
+
+fn duplicate_cluster_size_for_item(item: &QueuedEdit) -> Option<u32> {
+    item.score
+        .contributions
+        .iter()
+        .find(|entry| matches!(entry.signal, sp42_core::ScoringSignal::DuplicatePattern))
+        .and_then(|entry| entry.note.as_deref())
+        .and_then(|note| note.rsplit(' ').next())
+        .and_then(|value| value.parse::<u32>().ok())
+}
+
+fn has_signal(item: &QueuedEdit, signal: &sp42_core::ScoringSignal) -> bool {
+    item.score
+        .contributions
+        .iter()
+        .any(|entry| &entry.signal == signal)
+}
+
+fn action_reason_note(
+    item: &QueuedEdit,
+    provenance: Option<&LiveOperatorHeuristicProvenance>,
+) -> Option<String> {
+    let mut parts = Vec::new();
+    if has_signal(item, &sp42_core::ScoringSignal::ObviousVandalism) {
+        parts.push("obvious-vandalism".to_string());
+    }
+    if let Some(cluster_size) = provenance.and_then(|entry| entry.duplicate_cluster_size) {
+        parts.push(format!("duplicate-cluster={cluster_size}"));
+    }
+    if let Some(provenance) = provenance {
+        if !provenance.matched_trusted_sources.is_empty() {
+            parts.push(format!(
+                "trusted-source={}",
+                provenance.matched_trusted_sources.join("+")
+            ));
+        }
+        if !provenance.applied_rule_sources.is_empty() {
+            parts.push(format!(
+                "rules={}",
+                provenance.applied_rule_sources.join("+")
+            ));
+        }
+    }
+    if parts.is_empty() {
+        None
+    } else {
+        Some(format!("SP42 rationale: {}", parts.join("; ")))
+    }
+}
+
 fn build_live_operator_products(
     wiki_id: &str,
     queue: &[QueuedEdit],
     selected: Option<&QueuedEdit>,
     selected_review: &SelectedReviewState,
+    public_context: &LiveOperatorPublicContextState,
     context: &LiveOperatorProductContext<'_>,
 ) -> LiveOperatorProducts {
     let scenario_report = build_patrol_scenario_report(&PatrolScenarioReportInputs {
@@ -2099,8 +2250,19 @@ fn build_live_operator_products(
         backlog_status: Some(context.backlog_status),
         coordination: selected_review.coordination_state.as_ref(),
     });
-    let action_preflight =
-        build_live_operator_action_preflight(selected, context.capabilities, context.action_status);
+    let heuristic_provenance = build_live_operator_heuristic_provenance(queue, public_context);
+    let selected_provenance = selected.and_then(|item| {
+        heuristic_provenance
+            .iter()
+            .find(|entry| entry.rev_id == item.event.rev_id)
+    });
+    let selected_note = selected.and_then(|item| action_reason_note(item, selected_provenance));
+    let action_preflight = build_live_operator_action_preflight(
+        selected,
+        context.capabilities,
+        context.action_status,
+        selected_note.as_deref(),
+    );
 
     LiveOperatorProducts {
         scenario_report,
@@ -2109,6 +2271,7 @@ fn build_live_operator_products(
         backend,
         debug_snapshot,
         action_preflight,
+        heuristic_provenance,
     }
 }
 
@@ -2150,6 +2313,7 @@ fn finalize_live_operator_view(
         action_history: bootstrap.action_history,
         action_preflight: products.action_preflight,
         public_documents,
+        heuristic_provenance: products.heuristic_provenance,
         ingestion_supervisor,
         coordination_room: selected_review.coordination_room,
         coordination_state: selected_review.coordination_state,

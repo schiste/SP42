@@ -143,6 +143,12 @@ struct SessionSnapshot {
     bridge_mode: String,
 }
 
+#[derive(Clone)]
+struct AuthenticatedWikiContext {
+    client: BearerHttpClient,
+    config: WikiConfig,
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Eq, serde::Deserialize, serde::Serialize)]
 struct ActionHistoryQuery {
     limit: Option<usize>,
@@ -878,6 +884,63 @@ fn runtime_storage_root() -> PathBuf {
     )
 }
 
+fn gateway_error(message: impl Into<String>) -> (StatusCode, Json<serde_json::Value>) {
+    (
+        StatusCode::BAD_GATEWAY,
+        Json(serde_json::json!({ "error": message.into() })),
+    )
+}
+
+async fn authenticated_wiki_context(
+    state: &AppState,
+    headers: &HeaderMap,
+    wiki_id: &str,
+) -> Result<AuthenticatedWikiContext, (StatusCode, Json<serde_json::Value>)> {
+    let access_token = access_token_for_request(state, headers)
+        .await
+        .ok_or_else(|| unauthorized_error("No authenticated Wikimedia session is active."))?;
+    let config =
+        resolved_wiki_config(state, wiki_id).map_err(|message| invalid_payload(&message))?;
+    Ok(AuthenticatedWikiContext {
+        client: BearerHttpClient::new(state.http_client.clone(), access_token),
+        config,
+    })
+}
+
+async fn required_csrf_token(
+    context: &AuthenticatedWikiContext,
+) -> Result<String, (StatusCode, Json<serde_json::Value>)> {
+    execute_fetch_token(&context.client, &context.config, TokenKind::Csrf)
+        .await
+        .map_err(|error| gateway_error(format!("csrf token fetch failed: {error}")))
+}
+
+async fn load_storage_document_with_context(
+    context: &AuthenticatedWikiContext,
+    title: &str,
+) -> Result<WikiStorageLoadedDocument, (StatusCode, Json<serde_json::Value>)> {
+    load_wiki_storage_document(&context.client, &context.config, title)
+        .await
+        .map_err(|error| gateway_error(error.to_string()))
+}
+
+async fn save_storage_document_with_context(
+    context: &AuthenticatedWikiContext,
+    document: WikiStorageDocument,
+    request: WikiStorageWriteRequest,
+) -> Result<WikiStorageWriteOutcome, (StatusCode, Json<serde_json::Value>)> {
+    match save_wiki_storage_document(&context.client, &context.config, &request).await {
+        Ok(outcome) => Ok(outcome),
+        Err(error) => Err(wiki_storage_save_error_response(
+            &context.client,
+            &context.config,
+            &document,
+            error,
+        )
+        .await),
+    }
+}
+
 async fn browser_shell_unavailable() -> impl IntoResponse {
     (
         StatusCode::SERVICE_UNAVAILABLE,
@@ -1147,6 +1210,19 @@ struct LiveOperatorFinalization {
     ingestion_supervisor: Option<sp42_core::LiveIngestionSupervisorStatus>,
 }
 
+struct LiveOperatorAssembly {
+    bootstrap: LiveOperatorBootstrap,
+    public_context: LiveOperatorPublicContextState,
+    queue_state: LiveQueueState,
+    selected_review: SelectedReviewState,
+    telemetry_phase_timings: Vec<LiveOperatorPhaseTiming>,
+}
+
+enum CapabilityProbeSubject<'a> {
+    LocalToken,
+    Session(&'a SessionSnapshot),
+}
+
 fn operator_phase_timing(phase: &str, started_at: Instant) -> LiveOperatorPhaseTiming {
     LiveOperatorPhaseTiming {
         phase: phase.to_string(),
@@ -1220,22 +1296,10 @@ async fn get_storage_document(
         .as_deref()
         .filter(|value| !value.trim().is_empty())
         .ok_or_else(|| invalid_payload("title query parameter is required"))?;
-    let access_token = access_token_for_request(&state, &headers)
-        .await
-        .ok_or_else(|| unauthorized_error("No authenticated Wikimedia session is active."))?;
-    let config =
-        resolved_wiki_config(&state, &wiki_id).map_err(|message| invalid_payload(&message))?;
-    let client = BearerHttpClient::new(state.http_client.clone(), access_token);
-
-    load_wiki_storage_document(&client, &config, title)
+    let context = authenticated_wiki_context(&state, &headers, &wiki_id).await?;
+    load_storage_document_with_context(&context, title)
         .await
         .map(Json)
-        .map_err(|error| {
-            (
-                StatusCode::BAD_GATEWAY,
-                Json(serde_json::json!({ "error": error.to_string() })),
-            )
-        })
 }
 
 async fn put_storage_document(
@@ -1260,45 +1324,24 @@ async fn put_storage_document(
         return Err(invalid_payload("document.title is required"));
     }
 
-    let access_token = access_token_for_request(&state, &headers)
-        .await
-        .ok_or_else(|| unauthorized_error("No authenticated Wikimedia session is active."))?;
-    let config =
-        resolved_wiki_config(&state, &wiki_id).map_err(|message| invalid_payload(&message))?;
-    let client = BearerHttpClient::new(state.http_client.clone(), access_token);
-    let csrf_token = execute_fetch_token(&client, &config, TokenKind::Csrf)
-        .await
-        .map_err(|error| {
-            (
-                StatusCode::BAD_GATEWAY,
-                Json(serde_json::json!({ "error": format!("csrf token fetch failed: {error}") })),
-            )
-        })?;
+    let context = authenticated_wiki_context(&state, &headers, &wiki_id).await?;
+    let csrf_token = required_csrf_token(&context).await?;
+    let request = WikiStorageWriteRequest {
+        document: document.clone(),
+        human_summary,
+        data,
+        token: csrf_token,
+        baserevid,
+        tags,
+        watchlist,
+        create_only,
+        minor,
+        summary,
+    };
 
-    let result = save_wiki_storage_document(
-        &client,
-        &config,
-        &WikiStorageWriteRequest {
-            document: document.clone(),
-            human_summary,
-            data,
-            token: csrf_token,
-            baserevid,
-            tags,
-            watchlist,
-            create_only,
-            minor,
-            summary,
-        },
-    )
-    .await;
-
-    match result {
-        Ok(outcome) => Ok(Json(outcome)),
-        Err(error) => {
-            Err(wiki_storage_save_error_response(&client, &config, &document, error).await)
-        }
-    }
+    save_storage_document_with_context(&context, document, request)
+        .await
+        .map(Json)
 }
 
 async fn get_logical_storage_document(
@@ -1315,20 +1358,8 @@ async fn get_logical_storage_document(
         resolve_logical_storage_document(&state, &headers, &wiki_id, &realm, &kind, &query)
             .await
             .map_err(|message| invalid_payload(&message))?;
-    let access_token = access_token_for_request(&state, &headers)
-        .await
-        .ok_or_else(|| unauthorized_error("No authenticated Wikimedia session is active."))?;
-    let config =
-        resolved_wiki_config(&state, &wiki_id).map_err(|message| invalid_payload(&message))?;
-    let client = BearerHttpClient::new(state.http_client.clone(), access_token);
-    let loaded = load_wiki_storage_document(&client, &config, &document.title)
-        .await
-        .map_err(|error| {
-            (
-                StatusCode::BAD_GATEWAY,
-                Json(serde_json::json!({ "error": error.to_string() })),
-            )
-        })?;
+    let context = authenticated_wiki_context(&state, &headers, &wiki_id).await?;
+    let loaded = load_storage_document_with_context(&context, &document.title).await?;
 
     Ok(Json(LogicalStorageDocumentView { document, loaded }))
 }
@@ -1348,45 +1379,24 @@ async fn put_logical_storage_document(
         resolve_logical_storage_document(&state, &headers, &wiki_id, &realm, &kind, &query)
             .await
             .map_err(|message| invalid_payload(&message))?;
-    let access_token = access_token_for_request(&state, &headers)
-        .await
-        .ok_or_else(|| unauthorized_error("No authenticated Wikimedia session is active."))?;
-    let config =
-        resolved_wiki_config(&state, &wiki_id).map_err(|message| invalid_payload(&message))?;
-    let client = BearerHttpClient::new(state.http_client.clone(), access_token);
-    let csrf_token = execute_fetch_token(&client, &config, TokenKind::Csrf)
-        .await
-        .map_err(|error| {
-            (
-                StatusCode::BAD_GATEWAY,
-                Json(serde_json::json!({ "error": format!("csrf token fetch failed: {error}") })),
-            )
-        })?;
+    let context = authenticated_wiki_context(&state, &headers, &wiki_id).await?;
+    let csrf_token = required_csrf_token(&context).await?;
+    let request = WikiStorageWriteRequest {
+        document: document.clone(),
+        human_summary: payload.human_summary,
+        data: payload.data,
+        token: csrf_token,
+        baserevid: payload.baserevid,
+        tags: payload.tags,
+        watchlist: payload.watchlist,
+        create_only: payload.create_only,
+        minor: payload.minor,
+        summary: payload.summary,
+    };
 
-    let result = save_wiki_storage_document(
-        &client,
-        &config,
-        &WikiStorageWriteRequest {
-            document: document.clone(),
-            human_summary: payload.human_summary,
-            data: payload.data,
-            token: csrf_token,
-            baserevid: payload.baserevid,
-            tags: payload.tags,
-            watchlist: payload.watchlist,
-            create_only: payload.create_only,
-            minor: payload.minor,
-            summary: payload.summary,
-        },
-    )
-    .await;
-
-    match result {
-        Ok(outcome) => Ok(Json(LogicalStorageDocumentWriteView { document, outcome })),
-        Err(error) => {
-            Err(wiki_storage_save_error_response(&client, &config, &document, error).await)
-        }
-    }
+    save_storage_document_with_context(&context, document.clone(), request)
+        .await
+        .map(|outcome| Json(LogicalStorageDocumentWriteView { document, outcome }))
 }
 
 fn public_storage_document_kind(
@@ -1853,20 +1863,19 @@ async fn get_public_storage_document(
     let document = resolve_public_storage_document(&state, &headers, &wiki_id, &kind, &query)
         .await
         .map_err(|message| invalid_payload(&message))?;
-    let access_token = access_token_for_request(&state, &headers)
-        .await
-        .ok_or_else(|| unauthorized_error("No authenticated Wikimedia session is active."))?;
-    let config =
-        resolved_wiki_config(&state, &wiki_id).map_err(|message| invalid_payload(&message))?;
-    let client = BearerHttpClient::new(state.http_client.clone(), access_token);
-    let resolved = load_or_bootstrap_public_storage_document(&client, &config, document.clone())
-        .await
-        .map_err(|error| {
-            (
-                StatusCode::BAD_GATEWAY,
-                Json(serde_json::json!({ "error": error, "document": document })),
-            )
-        })?;
+    let context = authenticated_wiki_context(&state, &headers, &wiki_id).await?;
+    let resolved = load_or_bootstrap_public_storage_document(
+        &context.client,
+        &context.config,
+        document.clone(),
+    )
+    .await
+    .map_err(|error| {
+        (
+            StatusCode::BAD_GATEWAY,
+            Json(serde_json::json!({ "error": error, "document": document })),
+        )
+    })?;
 
     Ok(Json(PublicStorageDocumentView {
         document: resolved.document,
@@ -1891,20 +1900,8 @@ async fn put_public_storage_document(
         .ensure_matches_document_kind(&document.kind)
         .map_err(|error| invalid_payload(&error.to_string()))?;
 
-    let access_token = access_token_for_request(&state, &headers)
-        .await
-        .ok_or_else(|| unauthorized_error("No authenticated Wikimedia session is active."))?;
-    let config =
-        resolved_wiki_config(&state, &wiki_id).map_err(|message| invalid_payload(&message))?;
-    let client = BearerHttpClient::new(state.http_client.clone(), access_token);
-    let csrf_token = execute_fetch_token(&client, &config, TokenKind::Csrf)
-        .await
-        .map_err(|error| {
-            (
-                StatusCode::BAD_GATEWAY,
-                Json(serde_json::json!({ "error": format!("csrf token fetch failed: {error}") })),
-            )
-        })?;
+    let context = authenticated_wiki_context(&state, &headers, &wiki_id).await?;
+    let csrf_token = required_csrf_token(&context).await?;
 
     let json_data = payload
         .payload
@@ -1916,34 +1913,28 @@ async fn put_public_storage_document(
     } else {
         payload.human_summary
     };
-    let result = save_wiki_storage_document(
-        &client,
-        &config,
-        &WikiStorageWriteRequest {
-            document: document.clone(),
-            human_summary,
-            data: json_data,
-            token: csrf_token,
-            baserevid: payload.baserevid,
-            tags: payload.tags,
-            watchlist: payload.watchlist,
-            create_only: payload.create_only,
-            minor: payload.minor,
-            summary: payload.summary,
-        },
-    )
-    .await;
+    let request = WikiStorageWriteRequest {
+        document: document.clone(),
+        human_summary,
+        data: json_data,
+        token: csrf_token,
+        baserevid: payload.baserevid,
+        tags: payload.tags,
+        watchlist: payload.watchlist,
+        create_only: payload.create_only,
+        minor: payload.minor,
+        summary: payload.summary,
+    };
 
-    match result {
-        Ok(outcome) => Ok(Json(PublicStorageDocumentWriteView {
-            document,
-            payload: payload.payload,
-            outcome,
-        })),
-        Err(error) => {
-            Err(wiki_storage_save_error_response(&client, &config, &document, error).await)
-        }
-    }
+    save_storage_document_with_context(&context, document.clone(), request)
+        .await
+        .map(|outcome| {
+            Json(PublicStorageDocumentWriteView {
+                document,
+                payload: payload.payload,
+                outcome,
+            })
+        })
 }
 
 async fn server_debug_summary(state: &AppState, headers: &HeaderMap) -> ServerDebugSummary {
@@ -2854,14 +2845,12 @@ fn finalize_live_operator_view(
     }
 }
 
-#[allow(clippy::too_many_lines)]
-async fn live_operator_view(
+async fn load_live_operator_assembly(
     state: &AppState,
     headers: &HeaderMap,
     wiki_id: &str,
     filters: &LiveViewFilterParams,
-) -> Result<LiveOperatorView, String> {
-    let total_started = Instant::now();
+) -> Result<LiveOperatorAssembly, String> {
     let mut phase_timings = Vec::new();
 
     let phase_started = Instant::now();
@@ -2915,52 +2904,77 @@ async fn live_operator_view(
     )
     .await?;
     phase_timings.push(operator_phase_timing("selection", phase_started));
+
+    Ok(LiveOperatorAssembly {
+        bootstrap,
+        public_context,
+        queue_state,
+        selected_review,
+        telemetry_phase_timings: phase_timings,
+    })
+}
+
+fn build_live_operator_finalization(
+    wiki_id: &str,
+    total_started: Instant,
+    assembly: LiveOperatorAssembly,
+) -> LiveOperatorFinalization {
+    let selected = assembly
+        .queue_state
+        .selected_index
+        .and_then(|index| assembly.queue_state.queue.get(index));
     let products = build_live_operator_products(
         wiki_id,
-        &queue_state.queue,
+        &assembly.queue_state.queue,
         selected,
-        &selected_review,
+        &assembly.selected_review,
         &LiveOperatorProductContext {
-            stream_status: &bootstrap.stream_status,
-            backlog_status: &queue_state.backlog_status,
-            auth: &bootstrap.auth,
-            action_status: &bootstrap.action_status,
-            capabilities: &bootstrap.capabilities,
+            stream_status: &assembly.bootstrap.stream_status,
+            backlog_status: &assembly.queue_state.backlog_status,
+            auth: &assembly.bootstrap.auth,
+            action_status: &assembly.bootstrap.action_status,
+            capabilities: &assembly.bootstrap.capabilities,
         },
     );
+    let mut notes = build_live_operator_notes(
+        &assembly.queue_state.query,
+        &assembly.queue_state.backlog_status,
+        &assembly.queue_state.queue,
+        assembly.selected_review.scoring_context.as_ref(),
+        assembly.selected_review.diff.as_ref(),
+        assembly.selected_review.review_workbench.as_ref(),
+    );
+    notes.extend(assembly.public_context.notes.clone());
     let telemetry = LiveOperatorTelemetry {
         total_duration_ms: u64::try_from(total_started.elapsed().as_millis()).unwrap_or(u64::MAX),
-        phase_timings,
+        phase_timings: assembly.telemetry_phase_timings,
     };
 
-    let notes = build_live_operator_notes(
-        &queue_state.query,
-        &queue_state.backlog_status,
-        &queue_state.queue,
-        selected_review.scoring_context.as_ref(),
-        selected_review.diff.as_ref(),
-        selected_review.review_workbench.as_ref(),
-    );
-    let mut notes = notes;
-    notes.extend(public_context.notes.clone());
-    let ingestion_supervisor = supervisor_snapshot_for_wiki(state, wiki_id)
+    LiveOperatorFinalization {
+        queue_state: assembly.queue_state,
+        bootstrap: assembly.bootstrap,
+        selected_review: assembly.selected_review,
+        products,
+        public_documents: live_operator_public_documents_model(&assembly.public_context),
+        telemetry,
+        notes,
+        ingestion_supervisor: None,
+    }
+}
+
+async fn live_operator_view(
+    state: &AppState,
+    headers: &HeaderMap,
+    wiki_id: &str,
+    filters: &LiveViewFilterParams,
+) -> Result<LiveOperatorView, String> {
+    let total_started = Instant::now();
+    let assembly = load_live_operator_assembly(state, headers, wiki_id, filters).await?;
+    let mut finalization = build_live_operator_finalization(wiki_id, total_started, assembly);
+    finalization.ingestion_supervisor = supervisor_snapshot_for_wiki(state, wiki_id)
         .await
         .map(|snapshot| snapshot.status);
-
-    Ok(finalize_live_operator_view(
-        state,
-        wiki_id,
-        LiveOperatorFinalization {
-            queue_state,
-            bootstrap,
-            selected_review,
-            products,
-            public_documents: live_operator_public_documents_model(&public_context),
-            telemetry,
-            notes,
-            ingestion_supervisor,
-        },
-    ))
+    Ok(finalize_live_operator_view(state, wiki_id, finalization))
 }
 
 async fn access_token_for_request(state: &AppState, headers: &HeaderMap) -> Option<String> {
@@ -3251,10 +3265,144 @@ async fn capability_report_for_request(
     force_refresh: bool,
 ) -> DevAuthCapabilityReport {
     if let Some(session) = current_session_snapshot(state, headers, true).await {
-        return capability_report_for_session(state, &session, wiki_id, force_refresh).await;
+        return capability_report_for_subject(
+            state,
+            CapabilityProbeSubject::Session(&session),
+            wiki_id,
+            force_refresh,
+        )
+        .await;
     }
 
-    capability_report_for_local_token(state, wiki_id, force_refresh).await
+    capability_report_for_subject(
+        state,
+        CapabilityProbeSubject::LocalToken,
+        wiki_id,
+        force_refresh,
+    )
+    .await
+}
+
+async fn cached_capability_report_for_subject(
+    state: &AppState,
+    subject: &CapabilityProbeSubject<'_>,
+    wiki_id: &str,
+    force_refresh: bool,
+) -> Option<DevAuthCapabilityReport> {
+    if force_refresh {
+        return None;
+    }
+
+    match subject {
+        CapabilityProbeSubject::LocalToken => {
+            let guard = state.capability_cache.read().await;
+            if let Some(cache) = guard.as_ref()
+                && cache.report.wiki_id == wiki_id
+                && cache_is_fresh(cache, state.clock.now_ms())
+            {
+                return Some(cache.report.clone());
+            }
+        }
+        CapabilityProbeSubject::Session(session) => {
+            if let Some(report) =
+                cached_capabilities_for_session(state, &session.session_id, wiki_id).await
+            {
+                return Some(report);
+            }
+        }
+    }
+
+    None
+}
+
+fn capability_probe_token<'a>(
+    state: &'a AppState,
+    subject: &'a CapabilityProbeSubject<'a>,
+) -> Option<&'a str> {
+    match subject {
+        CapabilityProbeSubject::LocalToken => state.local_oauth.access_token(),
+        CapabilityProbeSubject::Session(session) => Some(session.access_token.as_str()),
+    }
+}
+
+fn log_capability_probe_result(
+    subject: &CapabilityProbeSubject<'_>,
+    wiki_id: &str,
+    report: &DevAuthCapabilityReport,
+) {
+    if let Some(error) = &report.error {
+        match subject {
+            CapabilityProbeSubject::LocalToken => {
+                warn!(wiki_id, error, "local capability probe failed");
+            }
+            CapabilityProbeSubject::Session(session) => {
+                warn!(
+                    session_id = session.session_id.as_str(),
+                    wiki_id, error, "session capability probe failed"
+                );
+            }
+        }
+    } else {
+        match subject {
+            CapabilityProbeSubject::LocalToken => {
+                info!(wiki_id, username = ?report.username, "local capability probe succeeded");
+            }
+            CapabilityProbeSubject::Session(session) => {
+                info!(
+                    session_id = session.session_id.as_str(),
+                    wiki_id,
+                    username = ?report.username,
+                    "session capability probe succeeded"
+                );
+            }
+        }
+    }
+}
+
+async fn store_capability_report_for_subject(
+    state: &AppState,
+    subject: &CapabilityProbeSubject<'_>,
+    report: &DevAuthCapabilityReport,
+) {
+    match subject {
+        CapabilityProbeSubject::LocalToken => {
+            let mut guard = state.capability_cache.write().await;
+            *guard = Some(CachedCapabilityReport {
+                fetched_at_ms: state.clock.now_ms(),
+                report: report.clone(),
+            });
+        }
+        CapabilityProbeSubject::Session(session) => {
+            store_capabilities_for_session(state, &session.session_id, report).await;
+        }
+    }
+}
+
+async fn capability_report_for_subject(
+    state: &AppState,
+    subject: CapabilityProbeSubject<'_>,
+    wiki_id: &str,
+    force_refresh: bool,
+) -> DevAuthCapabilityReport {
+    if let Some(report) =
+        cached_capability_report_for_subject(state, &subject, wiki_id, force_refresh).await
+    {
+        return report;
+    }
+
+    debug_assert!(!wiki_id.is_empty());
+    let oauth = state.local_oauth.status();
+    let report = probe_with_targets(
+        &state.http_client,
+        capability_probe_token(state, &subject),
+        &oauth,
+        wiki_id,
+        &state.capability_targets,
+    )
+    .await;
+    log_capability_probe_result(&subject, wiki_id, &report);
+    store_capability_report_for_subject(state, &subject, &report).await;
+    report
 }
 
 async fn capability_report_for_local_token(
@@ -3262,39 +3410,13 @@ async fn capability_report_for_local_token(
     wiki_id: &str,
     force_refresh: bool,
 ) -> DevAuthCapabilityReport {
-    if !force_refresh {
-        let guard = state.capability_cache.read().await;
-        if let Some(cache) = guard.as_ref()
-            && cache.report.wiki_id == wiki_id
-            && cache_is_fresh(cache, state.clock.now_ms())
-        {
-            return cache.report.clone();
-        }
-    }
-
-    let oauth = state.local_oauth.status();
-    debug_assert!(!wiki_id.is_empty());
-    let report = probe_with_targets(
-        &state.http_client,
-        state.local_oauth.access_token(),
-        &oauth,
+    capability_report_for_subject(
+        state,
+        CapabilityProbeSubject::LocalToken,
         wiki_id,
-        &state.capability_targets,
+        force_refresh,
     )
-    .await;
-    if let Some(error) = &report.error {
-        warn!(wiki_id, error, "local capability probe failed");
-    } else {
-        info!(wiki_id, username = ?report.username, "local capability probe succeeded");
-    }
-
-    let mut guard = state.capability_cache.write().await;
-    *guard = Some(CachedCapabilityReport {
-        fetched_at_ms: state.clock.now_ms(),
-        report: report.clone(),
-    });
-
-    report
+    .await
 }
 
 async fn capability_report_for_session(
@@ -3303,38 +3425,13 @@ async fn capability_report_for_session(
     wiki_id: &str,
     force_refresh: bool,
 ) -> DevAuthCapabilityReport {
-    if !force_refresh
-        && let Some(report) =
-            cached_capabilities_for_session(state, &session.session_id, wiki_id).await
-    {
-        return report;
-    }
-
-    let oauth = state.local_oauth.status();
-    let report = probe_with_targets(
-        &state.http_client,
-        Some(session.access_token.as_str()),
-        &oauth,
+    capability_report_for_subject(
+        state,
+        CapabilityProbeSubject::Session(session),
         wiki_id,
-        &state.capability_targets,
+        force_refresh,
     )
-    .await;
-    if let Some(error) = &report.error {
-        warn!(
-            session_id = session.session_id.as_str(),
-            wiki_id, error, "session capability probe failed"
-        );
-    } else {
-        info!(
-            session_id = session.session_id.as_str(),
-            wiki_id,
-            username = ?report.username,
-            "session capability probe succeeded"
-        );
-    }
-
-    store_capabilities_for_session(state, &session.session_id, &report).await;
-    report
+    .await
 }
 
 async fn get_runtime_debug(
@@ -3694,6 +3791,19 @@ fn action_response_payload(
     }
 }
 
+async fn record_action_side_effects(
+    state: &AppState,
+    session: &SessionSnapshot,
+    headers: &HeaderMap,
+    payload: &SessionActionExecutionRequest,
+    log_entry: &ActionExecutionLogEntry,
+) -> Option<String> {
+    record_action_execution(state, &session.session_id, log_entry.clone()).await;
+    append_public_audit_entry(state, headers, session, payload, log_entry)
+        .await
+        .err()
+}
+
 async fn handle_action_success(
     state: &AppState,
     session: &SessionSnapshot,
@@ -3721,10 +3831,8 @@ async fn handle_action_success(
             error: None,
         },
     );
-    record_action_execution(state, &session.session_id, log_entry.clone()).await;
-    let audit_warning = append_public_audit_entry(state, headers, session, payload, &log_entry)
-        .await
-        .err();
+    let audit_warning =
+        record_action_side_effects(state, session, headers, payload, &log_entry).await;
     let mut response_payload = action_response_payload(
         payload,
         session.username.clone(),
@@ -3774,10 +3882,8 @@ async fn handle_action_failure(
             error: Some(error_message),
         },
     );
-    record_action_execution(state, &session.session_id, log_entry.clone()).await;
-    let audit_warning = append_public_audit_entry(state, headers, session, payload, &log_entry)
-        .await
-        .err();
+    let audit_warning =
+        record_action_side_effects(state, session, headers, payload, &log_entry).await;
     if let Some(warning) = audit_warning {
         let mut body = api_error.1.0;
         body["audit_warning"] = serde_json::Value::String(warning);

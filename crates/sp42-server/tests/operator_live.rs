@@ -306,6 +306,7 @@ async fn wait_for_health(client: &Client, base_url: &str, child: &mut Child) -> 
     }
 }
 
+
 fn dump_runtime_root(runtime_root: &Path) {
     eprintln!("runtime root: {}", runtime_root.display());
     if let Ok(entries) = fs::read_dir(runtime_root) {
@@ -448,6 +449,88 @@ async fn operator_live_contract_reuses_checkpoints_and_handles_concurrent_reques
         .expect("checkpoint should persist");
     let checkpoint = String::from_utf8(checkpoint).expect("checkpoint should be valid UTF-8");
     assert_eq!(checkpoint, "20260324010203|789");
+
+    let _ = child.kill();
+    let _ = child.wait();
+    mock_handle.abort();
+    let _ = fs::remove_dir_all(&temp_dir);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn auth_logout_clears_bootstrapped_session_state() {
+    let temp_dir = unique_temp_dir("server-auth-logout");
+    fs::create_dir_all(&temp_dir).expect("temp dir should create");
+    write_local_env(&temp_dir);
+
+    let (mock_base, mock_handle) = start_mock_backend().await;
+    let bind_addr = format!("127.0.0.1:{}", free_port());
+    let mut child = spawn_server(&temp_dir, &bind_addr, &mock_base);
+    let base_url = format!("http://{bind_addr}");
+    let client = Client::builder()
+        .timeout(Duration::from_secs(5))
+        .user_agent(branding::USER_AGENT)
+        .build()
+        .expect("reqwest client should build");
+
+    let _health = wait_for_health(&client, &base_url, &mut child).await;
+
+    let bootstrap = client
+        .post(format!("{base_url}/dev/auth/session/bootstrap"))
+        .json(&serde_json::json!({}))
+        .send()
+        .await
+        .expect("bootstrap request should succeed");
+    assert!(bootstrap.status().is_success());
+    let session_cookie = bootstrap
+        .headers()
+        .get(reqwest::header::SET_COOKIE)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.split(';').next())
+        .map(str::to_string)
+        .expect("bootstrap should return a session cookie");
+
+    let session_after_bootstrap = client
+        .get(format!("{base_url}/auth/session"))
+        .header(reqwest::header::COOKIE, &session_cookie)
+        .send()
+        .await
+        .expect("auth session request should succeed");
+    assert!(session_after_bootstrap.status().is_success());
+    let session_json = session_after_bootstrap
+        .json::<serde_json::Value>()
+        .await
+        .expect("auth session response should parse");
+    assert_eq!(session_json["authenticated"], serde_json::json!(true));
+    assert_eq!(session_json["username"], serde_json::json!("Schiste"));
+    assert_eq!(session_json["bridge_mode"], serde_json::json!("local-env-token"));
+
+    let logout = client
+        .post(format!("{base_url}/auth/logout"))
+        .header(reqwest::header::COOKIE, &session_cookie)
+        .send()
+        .await
+        .expect("logout request should succeed");
+    assert!(logout.status().is_success());
+    let cleared_cookie = logout
+        .headers()
+        .get(reqwest::header::SET_COOKIE)
+        .and_then(|value| value.to_str().ok())
+        .expect("logout should return a clearing cookie");
+    assert!(cleared_cookie.contains("Max-Age=0"));
+
+    let session_after_logout = client
+        .get(format!("{base_url}/auth/session"))
+        .header(reqwest::header::COOKIE, &session_cookie)
+        .send()
+        .await
+        .expect("auth session request after logout should succeed");
+    assert!(session_after_logout.status().is_success());
+    let session_json = session_after_logout
+        .json::<serde_json::Value>()
+        .await
+        .expect("post-logout auth session response should parse");
+    assert_eq!(session_json["authenticated"], serde_json::json!(false));
+    assert_eq!(session_json["bridge_mode"], serde_json::json!("inactive"));
 
     let _ = child.kill();
     let _ = child.wait();

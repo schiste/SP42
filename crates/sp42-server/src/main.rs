@@ -3,6 +3,7 @@ mod auth_routes;
 mod coordination;
 mod ingestion_supervisor;
 mod local_env;
+mod oauth_runtime;
 mod operator_live;
 mod session_runtime;
 mod storage_routes;
@@ -21,7 +22,7 @@ use axum::extract::Path;
 use axum::extract::Query;
 use axum::extract::State;
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
-use axum::http::header::{CACHE_CONTROL, CONTENT_TYPE, COOKIE, HOST, PRAGMA};
+use axum::http::header::{CACHE_CONTROL, CONTENT_TYPE, COOKIE, PRAGMA};
 use axum::http::{HeaderMap, HeaderValue, Method, StatusCode};
 use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Redirect, Response};
@@ -2633,13 +2634,6 @@ fn action_feedback_for_entry(entry: &ActionExecutionLogEntry) -> String {
     action_routes::action_feedback_for_entry(entry)
 }
 
-fn internal_error(message: &str) -> (StatusCode, Json<serde_json::Value>) {
-    (
-        StatusCode::INTERNAL_SERVER_ERROR,
-        Json(serde_json::json!({ "error": message })),
-    )
-}
-
 async fn action_status_report(
     state: &AppState,
     headers: &HeaderMap,
@@ -2682,115 +2676,6 @@ async fn auth_session_view(state: &AppState, headers: &HeaderMap, touch: bool) -
     session_runtime::auth_session_view(state, headers, touch).await
 }
 
-fn sanitize_redirect_target(next: Option<&str>) -> String {
-    let Some(target) = next.map(str::trim).filter(|value| !value.is_empty()) else {
-        return "/".to_string();
-    };
-    if target.starts_with('/') && !target.starts_with("//") {
-        target.to_string()
-    } else {
-        "/".to_string()
-    }
-}
-
-fn redirect_with_status(target: &str, key: &str, value: &str) -> String {
-    let separator = if target.contains('?') { '&' } else { '?' };
-    format!(
-        "{target}{separator}{key}={}",
-        url::form_urlencoded::byte_serialize(value.as_bytes()).collect::<String>()
-    )
-}
-
-fn public_base_url(headers: &HeaderMap) -> Result<String, String> {
-    if let Ok(base_url) = std::env::var("SP42_PUBLIC_BASE_URL")
-        && !base_url.trim().is_empty()
-    {
-        return Ok(base_url.trim_end_matches('/').to_string());
-    }
-
-    let host = headers
-        .get(HOST)
-        .and_then(|value| value.to_str().ok())
-        .filter(|value| !value.trim().is_empty())
-        .ok_or_else(|| "host header is required to build oauth redirect URI".to_string())?;
-    if !is_local_host(host) {
-        return Err(
-            "non-local oauth redirects require SP42_PUBLIC_BASE_URL instead of trusting Host"
-                .to_string(),
-        );
-    }
-    let scheme = headers
-        .get("x-forwarded-proto")
-        .and_then(|value| value.to_str().ok())
-        .filter(|value| !value.trim().is_empty())
-        .unwrap_or("http");
-    Ok(format!("{scheme}://{host}"))
-}
-
-fn is_local_host(host: &str) -> bool {
-    let authority = host.trim();
-    let host_without_port = if authority.starts_with('[') {
-        authority
-            .split_once(']')
-            .map_or(authority, |(head, _)| &head[1..])
-    } else {
-        authority.split(':').next().unwrap_or(authority)
-    };
-
-    matches!(host_without_port, "localhost" | "127.0.0.1" | "::1")
-}
-
-fn oauth_client_config_for_request(
-    state: &AppState,
-    headers: &HeaderMap,
-    wiki_id: &str,
-) -> Result<OAuthClientConfig, (StatusCode, Json<serde_json::Value>)> {
-    let config =
-        resolved_wiki_config(state, wiki_id).map_err(|message| invalid_payload(&message))?;
-    let client_id = state
-        .local_oauth
-        .client_id()
-        .ok_or_else(|| invalid_payload("oauth client id is missing"))?
-        .to_string();
-    let redirect_uri = reqwest::Url::parse(&format!(
-        "{}{}",
-        public_base_url(headers).map_err(|message| invalid_payload(&message))?,
-        AUTH_CALLBACK_PATH
-    ))
-    .map_err(|error| invalid_payload(&format!("oauth redirect URI was invalid: {error}")))?;
-
-    Ok(OAuthClientConfig {
-        client_id,
-        authorize_url: config.oauth_authorize_url,
-        token_url: config.oauth_token_url,
-        redirect_uri,
-        scopes: vec!["basic".to_string(), "patrol".to_string()],
-    })
-}
-
-fn oauth_client_config_from_pending(
-    state: &AppState,
-    pending: &PendingOAuthLogin,
-) -> Result<OAuthClientConfig, (StatusCode, Json<serde_json::Value>)> {
-    let config = resolved_wiki_config(state, &pending.wiki_id)
-        .map_err(|message| invalid_payload(&message))?;
-    let client_id = state
-        .local_oauth
-        .client_id()
-        .ok_or_else(|| invalid_payload("oauth client id is missing"))?
-        .to_string();
-    let redirect_uri = reqwest::Url::parse(&pending.redirect_uri)
-        .map_err(|error| invalid_payload(&format!("pending redirect URI was invalid: {error}")))?;
-
-    Ok(OAuthClientConfig {
-        client_id,
-        authorize_url: config.oauth_authorize_url,
-        token_url: config.oauth_token_url,
-        redirect_uri,
-        scopes: vec!["basic".to_string(), "patrol".to_string()],
-    })
-}
-
 async fn store_pending_oauth_login(state: &AppState, pending: PendingOAuthLogin) {
     session_runtime::store_pending_oauth_login(state, pending).await;
 }
@@ -2811,67 +2696,6 @@ async fn install_session(
     session_runtime::install_session(state, prior_session_id, stored, current_ms).await
 }
 
-async fn exchange_authorization_code(
-    client: &reqwest::Client,
-    local_oauth: &LocalOAuthConfig,
-    oauth_config: &OAuthClientConfig,
-    code: &str,
-    verifier: &str,
-) -> Result<OAuthTokenResponse, String> {
-    let client_secret = local_oauth
-        .client_secret()
-        .ok_or_else(|| "oauth client secret is missing".to_string())?;
-    let response = client
-        .post(oauth_config.token_url.clone())
-        .form(&[
-            ("grant_type", "authorization_code"),
-            ("client_id", oauth_config.client_id.as_str()),
-            ("client_secret", client_secret),
-            ("redirect_uri", oauth_config.redirect_uri.as_ref()),
-            ("code", code),
-            ("code_verifier", verifier),
-        ])
-        .send()
-        .await
-        .map_err(|error| format!("oauth token exchange failed: {error}"))?;
-    let status = response.status();
-    let body = response
-        .text()
-        .await
-        .map_err(|error| format!("oauth token response body could not be read: {error}"))?;
-    if !status.is_success() {
-        return Err(format!(
-            "oauth token exchange returned HTTP {status}: {body}"
-        ));
-    }
-    serde_json::from_str::<OAuthTokenResponse>(&body)
-        .map_err(|error| format!("oauth token response was invalid: {error}"))
-}
-
-async fn fetch_oauth_profile(
-    client: &reqwest::Client,
-    access_token: &str,
-    profile_url: &str,
-) -> Result<OAuthProfileResponse, String> {
-    let response = client
-        .get(profile_url)
-        .bearer_auth(access_token)
-        .send()
-        .await
-        .map_err(|error| format!("oauth profile fetch failed: {error}"))?;
-    let status = response.status();
-    let body = response
-        .text()
-        .await
-        .map_err(|error| format!("oauth profile body could not be read: {error}"))?;
-    if !status.is_success() {
-        return Err(format!(
-            "oauth profile fetch returned HTTP {status}: {body}"
-        ));
-    }
-    serde_json::from_str::<OAuthProfileResponse>(&body)
-        .map_err(|error| format!("oauth profile response was invalid: {error}"))
-}
 
 fn to_status(
     session: Option<&StoredSession>,
@@ -2901,28 +2725,6 @@ fn live_operator_backend_status(
         capability_cache_age_ms: readiness.capability_cache.age_ms,
         capability_cache_wiki_id: readiness.capability_cache.wiki_id.clone(),
     }
-}
-
-fn validate_bootstrap_payload(
-    payload: &DevAuthBootstrapRequest,
-) -> Result<(), (StatusCode, Json<serde_json::Value>)> {
-    if !payload.username.trim().is_empty() {
-        return Err(invalid_payload(
-            "username is derived from the local Wikimedia token; leave it blank",
-        ));
-    }
-    if !payload.scopes.is_empty() {
-        return Err(invalid_payload(
-            "scopes are derived from the local Wikimedia token capabilities; leave them empty",
-        ));
-    }
-    if payload.expires_at_ms.is_some() {
-        return Err(invalid_payload(
-            "expires_at_ms is derived server-side for the local token path; omit it",
-        ));
-    }
-
-    Ok(())
 }
 
 #[cfg(test)]
@@ -3203,7 +3005,6 @@ mod tests {
     use std::time::Instant;
 
     use axum::body::{Body, to_bytes};
-    use axum::http::header::HOST;
     use axum::http::{HeaderMap, Method, Request, StatusCode};
     use axum::routing::get;
     use axum::{Json, Router};
@@ -3217,7 +3018,7 @@ mod tests {
         OPERATOR_STORAGE_LAYOUT_PATH, OperatorReport, OperatorRuntimeInspection,
         OperatorStorageLayoutView, RoomInspectionCollection, RuntimeDebugStatus,
         ServerHealthStatus, SessionActionKind, StoredSession, build_router, now_ms,
-        operator_endpoint_manifest, public_base_url, to_status,
+        operator_endpoint_manifest, to_status,
     };
     use crate::coordination::CoordinationRegistry;
     use crate::local_env::LocalOAuthConfig;
@@ -4045,9 +3846,13 @@ mod tests {
     #[test]
     fn public_base_url_accepts_loopback_host() {
         let mut headers = HeaderMap::new();
-        headers.insert(HOST, axum::http::HeaderValue::from_static("127.0.0.1:8788"));
+        headers.insert(
+            axum::http::header::HOST,
+            axum::http::HeaderValue::from_static("127.0.0.1:8788"),
+        );
 
-        let base = public_base_url(&headers).expect("loopback host should be accepted");
+        let base =
+            crate::oauth_runtime::public_base_url(&headers).expect("loopback host should be accepted");
 
         assert_eq!(base, "http://127.0.0.1:8788");
     }
@@ -4055,9 +3860,13 @@ mod tests {
     #[test]
     fn public_base_url_rejects_non_local_host_without_override() {
         let mut headers = HeaderMap::new();
-        headers.insert(HOST, axum::http::HeaderValue::from_static("example.org"));
+        headers.insert(
+            axum::http::header::HOST,
+            axum::http::HeaderValue::from_static("example.org"),
+        );
 
-        let error = public_base_url(&headers).expect_err("non-local host should be rejected");
+        let error = crate::oauth_runtime::public_base_url(&headers)
+            .expect_err("non-local host should be rejected");
 
         assert!(error.contains("SP42_PUBLIC_BASE_URL"));
     }

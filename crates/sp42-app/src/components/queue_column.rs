@@ -13,6 +13,15 @@ pub fn QueueColumn(
             aria-label="Edit queue"
             style="overflow-y:auto;min-height:0;background:#0b1324;border-inline-end:1px solid rgba(148,163,184,.12);"
         >
+            {if queue.is_empty() {
+                view! {
+                    <div style="padding:17px;text-align:center;color:#8b9fc0;font-size:12px;">
+                        <p style="margin:0 0 4px;font-weight:700;">"No edits in queue"</p>
+                        <p style="margin:0;">"Try adjusting your filters."</p>
+                    </div>
+                }.into_any()
+            } else {
+                view! { <div>
             {queue
                 .into_iter()
                 .enumerate()
@@ -61,6 +70,8 @@ pub fn QueueColumn(
                     }
                 })
                 .collect_view()}
+                </div> }.into_any()
+            }}
         </nav>
     }
 }

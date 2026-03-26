@@ -15,6 +15,7 @@ pub struct PatrolFilterParams {
     pub min_score: Option<i32>,
     pub tag_filter: Option<String>,
     pub rccontinue: Option<String>,
+    pub selected_index: Option<usize>,
 }
 
 impl Default for PatrolFilterParams {
@@ -32,6 +33,7 @@ impl Default for PatrolFilterParams {
             min_score: None,
             tag_filter: None,
             rccontinue: None,
+            selected_index: None,
         }
     }
 }
@@ -74,6 +76,9 @@ impl PatrolFilterParams {
         }
         if let Some(ref token) = self.rccontinue {
             pairs.push(format!("rccontinue={token}"));
+        }
+        if let Some(idx) = self.selected_index {
+            pairs.push(format!("selected_index={idx}"));
         }
         pairs.join("&")
     }
@@ -389,6 +394,7 @@ mod tests {
         assert!(!qs.contains("include_temporary"));
         assert!(!qs.contains("include_new_pages"));
         assert!(!qs.contains("tag_filter"));
+        assert!(!qs.contains("selected_index"));
     }
 
     #[test]
@@ -406,6 +412,7 @@ mod tests {
             min_score: Some(30),
             tag_filter: Some("mw-reverted".to_string()),
             rccontinue: Some("20260325|abc".to_string()),
+            selected_index: Some(3),
         };
         let qs = params.to_query_string();
         assert!(qs.contains("limit=50"));
@@ -420,5 +427,6 @@ mod tests {
         assert!(qs.contains("min_score=30"));
         assert!(qs.contains("tag_filter=mw-reverted"));
         assert!(qs.contains("rccontinue=20260325|abc"));
+        assert!(qs.contains("selected_index=3"));
     }
 }

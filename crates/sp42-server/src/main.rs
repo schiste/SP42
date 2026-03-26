@@ -951,6 +951,8 @@ struct LiveViewFilterParams {
     tag_filter: Option<String>,
     #[serde(default)]
     rccontinue: Option<String>,
+    #[serde(default)]
+    selected_index: Option<usize>,
 }
 
 struct LiveOperatorBootstrap {

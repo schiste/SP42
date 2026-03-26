@@ -81,9 +81,10 @@ pub(crate) async fn load_live_operator_assembly(
     phase_timings.push(operator_phase_timing("recentchanges", phase_started));
 
     let phase_started = Instant::now();
-    let selected = queue_state
+    let effective_index = filters
         .selected_index
-        .and_then(|index| queue_state.queue.get(index));
+        .or(queue_state.selected_index);
+    let selected = effective_index.and_then(|index| queue_state.queue.get(index));
     phase_timings.push(operator_phase_timing("queue", phase_started));
 
     let phase_started = Instant::now();
@@ -98,6 +99,9 @@ pub(crate) async fn load_live_operator_assembly(
     )
     .await?;
     phase_timings.push(operator_phase_timing("selection", phase_started));
+
+    let mut queue_state = queue_state;
+    queue_state.selected_index = effective_index;
 
     Ok(LiveOperatorAssembly {
         bootstrap,

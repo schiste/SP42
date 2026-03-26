@@ -35,7 +35,8 @@ pub fn PatrolSurface() -> impl IntoView {
         let set_load_error = set_load_error;
         let set_next_continue = set_next_continue;
         async move {
-            let current_filters = filters.get();
+            let mut current_filters = filters.get();
+            current_filters.selected_index = Some(selected_index.get_untracked());
             match fetch_live_operator_view(DEFAULT_WIKI_ID, &current_filters).await {
                 Ok(view) => {
                     if view.auth.username.is_none() && !bootstrap_attempted.get_untracked() {
@@ -152,9 +153,20 @@ pub fn PatrolSurface() -> impl IntoView {
     let has_selection = Memo::new(move |_| selected_index.get() < queue_len.get());
 
     Effect::new(move |_| {
-        let _ = filters.get(); // Track filter signal
-        set_selected_index.set(0); // Reset selection on filter change
+        let _ = filters.get();
+        set_selected_index.set(0);
         load_action.dispatch_local(());
+    });
+
+    // Re-fetch when the user selects a different edit so the diff updates
+    Effect::new(move |prev: Option<usize>| {
+        let idx = selected_index.get();
+        if let Some(prev_idx) = prev {
+            if prev_idx != idx {
+                load_action.dispatch_local(());
+            }
+        }
+        idx
     });
 
     Effect::new(move |_| {
@@ -634,19 +646,7 @@ pub fn PatrolSurface() -> impl IntoView {
                     <div style="min-width:0;min-height:0;overflow-y:auto;overflow-x:hidden;">
                         {move || {
                             if let Some(view) = view_data.get() {
-                                let idx = selected_index.get();
-                                let server_idx = view.selected_index.unwrap_or(0);
-                                // Diff is only valid for the server-selected edit
-                                if idx == server_idx {
-                                    view! { <DiffViewer diff=view.diff.clone() /> }.into_any()
-                                } else {
-                                    // Server only provides the diff for the top-ranked edit
-                                    view! {
-                                        <div style="display:grid;place-items:center;height:100%;color:#8b9fc0;font-size:12px;">
-                                            <p>"Diff available for the top-ranked edit only."</p>
-                                        </div>
-                                    }.into_any()
-                                }
+                                view! { <DiffViewer diff=view.diff.clone() /> }.into_any()
                             } else {
                                 view! {
                                     <div

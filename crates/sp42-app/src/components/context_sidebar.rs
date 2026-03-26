@@ -1,7 +1,7 @@
 use leptos::prelude::*;
 use sp42_core::{
     DevAuthCapabilityReport, EditorIdentity, PatrolScenarioReadiness, PatrolScenarioReport,
-    QueuedEdit, ReportSeverity, ScoringContext,
+    PatrolSessionDigest, QueuedEdit, ReportSeverity, ScoringContext,
 };
 
 #[component]
@@ -10,6 +10,7 @@ pub fn ContextSidebar(
     scoring_context: Option<ScoringContext>,
     capabilities: DevAuthCapabilityReport,
     scenario_report: PatrolScenarioReport,
+    session_digest: PatrolSessionDigest,
 ) -> impl IntoView {
     let Some(edit) = edit else {
         return view! {
@@ -176,6 +177,9 @@ pub fn ContextSidebar(
 
             // Scenario readiness & findings
             {scenario_readiness_section(&scenario_report)}
+
+            // Session digest
+            {session_digest_section(&session_digest)}
         </aside>
     }
     .into_any()
@@ -205,6 +209,45 @@ fn user_type_label(performer: &EditorIdentity) -> &'static str {
         EditorIdentity::Anonymous { .. } => "Anonymous (IP)",
         EditorIdentity::Temporary { .. } => "Temporary account",
     }
+}
+
+fn session_digest_section(digest: &PatrolSessionDigest) -> impl IntoView {
+    if digest.explanation_lines.is_empty() {
+        return view! { <span></span> }.into_any();
+    }
+
+    let lines: Vec<_> = digest
+        .explanation_lines
+        .iter()
+        .map(|line| {
+            view! {
+                <li style="font-size:11px;color:#8b9fc0;line-height:1.4;">
+                    {line.clone()}
+                </li>
+            }
+        })
+        .collect();
+
+    let headline = digest
+        .operator_summary
+        .notes
+        .first()
+        .cloned()
+        .unwrap_or_else(|| "Session digest".to_string());
+
+    view! {
+        <details style="display:grid;gap:3px;">
+            <summary style="font-size:11px;font-weight:700;color:#8b9fc0;\
+                            text-transform:uppercase;letter-spacing:.1em;cursor:pointer;">
+                "Session Digest"
+            </summary>
+            <p style="margin:0;font-size:12px;color:#eff4ff;">{headline}</p>
+            <ul style="margin:0;padding-inline-start:17px;">
+                {lines.into_iter().collect_view()}
+            </ul>
+        </details>
+    }
+    .into_any()
 }
 
 fn scenario_readiness_section(report: &PatrolScenarioReport) -> impl IntoView {

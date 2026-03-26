@@ -692,6 +692,7 @@ pub fn PatrolSurface() -> impl IntoView {
                                     scoring_context=view.scoring_context.clone()
                                     capabilities=view.capabilities.clone()
                                     scenario_report=view.scenario_report.clone()
+                                    session_digest=view.session_digest.clone()
                                 />
                             }
                                 .into_any()

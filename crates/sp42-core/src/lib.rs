@@ -142,10 +142,11 @@ pub use patrol_session_digest::{
 };
 pub use priority_queue::{PriorityQueue, QueueEntry};
 pub use public_documents::{
-    PublicAuditLedgerDocument, PublicAuditLedgerEntry, PublicRuleSetDocument,
-    PublicStorageDocumentData, PublicTeamDefinitionDocument, PublicTeamRegistryDocument,
-    PublicTeamRegistryEntry, PublicUserPreferencesDocument, default_public_storage_document,
-    parse_public_storage_document, validate_public_storage_document,
+    PublicAuditLedgerDocument, PublicAuditLedgerEntry, PublicAuditLedgerReasoning,
+    PublicRuleSetDocument, PublicStorageDocumentData, PublicTeamDefinitionDocument,
+    PublicTeamRegistryDocument, PublicTeamRegistryEntry, PublicUserPreferencesDocument,
+    default_public_storage_document, parse_public_storage_document,
+    validate_public_storage_document,
 };
 pub use queue_builder::{
     build_ranked_queue, build_ranked_queue_with_contexts, build_ranked_queue_with_policy,

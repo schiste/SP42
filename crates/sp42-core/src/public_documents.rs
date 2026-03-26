@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::errors::PublicDocumentError;
+use crate::types::FlagState;
 use crate::wiki_storage::WikiStorageDocumentKind;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -54,14 +55,28 @@ pub struct PublicRuleSetDocument {
     pub title: String,
     #[serde(default)]
     pub namespace_allowlist: Vec<i32>,
+    pub min_score: Option<i32>,
     #[serde(default)]
     pub tag_filters: Vec<String>,
     #[serde(default)]
     pub hide_minor: bool,
     #[serde(default)]
     pub hide_bots: bool,
+    #[serde(default = "default_enabled_flag_state")]
+    pub duplicate_cluster_boost: FlagState,
     #[serde(default)]
     pub trusted_users: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct PublicAuditLedgerReasoning {
+    #[serde(default)]
+    pub applied_rule_sources: Vec<String>,
+    #[serde(default)]
+    pub matched_trusted_sources: Vec<String>,
+    pub duplicate_cluster_size: Option<u32>,
+    #[serde(default)]
+    pub obvious_vandalism: FlagState,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -70,6 +85,20 @@ pub struct PublicAuditLedgerEntry {
     pub actor: String,
     pub action: String,
     pub summary: String,
+    pub rev_id: Option<u64>,
+    pub title: Option<String>,
+    pub target_user: Option<String>,
+    #[serde(default)]
+    pub accepted: FlagState,
+    pub http_status: Option<u16>,
+    pub api_code: Option<String>,
+    #[serde(default)]
+    pub retryable: FlagState,
+    #[serde(default)]
+    pub warnings: Vec<String>,
+    pub result: Option<String>,
+    pub error: Option<String>,
+    pub heuristic_reasoning: Option<PublicAuditLedgerReasoning>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -210,9 +239,11 @@ pub fn default_public_storage_document(
             slug: rule_set_slug.clone(),
             title: rule_set_slug.clone(),
             namespace_allowlist: vec![0],
+            min_score: None,
             tag_filters: Vec::new(),
             hide_minor: false,
             hide_bots: false,
+            duplicate_cluster_boost: FlagState::Enabled,
             trusted_users: Vec::new(),
         })),
         WikiStorageDocumentKind::SharedAuditPeriod {
@@ -303,6 +334,13 @@ pub fn validate_public_storage_document(
                     });
                 }
             }
+            if let Some(min_score) = value.min_score
+                && min_score < 0
+            {
+                return Err(PublicDocumentError::Validation {
+                    message: "rule-set min_score must not be negative".to_string(),
+                });
+            }
             validate_non_empty_unique_strings("rule-set trusted_users", &value.trusted_users)?;
         }
         PublicStorageDocumentData::AuditLedger(value) => {
@@ -326,6 +364,10 @@ pub fn validate_public_storage_document(
     }
 
     Ok(())
+}
+
+const fn default_enabled_flag_state() -> FlagState {
+    FlagState::Enabled
 }
 
 fn validate_non_empty_unique_strings(

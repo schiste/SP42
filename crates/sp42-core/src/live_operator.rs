@@ -128,6 +128,10 @@ pub struct LiveOperatorPublicDocuments {
 pub struct LiveOperatorHeuristicProvenance {
     pub rev_id: u64,
     pub performer: String,
+    pub resolved_team_slug: Option<String>,
+    pub resolved_team_document_title: Option<String>,
+    pub resolved_rule_set_slug: Option<String>,
+    pub resolved_rule_set_document_title: Option<String>,
     #[serde(default)]
     pub applied_rule_sources: Vec<String>,
     #[serde(default)]
@@ -165,6 +169,7 @@ pub struct LiveOperatorView {
     pub public_documents: LiveOperatorPublicDocuments,
     #[serde(default)]
     pub heuristic_provenance: Vec<LiveOperatorHeuristicProvenance>,
+    pub selected_heuristic_provenance: Option<LiveOperatorHeuristicProvenance>,
     pub ingestion_supervisor: Option<LiveIngestionSupervisorStatus>,
     pub coordination_room: Option<CoordinationRoomSummary>,
     pub coordination_state: Option<CoordinationStateSummary>,

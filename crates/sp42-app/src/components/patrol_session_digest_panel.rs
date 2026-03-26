@@ -174,10 +174,7 @@ pub fn finding_summary_tone(findings: &[sp42_core::PatrolScenarioFinding]) -> St
 
 #[must_use]
 pub fn finding_summary_line(finding: &sp42_core::PatrolScenarioFinding) -> String {
-    format!(
-        "{:?} {}: {}",
-        finding.severity, finding.code, finding.message
-    )
+    format!("{} {}: {}", finding.severity, finding.code, finding.message)
 }
 
 fn readiness_label(readiness: PatrolScenarioReadiness) -> &'static str {

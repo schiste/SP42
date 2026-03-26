@@ -20,6 +20,16 @@ pub enum ReportSeverity {
     Blocker,
 }
 
+impl std::fmt::Display for ReportSeverity {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::Info => "Info",
+            Self::Warning => "Warning",
+            Self::Blocker => "Blocker",
+        })
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PatrolScenarioFinding {
     pub severity: ReportSeverity,

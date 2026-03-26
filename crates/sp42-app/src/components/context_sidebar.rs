@@ -65,7 +65,7 @@ pub fn ContextSidebar(
     let warning = scoring_context
         .as_ref()
         .and_then(|ctx| ctx.user_risk.as_ref())
-        .map(|risk| format!("{:?}", risk.warning_level))
+        .map(|risk| format!("{}", risk.warning_level))
         .unwrap_or_else(|| "none".to_string());
 
     let can_rollback = capabilities.capabilities.moderation.can_rollback;
@@ -153,7 +153,7 @@ pub fn ContextSidebar(
                         view! {
                             <div style="display:flex;justify-content:space-between;font-size:12px;">
                                 <span style="color:#8b9fc0;">
-                                    {format!("{:?}", sig.signal)}
+                                    {format!("{}", sig.signal)}
                                 </span>
                                 <span style=format!("color:{color};font-weight:700;")>
                                     {format!("{sign}{}", sig.weight)}

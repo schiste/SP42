@@ -132,6 +132,23 @@ pub enum ScoringSignal {
     WarningHistory,
 }
 
+impl std::fmt::Display for ScoringSignal {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::AnonymousUser => "Anonymous user",
+            Self::NewPage => "New page",
+            Self::RevertedBefore => "Reverted before",
+            Self::LargeContentRemoval => "Large content removal",
+            Self::Profanity => "Profanity",
+            Self::LinkSpam => "Link spam",
+            Self::TrustedUser => "Trusted user",
+            Self::BotLikeEdit => "Bot-like edit",
+            Self::LiftWingRisk => "LiftWing risk",
+            Self::WarningHistory => "Warning history",
+        })
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SignalContribution {
     pub signal: ScoringSignal,
@@ -153,6 +170,19 @@ pub enum WarningLevel {
     Level3,
     Level4,
     Final,
+}
+
+impl std::fmt::Display for WarningLevel {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::None => "None",
+            Self::Level1 => "Level 1",
+            Self::Level2 => "Level 2",
+            Self::Level3 => "Level 3",
+            Self::Level4 => "Level 4",
+            Self::Final => "Final",
+        })
+    }
 }
 
 impl WarningLevel {

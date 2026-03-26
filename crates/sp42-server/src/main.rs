@@ -384,6 +384,42 @@ struct LogicalStorageDocumentWriteView {
     outcome: WikiStorageWriteOutcome,
 }
 
+async fn current_storage_document_on_conflict(
+    client: &BearerHttpClient,
+    config: &WikiConfig,
+    title: &str,
+) -> Option<WikiStorageLoadedDocument> {
+    load_wiki_storage_document(client, config, title).await.ok()
+}
+
+async fn wiki_storage_save_error_response(
+    client: &BearerHttpClient,
+    config: &WikiConfig,
+    document: &WikiStorageDocument,
+    error: sp42_core::WikiStorageError,
+) -> (StatusCode, Json<serde_json::Value>) {
+    match error {
+        sp42_core::WikiStorageError::Conflict { title, message } => {
+            let current = current_storage_document_on_conflict(client, config, &title).await;
+            (
+                StatusCode::CONFLICT,
+                Json(serde_json::json!({
+                    "error": message,
+                    "document": document,
+                    "current": current,
+                })),
+            )
+        }
+        other => (
+            StatusCode::BAD_GATEWAY,
+            Json(serde_json::json!({
+                "error": other.to_string(),
+                "document": document,
+            })),
+        ),
+    }
+}
+
 #[tokio::main]
 async fn main() -> Result<(), std::io::Error> {
     init_tracing();
@@ -1129,7 +1165,19 @@ async fn put_storage_document(
     headers: HeaderMap,
     Json(payload): Json<StorageDocumentSavePayload>,
 ) -> Result<Json<WikiStorageWriteOutcome>, (StatusCode, Json<serde_json::Value>)> {
-    if payload.document.title.trim().is_empty() {
+    let StorageDocumentSavePayload {
+        document,
+        human_summary,
+        data,
+        baserevid,
+        tags,
+        watchlist,
+        create_only,
+        minor,
+        summary,
+    } = payload;
+
+    if document.title.trim().is_empty() {
         return Err(invalid_payload("document.title is required"));
     }
 
@@ -1148,34 +1196,30 @@ async fn put_storage_document(
             )
         })?;
 
-    save_wiki_storage_document(
+    let result = save_wiki_storage_document(
         &client,
         &config,
         &WikiStorageWriteRequest {
-            document: payload.document,
-            human_summary: payload.human_summary,
-            data: payload.data,
+            document: document.clone(),
+            human_summary,
+            data,
             token: csrf_token,
-            baserevid: payload.baserevid,
-            tags: payload.tags,
-            watchlist: payload.watchlist,
-            create_only: payload.create_only,
-            minor: payload.minor,
-            summary: payload.summary,
+            baserevid,
+            tags,
+            watchlist,
+            create_only,
+            minor,
+            summary,
         },
     )
-    .await
-    .map(Json)
-    .map_err(|error| {
-        let status = match error {
-            sp42_core::WikiStorageError::Conflict { .. } => StatusCode::CONFLICT,
-            _ => StatusCode::BAD_GATEWAY,
-        };
-        (
-            status,
-            Json(serde_json::json!({ "error": error.to_string() })),
-        )
-    })
+    .await;
+
+    match result {
+        Ok(outcome) => Ok(Json(outcome)),
+        Err(error) => {
+            Err(wiki_storage_save_error_response(&client, &config, &document, error).await)
+        }
+    }
 }
 
 async fn get_logical_storage_document(
@@ -1240,7 +1284,7 @@ async fn put_logical_storage_document(
             )
         })?;
 
-    save_wiki_storage_document(
+    let result = save_wiki_storage_document(
         &client,
         &config,
         &WikiStorageWriteRequest {
@@ -1256,26 +1300,14 @@ async fn put_logical_storage_document(
             summary: payload.summary,
         },
     )
-    .await
-    .map(|outcome| {
-        Json(LogicalStorageDocumentWriteView {
-            document: document.clone(),
-            outcome,
-        })
-    })
-    .map_err(|error| {
-        let status = match error {
-            sp42_core::WikiStorageError::Conflict { .. } => StatusCode::CONFLICT,
-            _ => StatusCode::BAD_GATEWAY,
-        };
-        (
-            status,
-            Json(serde_json::json!({
-                "error": error.to_string(),
-                "document": document,
-            })),
-        )
-    })
+    .await;
+
+    match result {
+        Ok(outcome) => Ok(Json(LogicalStorageDocumentWriteView { document, outcome })),
+        Err(error) => {
+            Err(wiki_storage_save_error_response(&client, &config, &document, error).await)
+        }
+    }
 }
 
 async fn server_debug_summary(state: &AppState, headers: &HeaderMap) -> ServerDebugSummary {

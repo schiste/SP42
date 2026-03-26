@@ -38,7 +38,6 @@ pub fn ActionBar(
             style="display:flex;align-items:center;gap:7px;padding:0 10px;\
                    background:#0b1324;border-block-start:1px solid rgba(148,163,184,.18);"
         >
-            // Rollback — destructive, filled red-tinted
             <button
                 style=format!(
                     "{btn_base}background:rgba(239,68,68,.18);color:#fecaca;border-color:rgba(239,68,68,.3);{}",
@@ -52,7 +51,6 @@ pub fn ActionBar(
                 "R Rollback"
             </button>
 
-            // Undo — neutral outlined
             <button
                 style=format!(
                     "{btn_base}background:transparent;color:#eff4ff;{}",
@@ -66,7 +64,6 @@ pub fn ActionBar(
                 "U Undo"
             </button>
 
-            // Patrol — green-tinted
             <button
                 style=format!(
                     "{btn_base}background:rgba(34,197,94,.14);color:#bbf7d0;border-color:rgba(34,197,94,.3);{}",
@@ -80,7 +77,6 @@ pub fn ActionBar(
                 "P Patrol"
             </button>
 
-            // Skip — muted outlined
             <button
                 style=format!(
                     "{btn_base}background:transparent;color:#8b9fc0;",
@@ -92,10 +88,7 @@ pub fn ActionBar(
                 "S Skip"
             </button>
 
-            // Spacer
             <div style="flex:1;"></div>
-
-            // Status area (right side)
             <div style="font-size:11px;color:#8b9fc0;">
                 {move || {
                     if action_pending.get() {

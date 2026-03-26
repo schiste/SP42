@@ -126,7 +126,6 @@ pub fn FilterBar(
                     background:#0b1324;border-block-end:1px solid rgba(148,163,184,.18);\
                     font-size:12px;color:#8b9fc0;flex-wrap:wrap;min-height:34px;">
 
-            // Limit
             <label style=label_style>
                 "Limit:"
                 <select
@@ -142,10 +141,8 @@ pub fn FilterBar(
                 </select>
             </label>
 
-            // Separator
             <span style="color:rgba(148,163,184,.3);">"|"</span>
 
-            // Unpatrolled only
             <label style=label_style>
                 <input
                     type="checkbox"
@@ -159,7 +156,6 @@ pub fn FilterBar(
                 "Unpatrolled only"
             </label>
 
-            // Hide minor
             <label style=label_style>
                 <input
                     type="checkbox"
@@ -173,7 +169,6 @@ pub fn FilterBar(
                 "Hide minor"
             </label>
 
-            // Include bots
             <label style=label_style>
                 <input
                     type="checkbox"
@@ -189,7 +184,6 @@ pub fn FilterBar(
 
             <span style="color:rgba(148,163,184,.3);">"|"</span>
 
-            // Editor type filters
             <label style=label_style>
                 <input
                     type="checkbox"
@@ -229,7 +223,6 @@ pub fn FilterBar(
                 "Temporary"
             </label>
 
-            // Hide new pages
             <label style=label_style>
                 <input
                     type="checkbox"
@@ -245,7 +238,6 @@ pub fn FilterBar(
 
             <span style="color:rgba(148,163,184,.3);">"|"</span>
 
-            // Min score
             <label style=label_style>
                 "Min score:"
                 <select
@@ -264,7 +256,6 @@ pub fn FilterBar(
                 </select>
             </label>
 
-            // Tag filter
             <label style=label_style>
                 "Tag:"
                 <input
@@ -287,7 +278,6 @@ pub fn FilterBar(
 
             <span style="color:rgba(148,163,184,.3);">"|"</span>
 
-            // Namespace toggles
             {NAMESPACE_OPTIONS
                 .iter()
                 .map(|&(ns, name)| {
@@ -325,10 +315,8 @@ pub fn FilterBar(
                 })
                 .collect_view()}
 
-            // Spacer
             <div style="flex:1;"></div>
 
-            // Load older (backlog pagination)
             <button
                 style="min-height:32px;padding:2px 10px;border:1px solid rgba(148,163,184,.18);\
                        border-radius:4px;background:transparent;color:#8b9fc0;\

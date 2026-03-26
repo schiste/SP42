@@ -28,7 +28,6 @@ pub fn PatrolSurface() -> impl IntoView {
     let (bootstrap_attempted, set_bootstrap_attempted) = signal(false);
     let (bootstrap_error, set_bootstrap_error) = signal(None::<String>);
 
-    // Load live operator view with current filter params.
     // If the response shows no auth and we haven't tried yet, auto-bootstrap.
     let load_action = Action::new_local(move |_: &()| {
         let set_view_data = set_view_data;
@@ -81,7 +80,6 @@ pub fn PatrolSurface() -> impl IntoView {
         }
     });
 
-    // Execute action
     let execute_action = Action::new_local(move |kind: &SessionActionKind| {
         let kind = kind.clone();
         let set_action_pending = set_action_pending;
@@ -122,16 +120,13 @@ pub fn PatrolSurface() -> impl IntoView {
                     if response.accepted {
                         set_action_status
                             .set(format!("{:?} accepted for rev {}", kind, edit.event.rev_id));
-                        // Record action in local log
                         let mut log = action_log.get();
                         log.push(format!("{:?} rev {} OK", kind, edit.event.rev_id));
                         set_action_log.set(log);
-                        // Auto-advance: move to next edit
                         let queue_len = view.queue.len();
                         if idx + 1 < queue_len {
                             set_selected_index.set(idx + 1);
                         }
-                        // Clear review note after successful action
                         set_review_note.set(String::new());
                         // Re-fetch fresh queue
                         load_action.dispatch_local(());
@@ -153,21 +148,18 @@ pub fn PatrolSurface() -> impl IntoView {
         }
     });
 
-    // Dispatch on mount and on filter change
     Effect::new(move |_| {
         let _ = filters.get(); // Track filter signal
         set_selected_index.set(0); // Reset selection on filter change
         load_action.dispatch_local(());
     });
 
-    // React to action triggers
     Effect::new(move |_| {
         if let Some(kind) = action_trigger.get() {
             execute_action.dispatch_local(kind);
         }
     });
 
-    // React to skip trigger
     Effect::new(move |_| {
         if skip_trigger.get() {
             set_skip_trigger.set(false);
@@ -180,7 +172,6 @@ pub fn PatrolSurface() -> impl IntoView {
         }
     });
 
-    // Keyboard shortcuts
     let on_keydown = move |event: leptos::ev::KeyboardEvent| {
         // Don't intercept when typing in an input
         let tag = event
@@ -236,9 +227,8 @@ pub fn PatrolSurface() -> impl IntoView {
 
     view! {
         {move || {
-            // Task 1 — Auth guard (Rule 14.3): if the fetch succeeded but the
-            // session has no authenticated user, show a dedicated auth prompt
-            // instead of the patrol layout.
+            // If the fetch succeeded but no user is authenticated, show the
+            // auth bootstrap prompt instead of the patrol layout.
             if let Some(ref view) = view_data.get() {
                 if view.auth.username.is_none() {
                     let bootstrap_btn_action = Action::new_local(move |_: &()| {
@@ -330,7 +320,6 @@ pub fn PatrolSurface() -> impl IntoView {
                          }"}
                     </style>
 
-                    // Help overlay
                     {move || {
                         if !show_help.get() {
                             return view! { <span></span> }.into_any();
@@ -397,7 +386,6 @@ pub fn PatrolSurface() -> impl IntoView {
                         }.into_any()
                     }}
 
-                    // Back-office overlay
                     {move || {
                         if !show_backoffice.get() {
                             return view! { <span></span> }.into_any();
@@ -489,7 +477,6 @@ pub fn PatrolSurface() -> impl IntoView {
                         }.into_any()
                     }}
 
-                    // Row 1: Session bar (spans all 3 columns)
                     <div style="grid-column:1/-1;display:flex;align-items:center;gap:10px;\
                                 padding:4px 10px;height:28px;\
                                 background:#0b1324;border-block-end:1px solid rgba(148,163,184,.18);\
@@ -518,7 +505,6 @@ pub fn PatrolSurface() -> impl IntoView {
                         // Connection indicator
                         <span style="width:10px;height:10px;border-radius:4px;\
                                      background:{};display:inline-block;"
-                            // Green if data loaded, amber if loading, red if error
                             style:background=move || {
                                 if load_error.get().is_some() {
                                     "#ef4444"
@@ -529,7 +515,6 @@ pub fn PatrolSurface() -> impl IntoView {
                                 }
                             }
                         ></span>
-                        // Task 2 — Server notes (availability warnings)
                         {move || {
                             if let Some(ref view) = view_data.get() {
                                 if !view.notes.is_empty() {
@@ -542,7 +527,6 @@ pub fn PatrolSurface() -> impl IntoView {
                             }
                             view! { <span></span> }.into_any()
                         }}
-                        // Task 3 — Coordination presence indicator
                         {move || {
                             if let Some(ref view) = view_data.get() {
                                 if let Some(ref room) = view.coordination_room {
@@ -578,7 +562,6 @@ pub fn PatrolSurface() -> impl IntoView {
                             }
                             view! { <span></span> }.into_any()
                         }}
-                        // Action log count (from server action_status)
                         {move || {
                             if let Some(ref view) = view_data.get() {
                                 let status = &view.action_status;
@@ -598,7 +581,6 @@ pub fn PatrolSurface() -> impl IntoView {
                             }
                             view! { <span style="font-size:11px;color:#8b9fc0;">{move || format!("{} actions", action_log.get().len())}</span> }.into_any()
                         }}
-                        // Help button
                         <button
                             style="min-height:32px;padding:2px 8px;\
                                    border:1px solid rgba(148,163,184,.18);border-radius:4px;\
@@ -610,7 +592,6 @@ pub fn PatrolSurface() -> impl IntoView {
                         </button>
                     </div>
 
-                    // Row 2: Filter bar (spans all 3 columns)
                     <div style="grid-column:1/-1;">
                         <FilterBar
                             filters=filters
@@ -619,7 +600,6 @@ pub fn PatrolSurface() -> impl IntoView {
                         />
                     </div>
 
-                    // Row 3, Col 1: Queue
                     {move || {
                         if let Some(view) = view_data.get() {
                             view! {
@@ -657,7 +637,6 @@ pub fn PatrolSurface() -> impl IntoView {
                         }
                     }}
 
-                    // Row 3, Col 2: Diff
                     <div style="min-width:0;min-height:0;overflow-y:auto;overflow-x:hidden;">
                         {move || {
                             if let Some(view) = view_data.get() {
@@ -681,7 +660,6 @@ pub fn PatrolSurface() -> impl IntoView {
                         }}
                     </div>
 
-                    // Row 3, Col 3: Context
                     {move || {
                         if let Some(view) = view_data.get() {
                             let idx = selected_index.get();
@@ -713,7 +691,6 @@ pub fn PatrolSurface() -> impl IntoView {
                         }
                     }}
 
-                    // Row 4: Review note + Action bar (spans all 3 columns)
                     <div style="grid-column:1/-1;">
                         <div style="display:flex;align-items:center;gap:7px;\
                                     padding:4px 10px;background:#0b1324;\

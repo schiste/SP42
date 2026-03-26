@@ -84,7 +84,7 @@ pub fn ContextSidebar(
             style="overflow-y:auto;min-height:0;padding:10px;display:grid;gap:17px;align-content:start;\
                    border-inline-start:1px solid rgba(148,163,184,.12);"
         >
-            // Score (largest element per Rule 6.1)
+
             <div style="text-align:center;">
                 <div style=format!(
                     "font-size:44px;font-weight:700;line-height:1;color:{tier_color};",
@@ -96,7 +96,7 @@ pub fn ContextSidebar(
                 </div>
             </div>
 
-            // User identity
+
             <div style="display:grid;gap:4px;">
                 <div style="font-size:13px;font-weight:700;color:#eff4ff;word-break:break-all;">
                     {user_label}
@@ -106,7 +106,7 @@ pub fn ContextSidebar(
                 </div>
             </div>
 
-            // Edit metadata
+
             <div style="display:grid;gap:4px;font-size:12px;color:#8b9fc0;">
                 <div>
                     "Bytes: "
@@ -142,7 +142,7 @@ pub fn ContextSidebar(
                 <div>"Warning: " {warning}</div>
             </div>
 
-            // Signal breakdown
+
             <div style="display:grid;gap:3px;">
                 <div style="font-size:11px;font-weight:700;color:#8b9fc0;text-transform:uppercase;letter-spacing:.1em;">
                     "Signals"
@@ -168,7 +168,7 @@ pub fn ContextSidebar(
                     .collect_view()}
             </div>
 
-            // Capabilities
+
             <div style="display:grid;gap:3px;font-size:11px;color:#8b9fc0;">
                 <div style="font-weight:700;text-transform:uppercase;letter-spacing:.1em;">
                     "Capabilities"
@@ -178,13 +178,13 @@ pub fn ContextSidebar(
                 <div>{format!("undo: {}", if can_undo { "yes" } else { "no" })}</div>
             </div>
 
-            // Scenario readiness & findings
+
             {scenario_readiness_section(&scenario_report)}
 
-            // Session digest
+
             {session_digest_section(&session_digest)}
 
-            // Coordination
+
             {coordination_section(&edit, &coordination_room, &coordination_state)}
         </aside>
     }

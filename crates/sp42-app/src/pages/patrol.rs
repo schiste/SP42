@@ -585,26 +585,25 @@ pub fn PatrolSurface() -> impl IntoView {
                         </div>
                     </div>
 
-                    <div class="review-note-bar">
-                            <input
-                                type="text"
-                                placeholder="Review note (optional)"
-                                aria-label="Review note"
-                                class="review-note-input"
-                                prop:value=move || review_note.get()
-                                on:input=move |ev| {
-                                    use wasm_bindgen::JsCast;
-                                    let value = ev.target()
-                                        .and_then(|t| t.dyn_into::<web_sys::HtmlInputElement>().ok())
-                                        .map(|el| el.value())
-                                        .unwrap_or_default();
-                                    set_review_note.set(value);
-                                }
-                            />
-                        </div>
-                        {move || {
-                            if let Some(view) = view_data.get() {
-                                view! {
+                    {move || {
+                        if let Some(view) = view_data.get() {
+                            view! {
+                                <div class="action-bar">
+                                    <input
+                                        type="text"
+                                        placeholder="Review note (optional)"
+                                        aria-label="Review note"
+                                        class="review-note-input"
+                                        prop:value=move || review_note.get()
+                                        on:input=move |ev| {
+                                            use wasm_bindgen::JsCast;
+                                            let value = ev.target()
+                                                .and_then(|t| t.dyn_into::<web_sys::HtmlInputElement>().ok())
+                                                .map(|el| el.value())
+                                                .unwrap_or_default();
+                                            set_review_note.set(value);
+                                        }
+                                    />
                                     <ActionBar
                                         preflight=view.action_preflight.clone()
                                         capabilities=view.capabilities.clone()
@@ -613,17 +612,18 @@ pub fn PatrolSurface() -> impl IntoView {
                                         on_action=set_action_trigger
                                         on_skip=set_skip_trigger
                                     />
-                                }
-                                    .into_any()
-                            } else {
-                                view! {
-                                    <div class="action-bar text-muted" style="font-size:12px;">
-                                        "Actions available after queue loads."
-                                    </div>
-                                }
-                                    .into_any()
+                                </div>
                             }
-                        }}
+                                .into_any()
+                        } else {
+                            view! {
+                                <div class="action-bar text-muted" style="font-size:12px;">
+                                    "Actions available after queue loads."
+                                </div>
+                            }
+                                .into_any()
+                        }
+                    }}
                 </div>
             }.into_any()
         }}

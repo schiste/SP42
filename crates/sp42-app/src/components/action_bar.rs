@@ -54,7 +54,7 @@ pub fn ActionBar(
     };
 
     view! {
-        <div role="toolbar" aria-label="Patrol actions" class="action-bar">
+        <div role="toolbar" aria-label="Patrol actions" class="action-buttons">
             <button
                 class=rollback_class
                 title=rollback_title

@@ -549,7 +549,7 @@ pub fn PatrolSurface() -> impl IntoView {
                         }
                     }}
 
-                    <div style="min-width:0;min-height:0;display:grid;grid-template-rows:auto 1fr;overflow:hidden;">
+                    <div style="grid-area:main;min-width:0;min-height:0;display:grid;grid-template-rows:auto 1fr;overflow:hidden;">
                         {move || {
                             let edit = view_data.get().and_then(|v| {
                                 let idx = selected_index.get();

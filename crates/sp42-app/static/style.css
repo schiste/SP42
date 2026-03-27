@@ -66,6 +66,11 @@ body {
   display: grid;
   grid-template-columns: min(260px, 30vw) 1fr;
   grid-template-rows: auto auto 1fr auto;
+  grid-template-areas:
+    "header  header"
+    "filters filters"
+    "queue   main"
+    "actions actions";
   height: 100vh;
   background: var(--bg);
   color: var(--text);
@@ -73,7 +78,7 @@ body {
 }
 
 .session-bar {
-  grid-column: 1 / -1;
+  grid-area: header;
   display: flex;
   align-items: center;
   gap: 10px;
@@ -86,7 +91,7 @@ body {
 }
 
 .filter-bar-details {
-  grid-column: 1 / -1;
+  grid-area: filters;
   background: var(--panel);
   border-block-end: 1px solid var(--border);
 }
@@ -131,7 +136,7 @@ body {
 }
 
 .action-bar {
-  grid-column: 1 / -1;
+  grid-area: actions;
   display: flex;
   align-items: center;
   gap: 7px;
@@ -148,11 +153,13 @@ body {
 }
 
 .queue-column {
+  grid-area: queue;
   display: grid;
   grid-template-rows: auto 1fr;
   min-height: 0;
   background: var(--panel);
   border-inline-end: 1px solid var(--border-light);
+  overflow: hidden;
 }
 
 .queue-header {
@@ -231,6 +238,7 @@ body {
 
 .diff-viewer {
   overflow-y: auto;
+  overflow-x: hidden;
   font-family: var(--mono);
   font-size: 13px;
   line-height: 1.4;
@@ -622,15 +630,18 @@ body {
   .patrol-grid {
     grid-template-columns: 1fr !important;
     grid-template-rows: auto auto auto 1fr auto !important;
+    grid-template-areas:
+      "header"
+      "filters"
+      "queue"
+      "main"
+      "actions" !important;
   }
-  .patrol-grid nav {
+  .queue-column {
     max-height: 25vh;
   }
   .context-header {
     font-size: 11px;
     gap: 6px;
-  }
-  .queue-scroll {
-    max-height: 25vh;
   }
 }

@@ -257,6 +257,11 @@ body {
   cursor: default;
 }
 
+.btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
 .btn-danger {
   background: var(--danger-bg);
   color: var(--danger-light);
@@ -600,12 +605,32 @@ body {
 }
 
 /* ─── Responsive ─── */
+.filter-select:focus-visible,
+.review-note-input:focus-visible,
+.filter-checkbox:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.queue-item:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+/* ─── Responsive ─── */
 @media (max-width: 768px) {
   .patrol-grid {
     grid-template-columns: 1fr !important;
     grid-template-rows: auto auto auto 1fr auto !important;
   }
   .patrol-grid nav {
-    max-height: 30vh;
+    max-height: 25vh;
+  }
+  .context-header {
+    font-size: 11px;
+    gap: 6px;
+  }
+  .queue-scroll {
+    max-height: 25vh;
   }
 }

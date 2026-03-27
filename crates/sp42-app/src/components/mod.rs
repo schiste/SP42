@@ -2,7 +2,6 @@
 
 pub(crate) mod action_bar;
 pub(crate) mod context_header;
-pub(crate) mod context_sidebar;
 pub(crate) mod diff_viewer;
 pub(crate) mod filter_bar;
 pub(crate) mod inspector_feed;

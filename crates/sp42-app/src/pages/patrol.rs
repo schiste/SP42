@@ -2,7 +2,7 @@ use leptos::prelude::*;
 use sp42_core::{LiveOperatorView, SessionActionExecutionRequest, SessionActionKind};
 
 use crate::components::action_bar::ActionBar;
-use crate::components::context_sidebar::ContextSidebar;
+use crate::components::context_header::ContextHeader;
 use crate::components::diff_viewer::DiffViewer;
 use crate::components::filter_bar::{FilterBar, PatrolFilterParams};
 use crate::components::queue_column::QueueColumn;
@@ -477,97 +477,28 @@ pub fn PatrolSurface() -> impl IntoView {
                                 .map(|v| {
                                     view! {
                                         <span>{v.wiki_id.clone()}</span>
-                                        <span>
-                                            {v.auth.username.clone().unwrap_or_else(|| "not authenticated".to_string())}
-                                        </span>
-                                        <span>
-                                            {format!("{} edits in queue", v.queue.len())}
-                                        </span>
+                                        <span>{v.auth.username.clone().unwrap_or_else(|| "—".to_string())}</span>
+                                        <span>{format!("{} edits", v.queue.len())}</span>
                                     }
                                         .into_any()
                                 })
                                 .unwrap_or_else(|| view! { <span>"loading..."</span> }.into_any())
                         }}
                         <div class="flex-spacer"></div>
-                        // Connection indicator
-                        <span style="width:10px;height:10px;border-radius:4px;\
-                                     background:{};display:inline-block;"
+                        <span style="width:8px;height:8px;border-radius:50%;display:inline-block;"
                             style:background=move || {
-                                if load_error.get().is_some() {
-                                    "#ef4444"
-                                } else if view_data.get().is_some() {
-                                    "#22c55e"
-                                } else {
-                                    "#f59e0b"
-                                }
+                                if load_error.get().is_some() { "var(--danger)" }
+                                else if view_data.get().is_some() { "var(--success)" }
+                                else { "var(--warning)" }
                             }
                         ></span>
                         {move || {
-                            if let Some(ref view) = view_data.get() {
-                                if !view.notes.is_empty() {
-                                    return view! {
-                                        <span style="font-size:11px;color:#f59e0b;">
-                                            {view.notes.join(" | ")}
-                                        </span>
-                                    }.into_any();
-                                }
-                            }
-                            view! { <span></span> }.into_any()
-                        }}
-                        {move || {
-                            if let Some(ref view) = view_data.get() {
-                                if let Some(ref room) = view.coordination_room {
-                                    return view! {
-                                        <span style="font-size:11px;color:#8b9fc0;">
-                                            {format!("{} online", room.connected_clients)}
-                                        </span>
-                                    }.into_any();
-                                }
-                            }
-                            view! { <span></span> }.into_any()
-                        }}
-                        {move || {
                             let status = action_status.get();
                             if !status.is_empty() {
-                                view! {
-                                    <span style="font-size:11px;">{status}</span>
-                                }
-                                    .into_any()
+                                view! { <span style="font-size:11px;">{status}</span> }.into_any()
                             } else {
                                 view! { <span></span> }.into_any()
                             }
-                        }}
-                        // Telemetry: server response time
-                        {move || {
-                            if let Some(ref view) = view_data.get() {
-                                if view.telemetry.total_duration_ms > 0 {
-                                    return view! {
-                                        <span style="font-size:11px;color:#8b9fc0;">
-                                            {format!("{}ms", view.telemetry.total_duration_ms)}
-                                        </span>
-                                    }.into_any();
-                                }
-                            }
-                            view! { <span></span> }.into_any()
-                        }}
-                        {move || {
-                            if let Some(ref view) = view_data.get() {
-                                let status = &view.action_status;
-                                if status.total_actions > 0 {
-                                    let label = format!(
-                                        "{} actions ({} OK)",
-                                        status.total_actions, status.successful_actions,
-                                    );
-                                    let has_failure = status.last_execution.as_ref().is_some_and(|e| !e.accepted);
-                                    let color = if has_failure { "#f59e0b" } else { "#8b9fc0" };
-                                    return view! {
-                                        <span style=format!("font-size:11px;color:{color};")>
-                                            {label}
-                                        </span>
-                                    }.into_any();
-                                }
-                            }
-                            view! { <span style="font-size:11px;color:#8b9fc0;">"0 actions"</span> }.into_any()
                         }}
                         <button
                             class="btn btn-ghost btn-compact"
@@ -618,59 +549,41 @@ pub fn PatrolSurface() -> impl IntoView {
                         }
                     }}
 
-                    <div style="min-width:0;min-height:0;overflow-y:auto;overflow-x:hidden;">
+                    <div style="min-width:0;min-height:0;display:grid;grid-template-rows:auto 1fr;overflow:hidden;">
                         {move || {
-                            if diff_loading.get() {
-                                view! {
-                                    <div class="grid-center" role="main" aria-label="Diff viewer" style="height:100%;">
-                                        <div style="text-align:center;">
-                                            <div class="spinner" style="margin:0 auto;"></div>
-                                            <p class="text-muted" style="margin-top:10px;font-size:12px;">"Loading diff..."</p>
-                                        </div>
-                                    </div>
-                                }.into_any()
-                            } else if let Some(view) = view_data.get() {
-                                view! { <DiffViewer diff=view.diff.clone() /> }.into_any()
-                            } else {
-                                view! {
-                                    <div role="main" aria-label="Diff viewer" class="grid-center text-muted">
-                                        {if load_error.get().is_some() {
-                                            "Diff unavailable."
-                                        } else {
-                                            "Loading diff..."
-                                        }}
-                                    </div>
-                                }
-                                    .into_any()
-                            }
+                            let edit = view_data.get().and_then(|v| {
+                                let idx = selected_index.get();
+                                v.queue.get(idx).cloned()
+                            });
+                            view! { <ContextHeader edit=edit /> }.into_any()
                         }}
+                        <div style="overflow-y:auto;overflow-x:hidden;">
+                            {move || {
+                                if diff_loading.get() {
+                                    view! {
+                                        <div class="grid-center" style="height:100%;">
+                                            <div style="text-align:center;">
+                                                <div class="spinner" style="margin:0 auto;"></div>
+                                                <p class="text-muted" style="margin-top:10px;font-size:12px;">"Loading diff..."</p>
+                                            </div>
+                                        </div>
+                                    }.into_any()
+                                } else if let Some(view) = view_data.get() {
+                                    view! { <DiffViewer diff=view.diff.clone() /> }.into_any()
+                                } else {
+                                    view! {
+                                        <div class="grid-center text-muted" style="height:100%;">
+                                            {if load_error.get().is_some() {
+                                                "Diff unavailable."
+                                            } else {
+                                                "Loading diff..."
+                                            }}
+                                        </div>
+                                    }.into_any()
+                                }
+                            }}
+                        </div>
                     </div>
-
-                    {move || {
-                        if let Some(view) = view_data.get() {
-                            let idx = selected_index.get();
-                            let edit = view.queue.get(idx).cloned();
-                            view! {
-                                <ContextSidebar
-                                    view=view.clone()
-                                    edit=edit
-                                />
-                            }
-                                .into_any()
-                        } else {
-                            view! {
-                                <aside
-                                    role="complementary"
-                                    aria-label="Edit context"
-                                    style="padding:10px;color:#8b9fc0;\
-                                           border-inline-start:1px solid rgba(148,163,184,.18);"
-                                >
-                                    "Loading..."
-                                </aside>
-                            }
-                                .into_any()
-                        }
-                    }}
 
                     <div class="review-note-bar">
                             <input

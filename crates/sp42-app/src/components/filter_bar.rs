@@ -125,8 +125,30 @@ pub fn FilterBar(
     let label_class = "filter-label";
     let select_class = "filter-select";
 
+    let summary_text = move || {
+        let f = filters.get();
+        let mut parts = vec![format!("{} edits", f.limit)];
+        if f.unpatrolled_only {
+            parts.push("unpatrolled".to_string());
+        }
+        if !f.include_minor {
+            parts.push("no minor".to_string());
+        }
+        if f.include_bots {
+            parts.push("+ bots".to_string());
+        }
+        if let Some(ref tag) = f.tag_filter {
+            parts.push(format!("tag:{tag}"));
+        }
+        parts.join(", ")
+    };
+
     view! {
-        <div class="filter-bar">
+        <details class="filter-bar-details">
+            <summary class="filter-summary">
+                "Filters: " {summary_text}
+            </summary>
+            <div class="filter-bar">
 
             <label class=label_class>
                 "Limit:"
@@ -327,7 +349,8 @@ pub fn FilterBar(
             >
                 "Load older \u{25b8}"
             </button>
-        </div>
+            </div>
+        </details>
     }
 }
 

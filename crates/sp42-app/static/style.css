@@ -85,18 +85,49 @@ body {
   color: var(--muted);
 }
 
-.filter-bar {
+.filter-bar-details {
   grid-column: 1 / -1;
+  background: var(--panel);
+  border-block-end: 1px solid var(--border);
+}
+
+.filter-summary {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 4px 10px;
+  min-height: 28px;
+  font-size: 12px;
+  color: var(--muted);
+  cursor: pointer;
+  user-select: none;
+  list-style: none;
+}
+
+.filter-summary::-webkit-details-marker {
+  display: none;
+}
+
+.filter-summary::before {
+  content: "\25b6";
+  font-size: 9px;
+  transition: transform 120ms;
+}
+
+.filter-bar-details[open] > .filter-summary::before {
+  transform: rotate(90deg);
+}
+
+.filter-bar {
   display: flex;
   align-items: center;
   gap: 10px;
   padding: 4px 10px;
   min-height: 32px;
-  background: var(--panel);
-  border-block-end: 1px solid var(--border);
   font-size: 12px;
   color: var(--muted);
   flex-wrap: wrap;
+  border-block-start: 1px solid var(--border-light);
 }
 
 .action-bar {

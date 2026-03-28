@@ -1522,6 +1522,39 @@ mod tests {
     }
 
     #[test]
+    fn inline_highlights_preserve_unchanged_reference_blocks_during_reordering() {
+        let before = "{{date de décès|22 août 1973}} à [[Paris]]<ref>[https://deces.matchid.io/id/7UXLSe_f21FY Relevé des fichiers de l'Insee]</ref> est un [[Personnalité politique|homme politique]] [[France|français]] et un [[Compagnon de la Libération]].";
+        let after = "est mort le {{date de décès|22 août 1973}} à [[Paris]]<ref>[https://deces.matchid.io/id/7UXLSe_f21FY Relevé des fichiers de l'Insee]</ref> et un [[Personnalité politique|homme politique]] [[France|français]] et un [[Compagnon de la Libération]].";
+        let diff = diff_lines(before, after);
+
+        let delete_seg = diff
+            .segments
+            .iter()
+            .find(|s| s.kind == DiffSegmentKind::Delete)
+            .expect("should have a delete segment");
+        let insert_seg = diff
+            .segments
+            .iter()
+            .find(|s| s.kind == DiffSegmentKind::Insert)
+            .expect("should have an insert segment");
+
+        assert!(
+            delete_seg.inline_highlights.iter().any(|span| {
+                span.kind == DiffSegmentKind::Equal
+                    && span.text.contains("Relevé des fichiers de l'Insee")
+            }),
+            "unchanged ref payload should remain equal on delete side"
+        );
+        assert!(
+            insert_seg.inline_highlights.iter().any(|span| {
+                span.kind == DiffSegmentKind::Equal
+                    && span.text.contains("Relevé des fichiers de l'Insee")
+            }),
+            "unchanged ref payload should remain equal on insert side"
+        );
+    }
+
+    #[test]
     fn line_diff_tracks_before_and_after_line_spans() {
         let diff = diff_lines("alpha\nbeta\n", "alpha\ngamma\n");
 

@@ -121,21 +121,73 @@ pub struct ScoreWeights {
 
 impl Default for ScoreWeights {
     fn default() -> Self {
-        Self {
-            anonymous_user: 25,
-            temporary_account: 20,
-            new_page: 20,
-            reverted_before: 30,
-            large_content_removal: 15,
-            profanity: 30,
-            link_spam: 20,
-            trusted_user: -40,
-            bot_like_edit: -50,
-            liftwing_risk: 35,
-            warning_history: 25,
-            obvious_vandalism: 35,
-            duplicate_pattern: 18,
-        }
+        crate::scoring_policy::default_active_compiled_scoring_policy()
+            .scoring_config
+            .weights
+            .clone()
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ScoringSignalParameters {
+    pub large_content_removal_threshold: i32,
+    pub massive_blanking_threshold: i32,
+    pub repeated_character_run_threshold: u8,
+    pub profanity_markers: Vec<String>,
+    pub link_markers: Vec<String>,
+    pub trusted_tags: Vec<String>,
+    pub revert_tags: Vec<String>,
+    pub suspicious_comment_markers: Vec<String>,
+}
+
+impl Default for ScoringSignalParameters {
+    fn default() -> Self {
+        crate::scoring_policy::default_active_compiled_scoring_policy()
+            .scoring_config
+            .signal_parameters
+            .clone()
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ScoringIdentityConfig {
+    pub contribution_cap: Option<i32>,
+    pub anonymous_modifier_enabled: FlagState,
+    pub temporary_modifier_enabled: FlagState,
+    pub account_age_modifier_enabled: FlagState,
+}
+
+impl Default for ScoringIdentityConfig {
+    fn default() -> Self {
+        crate::scoring_policy::default_active_compiled_scoring_policy()
+            .scoring_config
+            .identity
+            .clone()
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ScoringCombinationRule {
+    pub slug: String,
+    pub weight: i32,
+    pub when_all: Vec<ScoringSignal>,
+    pub notes: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ScoringExternalEvaluationConfig {
+    pub liftwing_enabled: FlagState,
+    pub liftwing_max_contribution: i32,
+}
+
+impl Default for ScoringExternalEvaluationConfig {
+    fn default() -> Self {
+        crate::scoring_policy::default_active_compiled_scoring_policy()
+            .scoring_config
+            .external_evaluation
+            .clone()
     }
 }
 
@@ -143,18 +195,21 @@ impl Default for ScoreWeights {
 pub struct ScoringConfig {
     pub base_score: i32,
     pub max_score: i32,
-    pub identity_contribution_cap: Option<i32>,
+    pub identity: ScoringIdentityConfig,
     pub weights: ScoreWeights,
+    #[serde(default)]
+    pub signal_parameters: ScoringSignalParameters,
+    #[serde(default)]
+    pub combination_rules: Vec<ScoringCombinationRule>,
+    #[serde(default)]
+    pub external_evaluation: ScoringExternalEvaluationConfig,
 }
 
 impl Default for ScoringConfig {
     fn default() -> Self {
-        Self {
-            base_score: 0,
-            max_score: 100,
-            identity_contribution_cap: None,
-            weights: ScoreWeights::default(),
-        }
+        crate::scoring_policy::default_active_compiled_scoring_policy()
+            .scoring_config
+            .clone()
     }
 }
 
@@ -173,6 +228,7 @@ pub enum ScoringSignal {
     WarningHistory,
     ObviousVandalism,
     DuplicatePattern,
+    CombinationRule,
     IdentityCapAdjustment,
 }
 
@@ -192,6 +248,7 @@ impl std::fmt::Display for ScoringSignal {
             Self::WarningHistory => "Warning history",
             Self::ObviousVandalism => "Obvious vandalism",
             Self::DuplicatePattern => "Duplicate pattern",
+            Self::CombinationRule => "Combination rule",
             Self::IdentityCapAdjustment => "Identity cap adjustment",
         })
     }
@@ -310,10 +367,16 @@ pub struct WikiConfig {
     pub coordination_url: Option<Url>,
     #[serde(default)]
     pub namespace_allowlist: Vec<i32>,
+    #[serde(default = "default_scoring_policy_ref")]
+    pub scoring_policy_ref: String,
     #[serde(default)]
     pub scoring: ScoringConfig,
     #[serde(default)]
     pub templates: WikiTemplates,
+}
+
+fn default_scoring_policy_ref() -> String {
+    "active/frwiki-vandalism".to_string()
 }
 
 /// Per-wiki template names for tagging actions. Each value is the short

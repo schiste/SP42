@@ -38,6 +38,8 @@ fn default_scoring_policy_ref() -> String {
 /// match the [`WikiConfig`] schema.
 pub fn parse_wiki_config(source: &str) -> Result<WikiConfig, ConfigError> {
     let raw = serde_yaml::from_str::<RawWikiConfig>(source).map_err(ConfigError::from)?;
+    ensure_non_empty("wiki_id", &raw.wiki_id)?;
+    ensure_non_empty("display_name", &raw.display_name)?;
     let compiled_policy = load_embedded_compiled_scoring_policy(&raw.scoring_policy_ref)?;
     if compiled_policy.wiki_id != raw.wiki_id {
         return Err(ConfigError::InvalidField {

@@ -25,6 +25,33 @@ queue:
   max_limit: 250
   min_score_cutoff: 0
 
+signal_parameters:
+  large_content_removal_threshold: -500
+  massive_blanking_threshold: -900
+  repeated_character_run_threshold: 5
+  profanity_markers:
+    - fuck
+    - merde
+    - shit
+    - putain
+  link_markers:
+    - http://
+    - https://
+  trusted_tags:
+    - mw-manual-revert
+    - mw-rollback
+    - trusted
+  revert_tags:
+    - mw-reverted
+    - mw-undo
+  suspicious_comment_markers:
+    - rvv
+    - vandalisme
+    - vandalism
+    - blanking
+    - nonsense
+    - self revert
+
 rules:
   anonymous_user:
     enabled: true

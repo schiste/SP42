@@ -14,20 +14,7 @@
 //! oauth_authorize_url: https://meta.wikimedia.org/w/rest.php/oauth2/authorize
 //! oauth_token_url: https://meta.wikimedia.org/w/rest.php/oauth2/access_token
 //! namespace_allowlist: [0]
-//! scoring:
-//!   base_score: 0
-//!   max_score: 100
-//!   weights:
-//!     anonymous_user: 25
-//!     new_page: 20
-//!     reverted_before: 30
-//!     large_content_removal: 15
-//!     profanity: 30
-//!     link_spam: 20
-//!     trusted_user: -40
-//!     bot_like_edit: -50
-//!     liftwing_risk: 35
-//!     warning_history: 25
+//! scoring_policy_ref: active/frwiki-vandalism
 //! "#,
 //! )
 //! .expect("the inline fixture is valid");
@@ -177,9 +164,10 @@ pub use scoring_policy::{
     EvaluationFixtureSetPaths, ExternalEvaluationPolicyConfig, ExternalEvaluatorRole,
     FairnessPolicyConfig, IdentityPolicyConfig, LiftWingPolicyConfig, PolicyLifecycle,
     QueuePolicyConfig, RulePolicyConfig, ScoringDimensionWeights, ScoringDomain,
-    ScoringEvaluationProfile, ScoringPolicyDocument, compile_scoring_policy,
-    parse_scoring_evaluation_profile, parse_scoring_policy, validate_scoring_evaluation_profile,
-    validate_scoring_policy,
+    ScoringEvaluationProfile, ScoringPolicyDocument, SignalParametersPolicyConfig,
+    compile_scoring_policy, default_active_compiled_scoring_policy,
+    load_embedded_compiled_scoring_policy, parse_scoring_evaluation_profile, parse_scoring_policy,
+    validate_scoring_evaluation_profile, validate_scoring_policy,
 };
 pub use shell_state::{
     ShellPanelSummary, ShellStateInputs, ShellStateModel, ShellTimelineEntry, ShellTimelineStage,
@@ -198,9 +186,10 @@ pub use types::{
     Action, ActionBroadcast, CompositeScore, CoordinationMessage, CoordinationRoomSummary,
     CoordinationSnapshot, EditClaim, EditEvent, EditorIdentity, FlagState, FlaggedEdit, HttpMethod,
     HttpRequest, HttpResponse, LocalOAuthSourceReport, PresenceHeartbeat, QueueHeuristicPolicy,
-    QueuedEdit, RaceResolution, ScoreDelta, ScoreWeights, ScoringConfig, ScoringContext,
-    ScoringSignal, ServerDebugSummary, ServerSentEvent, SignalContribution, UserRiskProfile,
-    WarningLevel, WebSocketFrame, WikiConfig, WikiTemplates,
+    QueuedEdit, RaceResolution, ScoreDelta, ScoreWeights, ScoringCombinationRule, ScoringConfig,
+    ScoringContext, ScoringExternalEvaluationConfig, ScoringIdentityConfig, ScoringSignal,
+    ScoringSignalParameters, ServerDebugSummary, ServerSentEvent, SignalContribution,
+    UserRiskProfile, WarningLevel, WebSocketFrame, WikiConfig, WikiTemplates,
 };
 pub use user_analyzer::{
     UserRiskCache, build_user_risk_profile, count_warning_templates, parse_warning_level,

@@ -13,6 +13,7 @@
     "dimensions",
     "identity",
     "queue",
+    "signal_parameters",
     "rules"
   ],
   "properties": {
@@ -109,6 +110,30 @@
         "min_score_cutoff": { "type": "integer", "minimum": 0 }
       }
     },
+    "signal_parameters": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "large_content_removal_threshold",
+        "massive_blanking_threshold",
+        "repeated_character_run_threshold",
+        "profanity_markers",
+        "link_markers",
+        "trusted_tags",
+        "revert_tags",
+        "suspicious_comment_markers"
+      ],
+      "properties": {
+        "large_content_removal_threshold": { "type": "integer" },
+        "massive_blanking_threshold": { "type": "integer" },
+        "repeated_character_run_threshold": { "type": "integer", "minimum": 2 },
+        "profanity_markers": { "$ref": "#/$defs/nonEmptyStringArray" },
+        "link_markers": { "$ref": "#/$defs/nonEmptyStringArray" },
+        "trusted_tags": { "$ref": "#/$defs/nonEmptyStringArray" },
+        "revert_tags": { "$ref": "#/$defs/nonEmptyStringArray" },
+        "suspicious_comment_markers": { "$ref": "#/$defs/nonEmptyStringArray" }
+      }
+    },
     "rules": {
       "type": "object",
       "minProperties": 1,
@@ -169,6 +194,14 @@
     }
   },
   "$defs": {
+    "nonEmptyStringArray": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
     "ruleConfig": {
       "type": "object",
       "additionalProperties": false,

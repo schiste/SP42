@@ -30,6 +30,8 @@ pub enum ScoringError {
 pub enum ScoringPolicyError {
     #[error("scoring policy is not valid YAML: {0}")]
     InvalidYaml(#[from] serde_yaml::Error),
+    #[error("scoring policy reference `{reference}` is not embedded in the runtime")]
+    UnknownReference { reference: String },
     #[error("scoring policy field `{field}` is invalid: {message}")]
     InvalidField {
         field: &'static str,
@@ -121,6 +123,8 @@ pub enum ReviewWorkbenchError {
 pub enum ConfigError {
     #[error("configuration is not valid YAML: {0}")]
     InvalidYaml(#[from] serde_yaml::Error),
+    #[error(transparent)]
+    ScoringPolicy(#[from] ScoringPolicyError),
     #[error("configuration field `{field}` is invalid: {message}")]
     InvalidField {
         field: &'static str,

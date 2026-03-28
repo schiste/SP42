@@ -1,4 +1,4 @@
-use sp42_core::{LiveOperatorView, StructuredDiff};
+use sp42_core::{LiveOperatorView, MediaDiffReport, StructuredDiff};
 
 use crate::components::filter_bar::PatrolFilterParams;
 
@@ -7,6 +7,7 @@ use super::http::get_bytes;
 
 const LIVE_OPERATOR_URL_PREFIX: &str = "/operator/live";
 const DIFF_URL_PREFIX: &str = "/operator/diff";
+const MEDIA_DIFF_URL_PREFIX: &str = "/operator/media-diff";
 
 #[cfg(target_arch = "wasm32")]
 pub async fn fetch_live_operator_view(
@@ -50,4 +51,24 @@ pub async fn fetch_diff(
     _old_rev_id: u64,
 ) -> Result<Option<StructuredDiff>, String> {
     Err("Diff fetch is only available in the browser runtime.".to_string())
+}
+
+#[cfg(target_arch = "wasm32")]
+pub async fn fetch_media_diff(
+    wiki_id: &str,
+    rev_id: u64,
+    old_rev_id: u64,
+) -> Result<Option<MediaDiffReport>, String> {
+    let url = format!("{MEDIA_DIFF_URL_PREFIX}/{wiki_id}/{rev_id}/{old_rev_id}");
+    let bytes = get_bytes(&url, "fetch media diff").await?;
+    serde_json::from_slice(&bytes).map_err(|error| format!("parse media diff: {error}"))
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub async fn fetch_media_diff(
+    _wiki_id: &str,
+    _rev_id: u64,
+    _old_rev_id: u64,
+) -> Result<Option<MediaDiffReport>, String> {
+    Err("Media diff fetch is only available in the browser runtime.".to_string())
 }

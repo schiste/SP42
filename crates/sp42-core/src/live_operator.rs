@@ -6,10 +6,11 @@ use crate::{
     ActionExecutionHistoryReport, ActionExecutionStatusReport, BacklogRuntimeStatus,
     CoordinationRoomSummary, CoordinationStateSummary, DebugSnapshot, DevAuthCapabilityReport,
     DevAuthSessionStatus, FlagState, LocalOAuthConfigStatus, LocalOAuthSourceReport,
-    PatrolScenarioReport, PatrolSessionDigest, PublicRuleSetDocument, PublicTeamDefinitionDocument,
-    PublicTeamRegistryDocument, PublicUserPreferencesDocument, QueuedEdit, ReviewWorkbench,
-    ScoringContext, ScoringSignal, SessionActionExecutionRequest, SessionActionKind,
-    ShellStateModel, StreamRuntimeStatus, StructuredDiff, build_session_action_execution_requests,
+    MediaDiffReport, PatrolScenarioReport, PatrolSessionDigest, PublicRuleSetDocument,
+    PublicTeamDefinitionDocument, PublicTeamRegistryDocument, PublicUserPreferencesDocument,
+    QueuedEdit, ReviewWorkbench, ScoringContext, ScoringSignal, SessionActionExecutionRequest,
+    SessionActionKind, ShellStateModel, StreamRuntimeStatus, StructuredDiff,
+    build_session_action_execution_requests,
 };
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -153,6 +154,7 @@ pub struct LiveOperatorView {
     pub selected_index: Option<usize>,
     pub scoring_context: Option<ScoringContext>,
     pub diff: Option<StructuredDiff>,
+    pub media_diff: Option<MediaDiffReport>,
     pub review_workbench: Option<ReviewWorkbench>,
     pub stream_status: Option<StreamRuntimeStatus>,
     pub backlog_status: Option<BacklogRuntimeStatus>,

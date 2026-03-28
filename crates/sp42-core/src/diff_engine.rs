@@ -3,6 +3,8 @@
 use serde::{Deserialize, Serialize};
 use similar::{ChangeTag, TextDiff};
 
+use crate::types::ScoringSignalParameters;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum DiffMode {
     #[default]
@@ -68,38 +70,121 @@ pub struct StructuredDiff {
     pub stats: DiffStats,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct DiffAdditiveOnlyHints {
+    pub link_addition_only: bool,
+    pub reference_addition_only: bool,
+    pub category_addition_only: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct DiffRiskHints {
+    pub interwiki_addition_only: bool,
+    pub mass_blanking_detected: bool,
+    pub inserted_profanity_detected: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct DiffNoiseHints {
+    pub repeated_character_noise_detected: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct DiffScoringHints {
+    pub additive_only: DiffAdditiveOnlyHints,
+    pub risk: DiffRiskHints,
+    pub noise: DiffNoiseHints,
+}
+
+impl DiffScoringHints {
+    #[must_use]
+    pub const fn link_addition_only(&self) -> bool {
+        self.additive_only.link_addition_only
+    }
+
+    #[must_use]
+    pub const fn reference_addition_only(&self) -> bool {
+        self.additive_only.reference_addition_only
+    }
+
+    #[must_use]
+    pub const fn category_addition_only(&self) -> bool {
+        self.additive_only.category_addition_only
+    }
+
+    #[must_use]
+    pub const fn interwiki_addition_only(&self) -> bool {
+        self.risk.interwiki_addition_only
+    }
+
+    #[must_use]
+    pub const fn mass_blanking_detected(&self) -> bool {
+        self.risk.mass_blanking_detected
+    }
+
+    #[must_use]
+    pub const fn inserted_profanity_detected(&self) -> bool {
+        self.risk.inserted_profanity_detected
+    }
+
+    #[must_use]
+    pub const fn repeated_character_noise_detected(&self) -> bool {
+        self.noise.repeated_character_noise_detected
+    }
+}
+
 #[must_use]
 pub fn detect_link_addition_only(diff: &StructuredDiff) -> Option<String> {
-    if diff.stats.insert_segments == 0 || diff.stats.delete_segments > 0 {
+    if diff.stats.insert_segments == 0 {
         return None;
     }
 
-    let mut inserted_wrapper_chars = 0usize;
-    for segment in &diff.segments {
-        if segment.kind != DiffSegmentKind::Insert {
-            continue;
-        }
-        let inserted = segment.text.trim();
-        if inserted.is_empty() {
-            continue;
-        }
-        if !inserted
-            .chars()
-            .all(|ch| ch.is_whitespace() || matches!(ch, '[' | ']'))
-        {
-            return None;
-        }
-        inserted_wrapper_chars += inserted
-            .chars()
-            .filter(|ch| matches!(ch, '[' | ']'))
-            .count();
-    }
+    let before = before_text(diff);
+    let after = after_text(diff);
+    let inserted_wrapper_chars = after
+        .chars()
+        .filter(|ch| matches!(ch, '[' | ']'))
+        .count()
+        .saturating_sub(before.chars().filter(|ch| matches!(ch, '[' | ']')).count());
+    let stripped_after = after.replace("[[", "").replace("]]", "");
 
-    (inserted_wrapper_chars >= 4).then(|| {
+    (inserted_wrapper_chars >= 4 && stripped_after == before).then(|| {
         format!(
             "inserted only wikilink wrapper characters ({inserted_wrapper_chars} bracket chars)"
         )
     })
+}
+
+#[must_use]
+pub fn analyze_diff_for_scoring(
+    diff: &StructuredDiff,
+    parameters: &ScoringSignalParameters,
+) -> DiffScoringHints {
+    let before = before_text(diff);
+    let after = after_text(diff);
+
+    DiffScoringHints {
+        additive_only: DiffAdditiveOnlyHints {
+            link_addition_only: detect_link_addition_only(diff).is_some(),
+            reference_addition_only: detect_reference_addition_only(&before, &after),
+            category_addition_only: detect_category_addition_only(&before, &after),
+        },
+        risk: DiffRiskHints {
+            interwiki_addition_only: detect_interwiki_addition_only(&before, &after),
+            mass_blanking_detected: detect_mass_blanking(diff, parameters),
+            inserted_profanity_detected: contains_any_marker(&after, &parameters.profanity_markers)
+                && !contains_any_marker(&before, &parameters.profanity_markers),
+        },
+        noise: DiffNoiseHints {
+            repeated_character_noise_detected: has_repeated_character_run(
+                &after,
+                parameters.repeated_character_run_threshold,
+            ) && !has_repeated_character_run(
+                &before,
+                parameters.repeated_character_run_threshold,
+            ),
+        },
+    }
 }
 
 #[must_use]
@@ -180,7 +265,7 @@ fn collect_segments<'a>(
     let mut after_line = 1usize;
 
     for change in changes {
-        let text = change.to_string();
+        let text = change.to_string_lossy().to_string();
         let character_count = text.chars().count();
         let line_count = match mode {
             DiffMode::Lines => count_text_lines(&text),
@@ -262,9 +347,235 @@ fn count_text_lines(text: &str) -> usize {
     }
 }
 
+fn before_text(diff: &StructuredDiff) -> String {
+    let text = diff
+        .segments
+        .iter()
+        .filter(|segment| segment.kind != DiffSegmentKind::Insert)
+        .map(|segment| segment.text.as_str())
+        .collect::<String>();
+    normalize_reconstructed_text(diff.mode, text)
+}
+
+fn after_text(diff: &StructuredDiff) -> String {
+    let text = diff
+        .segments
+        .iter()
+        .filter(|segment| segment.kind != DiffSegmentKind::Delete)
+        .map(|segment| segment.text.as_str())
+        .collect::<String>();
+    normalize_reconstructed_text(diff.mode, text)
+}
+
+fn normalize_reconstructed_text(mode: DiffMode, text: String) -> String {
+    match mode {
+        DiffMode::Lines => text,
+        DiffMode::Chars => text.replace('\n', ""),
+    }
+}
+
+fn detect_reference_addition_only(before_text: &str, after_text: &str) -> bool {
+    if after_text.trim().is_empty() || before_text == after_text {
+        return false;
+    }
+
+    remove_reference_constructs(after_text) == before_text
+}
+
+fn detect_category_addition_only(before_text: &str, after_text: &str) -> bool {
+    if after_text.trim().is_empty() || before_text == after_text {
+        return false;
+    }
+    remove_link_family(after_text, is_category_link) == before_text
+}
+
+fn detect_interwiki_addition_only(before_text: &str, after_text: &str) -> bool {
+    if after_text.trim().is_empty() || before_text == after_text {
+        return false;
+    }
+    remove_link_family(after_text, is_interwiki_link) == before_text
+}
+
+fn is_category_link(candidate: &str) -> bool {
+    let lowered = candidate.trim().to_ascii_lowercase();
+    lowered.starts_with("[[category:") || lowered.starts_with("[[catégorie:")
+}
+
+fn is_interwiki_link(candidate: &str) -> bool {
+    let lowered = candidate.trim().to_ascii_lowercase();
+    if !lowered.starts_with("[[") || !lowered.ends_with("]]") {
+        return false;
+    }
+    let inner = &lowered[2..lowered.len() - 2];
+    let Some((prefix, _target)) = inner.split_once(':') else {
+        return false;
+    };
+    if prefix.is_empty() || prefix.contains(' ') {
+        return false;
+    }
+
+    let excluded = [
+        "category",
+        "catégorie",
+        "file",
+        "fichier",
+        "image",
+        "template",
+        "modèle",
+        "user",
+        "utilisateur",
+        "portal",
+        "help",
+        "aide",
+        "draft",
+        "media",
+        "special",
+        "module",
+        "project",
+        "wikipedia",
+    ];
+    if excluded.contains(&prefix) {
+        return false;
+    }
+
+    prefix
+        .chars()
+        .all(|ch| ch.is_ascii_lowercase() || ch == '-')
+}
+
+fn detect_mass_blanking(diff: &StructuredDiff, parameters: &ScoringSignalParameters) -> bool {
+    let deleted = i32::try_from(diff.stats.deleted_char_count).unwrap_or(i32::MAX);
+    let inserted = i32::try_from(diff.stats.inserted_char_count).unwrap_or(i32::MAX);
+    deleted >= parameters.massive_blanking_threshold.abs()
+        && inserted <= 64
+        && deleted >= inserted.saturating_mul(4)
+}
+
+fn contains_any_marker(text: &str, markers: &[String]) -> bool {
+    if text.trim().is_empty() {
+        return false;
+    }
+    let lowered = text.to_ascii_lowercase();
+    markers.iter().any(|marker| lowered.contains(marker))
+}
+
+fn has_repeated_character_run(value: &str, threshold: u8) -> bool {
+    max_repeated_character_run(value) >= threshold
+}
+
+fn max_repeated_character_run(value: &str) -> u8 {
+    let mut last = '\0';
+    let mut run = 0u8;
+    let mut max_run = 0u8;
+    for ch in value.chars().flat_map(char::to_lowercase) {
+        if ch.is_ascii_alphanumeric() && ch == last {
+            run = run.saturating_add(1);
+        } else {
+            last = ch;
+            run = 1;
+        }
+        max_run = max_run.max(run);
+    }
+    max_run
+}
+
+fn consume_ref_tag(value: &str) -> Option<&str> {
+    let lowered = value.to_ascii_lowercase();
+    if !lowered.starts_with("<ref") {
+        return None;
+    }
+    let end = lowered.find("</ref>")?;
+    Some(&value[end + "</ref>".len()..])
+}
+
+fn consume_reference_template(value: &str) -> Option<&str> {
+    let lowered = value.to_ascii_lowercase();
+    if !(lowered.starts_with("{{cite")
+        || lowered.starts_with("{{citation")
+        || lowered.starts_with("{{sfn"))
+    {
+        return None;
+    }
+
+    let mut depth = 0usize;
+    let mut iter = value.char_indices().peekable();
+    while let Some((idx, ch)) = iter.next() {
+        if ch == '{' && iter.peek().is_some_and(|(_, next)| *next == '{') {
+            depth += 1;
+            let _ = iter.next();
+            continue;
+        }
+        if ch == '}' && iter.peek().is_some_and(|(_, next)| *next == '}') {
+            depth = depth.saturating_sub(1);
+            let _ = iter.next();
+            if depth == 0 {
+                return Some(&value[idx + 2..]);
+            }
+        }
+    }
+    None
+}
+
+fn remove_reference_constructs(value: &str) -> String {
+    let mut remaining = value;
+    let mut output = String::new();
+
+    while !remaining.is_empty() {
+        if let Some(next) = consume_ref_tag(remaining) {
+            remaining = next;
+            continue;
+        }
+        if let Some(next) = consume_reference_template(remaining) {
+            remaining = next;
+            continue;
+        }
+
+        let Some(ch) = remaining.chars().next() else {
+            break;
+        };
+        output.push(ch);
+        remaining = &remaining[ch.len_utf8()..];
+    }
+
+    output
+}
+
+fn remove_link_family(value: &str, predicate: fn(&str) -> bool) -> String {
+    let mut remaining = value;
+    let mut output = String::new();
+
+    while !remaining.is_empty() {
+        if let Some(next) = consume_link_family(remaining, predicate) {
+            remaining = next;
+            continue;
+        }
+
+        let Some(ch) = remaining.chars().next() else {
+            break;
+        };
+        output.push(ch);
+        remaining = &remaining[ch.len_utf8()..];
+    }
+
+    output
+}
+
+fn consume_link_family(value: &str, predicate: fn(&str) -> bool) -> Option<&str> {
+    if !value.starts_with("[[") {
+        return None;
+    }
+    let end = value.find("]]")?;
+    let candidate = &value[..end + 2];
+    predicate(candidate).then_some(&value[end + 2..])
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{DiffMode, DiffSegmentKind, detect_link_addition_only, diff_chars, diff_lines};
+    use super::{
+        DiffMode, DiffSegmentKind, analyze_diff_for_scoring, detect_link_addition_only, diff_chars,
+        diff_lines,
+    };
+    use crate::types::ScoringSignalParameters;
 
     #[test]
     fn line_diff_marks_insertions() {
@@ -404,5 +715,54 @@ mod tests {
         let diff = diff_chars("Paris ville", "[[Paris]]");
 
         assert!(detect_link_addition_only(&diff).is_none());
+    }
+
+    #[test]
+    fn scoring_hints_detect_reference_addition() {
+        let diff = diff_chars("Paris", "Paris<ref>source</ref>");
+        let hints = analyze_diff_for_scoring(&diff, &ScoringSignalParameters::default());
+
+        assert!(hints.reference_addition_only());
+    }
+
+    #[test]
+    fn scoring_hints_detect_category_addition() {
+        let diff = diff_chars("Paris", "Paris\n[[Catégorie:Capitales]]");
+        let hints = analyze_diff_for_scoring(&diff, &ScoringSignalParameters::default());
+
+        assert!(hints.category_addition_only());
+    }
+
+    #[test]
+    fn scoring_hints_detect_interwiki_addition() {
+        let diff = diff_chars("Paris", "Paris\n[[en:Paris]]");
+        let hints = analyze_diff_for_scoring(&diff, &ScoringSignalParameters::default());
+
+        assert!(hints.interwiki_addition_only());
+    }
+
+    #[test]
+    fn scoring_hints_detect_mass_blanking() {
+        let before = format!("{}\n", "A".repeat(1_200));
+        let diff = diff_chars(&before, "A");
+        let hints = analyze_diff_for_scoring(&diff, &ScoringSignalParameters::default());
+
+        assert!(hints.mass_blanking_detected());
+    }
+
+    #[test]
+    fn scoring_hints_detect_inserted_profanity() {
+        let diff = diff_chars("Paris", "Paris putain");
+        let hints = analyze_diff_for_scoring(&diff, &ScoringSignalParameters::default());
+
+        assert!(hints.inserted_profanity_detected());
+    }
+
+    #[test]
+    fn scoring_hints_detect_repeated_character_noise() {
+        let diff = diff_chars("Paris", "Paris aaaaaaa");
+        let hints = analyze_diff_for_scoring(&diff, &ScoringSignalParameters::default());
+
+        assert!(hints.repeated_character_noise_detected());
     }
 }

@@ -211,66 +211,171 @@ fn apply_context_signals(
     total: &mut i32,
     contributions: &mut Vec<SignalContribution>,
 ) {
-    if let Some(profile) = &context.user_risk {
-        let severity = profile.warning_level.severity();
-        if severity > 0 {
-            let scaled_weight = scale_weight(weights.warning_history, severity, 4);
-            let note = Some(format!(
-                "warning level {:?}, {} warning templates",
-                profile.warning_level, profile.warning_count
-            ));
-            push_signal(
-                ScoringSignal::WarningHistory,
-                scaled_weight,
-                note,
-                total,
-                contributions,
-            );
-        }
+    apply_warning_history_signal(context, weights, total, contributions);
+    apply_liftwing_signal(context, weights, total, contributions);
+    apply_boolean_context_signals(context, weights, total, contributions);
+    apply_duplicate_pattern_signal(context, weights, total, contributions);
+}
+
+fn apply_warning_history_signal(
+    context: &ScoringContext,
+    weights: &ScoreWeights,
+    total: &mut i32,
+    contributions: &mut Vec<SignalContribution>,
+) {
+    let Some(profile) = &context.user_risk else {
+        return;
+    };
+
+    let severity = profile.warning_level.severity();
+    if severity <= 0 {
+        return;
     }
 
-    if let Some(liftwing_risk) = context.liftwing_risk {
-        let Some(bounded_risk) = normalize_probability(liftwing_risk) else {
-            return;
-        };
-        if bounded_risk > 0.0 {
-            let percentage = format!("{:.0}", f64::from(bounded_risk) * 100.0)
-                .parse::<i32>()
-                .unwrap_or(0);
-            let scaled_weight = scale_weight(weights.liftwing_risk, percentage, 100);
-            push_signal(
-                ScoringSignal::LiftWingRisk,
-                scaled_weight,
-                Some(format!("probability {bounded_risk:.2}")),
-                total,
-                contributions,
-            );
-        }
+    let scaled_weight = scale_weight(weights.warning_history, severity, 4);
+    let note = Some(format!(
+        "warning level {:?}, {} warning templates",
+        profile.warning_level, profile.warning_count
+    ));
+    push_signal(
+        ScoringSignal::WarningHistory,
+        scaled_weight,
+        note,
+        total,
+        contributions,
+    );
+}
+
+fn apply_liftwing_signal(
+    context: &ScoringContext,
+    weights: &ScoreWeights,
+    total: &mut i32,
+    contributions: &mut Vec<SignalContribution>,
+) {
+    let Some(liftwing_risk) = context.liftwing_risk else {
+        return;
+    };
+    let Some(bounded_risk) = normalize_probability(liftwing_risk) else {
+        return;
+    };
+    if bounded_risk <= 0.0 {
+        return;
     }
 
-    if context.link_addition_only.is_enabled() {
-        push_signal(
-            ScoringSignal::LinkAddition,
-            weights.link_addition,
-            Some("only wikilink wrapper characters were added".to_string()),
-            total,
-            contributions,
-        );
+    let percentage = format!("{:.0}", f64::from(bounded_risk) * 100.0)
+        .parse::<i32>()
+        .unwrap_or(0);
+    let scaled_weight = scale_weight(weights.liftwing_risk, percentage, 100);
+    push_signal(
+        ScoringSignal::LiftWingRisk,
+        scaled_weight,
+        Some(format!("probability {bounded_risk:.2}")),
+        total,
+        contributions,
+    );
+}
+
+fn apply_boolean_context_signals(
+    context: &ScoringContext,
+    weights: &ScoreWeights,
+    total: &mut i32,
+    contributions: &mut Vec<SignalContribution>,
+) {
+    apply_flagged_context_signal(
+        context.link_addition_only.is_enabled(),
+        ScoringSignal::LinkAddition,
+        weights.link_addition,
+        "only wikilink wrapper characters were added",
+        total,
+        contributions,
+    );
+    apply_flagged_context_signal(
+        context.reference_addition_only.is_enabled(),
+        ScoringSignal::ReferenceAddition,
+        weights.reference_addition,
+        "only references or citation templates were added",
+        total,
+        contributions,
+    );
+    apply_flagged_context_signal(
+        context.category_addition_only.is_enabled(),
+        ScoringSignal::CategoryAddition,
+        weights.category_addition,
+        "only category links were added",
+        total,
+        contributions,
+    );
+    apply_flagged_context_signal(
+        context.interwiki_addition_only.is_enabled(),
+        ScoringSignal::InterwikiAddition,
+        weights.interwiki_addition,
+        "only interwiki or language links were added",
+        total,
+        contributions,
+    );
+    apply_flagged_context_signal(
+        context.mass_blanking_detected.is_enabled(),
+        ScoringSignal::MassBlanking,
+        weights.mass_blanking,
+        "diff removed substantially more content than it inserted",
+        total,
+        contributions,
+    );
+    apply_flagged_context_signal(
+        context.inserted_profanity_detected.is_enabled(),
+        ScoringSignal::InsertedProfanity,
+        weights.inserted_profanity,
+        "inserted diff text contains configured profanity markers",
+        total,
+        contributions,
+    );
+    apply_flagged_context_signal(
+        context.repeated_character_noise_detected.is_enabled(),
+        ScoringSignal::RepeatedCharacterNoise,
+        weights.repeated_character_noise,
+        "inserted diff text contains repeated-character noise",
+        total,
+        contributions,
+    );
+}
+
+fn apply_flagged_context_signal(
+    enabled: bool,
+    signal: ScoringSignal,
+    weight: i32,
+    note: &'static str,
+    total: &mut i32,
+    contributions: &mut Vec<SignalContribution>,
+) {
+    if !enabled {
+        return;
     }
 
-    if let Some(cluster_size) = context.duplicate_cluster_size
-        && cluster_size > 1
-    {
-        let numerator = i32::try_from(cluster_size.saturating_sub(1)).unwrap_or(i32::MAX);
-        let scaled_weight = scale_weight(weights.duplicate_pattern, numerator.min(4), 4);
-        push_signal(
-            ScoringSignal::DuplicatePattern,
-            scaled_weight,
-            Some(format!("duplicate cluster size {cluster_size}")),
-            total,
-            contributions,
-        );
+    push_signal(signal, weight, Some(note.to_string()), total, contributions);
+}
+
+fn apply_duplicate_pattern_signal(
+    context: &ScoringContext,
+    weights: &ScoreWeights,
+    total: &mut i32,
+    contributions: &mut Vec<SignalContribution>,
+) {
+    let Some(cluster_size) = context.duplicate_cluster_size else {
+        return;
+    };
+    if cluster_size <= 1 {
+        return;
     }
+
+    let numerator = i32::try_from(cluster_size.saturating_sub(1)).unwrap_or(i32::MAX);
+    let scaled_weight = scale_weight(weights.duplicate_pattern, numerator.min(4), 4);
+    push_signal(
+        ScoringSignal::DuplicatePattern,
+        scaled_weight,
+        Some(format!("duplicate cluster size {cluster_size}")),
+        total,
+        contributions,
+    );
 }
 
 fn scale_weight(weight: i32, numerator: i32, denominator: i32) -> i32 {
@@ -655,6 +760,12 @@ mod tests {
                 reverted_before: i32::MAX,
                 large_content_removal: i32::MAX,
                 link_addition: i32::MAX,
+                reference_addition: i32::MAX,
+                category_addition: i32::MAX,
+                interwiki_addition: i32::MAX,
+                mass_blanking: i32::MAX,
+                inserted_profanity: i32::MAX,
+                repeated_character_noise: i32::MAX,
                 profanity: i32::MAX,
                 link_spam: i32::MAX,
                 trusted_user: i32::MIN,
@@ -801,6 +912,60 @@ mod tests {
     }
 
     #[test]
+    fn applies_new_diff_aware_signals_from_context() {
+        let event = sample_event();
+        let context = ScoringContext {
+            reference_addition_only: true.into(),
+            category_addition_only: true.into(),
+            interwiki_addition_only: true.into(),
+            mass_blanking_detected: true.into(),
+            inserted_profanity_detected: true.into(),
+            repeated_character_noise_detected: true.into(),
+            ..ScoringContext::default()
+        };
+
+        let score = score_edit_with_context(&event, &ScoringConfig::default(), &context)
+            .expect("score should compute");
+
+        assert!(
+            score
+                .contributions
+                .iter()
+                .any(|entry| entry.signal == ScoringSignal::ReferenceAddition)
+        );
+        assert!(
+            score
+                .contributions
+                .iter()
+                .any(|entry| entry.signal == ScoringSignal::CategoryAddition)
+        );
+        assert!(
+            score
+                .contributions
+                .iter()
+                .any(|entry| entry.signal == ScoringSignal::InterwikiAddition)
+        );
+        assert!(
+            score
+                .contributions
+                .iter()
+                .any(|entry| entry.signal == ScoringSignal::MassBlanking)
+        );
+        assert!(
+            score
+                .contributions
+                .iter()
+                .any(|entry| entry.signal == ScoringSignal::InsertedProfanity)
+        );
+        assert!(
+            score
+                .contributions
+                .iter()
+                .any(|entry| entry.signal == ScoringSignal::RepeatedCharacterNoise)
+        );
+    }
+
+    #[test]
     fn applies_identity_cap_adjustment() {
         let event = sample_event();
         let config = ScoringConfig {
@@ -924,6 +1089,12 @@ mod tests {
                     reverted_before,
                     large_content_removal,
                     link_addition: 0,
+                    reference_addition: 0,
+                    category_addition: 0,
+                    interwiki_addition: 0,
+                    mass_blanking: 0,
+                    inserted_profanity: 0,
+                    repeated_character_noise: 0,
                     profanity,
                     link_spam,
                     trusted_user,

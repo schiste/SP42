@@ -38,6 +38,7 @@ pub mod diff_engine;
 pub mod errors;
 pub mod liftwing;
 pub mod live_operator;
+pub mod media_diff;
 pub mod oauth;
 pub mod operator_summary;
 pub mod patrol_scenario_report;
@@ -89,8 +90,8 @@ pub use dev_auth::{
     parse_action_execution_status, parse_dev_auth_status,
 };
 pub use diff_engine::{
-    DiffLineSpan, DiffMode, DiffSegment, DiffSegmentKind, DiffStats, InlineSpan, StructuredDiff,
-    detect_link_addition_only, diff_chars, diff_lines,
+    DiffLineSpan, DiffMode, DiffScoringHints, DiffSegment, DiffSegmentKind, DiffStats, InlineSpan,
+    StructuredDiff, analyze_diff_for_scoring, detect_link_addition_only, diff_chars, diff_lines,
 };
 pub use errors::{
     ActionError, BacklogRuntimeError, CodecError, ConfigError, CoordinationError, DevAuthError,
@@ -108,6 +109,10 @@ pub use live_operator::{
     LiveOperatorBackendStatus, LiveOperatorHeuristicProvenance, LiveOperatorPhaseTiming,
     LiveOperatorPublicDocuments, LiveOperatorQuery, LiveOperatorRetryClass, LiveOperatorTelemetry,
     LiveOperatorView, build_live_operator_action_preflight, classify_retry,
+};
+pub use media_diff::{
+    MediaDiffEntry, MediaDiffKind, MediaDiffReport, MediaReference, build_media_diff,
+    extract_media_references,
 };
 pub use oauth::{
     OAuthCallback, OAuthClientConfig, OAuthLaunchContext, OAuthTokenResponse,

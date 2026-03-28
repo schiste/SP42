@@ -2,19 +2,21 @@ use std::collections::HashMap;
 
 use leptos::prelude::*;
 use sp42_core::{
-    LiveOperatorView, SessionActionExecutionRequest, SessionActionKind, StructuredDiff,
+    LiveOperatorView, MediaDiffReport, SessionActionExecutionRequest, SessionActionKind,
+    StructuredDiff,
 };
 
 use crate::components::action_bar::ActionBar;
 use crate::components::context_header::ContextHeader;
 use crate::components::diff_viewer::{DiffViewer, TagAction};
 use crate::components::filter_bar::{FilterBar, PatrolFilterParams};
+use crate::components::media_diff_gallery::MediaDiffGallery;
 use crate::components::queue_column::QueueColumn;
 use crate::components::{PatrolScenarioPanel, PatrolSessionDigestPanel, ShellStatePanel};
 use crate::platform::auth::{bootstrap_dev_auth_session, execute_dev_auth_action};
 use crate::platform::console;
 use crate::platform::eventstream::{StreamEvent, start_eventstream};
-use crate::platform::live::{fetch_diff, fetch_live_operator_view};
+use crate::platform::live::{fetch_diff, fetch_live_operator_view, fetch_media_diff};
 
 /// Read `rev=N` from the URL hash fragment.
 fn rev_id_from_hash() -> Option<u64> {
@@ -68,6 +70,9 @@ pub fn PatrolSurface() -> impl IntoView {
     let (diff_loading, set_diff_loading) = signal(false);
     let (current_diff, set_current_diff) = signal(None::<StructuredDiff>);
     let (diff_cache, set_diff_cache) = signal(HashMap::<u64, StructuredDiff>::new());
+    let (media_diff_loading, set_media_diff_loading) = signal(false);
+    let (current_media_diff, set_current_media_diff) = signal(None::<MediaDiffReport>);
+    let (media_diff_cache, set_media_diff_cache) = signal(HashMap::<u64, MediaDiffReport>::new());
     let (all_edits, set_all_edits) = signal(Vec::<sp42_core::QueuedEdit>::new());
 
     let (tag_action, set_tag_action) = signal(None::<TagAction>);
@@ -189,9 +194,19 @@ pub fn PatrolSurface() -> impl IntoView {
                             set_diff_cache.set(c);
                         }
                     }
+                    if let (Some(media_diff), Some(sel_idx)) =
+                        (&view.media_diff, view.selected_index)
+                    {
+                        if let Some(edit) = view.queue.get(sel_idx) {
+                            let mut c = media_diff_cache.get_untracked();
+                            c.insert(edit.event.rev_id, media_diff.clone());
+                            set_media_diff_cache.set(c);
+                        }
+                    }
                     if let Some(ref diff) = view.diff {
                         set_current_diff.set(Some(diff.clone()));
                     }
+                    set_current_media_diff.set(view.media_diff.clone());
                     if !selection_only_refetch.get_untracked() {
                         console::info(&format!(
                             "[SP42] server load: {} edits, diff={}",
@@ -469,6 +484,58 @@ pub fn PatrolSurface() -> impl IntoView {
                 }
                 set_diff_loading.set(false);
             });
+        }
+        current_rev
+    });
+
+    Effect::new(move |prev_rev: Option<Option<u64>>| {
+        let current_rev = selected_rev_id.get();
+        let Some(rev_id) = current_rev else {
+            set_current_media_diff.set(None);
+            set_media_diff_loading.set(false);
+            return current_rev;
+        };
+
+        if prev_rev == Some(current_rev) {
+            return current_rev;
+        }
+
+        let cache = media_diff_cache.get_untracked();
+        if let Some(report) = cache.get(&rev_id) {
+            set_current_media_diff.set(Some(report.clone()));
+            set_media_diff_loading.set(false);
+            return current_rev;
+        }
+
+        set_media_diff_loading.set(true);
+        set_current_media_diff.set(None);
+        let queue = queue_signal.get_untracked();
+        let idx = selected_index.get_untracked();
+        if let Some(edit) = queue.get(idx) {
+            let old_rev_id = edit.event.old_rev_id.unwrap_or(0);
+            if old_rev_id == 0 {
+                set_media_diff_loading.set(false);
+                return current_rev;
+            }
+            let wiki_id = edit.event.wiki_id.clone();
+            wasm_bindgen_futures::spawn_local(async move {
+                match fetch_media_diff(&wiki_id, rev_id, old_rev_id).await {
+                    Ok(report) => {
+                        if let Some(ref media_diff) = report {
+                            let mut c = media_diff_cache.get_untracked();
+                            c.insert(rev_id, media_diff.clone());
+                            set_media_diff_cache.set(c);
+                        }
+                        set_current_media_diff.set(report);
+                    }
+                    Err(_) => {
+                        set_current_media_diff.set(None);
+                    }
+                }
+                set_media_diff_loading.set(false);
+            });
+        } else {
+            set_media_diff_loading.set(false);
         }
         current_rev
     });
@@ -927,21 +994,32 @@ pub fn PatrolSurface() -> impl IntoView {
                             let edit = queue.get(idx).cloned();
                             view! { <ContextHeader edit=edit /> }.into_any()
                         }}
-                        <div style="overflow-y:auto;overflow-x:hidden;">
-                            {move || {
-                                if diff_loading.get() {
-                                    view! {
-                                        <div class="grid-center" style="height:100%;">
-                                            <div style="text-align:center;">
-                                                <div class="spinner" style="margin:0 auto;"></div>
-                                                <p class="text-muted" style="margin-top:10px;font-size:12px;">"Loading diff..."</p>
+                        <div
+                            style="display:grid;grid-template-columns:minmax(0,1fr) minmax(260px,320px);\
+                                   gap:10px;overflow:hidden;padding-top:10px;"
+                        >
+                            <div style="min-width:0;overflow-y:auto;overflow-x:hidden;">
+                                {move || {
+                                    if diff_loading.get() {
+                                        view! {
+                                            <div class="grid-center" style="height:100%;">
+                                                <div style="text-align:center;">
+                                                    <div class="spinner" style="margin:0 auto;"></div>
+                                                    <p class="text-muted" style="margin-top:10px;font-size:12px;">"Loading diff..."</p>
+                                                </div>
                                             </div>
-                                        </div>
-                                    }.into_any()
-                                } else {
-                                    view! { <DiffViewer diff=current_diff.get() on_tag=set_tag_action /> }.into_any()
-                                }
-                            }}
+                                        }.into_any()
+                                    } else {
+                                        view! { <DiffViewer diff=current_diff.get() on_tag=set_tag_action /> }.into_any()
+                                    }
+                                }}
+                            </div>
+                            <div style="min-width:0;overflow:hidden;">
+                                <MediaDiffGallery
+                                    report=current_media_diff.get()
+                                    loading=Signal::derive(move || media_diff_loading.get())
+                                />
+                            </div>
                         </div>
                     </div>
 

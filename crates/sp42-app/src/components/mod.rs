@@ -5,6 +5,7 @@ pub(crate) mod context_header;
 pub(crate) mod diff_viewer;
 pub(crate) mod filter_bar;
 pub(crate) mod inspector_feed;
+pub(crate) mod media_diff_gallery;
 pub(crate) mod patrol_scenario_panel;
 pub(crate) mod patrol_session_digest_panel;
 pub(crate) mod queue_column;

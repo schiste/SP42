@@ -54,13 +54,14 @@ use sp42_core::{
     WikiStorageDocument, WikiStorageDocumentKind, WikiStorageLoadedDocument, WikiStoragePlan,
     WikiStoragePlanInput, WikiStorageWriteOutcome, WikiStorageWriteRequest,
     build_authorization_url, build_debug_snapshot, build_live_operator_action_preflight,
-    build_patrol_scenario_report, build_patrol_session_digest, build_ranked_queue_with_policy,
-    build_review_workbench, build_scoring_context, build_shell_state_model,
-    build_wiki_storage_plan, default_public_storage_document, detect_link_addition_only,
-    diff_lines, execute_fetch_token, execute_liftwing_score, execute_recent_changes,
-    generate_oauth_state, generate_pkce_verifier, load_wiki_storage_document, parse_callback_query,
-    render_wiki_storage_document_page, render_wiki_storage_index_page,
-    resolve_wiki_storage_document, save_wiki_storage_document, score_edit_with_context,
+    build_media_diff, build_patrol_scenario_report,
+    build_patrol_session_digest, build_ranked_queue_with_policy, build_review_workbench,
+    build_scoring_context, build_shell_state_model, build_wiki_storage_plan,
+    default_public_storage_document, diff_lines, execute_fetch_token, execute_liftwing_score,
+    execute_recent_changes, generate_oauth_state, generate_pkce_verifier,
+    load_wiki_storage_document, parse_callback_query, render_wiki_storage_document_page,
+    render_wiki_storage_index_page, resolve_wiki_storage_document, save_wiki_storage_document,
+    score_edit_with_context,
 };
 
 use crate::coordination::{
@@ -603,6 +604,10 @@ fn build_router(state: AppState) -> Router {
             "/operator/diff/{wiki_id}/{rev_id}/{old_rev_id}",
             get(get_revision_diff),
         )
+        .route(
+            "/operator/media-diff/{wiki_id}/{rev_id}/{old_rev_id}",
+            get(get_revision_media_diff),
+        )
         .route("/operator/runtime/{wiki_id}", get(get_operator_runtime))
         .route(
             "/operator/storage/layout/{wiki_id}",
@@ -988,6 +993,7 @@ struct SelectedReviewState {
     scoring_context: Option<sp42_core::ScoringContext>,
     selected_score: Option<sp42_core::CompositeScore>,
     diff: Option<sp42_core::StructuredDiff>,
+    media_diff: Option<sp42_core::MediaDiffReport>,
     review_workbench: Option<sp42_core::ReviewWorkbench>,
     readiness: ServerHealthStatus,
     coordination_state: Option<sp42_core::CoordinationStateSummary>,
@@ -1973,11 +1979,24 @@ async fn load_selected_review_state(
     } else {
         None
     };
+    let media_diff = if let Some(item) = selected {
+        fetch_revision_media_diff(&state.http_client, access_token, config, item).await?
+    } else {
+        None
+    };
     if let Some(diff) = diff.as_ref()
         && let Some(context) = &mut scoring_context
-        && detect_link_addition_only(diff).is_some()
     {
-        context.link_addition_only = FlagState::Enabled;
+        let hints =
+            sp42_core::diff_engine::analyze_diff_for_scoring(diff, &config.scoring.signal_parameters);
+        context.link_addition_only = FlagState::from(hints.link_addition_only());
+        context.reference_addition_only = FlagState::from(hints.reference_addition_only());
+        context.category_addition_only = FlagState::from(hints.category_addition_only());
+        context.interwiki_addition_only = FlagState::from(hints.interwiki_addition_only());
+        context.mass_blanking_detected = FlagState::from(hints.mass_blanking_detected());
+        context.inserted_profanity_detected = FlagState::from(hints.inserted_profanity_detected());
+        context.repeated_character_noise_detected =
+            FlagState::from(hints.repeated_character_noise_detected());
     }
     let selected_score = selected
         .zip(scoring_context.as_ref())
@@ -2008,6 +2027,7 @@ async fn load_selected_review_state(
         scoring_context,
         selected_score,
         diff,
+        media_diff,
         review_workbench,
         readiness,
         coordination_state,
@@ -2371,6 +2391,7 @@ fn finalize_live_operator_view(
         selected_index: queue_state.selected_index,
         scoring_context: selected_review.scoring_context,
         diff: selected_review.diff,
+        media_diff: selected_review.media_diff,
         review_workbench: selected_review.review_workbench,
         stream_status: Some(bootstrap.stream_status),
         backlog_status: Some(queue_state.backlog_status),
@@ -2417,24 +2438,52 @@ async fn get_revision_diff(
             )
         })?;
     let config = config_for_state_wiki(&state, &wiki_id)?;
-    let revisions = fetch_revision_texts(
+    let diff = fetch_revision_diff_by_ids(
         &state.http_client,
         &access_token,
         &config,
-        &[old_rev_id, rev_id],
+        rev_id,
+        old_rev_id,
     )
     .await
-    .map_err(|e| {
+    .map_err(|error| {
         (
             StatusCode::BAD_GATEWAY,
-            Json(serde_json::json!({"error": e})),
+            Json(serde_json::json!({"error": error})),
         )
     })?;
-    let diff = match (revisions.get(&old_rev_id), revisions.get(&rev_id)) {
-        (Some(before), Some(after)) => Some(diff_lines(before, after)),
-        _ => None,
-    };
     Ok(Json(diff))
+}
+
+async fn get_revision_media_diff(
+    Path((wiki_id, rev_id, old_rev_id)): Path<(String, u64, u64)>,
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Result<Json<Option<sp42_core::MediaDiffReport>>, (StatusCode, Json<serde_json::Value>)> {
+    let access_token = access_token_for_request(&state, &headers)
+        .await
+        .ok_or_else(|| {
+            (
+                StatusCode::UNAUTHORIZED,
+                Json(serde_json::json!({"error": "no access token"})),
+            )
+        })?;
+    let config = config_for_state_wiki(&state, &wiki_id)?;
+    let report = fetch_revision_media_diff_by_ids(
+        &state.http_client,
+        &access_token,
+        &config,
+        rev_id,
+        old_rev_id,
+    )
+    .await
+    .map_err(|error| {
+        (
+            StatusCode::BAD_GATEWAY,
+            Json(serde_json::json!({"error": error})),
+        )
+    })?;
+    Ok(Json(report))
 }
 
 async fn fetch_revision_diff(
@@ -2447,21 +2496,108 @@ async fn fetch_revision_diff(
         return Ok(None);
     };
 
-    let revisions = fetch_revision_texts(
-        client,
-        access_token,
-        config,
-        &[old_rev_id, item.event.rev_id],
-    )
-    .await?;
-    let Some(before) = revisions.get(&old_rev_id) else {
-        return Ok(None);
-    };
-    let Some(after) = revisions.get(&item.event.rev_id) else {
+    fetch_revision_diff_by_ids(client, access_token, config, item.event.rev_id, old_rev_id).await
+}
+
+async fn fetch_revision_media_diff(
+    client: &reqwest::Client,
+    access_token: &str,
+    config: &WikiConfig,
+    item: &QueuedEdit,
+) -> Result<Option<sp42_core::MediaDiffReport>, String> {
+    let Some(old_rev_id) = item.event.old_rev_id else {
         return Ok(None);
     };
 
-    Ok(Some(diff_lines(before, after)))
+    fetch_revision_media_diff_by_ids(client, access_token, config, item.event.rev_id, old_rev_id)
+        .await
+}
+
+async fn fetch_revision_diff_by_ids(
+    client: &reqwest::Client,
+    access_token: &str,
+    config: &WikiConfig,
+    rev_id: u64,
+    old_rev_id: u64,
+) -> Result<Option<sp42_core::StructuredDiff>, String> {
+    fetch_revision_text_pair(client, access_token, config, rev_id, old_rev_id)
+        .await
+        .map(|pair| pair.map(|(before, after)| diff_lines(&before, &after)))
+}
+
+async fn fetch_revision_media_diff_by_ids(
+    client: &reqwest::Client,
+    access_token: &str,
+    config: &WikiConfig,
+    rev_id: u64,
+    old_rev_id: u64,
+) -> Result<Option<sp42_core::MediaDiffReport>, String> {
+    fetch_revision_text_pair(client, access_token, config, rev_id, old_rev_id)
+        .await
+        .map(|pair| {
+            pair.map(|(before, after)| {
+                let mut report = build_media_diff(&before, &after);
+                populate_media_preview_urls(config, &mut report);
+                report
+            })
+        })
+}
+
+async fn fetch_revision_text_pair(
+    client: &reqwest::Client,
+    access_token: &str,
+    config: &WikiConfig,
+    rev_id: u64,
+    old_rev_id: u64,
+) -> Result<Option<(String, String)>, String> {
+    let revisions =
+        fetch_revision_texts(client, access_token, config, &[old_rev_id, rev_id]).await?;
+    let Some(before) = revisions.get(&old_rev_id) else {
+        return Ok(None);
+    };
+    let Some(after) = revisions.get(&rev_id) else {
+        return Ok(None);
+    };
+
+    Ok(Some((before.clone(), after.clone())))
+}
+
+fn populate_media_preview_urls(config: &WikiConfig, report: &mut sp42_core::MediaDiffReport) {
+    for entry in &mut report.entries {
+        entry.page_url = build_file_page_url(config, &entry.file_name);
+        entry.preview_url = build_file_preview_url(config, &entry.display_title);
+    }
+}
+
+fn build_file_page_url(config: &WikiConfig, file_name: &str) -> Option<url::Url> {
+    let mut url = wiki_origin_url(config);
+    {
+        let mut segments = url.path_segments_mut().ok()?;
+        segments.push("wiki");
+        segments.push(file_name);
+    }
+    Some(url)
+}
+
+fn build_file_preview_url(config: &WikiConfig, display_title: &str) -> Option<url::Url> {
+    let mut url = wiki_origin_url(config);
+    {
+        let mut segments = url.path_segments_mut().ok()?;
+        segments.push("wiki");
+        segments.push("Special:Redirect");
+        segments.push("file");
+        segments.push(display_title);
+    }
+    url.query_pairs_mut().append_pair("width", "320");
+    Some(url)
+}
+
+fn wiki_origin_url(config: &WikiConfig) -> url::Url {
+    let mut url = config.api_url.clone();
+    url.set_path("");
+    url.set_query(None);
+    url.set_fragment(None);
+    url
 }
 
 async fn fetch_revision_texts(

@@ -2,24 +2,9 @@
 
 use crate::errors::ScoringError;
 use crate::types::{
-    CompositeScore, EditEvent, ScoreWeights, ScoringConfig, ScoringContext, ScoringSignal,
-    SignalContribution,
+    CompositeScore, EditEvent, ScoreWeights, ScoringCombinationRule, ScoringConfig, ScoringContext,
+    ScoringSignal, SignalContribution,
 };
-
-const LARGE_REMOVAL_THRESHOLD: i32 = -500;
-const MASSIVE_BLANKING_THRESHOLD: i32 = -900;
-const PROFANITY_MARKERS: [&str; 4] = ["fuck", "merde", "shit", "putain"];
-const LINK_MARKERS: [&str; 2] = ["http://", "https://"];
-const TRUSTED_TAGS: [&str; 3] = ["mw-manual-revert", "mw-rollback", "trusted"];
-const REVERT_TAGS: [&str; 2] = ["mw-reverted", "mw-undo"];
-const SUSPICIOUS_COMMENT_MARKERS: [&str; 6] = [
-    "rvv",
-    "vandalisme",
-    "vandalism",
-    "blanking",
-    "nonsense",
-    "self revert",
-];
 
 /// Score an edit event from deterministic local signals.
 ///
@@ -54,8 +39,8 @@ pub fn score_edit_with_context(
     let mut total = config.base_score;
     let mut contributions = Vec::new();
     apply_primary_edit_signals(event, config, context, &mut total, &mut contributions);
-
     apply_context_signals(context, &config.weights, &mut total, &mut contributions);
+    apply_combination_rules(&config.combination_rules, &mut total, &mut contributions);
 
     total = total.clamp(0, config.max_score);
 
@@ -80,18 +65,20 @@ fn apply_primary_edit_signals(
         total,
         contributions,
         &mut identity_total,
+        config,
     );
-    apply_edit_shape_signals(event, &config.weights, total, contributions);
+    apply_edit_shape_signals(event, config, &config.weights, total, contributions);
     apply_trusted_and_revert_signals(
         event,
         context,
+        config,
         &config.weights,
         total,
         contributions,
         &mut identity_total,
     );
     apply_identity_contribution_cap(
-        config.identity_contribution_cap,
+        config.identity.contribution_cap,
         total,
         contributions,
         identity_total,
@@ -100,6 +87,7 @@ fn apply_primary_edit_signals(
 
 fn apply_edit_shape_signals(
     event: &EditEvent,
+    config: &ScoringConfig,
     weights: &ScoreWeights,
     total: &mut i32,
     contributions: &mut Vec<SignalContribution>,
@@ -114,7 +102,7 @@ fn apply_edit_shape_signals(
         );
     }
 
-    if event.byte_delta <= LARGE_REMOVAL_THRESHOLD {
+    if event.byte_delta <= config.signal_parameters.large_content_removal_threshold {
         push_signal(
             ScoringSignal::LargeContentRemoval,
             weights.large_content_removal,
@@ -134,7 +122,10 @@ fn apply_edit_shape_signals(
         );
     }
 
-    if contains_any(event.comment.as_deref(), &PROFANITY_MARKERS) {
+    if contains_any(
+        event.comment.as_deref(),
+        &config.signal_parameters.profanity_markers,
+    ) {
         push_signal(
             ScoringSignal::Profanity,
             weights.profanity,
@@ -144,7 +135,10 @@ fn apply_edit_shape_signals(
         );
     }
 
-    if contains_any(event.comment.as_deref(), &LINK_MARKERS) {
+    if contains_any(
+        event.comment.as_deref(),
+        &config.signal_parameters.link_markers,
+    ) {
         push_signal(
             ScoringSignal::LinkSpam,
             weights.link_spam,
@@ -154,7 +148,7 @@ fn apply_edit_shape_signals(
         );
     }
 
-    if let Some(reason) = detect_obvious_vandalism(event) {
+    if let Some(reason) = detect_obvious_vandalism(event, config) {
         push_signal(
             ScoringSignal::ObviousVandalism,
             weights.obvious_vandalism,
@@ -168,6 +162,7 @@ fn apply_edit_shape_signals(
 fn apply_trusted_and_revert_signals(
     event: &EditEvent,
     context: &ScoringContext,
+    config: &ScoringConfig,
     weights: &ScoreWeights,
     total: &mut i32,
     contributions: &mut Vec<SignalContribution>,
@@ -176,7 +171,7 @@ fn apply_trusted_and_revert_signals(
     let trusted_tag_detected = event
         .tags
         .iter()
-        .any(|tag| contains_tag(tag, &TRUSTED_TAGS));
+        .any(|tag| contains_tag(tag, &config.signal_parameters.trusted_tags));
     let trusted_override_detected = context.trust_override.is_enabled();
     if trusted_tag_detected || trusted_override_detected {
         let note = match (trusted_tag_detected, trusted_override_detected) {
@@ -195,7 +190,11 @@ fn apply_trusted_and_revert_signals(
         *identity_total = identity_total.saturating_add(weights.trusted_user);
     }
 
-    if event.tags.iter().any(|tag| contains_tag(tag, &REVERT_TAGS)) {
+    if event
+        .tags
+        .iter()
+        .any(|tag| contains_tag(tag, &config.signal_parameters.revert_tags))
+    {
         push_signal(
             ScoringSignal::RevertedBefore,
             weights.reverted_before,
@@ -292,8 +291,9 @@ fn apply_editor_signal(
     total: &mut i32,
     contributions: &mut Vec<SignalContribution>,
     identity_total: &mut i32,
+    config: &ScoringConfig,
 ) {
-    if event.performer.is_anonymous() {
+    if config.identity.anonymous_modifier_enabled.is_enabled() && event.performer.is_anonymous() {
         push_signal(
             ScoringSignal::AnonymousUser,
             weights.anonymous_user,
@@ -304,7 +304,7 @@ fn apply_editor_signal(
         *identity_total = identity_total.saturating_add(weights.anonymous_user);
     }
 
-    if event.performer.is_temporary() {
+    if config.identity.temporary_modifier_enabled.is_enabled() && event.performer.is_temporary() {
         push_signal(
             ScoringSignal::TemporaryAccount,
             weights.temporary_account,
@@ -372,7 +372,7 @@ fn normalize_probability(probability: f32) -> Option<f32> {
     Some(probability.clamp(0.0, 1.0))
 }
 
-fn contains_any(haystack: Option<&str>, markers: &[&str]) -> bool {
+fn contains_any(haystack: Option<&str>, markers: &[String]) -> bool {
     let Some(haystack) = haystack else {
         return false;
     };
@@ -380,33 +380,46 @@ fn contains_any(haystack: Option<&str>, markers: &[&str]) -> bool {
     markers.iter().any(|marker| lowercase.contains(marker))
 }
 
-fn contains_tag(tag: &str, markers: &[&str]) -> bool {
+fn contains_tag(tag: &str, markers: &[String]) -> bool {
     let lowercase = tag.to_ascii_lowercase();
     markers.iter().any(|marker| lowercase.contains(marker))
 }
 
-fn detect_obvious_vandalism(event: &EditEvent) -> Option<String> {
+fn detect_obvious_vandalism(event: &EditEvent, config: &ScoringConfig) -> Option<String> {
     let mut reasons = Vec::new();
 
-    if event.byte_delta <= MASSIVE_BLANKING_THRESHOLD {
+    if event.byte_delta <= config.signal_parameters.massive_blanking_threshold {
         reasons.push(format!("massive blanking byte_delta={}", event.byte_delta));
     }
 
-    if contains_any(event.comment.as_deref(), &PROFANITY_MARKERS) {
+    if contains_any(
+        event.comment.as_deref(),
+        &config.signal_parameters.profanity_markers,
+    ) {
         reasons.push("profanity marker in comment".to_string());
     }
 
-    if contains_any(event.comment.as_deref(), &LINK_MARKERS) {
+    if contains_any(
+        event.comment.as_deref(),
+        &config.signal_parameters.link_markers,
+    ) {
         reasons.push("external link marker in comment".to_string());
     }
 
-    if contains_any(event.comment.as_deref(), &SUSPICIOUS_COMMENT_MARKERS) {
+    if contains_any(
+        event.comment.as_deref(),
+        &config.signal_parameters.suspicious_comment_markers,
+    ) {
         reasons.push("suspicious moderation-style comment marker".to_string());
     }
 
-    if has_repeated_character_run(event.comment.as_deref())
-        || has_repeated_character_run(Some(&event.title))
-    {
+    if has_repeated_character_run(
+        event.comment.as_deref(),
+        config.signal_parameters.repeated_character_run_threshold,
+    ) || has_repeated_character_run(
+        Some(&event.title),
+        config.signal_parameters.repeated_character_run_threshold,
+    ) {
         reasons.push("repeated-character noise detected".to_string());
     }
 
@@ -414,7 +427,7 @@ fn detect_obvious_vandalism(event: &EditEvent) -> Option<String> {
         return None;
     }
 
-    let severe_blanking = event.byte_delta <= MASSIVE_BLANKING_THRESHOLD;
+    let severe_blanking = event.byte_delta <= config.signal_parameters.massive_blanking_threshold;
     let layered_signals = reasons.len() >= 2;
     if severe_blanking || layered_signals {
         Some(reasons.join("; "))
@@ -423,7 +436,7 @@ fn detect_obvious_vandalism(event: &EditEvent) -> Option<String> {
     }
 }
 
-fn has_repeated_character_run(value: Option<&str>) -> bool {
+fn has_repeated_character_run(value: Option<&str>, threshold: u8) -> bool {
     let Some(value) = value else {
         return false;
     };
@@ -433,7 +446,7 @@ fn has_repeated_character_run(value: Option<&str>) -> bool {
     for ch in value.chars().flat_map(char::to_lowercase) {
         if ch.is_ascii_alphanumeric() && ch == last {
             run = run.saturating_add(1);
-            if run >= 5 {
+            if run >= threshold {
                 return true;
             }
         } else {
@@ -442,6 +455,29 @@ fn has_repeated_character_run(value: Option<&str>) -> bool {
         }
     }
     false
+}
+
+fn apply_combination_rules(
+    rules: &[ScoringCombinationRule],
+    total: &mut i32,
+    contributions: &mut Vec<SignalContribution>,
+) {
+    for rule in rules {
+        let all_present = rule
+            .when_all
+            .iter()
+            .all(|signal| contributions.iter().any(|entry| entry.signal == *signal));
+        if !all_present {
+            continue;
+        }
+        push_signal(
+            ScoringSignal::CombinationRule,
+            rule.weight,
+            Some(format!("combination rule `{}` matched", rule.slug)),
+            total,
+            contributions,
+        );
+    }
 }
 
 fn merge_notes(existing: Option<String>, incoming: Option<String>) -> Option<String> {
@@ -598,7 +634,10 @@ mod tests {
         let config = ScoringConfig {
             base_score: 0,
             max_score: i32::MAX,
-            identity_contribution_cap: None,
+            identity: crate::types::ScoringIdentityConfig {
+                contribution_cap: None,
+                ..crate::types::ScoringIdentityConfig::default()
+            },
             weights: crate::types::ScoreWeights {
                 anonymous_user: i32::MAX,
                 temporary_account: i32::MAX,
@@ -614,6 +653,7 @@ mod tests {
                 obvious_vandalism: i32::MAX,
                 duplicate_pattern: i32::MAX,
             },
+            ..ScoringConfig::default()
         };
         let context = ScoringContext {
             user_risk: Some(UserRiskProfile {
@@ -734,7 +774,10 @@ mod tests {
     fn applies_identity_cap_adjustment() {
         let event = sample_event();
         let config = ScoringConfig {
-            identity_contribution_cap: Some(10),
+            identity: crate::types::ScoringIdentityConfig {
+                contribution_cap: Some(10),
+                ..crate::types::ScoringIdentityConfig::default()
+            },
             ..ScoringConfig::default()
         };
 
@@ -840,7 +883,10 @@ mod tests {
             let config = ScoringConfig {
                 base_score,
                 max_score,
-                identity_contribution_cap: None,
+                identity: crate::types::ScoringIdentityConfig {
+                    contribution_cap: None,
+                    ..crate::types::ScoringIdentityConfig::default()
+                },
                 weights: crate::types::ScoreWeights {
                     anonymous_user,
                     temporary_account: 0,
@@ -856,6 +902,7 @@ mod tests {
                     obvious_vandalism: 0,
                     duplicate_pattern: 0,
                 },
+                ..ScoringConfig::default()
             };
             let context = ScoringContext {
                 user_risk: Some(UserRiskProfile {

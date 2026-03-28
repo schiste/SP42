@@ -3,7 +3,32 @@
 use std::collections::BTreeSet;
 
 use crate::errors::ConfigError;
-use crate::types::WikiConfig;
+use crate::scoring_policy::load_embedded_compiled_scoring_policy;
+use crate::types::{WikiConfig, WikiTemplates};
+use serde::Deserialize;
+use url::Url;
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+struct RawWikiConfig {
+    wiki_id: String,
+    display_name: String,
+    api_url: Url,
+    eventstreams_url: Url,
+    oauth_authorize_url: Url,
+    oauth_token_url: Url,
+    liftwing_url: Option<Url>,
+    coordination_url: Option<Url>,
+    #[serde(default)]
+    namespace_allowlist: Vec<i32>,
+    #[serde(default = "default_scoring_policy_ref")]
+    scoring_policy_ref: String,
+    #[serde(default)]
+    templates: WikiTemplates,
+}
+
+fn default_scoring_policy_ref() -> String {
+    "active/frwiki-vandalism".to_string()
+}
 
 /// Parse a single wiki configuration document from YAML.
 ///
@@ -12,7 +37,31 @@ use crate::types::WikiConfig;
 /// Returns [`ConfigError`] when the document is not valid YAML or does not
 /// match the [`WikiConfig`] schema.
 pub fn parse_wiki_config(source: &str) -> Result<WikiConfig, ConfigError> {
-    let config = serde_yaml::from_str(source).map_err(ConfigError::from)?;
+    let raw = serde_yaml::from_str::<RawWikiConfig>(source).map_err(ConfigError::from)?;
+    let compiled_policy = load_embedded_compiled_scoring_policy(&raw.scoring_policy_ref)?;
+    if compiled_policy.wiki_id != raw.wiki_id {
+        return Err(ConfigError::InvalidField {
+            field: "scoring_policy_ref",
+            message: format!(
+                "policy wiki_id `{}` does not match config wiki_id `{}`",
+                compiled_policy.wiki_id, raw.wiki_id
+            ),
+        });
+    }
+    let config = WikiConfig {
+        wiki_id: raw.wiki_id,
+        display_name: raw.display_name,
+        api_url: raw.api_url,
+        eventstreams_url: raw.eventstreams_url,
+        oauth_authorize_url: raw.oauth_authorize_url,
+        oauth_token_url: raw.oauth_token_url,
+        liftwing_url: raw.liftwing_url,
+        coordination_url: raw.coordination_url,
+        namespace_allowlist: raw.namespace_allowlist,
+        scoring_policy_ref: raw.scoring_policy_ref,
+        scoring: compiled_policy.scoring_config,
+        templates: raw.templates,
+    };
     validate_config(config)
 }
 
@@ -127,6 +176,8 @@ mod tests {
         assert_eq!(config.wiki_id, "frwiki");
         assert_eq!(config.display_name, "French Wikipedia");
         assert_eq!(config.scoring.max_score, 100);
+        assert_eq!(config.scoring_policy_ref, "active/frwiki-vandalism");
+        assert_eq!(config.scoring.identity.contribution_cap, Some(25));
     }
 
     #[test]
@@ -176,19 +227,13 @@ mod tests {
     }
 
     #[test]
-    fn rejects_invalid_scoring_bounds() {
+    fn rejects_unknown_scoring_policy_reference() {
         let source = include_str!("../../../configs/frwiki.yaml").replace(
-            "base_score: 0\n  max_score: 100",
-            "base_score: 100\n  max_score: 10",
+            "scoring_policy_ref: active/frwiki-vandalism",
+            "scoring_policy_ref: active/unknown",
         );
-        let error = parse_wiki_config(&source).expect_err("invalid scoring bounds should fail");
+        let error = parse_wiki_config(&source).expect_err("unknown policy ref should fail");
 
-        assert!(matches!(
-            error,
-            ConfigError::InvalidField {
-                field: "scoring.max_score",
-                ..
-            }
-        ));
+        assert!(matches!(error, ConfigError::ScoringPolicy(_)));
     }
 }

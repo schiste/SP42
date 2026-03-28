@@ -367,12 +367,16 @@ pub fn PatrolSurface() -> impl IntoView {
         true
     });
 
-    // Filter changes apply instantly via the queue_signal Memo —
-    // just reset selection, no server round-trip needed
-    Effect::new(move |_| {
-        let _ = filters.get();
-        let queue = queue_signal.get();
-        set_selected_rev_id.set(queue.first().map(|e| e.event.rev_id));
+    // Filter changes reset selection to the first visible item.
+    // Uses get_untracked for the queue so EventStream inserts don't
+    // trigger this — only explicit filter toggles do.
+    Effect::new(move |prev_filters: Option<PatrolFilterParams>| {
+        let current = filters.get();
+        if prev_filters.as_ref() != Some(&current) {
+            let queue = queue_signal.get_untracked();
+            set_selected_rev_id.set(queue.first().map(|e| e.event.rev_id));
+        }
+        current
     });
 
     // When selection changes, look up diff from cache or fetch it.

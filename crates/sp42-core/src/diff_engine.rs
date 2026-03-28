@@ -18,7 +18,7 @@ pub struct DiffLineSpan {
     pub line_count: usize,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum DiffSegmentKind {
     Equal,
     Insert,
@@ -35,6 +35,56 @@ pub struct DiffSegment {
     pub after: Option<DiffLineSpan>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub inline_highlights: Vec<InlineSpan>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum DiffHunkKind {
+    Modification,
+    Addition,
+    Removal,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum DiffMoveRole {
+    Source,
+    Target,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum DiffMarker {
+    References,
+    Category,
+    Interwiki,
+    Template,
+    Media,
+    Heading,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct DiffSectionContext {
+    pub before: Option<String>,
+    pub after: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DiffHunk {
+    pub kind: DiffHunkKind,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub before: Option<DiffLineSpan>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub after: Option<DiffLineSpan>,
+    #[serde(default)]
+    pub section: DiffSectionContext,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub markers: Vec<DiffMarker>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub notes: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub move_group: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub move_role: Option<DiffMoveRole>,
+    #[serde(default)]
+    pub segments: Vec<DiffSegment>,
 }
 
 /// A word-level span within a diff segment, used to highlight the exact
@@ -67,6 +117,8 @@ pub struct StructuredDiff {
     #[serde(default)]
     pub mode: DiffMode,
     pub segments: Vec<DiffSegment>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub hunks: Vec<DiffHunk>,
     pub stats: DiffStats,
 }
 
@@ -194,6 +246,7 @@ pub fn diff_lines(before: &str, after: &str) -> StructuredDiff {
         TextDiff::from_lines(before, after).iter_all_changes(),
     );
     compute_inline_highlights(&mut diff.segments);
+    diff.hunks = build_diff_hunks(&diff.segments, before, after, 3);
     diff
 }
 
@@ -323,7 +376,380 @@ fn collect_segments<'a>(
     StructuredDiff {
         mode,
         segments,
+        hunks: Vec::new(),
         stats,
+    }
+}
+
+fn build_diff_hunks(
+    segments: &[DiffSegment],
+    before_text: &str,
+    after_text: &str,
+    context_lines: usize,
+) -> Vec<DiffHunk> {
+    let changed_ranges = collect_changed_ranges(segments, context_lines);
+    if changed_ranges.is_empty() {
+        return Vec::new();
+    }
+
+    let before_sections = build_section_index(before_text);
+    let after_sections = build_section_index(after_text);
+
+    let mut hunks = changed_ranges
+        .into_iter()
+        .map(|(start, end)| {
+            let hunk_segments = segments[start..end].to_vec();
+            let changed_before = merge_line_spans(
+                hunk_segments
+                    .iter()
+                    .filter(|segment| segment.kind != DiffSegmentKind::Insert)
+                    .filter(|segment| segment.kind != DiffSegmentKind::Equal)
+                    .filter_map(|segment| segment.before.as_ref()),
+            );
+            let changed_after = merge_line_spans(
+                hunk_segments
+                    .iter()
+                    .filter(|segment| segment.kind != DiffSegmentKind::Delete)
+                    .filter(|segment| segment.kind != DiffSegmentKind::Equal)
+                    .filter_map(|segment| segment.after.as_ref()),
+            );
+            let before = changed_before
+                .clone()
+                .or_else(|| merge_line_spans(hunk_segments.iter().filter_map(|segment| segment.before.as_ref())));
+            let after = changed_after
+                .clone()
+                .or_else(|| merge_line_spans(hunk_segments.iter().filter_map(|segment| segment.after.as_ref())));
+            let kind = classify_hunk_kind(&hunk_segments);
+            let markers = collect_hunk_markers(&hunk_segments);
+            let notes = build_hunk_notes(kind, &markers, before.as_ref(), after.as_ref());
+
+            DiffHunk {
+                kind,
+                before: before.clone(),
+                after: after.clone(),
+                section: DiffSectionContext {
+                    before: resolve_section_label(changed_before.as_ref().or(before.as_ref()), &before_sections),
+                    after: resolve_section_label(changed_after.as_ref().or(after.as_ref()), &after_sections),
+                },
+                markers,
+                notes,
+                move_group: None,
+                move_role: None,
+                segments: hunk_segments,
+            }
+        })
+        .collect::<Vec<_>>();
+
+    annotate_moves(&mut hunks);
+    hunks
+}
+
+fn collect_changed_ranges(segments: &[DiffSegment], context_lines: usize) -> Vec<(usize, usize)> {
+    let len = segments.len();
+    if len == 0 {
+        return Vec::new();
+    }
+
+    let mut visible = vec![false; len];
+    for (index, segment) in segments.iter().enumerate() {
+        if segment.kind == DiffSegmentKind::Equal {
+            continue;
+        }
+        let start = index.saturating_sub(context_lines);
+        let end = (index + context_lines + 1).min(len);
+        for slot in &mut visible[start..end] {
+            *slot = true;
+        }
+    }
+
+    let mut ranges = Vec::new();
+    let mut cursor = 0usize;
+    while cursor < len {
+        if !visible[cursor] {
+            cursor += 1;
+            continue;
+        }
+        let start = cursor;
+        while cursor < len && visible[cursor] {
+            cursor += 1;
+        }
+        ranges.push((start, cursor));
+    }
+    ranges
+}
+
+fn merge_line_spans<'a>(spans: impl Iterator<Item = &'a DiffLineSpan>) -> Option<DiffLineSpan> {
+    let mut iter = spans.peekable();
+    let first = *iter.peek()?;
+    let mut start_line = first.start_line;
+    let mut end_line = first.start_line + first.line_count.saturating_sub(1);
+
+    for span in iter {
+        start_line = start_line.min(span.start_line);
+        end_line = end_line.max(span.start_line + span.line_count.saturating_sub(1));
+    }
+
+    Some(DiffLineSpan {
+        start_line,
+        line_count: end_line.saturating_sub(start_line) + 1,
+    })
+}
+
+fn classify_hunk_kind(segments: &[DiffSegment]) -> DiffHunkKind {
+    let has_insert = segments.iter().any(|segment| segment.kind == DiffSegmentKind::Insert);
+    let has_delete = segments.iter().any(|segment| segment.kind == DiffSegmentKind::Delete);
+
+    match (has_insert, has_delete) {
+        (true, false) => DiffHunkKind::Addition,
+        (false, true) => DiffHunkKind::Removal,
+        (true, true) | (false, false) => DiffHunkKind::Modification,
+    }
+}
+
+fn build_section_index(text: &str) -> Vec<(usize, String)> {
+    text.lines()
+        .enumerate()
+        .filter_map(|(index, line)| parse_section_heading(line).map(|heading| (index + 1, heading)))
+        .collect()
+}
+
+fn parse_section_heading(line: &str) -> Option<String> {
+    let trimmed = line.trim();
+    if trimmed.len() < 4 {
+        return None;
+    }
+    let prefix = trimmed.chars().take_while(|ch| *ch == '=').count();
+    let suffix = trimmed.chars().rev().take_while(|ch| *ch == '=').count();
+    if prefix < 2 || prefix != suffix {
+        return None;
+    }
+    let heading = trimmed[prefix..trimmed.len() - suffix].trim();
+    (!heading.is_empty()).then(|| heading.to_string())
+}
+
+fn resolve_section_label(span: Option<&DiffLineSpan>, sections: &[(usize, String)]) -> Option<String> {
+    let line = span?.start_line;
+    sections
+        .iter()
+        .take_while(|(section_line, _)| *section_line <= line)
+        .last()
+        .map(|(_, label)| label.clone())
+        .or_else(|| Some("Lead".to_string()))
+}
+
+fn collect_hunk_markers(segments: &[DiffSegment]) -> Vec<DiffMarker> {
+    let inserted = segments
+        .iter()
+        .filter(|segment| segment.kind == DiffSegmentKind::Insert)
+        .map(|segment| segment.text.as_str())
+        .collect::<String>();
+    let deleted = segments
+        .iter()
+        .filter(|segment| segment.kind == DiffSegmentKind::Delete)
+        .map(|segment| segment.text.as_str())
+        .collect::<String>();
+    let combined = format!("{inserted}\n{deleted}");
+    let lowered = combined.to_ascii_lowercase();
+    let mut markers = Vec::new();
+
+    if lowered.contains("<ref") || lowered.contains("{{cite") || lowered.contains("{{citation") {
+        markers.push(DiffMarker::References);
+    }
+    if lowered.contains("[[category:") || lowered.contains("[[catégorie:") {
+        markers.push(DiffMarker::Category);
+    }
+    if lowered.contains("[[file:")
+        || lowered.contains("[[image:")
+        || lowered.contains("[[fichier:")
+        || lowered.contains("<gallery")
+    {
+        markers.push(DiffMarker::Media);
+    }
+    if lowered.contains("{{") {
+        markers.push(DiffMarker::Template);
+    }
+    if combined.lines().any(|line| parse_section_heading(line).is_some()) {
+        markers.push(DiffMarker::Heading);
+    }
+    if contains_interwiki_markup(&lowered) {
+        markers.push(DiffMarker::Interwiki);
+    }
+
+    markers
+}
+
+fn contains_interwiki_markup(lowered: &str) -> bool {
+    lowered
+        .split("[[")
+        .skip(1)
+        .filter_map(|part| part.split("]]").next())
+        .any(|candidate| is_interwiki_link(&format!("[[{candidate}]]")))
+}
+
+fn build_hunk_notes(
+    kind: DiffHunkKind,
+    markers: &[DiffMarker],
+    before: Option<&DiffLineSpan>,
+    after: Option<&DiffLineSpan>,
+) -> Vec<String> {
+    let mut notes = Vec::new();
+    match kind {
+        DiffHunkKind::Modification => notes.push("content changed in place".to_string()),
+        DiffHunkKind::Addition => {
+            if let Some(after) = after {
+                notes.push(format!("new content around line {}", after.start_line));
+            }
+        }
+        DiffHunkKind::Removal => {
+            if let Some(before) = before {
+                notes.push(format!("content removed around line {}", before.start_line));
+            }
+        }
+    }
+
+    if !markers.is_empty() {
+        let marker_summary = markers
+            .iter()
+            .map(|marker| diff_marker_label(*marker))
+            .collect::<Vec<_>>()
+            .join(", ");
+        notes.push(format!("semantic cues: {marker_summary}"));
+    }
+    notes
+}
+
+fn annotate_moves(hunks: &mut [DiffHunk]) {
+    let mut next_group = 1usize;
+    let mut consumed = vec![false; hunks.len()];
+
+    for hunk in hunks.iter_mut() {
+        if hunk.kind != DiffHunkKind::Modification || hunk.move_group.is_some() {
+            continue;
+        }
+        let removed = normalized_hunk_side_text(hunk, DiffSegmentKind::Delete);
+        let inserted = normalized_hunk_side_text(hunk, DiffSegmentKind::Insert);
+        let sections_differ = hunk.section.before != hunk.section.after;
+        if let (Some(removed), Some(inserted)) = (removed, inserted)
+            && sections_differ
+            && is_probable_move_match(&removed, &inserted)
+        {
+            hunk.move_group = Some(next_group);
+            hunk.notes
+                .push("probable moved block with in-place edits".to_string());
+            next_group += 1;
+        }
+    }
+
+    for source_index in 0..hunks.len() {
+        if consumed[source_index] || hunks[source_index].kind != DiffHunkKind::Removal {
+            continue;
+        }
+        let Some(source_signature) = normalized_change_text(&hunks[source_index]) else {
+            continue;
+        };
+        for target_index in 0..hunks.len() {
+            if source_index == target_index
+                || consumed[target_index]
+                || hunks[target_index].kind != DiffHunkKind::Addition
+            {
+                continue;
+            }
+            let Some(target_signature) = normalized_change_text(&hunks[target_index]) else {
+                continue;
+            };
+            if !is_probable_move_match(&source_signature, &target_signature) {
+                continue;
+            }
+
+            hunks[source_index].move_group = Some(next_group);
+            hunks[source_index].move_role = Some(DiffMoveRole::Source);
+            hunks[source_index]
+                .notes
+                .push("probable moved block".to_string());
+            hunks[target_index].move_group = Some(next_group);
+            hunks[target_index].move_role = Some(DiffMoveRole::Target);
+            hunks[target_index]
+                .notes
+                .push("probable moved block".to_string());
+            consumed[source_index] = true;
+            consumed[target_index] = true;
+            next_group += 1;
+            break;
+        }
+    }
+}
+
+fn normalized_change_text(hunk: &DiffHunk) -> Option<String> {
+    let relevant_kind = match hunk.kind {
+        DiffHunkKind::Addition => DiffSegmentKind::Insert,
+        DiffHunkKind::Removal => DiffSegmentKind::Delete,
+        DiffHunkKind::Modification => return None,
+    };
+
+    let normalized_lines = hunk
+        .segments
+        .iter()
+        .filter(|segment| segment.kind == relevant_kind)
+        .flat_map(|segment| segment.text.lines())
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .map(str::to_ascii_lowercase)
+        .collect::<Vec<_>>();
+
+    let line_count = normalized_lines.len();
+    let joined = normalized_lines.join("\n");
+    if line_count < 2 && joined.chars().count() < 80 {
+        return None;
+    }
+    Some(joined)
+}
+
+fn normalized_hunk_side_text(hunk: &DiffHunk, relevant_kind: DiffSegmentKind) -> Option<String> {
+    let normalized_lines = hunk
+        .segments
+        .iter()
+        .filter(|segment| segment.kind == relevant_kind)
+        .flat_map(|segment| segment.text.lines())
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .map(str::to_ascii_lowercase)
+        .collect::<Vec<_>>();
+
+    let joined = normalized_lines.join("\n");
+    (!joined.is_empty()).then_some(joined)
+}
+
+fn is_probable_move_match(left: &str, right: &str) -> bool {
+    let left_words = normalized_word_bag(left);
+    let right_words = normalized_word_bag(right);
+    if left_words.is_empty() || right_words.is_empty() {
+        return false;
+    }
+
+    let shared = left_words.iter().filter(|word| right_words.contains(*word)).count();
+    let total = left_words.len() + right_words.len() - shared;
+    if total == 0 {
+        return true;
+    }
+
+    shared.saturating_mul(10) >= total.saturating_mul(6)
+}
+
+fn normalized_word_bag(text: &str) -> Vec<String> {
+    text.split(|ch: char| !ch.is_alphanumeric())
+        .filter(|word| !word.is_empty())
+        .map(str::to_ascii_lowercase)
+        .collect()
+}
+
+fn diff_marker_label(marker: DiffMarker) -> &'static str {
+    match marker {
+        DiffMarker::References => "references",
+        DiffMarker::Category => "categories",
+        DiffMarker::Interwiki => "interwiki",
+        DiffMarker::Template => "templates",
+        DiffMarker::Media => "media",
+        DiffMarker::Heading => "section headings",
     }
 }
 
@@ -572,8 +998,8 @@ fn consume_link_family(value: &str, predicate: fn(&str) -> bool) -> Option<&str>
 #[cfg(test)]
 mod tests {
     use super::{
-        DiffMode, DiffSegmentKind, analyze_diff_for_scoring, detect_link_addition_only, diff_chars,
-        diff_lines,
+        DiffHunkKind, DiffMarker, DiffMode, DiffSegmentKind, analyze_diff_for_scoring,
+        detect_link_addition_only, diff_chars, diff_lines,
     };
     use crate::types::ScoringSignalParameters;
 
@@ -694,6 +1120,47 @@ mod tests {
 
         assert!(diff.segments.iter().all(|segment| segment.before.is_none()));
         assert!(diff.segments.iter().all(|segment| segment.after.is_none()));
+        assert!(diff.hunks.is_empty());
+    }
+
+    #[test]
+    fn line_diff_builds_section_aware_hunks() {
+        let before = "Lead intro\n== History ==\nOld line\n== References ==\n<ref>One</ref>\n";
+        let after = "Lead intro\n== History ==\nNew line\n== References ==\n<ref>One</ref>\n";
+        let diff = diff_lines(before, after);
+
+        assert_eq!(diff.hunks.len(), 1);
+        let hunk = &diff.hunks[0];
+        assert_eq!(hunk.section.before.as_deref(), Some("History"));
+        assert_eq!(hunk.section.after.as_deref(), Some("History"));
+        assert_eq!(hunk.kind, DiffHunkKind::Modification);
+    }
+
+    #[test]
+    fn line_diff_marks_reference_hunks() {
+        let diff = diff_lines("Lead\n", "Lead\n<ref>Source</ref>\n");
+
+        assert_eq!(diff.hunks.len(), 1);
+        assert!(diff.hunks[0].markers.contains(&DiffMarker::References));
+    }
+
+    #[test]
+    fn line_diff_detects_probable_moved_blocks() {
+        let before = "Lead\nIntro\nParagraph two moved.\nSpacer A\nSpacer B\nSpacer C\nSpacer D\n== Later ==\nTail\n";
+        let after = "Lead\nIntro\nSpacer A\nSpacer B\nSpacer C\nSpacer D\n== Later ==\nParagraph two moved and expanded.\nTail\n";
+        let diff = diff_lines(before, after);
+
+        let move_hunks = diff
+            .hunks
+            .iter()
+            .filter(|hunk| hunk.move_group.is_some())
+            .count();
+
+        assert_eq!(move_hunks, 1);
+        assert!(diff
+            .hunks
+            .iter()
+            .any(|hunk| hunk.notes.iter().any(|note| note.contains("moved block"))));
     }
 
     #[test]

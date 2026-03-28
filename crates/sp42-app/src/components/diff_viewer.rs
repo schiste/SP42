@@ -1,5 +1,8 @@
 use leptos::prelude::*;
-use sp42_core::{DiffLineSpan, DiffMode, DiffSegment, DiffSegmentKind, InlineSpan, StructuredDiff};
+use sp42_core::{
+    DiffHunkKind, DiffLineSpan, DiffMarker, DiffMode, DiffMoveRole, DiffSegment,
+    DiffSegmentKind, InlineSpan, StructuredDiff,
+};
 
 /// Action triggered from the diff context menu.
 #[derive(Debug, Clone)]
@@ -66,6 +69,20 @@ struct SegmentData {
     inline_highlights: Vec<InlineSpan>,
 }
 
+#[derive(Clone)]
+struct HunkData {
+    kind: DiffHunkKind,
+    before: Option<DiffLineSpan>,
+    after: Option<DiffLineSpan>,
+    before_section: Option<String>,
+    after_section: Option<String>,
+    markers: Vec<DiffMarker>,
+    notes: Vec<String>,
+    move_group: Option<usize>,
+    move_role: Option<DiffMoveRole>,
+    segments: Vec<SegmentData>,
+}
+
 #[component]
 pub fn DiffViewer(
     diff: Option<StructuredDiff>,
@@ -114,6 +131,32 @@ pub fn DiffViewer(
             inline_highlights: s.inline_highlights,
         })
         .collect();
+    let hunk_data: Vec<HunkData> = diff
+        .hunks
+        .into_iter()
+        .map(|hunk| HunkData {
+            kind: hunk.kind,
+            before: hunk.before,
+            after: hunk.after,
+            before_section: hunk.section.before,
+            after_section: hunk.section.after,
+            markers: hunk.markers,
+            notes: hunk.notes,
+            move_group: hunk.move_group,
+            move_role: hunk.move_role,
+            segments: hunk
+                .segments
+                .into_iter()
+                .map(|segment| SegmentData {
+                    kind: segment.kind,
+                    text: segment.text,
+                    before: segment.before,
+                    after: segment.after,
+                    inline_highlights: segment.inline_highlights,
+                })
+                .collect(),
+        })
+        .collect();
 
     view! {
         <div role="main" aria-label="Diff viewer" class="diff-viewer">
@@ -154,6 +197,13 @@ pub fn DiffViewer(
                             .iter()
                             .enumerate()
                             .map(|(idx, seg)| render(seg, idx + 1))
+                            .collect_view()
+                            .into_any()
+                    } else if !hunk_data.is_empty() {
+                        hunk_data
+                            .iter()
+                            .enumerate()
+                            .map(|(index, hunk)| render_hunk(hunk, index + 1, diff_mode, has_menu, set_menu_pos))
                             .collect_view()
                             .into_any()
                     } else {
@@ -209,6 +259,139 @@ pub fn DiffViewer(
         </div>
     }
     .into_any()
+}
+
+fn render_hunk(
+    hunk: &HunkData,
+    ordinal: usize,
+    diff_mode: DiffMode,
+    has_menu: bool,
+    set_menu_pos: WriteSignal<Option<(i32, i32, String)>>,
+) -> leptos::tachys::view::any_view::AnyView {
+    let title = hunk_title(hunk, ordinal);
+    let section_label = hunk_section_label(hunk);
+    let marker_badges = hunk
+        .markers
+        .iter()
+        .map(diff_marker_label)
+        .collect::<Vec<_>>();
+    let move_badge = hunk.move_role.map(|role| match role {
+        DiffMoveRole::Source => "Moved from here",
+        DiffMoveRole::Target => "Moved to here",
+    });
+    let note = hunk.notes.first().cloned();
+
+    view! {
+        <section
+            style="display:grid;gap:8px;margin-block-end:14px;padding:10px 0 0;\
+                   border-block-start:1px solid var(--border-light);"
+        >
+            <header style="display:grid;gap:6px;padding:0 0 2px;">
+                <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+                    <strong style="font-size:12px;text-transform:uppercase;letter-spacing:0.08em;color:var(--muted);">
+                        {title}
+                    </strong>
+                    <span style="font-size:11px;color:var(--subtle);">
+                        {section_label}
+                    </span>
+                    {move || {
+                        move_badge
+                            .map(|badge| {
+                                view! {
+                                    <span
+                                        style="padding:2px 6px;border-radius:999px;font-size:10px;\
+                                               background:rgba(59,130,246,.12);color:#bfdbfe;border:1px solid rgba(59,130,246,.25);"
+                                    >
+                                        {badge}
+                                    </span>
+                                }
+                                    .into_any()
+                            })
+                            .unwrap_or_else(|| view! { <span></span> }.into_any())
+                    }}
+                    {marker_badges
+                        .iter()
+                        .map(|label| {
+                            let label = (*label).to_string();
+                            view! {
+                                <span
+                                    style="padding:2px 6px;border-radius:999px;font-size:10px;\
+                                           background:rgba(248,250,252,.06);color:var(--muted);border:1px solid var(--border-light);"
+                                >
+                                    {label}
+                                </span>
+                            }
+                        })
+                        .collect_view()}
+                </div>
+                {move || {
+                    note.clone()
+                        .map(|text| {
+                            view! {
+                                <div style="font-size:11px;line-height:1.45;color:var(--muted);">
+                                    {text}
+                                </div>
+                            }
+                                .into_any()
+                        })
+                        .unwrap_or_else(|| view! { <span></span> }.into_any())
+                }}
+            </header>
+            <div style="display:grid;gap:2px;">
+                {hunk
+                    .segments
+                    .iter()
+                    .enumerate()
+                    .map(|(index, segment)| {
+                        let fallback = hunk
+                            .before
+                            .as_ref()
+                            .map_or_else(
+                                || hunk.after.as_ref().map_or(ordinal, |span| span.start_line + index),
+                                |span| span.start_line + index,
+                            );
+                        render_segment_data(segment, fallback, diff_mode, has_menu, set_menu_pos)
+                    })
+                    .collect_view()}
+            </div>
+        </section>
+    }
+    .into_any()
+}
+
+fn hunk_title(hunk: &HunkData, ordinal: usize) -> String {
+    let base = match hunk.kind {
+        DiffHunkKind::Modification => format!("Hunk {ordinal}"),
+        DiffHunkKind::Addition => format!("Addition {ordinal}"),
+        DiffHunkKind::Removal => format!("Removal {ordinal}"),
+    };
+
+    if let Some(group) = hunk.move_group {
+        format!("{base} · move #{group}")
+    } else {
+        base
+    }
+}
+
+fn hunk_section_label(hunk: &HunkData) -> String {
+    match (hunk.before_section.as_deref(), hunk.after_section.as_deref()) {
+        (Some(before), Some(after)) if before == after => before.to_string(),
+        (Some(before), Some(after)) => format!("{before} → {after}"),
+        (Some(before), None) => before.to_string(),
+        (None, Some(after)) => after.to_string(),
+        (None, None) => "Lead".to_string(),
+    }
+}
+
+fn diff_marker_label(marker: &DiffMarker) -> &'static str {
+    match marker {
+        DiffMarker::References => "refs",
+        DiffMarker::Category => "categories",
+        DiffMarker::Interwiki => "interwiki",
+        DiffMarker::Template => "templates",
+        DiffMarker::Media => "media",
+        DiffMarker::Heading => "heading",
+    }
 }
 
 fn render_segment_data(

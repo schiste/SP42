@@ -11,6 +11,39 @@ use crate::platform::auth::{bootstrap_dev_auth_session, execute_dev_auth_action}
 use crate::platform::eventstream::{StreamEvent, start_eventstream};
 use crate::platform::live::fetch_live_operator_view;
 
+/// Read `rev=N` from the URL hash fragment.
+fn rev_id_from_hash() -> Option<u64> {
+    #[cfg(target_arch = "wasm32")]
+    {
+        let hash = web_sys::window()?.location().hash().ok()?;
+        let hash = hash.trim_start_matches('#');
+        for part in hash.split('&') {
+            if let Some(val) = part.strip_prefix("rev=") {
+                return val.parse().ok();
+            }
+        }
+        None
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        None
+    }
+}
+
+/// Update the URL hash to reflect the selected revision.
+fn set_hash_rev(rev_id: u64) {
+    #[cfg(target_arch = "wasm32")]
+    {
+        if let Some(window) = web_sys::window() {
+            let _ = window.location().set_hash(&format!("rev={rev_id}"));
+        }
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let _ = rev_id;
+    }
+}
+
 const DEFAULT_WIKI_ID: &str = "frwiki";
 
 #[component]
@@ -93,6 +126,12 @@ pub fn PatrolSurface() -> impl IntoView {
                             set_view_data.set(Some(view));
                         }
                     } else {
+                        // On initial load, select the edit from the URL hash if present
+                        if let Some(target_rev) = rev_id_from_hash() {
+                            if let Some(idx) = view.queue.iter().position(|q| q.event.rev_id == target_rev) {
+                                set_selected_index.set(idx);
+                            }
+                        }
                         set_view_data.set(Some(view));
                     }
                     set_diff_loading.set(false);
@@ -192,9 +231,15 @@ pub fn PatrolSurface() -> impl IntoView {
         load_action.dispatch_local(());
     });
 
-    // Re-fetch when the user selects a different edit so the diff updates
+    // Re-fetch when the user selects a different edit so the diff updates.
+    // Also update the URL hash so the edit is shareable.
     Effect::new(move |prev: Option<usize>| {
         let idx = selected_index.get();
+        if let Some(v) = view_data.get_untracked() {
+            if let Some(edit) = v.queue.get(idx) {
+                set_hash_rev(edit.event.rev_id);
+            }
+        }
         if let Some(prev_idx) = prev {
             if prev_idx != idx {
                 set_diff_loading.set(true);

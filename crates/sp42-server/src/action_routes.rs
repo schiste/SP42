@@ -7,8 +7,9 @@ use axum::{
 use tracing::info;
 
 use sp42_core::{
-    ActionError, ActionResponseSummary, HttpResponse, PatrolRequest, RollbackRequest, TokenKind,
-    UndoRequest, execute_patrol, execute_rollback, execute_undo, parse_action_response_summary,
+    ActionError, ActionResponseSummary, FlagState, HttpResponse, PatrolRequest, RollbackRequest,
+    TokenKind, UndoRequest, WikiPageSaveRequest, execute_patrol, execute_rollback, execute_undo,
+    execute_wiki_page_save, parse_action_response_summary,
 };
 
 use crate::{
@@ -287,6 +288,55 @@ async fn execute_session_action(
             )
             .await
         }
+        SessionActionKind::TagCitationNeeded => {
+            let token = execute_fetch_token(client, config, TokenKind::Csrf).await?;
+            let title = payload.title.clone().unwrap_or_default();
+            let selected_text = payload.selected_text.clone().unwrap_or_default();
+            if selected_text.trim().is_empty() {
+                return Err(ActionError::Execution {
+                    message: "selected_text is required for citation tagging".to_string(),
+                    code: Some("invalid-input".to_string()),
+                    http_status: None,
+                    retryable: false,
+                });
+            }
+            let template = &config.templates.citation_needed;
+
+            // Fetch current page wikitext
+            let page_text = crate::fetch_page_wikitext(client, config, &title).await?;
+
+            // Insert {{template}} after the selected text
+            let tagged = format!("{selected_text}{{{{{template}}}}}");
+            let updated_text = page_text.replacen(&selected_text, &tagged, 1);
+            if updated_text == page_text {
+                return Err(ActionError::Execution {
+                    message: "selected text not found in page content".to_string(),
+                    code: Some("text-not-found".to_string()),
+                    http_status: None,
+                    retryable: false,
+                });
+            }
+            let summary = payload
+                .summary
+                .clone()
+                .unwrap_or_else(|| format!("SP42: added {{{{{template}}}}}"));
+            execute_wiki_page_save(
+                client,
+                config,
+                &WikiPageSaveRequest {
+                    title,
+                    text: updated_text,
+                    token,
+                    summary: Some(summary),
+                    baserevid: Some(payload.rev_id),
+                    tags: Vec::new(),
+                    watchlist: None,
+                    create_only: FlagState::Disabled,
+                    minor: FlagState::Disabled,
+                },
+            )
+            .await
+        }
     }
 }
 
@@ -353,6 +403,7 @@ pub(crate) fn action_feedback_for_entry(entry: &ActionExecutionLogEntry) -> Stri
         SessionActionKind::Rollback => "Rollback",
         SessionActionKind::Patrol => "Patrol",
         SessionActionKind::Undo => "Undo",
+        SessionActionKind::TagCitationNeeded => "Citation needed",
     };
     let rationale = entry
         .summary
@@ -586,6 +637,21 @@ pub(crate) fn validate_action_request(
             if !capabilities.capabilities.editing.can_undo {
                 return Err(forbidden_error(
                     "The authenticated session does not currently have undo capability on this wiki.",
+                ));
+            }
+        }
+        SessionActionKind::TagCitationNeeded => {
+            if payload.title.as_deref().is_none_or(str::is_empty) {
+                return Err(invalid_payload("title is required for citation tagging"));
+            }
+            if payload.selected_text.as_deref().is_none_or(str::is_empty) {
+                return Err(invalid_payload(
+                    "selected_text is required for citation tagging",
+                ));
+            }
+            if !capabilities.capabilities.editing.can_edit {
+                return Err(forbidden_error(
+                    "The authenticated session does not currently have edit capability on this wiki.",
                 ));
             }
         }

@@ -2510,6 +2510,70 @@ async fn fetch_revision_texts(
     Ok(map)
 }
 
+pub(crate) async fn fetch_page_wikitext(
+    client: &BearerHttpClient,
+    config: &WikiConfig,
+    title: &str,
+) -> Result<String, sp42_core::ActionError> {
+    use sp42_core::{ActionError, HttpMethod, HttpRequest};
+
+    let mut url = config.api_url.clone();
+    url.query_pairs_mut()
+        .append_pair("action", "query")
+        .append_pair("prop", "revisions")
+        .append_pair("titles", title)
+        .append_pair("rvprop", "content")
+        .append_pair("rvslots", "main")
+        .append_pair("rvlimit", "1")
+        .append_pair("format", "json")
+        .append_pair("formatversion", "2");
+
+    let response = client
+        .execute(HttpRequest {
+            method: HttpMethod::Get,
+            url,
+            headers: std::collections::BTreeMap::new(),
+            body: Vec::new(),
+        })
+        .await
+        .map_err(|e| ActionError::Execution {
+            message: format!("page fetch failed: {e}"),
+            code: None,
+            http_status: None,
+            retryable: true,
+        })?;
+
+    if !(200..300).contains(&response.status) {
+        return Err(ActionError::Execution {
+            message: format!("page fetch HTTP {}", response.status),
+            code: None,
+            http_status: Some(response.status),
+            retryable: response.status >= 500,
+        });
+    }
+
+    let v: serde_json::Value = serde_json::from_slice(&response.body).map_err(|e| {
+        ActionError::Execution {
+            message: format!("page JSON failed: {e}"),
+            code: None,
+            http_status: None,
+            retryable: false,
+        }
+    })?;
+
+    // Navigate: query.pages[0].revisions[0].slots.main.content
+    let content = v
+        .pointer("/query/pages/0/revisions/0/slots/main/content")
+        .and_then(serde_json::Value::as_str);
+
+    content.map(ToString::to_string).ok_or_else(|| ActionError::Execution {
+        message: format!("page content not found for: {title}"),
+        code: Some("missing-content".to_string()),
+        http_status: None,
+        retryable: false,
+    })
+}
+
 fn operator_endpoint_manifest() -> Vec<OperatorEndpointDescriptor> {
     let mut endpoints = operator_core_endpoints();
     endpoints.extend(operator_storage_endpoints());

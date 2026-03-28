@@ -53,59 +53,126 @@ pub fn score_edit_with_context(
 
     let mut total = config.base_score;
     let mut contributions = Vec::new();
+    apply_primary_edit_signals(event, config, context, &mut total, &mut contributions);
 
-    apply_editor_signal(event, &config.weights, &mut total, &mut contributions);
+    apply_context_signals(context, &config.weights, &mut total, &mut contributions);
 
+    total = total.clamp(0, config.max_score);
+
+    Ok(CompositeScore {
+        total,
+        contributions,
+    })
+}
+
+fn apply_primary_edit_signals(
+    event: &EditEvent,
+    config: &ScoringConfig,
+    context: &ScoringContext,
+    total: &mut i32,
+    contributions: &mut Vec<SignalContribution>,
+) {
+    let mut identity_total = 0;
+
+    apply_editor_signal(
+        event,
+        &config.weights,
+        total,
+        contributions,
+        &mut identity_total,
+    );
+    apply_edit_shape_signals(event, &config.weights, total, contributions);
+    apply_trusted_and_revert_signals(
+        event,
+        context,
+        &config.weights,
+        total,
+        contributions,
+        &mut identity_total,
+    );
+    apply_identity_contribution_cap(
+        config.identity_contribution_cap,
+        total,
+        contributions,
+        identity_total,
+    );
+}
+
+fn apply_edit_shape_signals(
+    event: &EditEvent,
+    weights: &ScoreWeights,
+    total: &mut i32,
+    contributions: &mut Vec<SignalContribution>,
+) {
     if event.is_new_page.is_enabled() {
         push_signal(
             ScoringSignal::NewPage,
-            config.weights.new_page,
+            weights.new_page,
             None,
-            &mut total,
-            &mut contributions,
+            total,
+            contributions,
         );
     }
 
     if event.byte_delta <= LARGE_REMOVAL_THRESHOLD {
         push_signal(
             ScoringSignal::LargeContentRemoval,
-            config.weights.large_content_removal,
+            weights.large_content_removal,
             Some(format!("byte delta {}", event.byte_delta)),
-            &mut total,
-            &mut contributions,
+            total,
+            contributions,
         );
     }
 
     if event.is_bot.is_enabled() {
         push_signal(
             ScoringSignal::BotLikeEdit,
-            config.weights.bot_like_edit,
+            weights.bot_like_edit,
             None,
-            &mut total,
-            &mut contributions,
+            total,
+            contributions,
         );
     }
 
     if contains_any(event.comment.as_deref(), &PROFANITY_MARKERS) {
         push_signal(
             ScoringSignal::Profanity,
-            config.weights.profanity,
+            weights.profanity,
             event.comment.clone(),
-            &mut total,
-            &mut contributions,
+            total,
+            contributions,
         );
     }
 
     if contains_any(event.comment.as_deref(), &LINK_MARKERS) {
         push_signal(
             ScoringSignal::LinkSpam,
-            config.weights.link_spam,
+            weights.link_spam,
             event.comment.clone(),
-            &mut total,
-            &mut contributions,
+            total,
+            contributions,
         );
     }
 
+    if let Some(reason) = detect_obvious_vandalism(event) {
+        push_signal(
+            ScoringSignal::ObviousVandalism,
+            weights.obvious_vandalism,
+            Some(reason),
+            total,
+            contributions,
+        );
+    }
+}
+
+fn apply_trusted_and_revert_signals(
+    event: &EditEvent,
+    context: &ScoringContext,
+    weights: &ScoreWeights,
+    total: &mut i32,
+    contributions: &mut Vec<SignalContribution>,
+    identity_total: &mut i32,
+) {
     let trusted_tag_detected = event
         .tags
         .iter()
@@ -120,41 +187,23 @@ pub fn score_edit_with_context(
         };
         push_signal(
             ScoringSignal::TrustedUser,
-            config.weights.trusted_user,
+            weights.trusted_user,
             note,
-            &mut total,
-            &mut contributions,
+            total,
+            contributions,
         );
+        *identity_total = identity_total.saturating_add(weights.trusted_user);
     }
 
     if event.tags.iter().any(|tag| contains_tag(tag, &REVERT_TAGS)) {
         push_signal(
             ScoringSignal::RevertedBefore,
-            config.weights.reverted_before,
+            weights.reverted_before,
             Some("revert-related tag detected".to_string()),
-            &mut total,
-            &mut contributions,
+            total,
+            contributions,
         );
     }
-
-    if let Some(reason) = detect_obvious_vandalism(event) {
-        push_signal(
-            ScoringSignal::ObviousVandalism,
-            config.weights.obvious_vandalism,
-            Some(reason),
-            &mut total,
-            &mut contributions,
-        );
-    }
-
-    apply_context_signals(context, &config.weights, &mut total, &mut contributions);
-
-    total = total.clamp(0, config.max_score);
-
-    Ok(CompositeScore {
-        total,
-        contributions,
-    })
 }
 
 fn apply_context_signals(
@@ -242,6 +291,7 @@ fn apply_editor_signal(
     weights: &ScoreWeights,
     total: &mut i32,
     contributions: &mut Vec<SignalContribution>,
+    identity_total: &mut i32,
 ) {
     if event.performer.is_anonymous() {
         push_signal(
@@ -251,6 +301,7 @@ fn apply_editor_signal(
             total,
             contributions,
         );
+        *identity_total = identity_total.saturating_add(weights.anonymous_user);
     }
 
     if event.performer.is_temporary() {
@@ -261,7 +312,33 @@ fn apply_editor_signal(
             total,
             contributions,
         );
+        *identity_total = identity_total.saturating_add(weights.temporary_account);
     }
+}
+
+fn apply_identity_contribution_cap(
+    cap: Option<i32>,
+    total: &mut i32,
+    contributions: &mut Vec<SignalContribution>,
+    identity_total: i32,
+) {
+    let Some(cap) = cap else {
+        return;
+    };
+    let cap = cap.abs();
+    let bounded = identity_total.clamp(-cap, cap);
+    let adjustment = bounded.saturating_sub(identity_total);
+    if adjustment == 0 {
+        return;
+    }
+
+    push_signal(
+        ScoringSignal::IdentityCapAdjustment,
+        adjustment,
+        Some(format!("identity contribution capped to +/- {cap}")),
+        total,
+        contributions,
+    );
 }
 
 fn push_signal(
@@ -521,6 +598,7 @@ mod tests {
         let config = ScoringConfig {
             base_score: 0,
             max_score: i32::MAX,
+            identity_contribution_cap: None,
             weights: crate::types::ScoreWeights {
                 anonymous_user: i32::MAX,
                 temporary_account: i32::MAX,
@@ -652,6 +730,25 @@ mod tests {
         assert_eq!(warning_weight, Some(-9));
     }
 
+    #[test]
+    fn applies_identity_cap_adjustment() {
+        let event = sample_event();
+        let config = ScoringConfig {
+            identity_contribution_cap: Some(10),
+            ..ScoringConfig::default()
+        };
+
+        let score = score_edit(&event, &config).expect("score should compute");
+
+        assert_eq!(score.total, 50);
+        assert!(
+            score
+                .contributions
+                .iter()
+                .any(|entry| entry.signal == ScoringSignal::IdentityCapAdjustment)
+        );
+    }
+
     proptest! {
         #[test]
         fn property_score_stays_within_config_bounds(
@@ -743,6 +840,7 @@ mod tests {
             let config = ScoringConfig {
                 base_score,
                 max_score,
+                identity_contribution_cap: None,
                 weights: crate::types::ScoreWeights {
                     anonymous_user,
                     temporary_account: 0,

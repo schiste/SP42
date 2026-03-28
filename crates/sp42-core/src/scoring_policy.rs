@@ -176,12 +176,24 @@ pub struct CompiledScoringPolicy {
     pub fairness: FairnessPolicyConfig,
 }
 
+/// Parse, deserialize, and validate a scoring policy document.
+///
+/// # Errors
+///
+/// Returns [`ScoringPolicyError`] if the YAML is invalid or if the decoded
+/// policy fails constitutional validation.
 pub fn parse_scoring_policy(yaml: &str) -> Result<ScoringPolicyDocument, ScoringPolicyError> {
     let document = serde_yaml::from_str::<ScoringPolicyDocument>(yaml)?;
     validate_scoring_policy(&document)?;
     Ok(document)
 }
 
+/// Compile a validated scoring policy into the hot-path runtime structures used
+/// by the scorer.
+///
+/// # Errors
+///
+/// Returns [`ScoringPolicyError`] if the supplied document fails validation.
 pub fn compile_scoring_policy(
     document: &ScoringPolicyDocument,
 ) -> Result<CompiledScoringPolicy, ScoringPolicyError> {
@@ -210,7 +222,10 @@ pub fn compile_scoring_policy(
     let queue_policy = QueueHeuristicPolicy {
         trusted_usernames: Vec::new(),
         duplicate_cluster_boost: FlagState::from(
-            document.rules.get("duplicate_pattern").map_or(true, |rule| rule.enabled),
+            document
+                .rules
+                .get("duplicate_pattern")
+                .is_none_or(|rule| rule.enabled),
         ),
     };
 
@@ -230,6 +245,12 @@ pub fn compile_scoring_policy(
     })
 }
 
+/// Parse, deserialize, and validate a scoring evaluation profile.
+///
+/// # Errors
+///
+/// Returns [`ScoringEvaluationError`] if the YAML is invalid or the decoded
+/// profile fails validation.
 pub fn parse_scoring_evaluation_profile(
     yaml: &str,
 ) -> Result<ScoringEvaluationProfile, ScoringEvaluationError> {
@@ -238,6 +259,13 @@ pub fn parse_scoring_evaluation_profile(
     Ok(profile)
 }
 
+/// Validate a scoring policy document against the constitutional structural
+/// requirements used by the runtime compiler.
+///
+/// # Errors
+///
+/// Returns [`ScoringPolicyError`] when required metadata, queue settings, or
+/// rule definitions are missing or inconsistent.
 pub fn validate_scoring_policy(document: &ScoringPolicyDocument) -> Result<(), ScoringPolicyError> {
     if document.wiki_id.trim().is_empty() {
         return Err(ScoringPolicyError::InvalidField {
@@ -297,6 +325,13 @@ pub fn validate_scoring_policy(document: &ScoringPolicyDocument) -> Result<(), S
     Ok(())
 }
 
+/// Validate a scoring evaluation profile before it is admitted into CI or local
+/// evaluation runs.
+///
+/// # Errors
+///
+/// Returns [`ScoringEvaluationError`] when required gate metadata or performance
+/// budget fields are missing or invalid.
 pub fn validate_scoring_evaluation_profile(
     profile: &ScoringEvaluationProfile,
 ) -> Result<(), ScoringEvaluationError> {

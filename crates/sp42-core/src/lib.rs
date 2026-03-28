@@ -62,6 +62,8 @@ pub mod recent_changes;
 pub mod report_document;
 pub mod review_workbench;
 pub mod scoring_engine;
+pub mod scoring_evaluation;
+pub mod scoring_policy;
 pub mod shell_state;
 pub mod stream_ingestor;
 pub mod stream_runtime;
@@ -105,8 +107,9 @@ pub use diff_engine::{
 pub use errors::{
     ActionError, BacklogRuntimeError, CodecError, ConfigError, CoordinationError, DevAuthError,
     DiffError, EventSourceError, HttpClientError, LiftWingError, OAuthError, PublicDocumentError,
-    RecentChangesError, ReviewWorkbenchError, ScoringError, StorageError, StreamIngestorError,
-    StreamRuntimeError, TrainingDataError, UserAnalysisError, WebSocketError, WikiStorageError,
+    RecentChangesError, ReviewWorkbenchError, ScoringError, ScoringEvaluationError,
+    ScoringPolicyError, StorageError, StreamIngestorError, StreamRuntimeError, TrainingDataError,
+    UserAnalysisError, WebSocketError, WikiStorageError,
 };
 pub use liftwing::{
     LiftWingRequest, build_liftwing_score_request, execute_liftwing_score,
@@ -163,6 +166,21 @@ pub use review_workbench::{
     build_session_action_execution_requests,
 };
 pub use scoring_engine::{score_edit, score_edit_with_context};
+pub use scoring_evaluation::{
+    FairnessFixtureCheck, FairnessFixtureSet, InvariantFixtureRule, InvariantFixtureSet,
+    RankingFixtureComparison, RankingFixtureSet, RegressionFixtureCase, RegressionFixtureSet,
+    parse_fairness_fixture_set, parse_invariant_fixture_set, parse_ranking_fixture_set,
+    parse_regression_fixture_set,
+};
+pub use scoring_policy::{
+    CombinationRulePolicy, CompiledScoringPolicy, EvaluationFairnessProfile,
+    EvaluationFixtureSetPaths, ExternalEvaluationPolicyConfig, ExternalEvaluatorRole,
+    FairnessPolicyConfig, IdentityPolicyConfig, LiftWingPolicyConfig, PolicyLifecycle,
+    QueuePolicyConfig, RulePolicyConfig, ScoringDimensionWeights, ScoringDomain,
+    ScoringEvaluationProfile, ScoringPolicyDocument, compile_scoring_policy,
+    parse_scoring_evaluation_profile, parse_scoring_policy, validate_scoring_evaluation_profile,
+    validate_scoring_policy,
+};
 pub use shell_state::{
     ShellPanelSummary, ShellStateInputs, ShellStateModel, ShellTimelineEntry, ShellTimelineStage,
     build_shell_state_model, render_shell_state_markdown, render_shell_state_text,

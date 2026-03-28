@@ -143,6 +143,7 @@ impl Default for ScoreWeights {
 pub struct ScoringConfig {
     pub base_score: i32,
     pub max_score: i32,
+    pub identity_contribution_cap: Option<i32>,
     pub weights: ScoreWeights,
 }
 
@@ -151,6 +152,7 @@ impl Default for ScoringConfig {
         Self {
             base_score: 0,
             max_score: 100,
+            identity_contribution_cap: None,
             weights: ScoreWeights::default(),
         }
     }
@@ -171,6 +173,7 @@ pub enum ScoringSignal {
     WarningHistory,
     ObviousVandalism,
     DuplicatePattern,
+    IdentityCapAdjustment,
 }
 
 impl std::fmt::Display for ScoringSignal {
@@ -189,6 +192,7 @@ impl std::fmt::Display for ScoringSignal {
             Self::WarningHistory => "Warning history",
             Self::ObviousVandalism => "Obvious vandalism",
             Self::DuplicatePattern => "Duplicate pattern",
+            Self::IdentityCapAdjustment => "Identity cap adjustment",
         })
     }
 }

@@ -27,6 +27,30 @@ pub enum ScoringError {
 }
 
 #[derive(Debug, Error)]
+pub enum ScoringPolicyError {
+    #[error("scoring policy is not valid YAML: {0}")]
+    InvalidYaml(#[from] serde_yaml::Error),
+    #[error("scoring policy field `{field}` is invalid: {message}")]
+    InvalidField {
+        field: &'static str,
+        message: String,
+    },
+    #[error("scoring policy is missing required rule `{rule}`")]
+    MissingRule { rule: &'static str },
+}
+
+#[derive(Debug, Error)]
+pub enum ScoringEvaluationError {
+    #[error("scoring evaluation profile is not valid YAML: {0}")]
+    InvalidYaml(#[from] serde_yaml::Error),
+    #[error("scoring evaluation field `{field}` is invalid: {message}")]
+    InvalidField {
+        field: &'static str,
+        message: String,
+    },
+}
+
+#[derive(Debug, Error)]
 pub enum RecentChangesError {
     #[error("recentchanges request is invalid: {message}")]
     InvalidRequest { message: String },

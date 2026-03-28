@@ -807,6 +807,7 @@ mod tests {
             rev_id: 123_456,
             title: Some("Example".to_string()),
             target_user: Some("ExampleUser".to_string()),
+            selected_text: None,
             undo_after_rev_id: None,
             summary: Some("test note".to_string()),
         };

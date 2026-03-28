@@ -288,7 +288,45 @@ pub fn PatrolSurface() -> impl IntoView {
                     }
                 }
                 Err(error) => {
-                    set_action_status.set(format!("Action error: {error}"));
+                    if error.contains("401") || error.contains("No authenticated") {
+                        // Session expired — try to re-bootstrap
+                        set_action_status.set("Session expired, re-authenticating...".to_string());
+                        let bootstrap_request = sp42_core::DevAuthBootstrapRequest {
+                            username: String::new(),
+                            scopes: Vec::new(),
+                            expires_at_ms: None,
+                        };
+                        if bootstrap_dev_auth_session(&bootstrap_request).await.is_ok() {
+                            // Retry the action once
+                            match execute_dev_auth_action(&request).await {
+                                Ok(response) if response.accepted => {
+                                    set_action_status.set(format!(
+                                        "{} accepted for rev {} (re-authenticated)",
+                                        kind.label(), edit.event.rev_id
+                                    ));
+                                    let mut q = all_edits.get_untracked();
+                                    if let Some(pos) = q.iter().position(|e| e.event.rev_id == edit.event.rev_id) {
+                                        q.remove(pos);
+                                        set_all_edits.set(q);
+                                    }
+                                    set_review_note.set(String::new());
+                                }
+                                Ok(response) => {
+                                    set_action_status.set(format!(
+                                        "{} rejected: {}",
+                                        kind.label(), response.message.unwrap_or_default()
+                                    ));
+                                }
+                                Err(retry_error) => {
+                                    set_action_status.set(format!("Retry failed: {retry_error}"));
+                                }
+                            }
+                        } else {
+                            set_action_status.set("Re-authentication failed. Reload the page.".to_string());
+                        }
+                    } else {
+                        set_action_status.set(format!("Action error: {error}"));
+                    }
                 }
             }
 

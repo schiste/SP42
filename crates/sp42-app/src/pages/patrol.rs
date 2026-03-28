@@ -5,7 +5,7 @@ use sp42_core::{LiveOperatorView, SessionActionExecutionRequest, SessionActionKi
 
 use crate::components::action_bar::ActionBar;
 use crate::components::context_header::ContextHeader;
-use crate::components::diff_viewer::DiffViewer;
+use crate::components::diff_viewer::{DiffViewer, TagAction};
 use crate::components::filter_bar::{FilterBar, PatrolFilterParams};
 use crate::components::queue_column::QueueColumn;
 use crate::components::{PatrolScenarioPanel, PatrolSessionDigestPanel, ShellStatePanel};
@@ -66,6 +66,8 @@ pub fn PatrolSurface() -> impl IntoView {
     let (current_diff, set_current_diff) = signal(None::<StructuredDiff>);
     let (diff_cache, set_diff_cache) = signal(HashMap::<u64, StructuredDiff>::new());
     let (all_edits, set_all_edits) = signal(Vec::<sp42_core::QueuedEdit>::new());
+
+    let (tag_action, set_tag_action) = signal(None::<TagAction>);
 
     // Derived filtered queue — re-computes instantly when filters or all_edits change
     let queue_signal = Memo::new(move |_| {
@@ -253,6 +255,7 @@ pub fn PatrolSurface() -> impl IntoView {
                         Some(format!("SP42: {note}"))
                     }
                 },
+                selected_text: None,
             };
 
             match execute_dev_auth_action(&request).await {
@@ -389,6 +392,64 @@ pub fn PatrolSurface() -> impl IntoView {
             }
         }
         idx
+    });
+
+    // Handle citation needed from context menu
+    Effect::new(move |_| {
+        let Some(action) = tag_action.get() else {
+            return;
+        };
+        set_tag_action.set(None);
+
+        let queue = queue_signal.get_untracked();
+        let idx = selected_index.get_untracked();
+        let Some(edit) = queue.get(idx) else { return };
+
+        let request = SessionActionExecutionRequest {
+            wiki_id: edit.event.wiki_id.clone(),
+            kind: SessionActionKind::TagCitationNeeded,
+            rev_id: edit.event.rev_id,
+            title: Some(edit.event.title.clone()),
+            target_user: None,
+            undo_after_rev_id: None,
+            summary: Some("SP42: added {{refnec}}".to_string()),
+            selected_text: Some(action.text),
+        };
+
+        set_action_status.set("Adding citation needed...".to_string());
+        wasm_bindgen_futures::spawn_local(async move {
+            match execute_dev_auth_action(&request).await {
+                Ok(response) if response.accepted => {
+                    set_action_status
+                        .set(format!("Citation needed added for rev {}", request.rev_id));
+                    // Invalidate the diff cache for this rev
+                    let mut c = diff_cache.get_untracked();
+                    c.remove(&request.rev_id);
+                    set_diff_cache.set(c);
+                    set_diff_loading.set(true);
+                    // Re-fetch diff to show the template
+                    let edit_data = queue_signal.get_untracked();
+                    if let Some(item) = edit_data.get(selected_index.get_untracked()) {
+                        let old = item.event.old_rev_id.unwrap_or(0);
+                        if let Ok(Some(diff)) =
+                            fetch_diff(&item.event.wiki_id, item.event.rev_id, old).await
+                        {
+                            set_current_diff.set(Some(diff));
+                        }
+                    }
+                    set_diff_loading.set(false);
+                }
+                Ok(response) => {
+                    set_action_status.set(format!(
+                        "Citation needed rejected: {}",
+                        response.message.unwrap_or_default()
+                    ));
+                }
+                Err(error) => {
+                    set_action_status.set(format!("Citation error: {error}"));
+                }
+            }
+        });
     });
 
     Effect::new(move |_| {
@@ -788,7 +849,7 @@ pub fn PatrolSurface() -> impl IntoView {
                                         </div>
                                     }.into_any()
                                 } else {
-                                    view! { <DiffViewer diff=current_diff.get() /> }.into_any()
+                                    view! { <DiffViewer diff=current_diff.get() on_tag=set_tag_action /> }.into_any()
                                 }
                             }}
                         </div>

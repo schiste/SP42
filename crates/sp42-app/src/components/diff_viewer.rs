@@ -225,10 +225,14 @@ fn render_segment_data(
             // Try to get selected text, fall back to full segment text
             #[cfg(target_arch = "wasm32")]
             {
+                use wasm_bindgen::JsCast;
                 let selection = web_sys::window()
-                    .and_then(|w| w.get_selection().ok().flatten())
-                    .and_then(|s| {
-                        let text = s.to_string().as_string().unwrap_or_default();
+                    .and_then(|w| {
+                        let f = js_sys::Reflect::get(&w, &"getSelection".into()).ok()?;
+                        let f = f.dyn_into::<js_sys::Function>().ok()?;
+                        let sel = f.call0(&w).ok()?;
+                        let text = sel.as_string()
+                            .or_else(|| sel.dyn_ref::<js_sys::Object>().map(|o| o.to_string().as_string().unwrap_or_default()))?;
                         if text.trim().is_empty() { None } else { Some(text) }
                     })
                     .unwrap_or_else(|| menu_text.trim().to_string());

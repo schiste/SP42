@@ -14,7 +14,7 @@ namespace_allowlist:
   - 10
   - 14
 templates:
-  citation_needed: "refnec"
+  citation_needed: "Référence nécessaire"
 scoring:
   base_score: 0
   max_score: 100

@@ -329,7 +329,7 @@ impl Default for WikiTemplates {
 }
 
 fn default_citation_needed() -> String {
-    "refnec".to_string()
+    "Référence nécessaire".to_string()
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

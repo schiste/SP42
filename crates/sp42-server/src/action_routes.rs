@@ -301,12 +301,20 @@ async fn execute_session_action(
                 });
             }
             let template = &config.templates.citation_needed;
+            let date = current_french_date();
 
             // Fetch current page wikitext
             let page_text = crate::fetch_page_wikitext(client, config, &title).await?;
 
-            // Insert {{template}} after the selected text
-            let tagged = format!("{selected_text}{{{{{template}}}}}");
+            // Wrap the selected text with the full template syntax:
+            // {{Référence nécessaire|selected text|date=mars 2026}}
+            // Use named param 1= if text contains '='
+            let text_param = if selected_text.contains('=') {
+                format!("1={selected_text}")
+            } else {
+                selected_text.clone()
+            };
+            let tagged = format!("{{{{{template}|{text_param}|date={date}}}}}");
             let updated_text = page_text.replacen(&selected_text, &tagged, 1);
             if updated_text == page_text {
                 return Err(ActionError::Execution {
@@ -319,7 +327,7 @@ async fn execute_session_action(
             let summary = payload
                 .summary
                 .clone()
-                .unwrap_or_else(|| format!("SP42: added {{{{{template}}}}}"));
+                .unwrap_or_else(|| format!("SP42: {{{{{template}|date={date}}}}}"));
             let save_response = execute_wiki_page_save(
                 client,
                 config,
@@ -390,6 +398,55 @@ struct ActionLogOutcome {
     result: Option<String>,
     response_preview: Option<String>,
     error: Option<String>,
+}
+
+/// Current month and year in French for template date parameters.
+fn current_french_date() -> String {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let secs = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    let days = secs / 86400;
+    // Approximate year/month from epoch days
+    let mut y = 1970i32;
+    let mut remaining = days as i32;
+    loop {
+        let days_in_year = if y % 4 == 0 && (y % 100 != 0 || y % 400 == 0) { 366 } else { 365 };
+        if remaining < days_in_year {
+            break;
+        }
+        remaining -= days_in_year;
+        y += 1;
+    }
+    let months_days = if y % 4 == 0 && (y % 100 != 0 || y % 400 == 0) {
+        [31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
+    } else {
+        [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
+    };
+    let mut m = 0usize;
+    for (i, &d) in months_days.iter().enumerate() {
+        if remaining < d {
+            m = i;
+            break;
+        }
+        remaining -= d;
+    }
+    let month_name = match m {
+        0 => "janvier",
+        1 => "février",
+        2 => "mars",
+        3 => "avril",
+        4 => "mai",
+        5 => "juin",
+        6 => "juillet",
+        7 => "août",
+        8 => "septembre",
+        9 => "octobre",
+        10 => "novembre",
+        _ => "décembre",
+    };
+    format!("{month_name} {y}")
 }
 
 struct ActionHistoryStats {

@@ -76,12 +76,13 @@ pub fn PatrolSurface() -> impl IntoView {
     let (all_edits, set_all_edits) = signal(Vec::<sp42_core::QueuedEdit>::new());
 
     let (tag_action, set_tag_action) = signal(None::<TagAction>);
+    let (group_rev_ids, set_group_rev_ids) = signal(HashMap::<u64, Vec<u64>>::new());
 
-    // Derived filtered queue — re-computes instantly when filters or all_edits change
-    let queue_signal = Memo::new(move |_| {
+    // Derived filtered + optionally grouped queue
+    let queue_signal = Memo::new(move |_: Option<&Vec<sp42_core::QueuedEdit>>| {
         let edits = all_edits.get();
         let f = filters.get();
-        edits
+        let filtered: Vec<_> = edits
             .into_iter()
             .filter(|item| {
                 if f.unpatrolled_only && item.event.is_patrolled.is_enabled() {
@@ -125,8 +126,50 @@ pub fn PatrolSurface() -> impl IntoView {
                 }
                 true
             })
-            .take(f.limit as usize)
-            .collect::<Vec<_>>()
+            .collect();
+
+        if !f.group_edits {
+            set_group_rev_ids.set(HashMap::new());
+            return filtered.into_iter().take(f.limit as usize).collect();
+        }
+
+        // Group by (title, performer label)
+        let mut groups: Vec<(String, Vec<sp42_core::QueuedEdit>)> = Vec::new();
+        for item in filtered {
+            let key = format!("{}|{}", item.event.title, performer_key(&item.event.performer));
+            if let Some(group) = groups.iter_mut().find(|(k, _)| k == &key) {
+                group.1.push(item);
+            } else {
+                groups.push((key, vec![item]));
+            }
+        }
+
+        let mut grouped = Vec::new();
+        let mut rev_map = HashMap::new();
+        for (_key, mut members) in groups {
+            if members.len() == 1 {
+                grouped.push(members.remove(0));
+            } else {
+                // Sort by rev_id to find oldest→newest
+                members.sort_by_key(|e| e.event.rev_id);
+                let all_revs: Vec<u64> = members.iter().map(|e| e.event.rev_id).collect();
+                let oldest_old = members.first().and_then(|e| e.event.old_rev_id);
+                let newest = members.last().expect("non-empty group");
+                let max_score = members.iter().map(|e| e.score.total).max().unwrap_or(0);
+                let total_delta: i32 = members.iter().map(|e| e.event.byte_delta).sum();
+
+                let mut merged = newest.clone();
+                merged.event.old_rev_id = oldest_old;
+                merged.event.byte_delta = total_delta;
+                merged.score.total = max_score;
+
+                rev_map.insert(merged.event.rev_id, all_revs);
+                grouped.push(merged);
+            }
+        }
+
+        set_group_rev_ids.set(rev_map);
+        grouped.into_iter().take(f.limit as usize).collect()
     });
     // Derive the selected index from rev_id — stable across queue reorders
     let selected_index = Memo::new(move |_| {
@@ -299,13 +342,19 @@ pub fn PatrolSurface() -> impl IntoView {
                     }
                 },
                 selected_text: None,
+                batch_rev_ids: {
+                    let groups = group_rev_ids.get_untracked();
+                    groups.get(&edit.event.rev_id).cloned()
+                },
             };
 
+            let batch_count = request.batch_rev_ids.as_ref().map_or(1, Vec::len);
             console::info(&format!(
-                "[SP42] action {} on rev {} title={:?}",
+                "[SP42] action {} on rev {} title={:?} (batch={})",
                 kind.label(),
                 edit.event.rev_id,
-                edit.event.title
+                edit.event.title,
+                batch_count
             ));
             match execute_dev_auth_action(&request).await {
                 Ok(response) => {
@@ -331,9 +380,14 @@ pub fn PatrolSurface() -> impl IntoView {
                             })
                             .map(|e| e.event.rev_id);
 
-                        // Remove the acted-on edit
+                        // Remove the acted-on edit (and all group members if batch)
+                        let groups = group_rev_ids.get_untracked();
+                        let revs_to_remove: Vec<u64> = groups
+                            .get(&acted_rev)
+                            .cloned()
+                            .unwrap_or_else(|| vec![acted_rev]);
                         let mut edits = all_edits.get_untracked();
-                        edits.retain(|e| e.event.rev_id != acted_rev);
+                        edits.retain(|e| !revs_to_remove.contains(&e.event.rev_id));
                         set_all_edits.set(edits);
                         set_selected_rev_id.set(next_rev);
                         console::debug(&format!(
@@ -560,6 +614,7 @@ pub fn PatrolSurface() -> impl IntoView {
             undo_after_rev_id: None,
             summary: Some("SP42: added {{refnec}}".to_string()),
             selected_text: Some(action.text),
+            batch_rev_ids: None,
         };
 
         set_action_status.set("Adding citation needed...".to_string());
@@ -959,6 +1014,11 @@ pub fn PatrolSurface() -> impl IntoView {
                                     queue=queue
                                     selected_rev_id=Signal::derive(move || selected_rev_id.get())
                                     set_selected_rev_id=set_selected_rev_id
+                                    group_counts=group_rev_ids
+                                        .get_untracked()
+                                        .iter()
+                                        .map(|(k, v)| (*k, v.len()))
+                                        .collect()
                                 />
                             }
                                 .into_any()
@@ -1159,5 +1219,13 @@ fn stream_event_to_queued_edit(event: &StreamEvent) -> sp42_core::QueuedEdit {
             total: score,
             contributions,
         },
+    }
+}
+
+fn performer_key(performer: &sp42_core::EditorIdentity) -> String {
+    match performer {
+        sp42_core::EditorIdentity::Registered { username } => username.clone(),
+        sp42_core::EditorIdentity::Anonymous { label } => label.clone(),
+        sp42_core::EditorIdentity::Temporary { label } => label.clone(),
     }
 }

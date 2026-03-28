@@ -16,6 +16,7 @@ pub struct PatrolFilterParams {
     pub tag_filter: Option<String>,
     pub rccontinue: Option<String>,
     pub selected_index: Option<usize>,
+    pub group_edits: bool,
 }
 
 impl Default for PatrolFilterParams {
@@ -34,6 +35,7 @@ impl Default for PatrolFilterParams {
             tag_filter: None,
             rccontinue: None,
             selected_index: None,
+            group_edits: false,
         }
     }
 }
@@ -260,6 +262,19 @@ pub fn FilterBar(
                 "Hide new pages"
             </label>
 
+            <label class=label_class>
+                <input
+                    type="checkbox"
+                    class=checkbox_class
+                    prop:checked=move || filters.get().group_edits
+                    on:change=move |ev| {
+                        let checked = event_target_checked(&ev);
+                        update_filter!(move |f| f.group_edits = checked);
+                    }
+                />
+                "Group edits"
+            </label>
+
             <span class="filter-separator">"|"</span>
 
             <label class=label_class>
@@ -432,6 +447,7 @@ mod tests {
             tag_filter: Some("mw-reverted".to_string()),
             rccontinue: Some("20260325|abc".to_string()),
             selected_index: Some(3),
+            group_edits: false,
         };
         let qs = params.to_query_string();
         assert!(qs.contains("limit=50"));

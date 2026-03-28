@@ -220,6 +220,15 @@ body {
   color: var(--muted);
 }
 
+.queue-group-count {
+  padding: 1px 5px;
+  border-radius: 3px;
+  background: rgba(143, 183, 255, 0.18);
+  color: var(--accent);
+  font-weight: 700;
+  font-size: 9px;
+}
+
 .context-sidebar {
   overflow-y: auto;
   min-height: 0;
@@ -362,6 +371,11 @@ body {
 }
 
 /* ─── Context header (replaces right sidebar) ─── */
+.context-header-shell {
+  display: grid;
+  min-height: 0;
+}
+
 .context-header {
   display: flex;
   align-items: center;
@@ -373,6 +387,28 @@ body {
   color: var(--muted);
   min-height: 28px;
   flex-wrap: wrap;
+}
+
+.context-score-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  font: inherit;
+}
+
+.context-score-button:hover .context-score,
+.context-score-button:focus-visible .context-score {
+  text-decoration: underline;
+}
+
+.context-score-button:focus-visible {
+  outline: none;
+  box-shadow: var(--ring);
+  border-radius: var(--radius-sm);
 }
 
 .context-score {
@@ -402,6 +438,67 @@ body {
 
 .context-link:hover {
   text-decoration: underline;
+}
+
+.score-details-panel {
+  display: grid;
+  gap: 10px;
+  padding: 10px;
+  background: var(--panel-inner);
+  border-block-end: 1px solid var(--border);
+}
+
+.score-details-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+}
+
+.score-details-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 8px;
+}
+
+.score-details-item {
+  padding: 8px 10px;
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-sm);
+  background: var(--panel-deep);
+}
+
+.score-details-line {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  font-size: 12px;
+}
+
+.score-details-signal {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.score-details-weight {
+  font-family: var(--mono);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.score-details-note {
+  margin-top: 4px;
+  font-size: 11px;
+  line-height: 1.45;
+  color: var(--muted);
 }
 
 /* ─── Score display ─── */

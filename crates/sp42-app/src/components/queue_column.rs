@@ -8,6 +8,7 @@ pub fn QueueColumn(
     queue: Vec<QueuedEdit>,
     selected_rev_id: Signal<Option<u64>>,
     set_selected_rev_id: WriteSignal<Option<u64>>,
+    group_counts: std::collections::HashMap<u64, usize>,
 ) -> impl IntoView {
     let count = queue.len();
     view! {
@@ -43,6 +44,7 @@ pub fn QueueColumn(
                         let delta_color = if delta > 0 { "var(--success)" } else if delta < 0 { "var(--danger)" } else { "var(--muted)" };
 
                         let rev_id = item.event.rev_id;
+                        let group_count = group_counts.get(&rev_id).copied().unwrap_or(1);
                         view! {
                             <button
                                 class="queue-item"
@@ -67,6 +69,15 @@ pub fn QueueColumn(
                                     <span style=format!("color:{delta_color};")>{delta_str}</span>
                                     {if is_patrolled {
                                         view! { <span class="text-success">"P"</span> }.into_any()
+                                    } else {
+                                        view! { <span></span> }.into_any()
+                                    }}
+                                    {if group_count > 1 {
+                                        view! {
+                                            <span class="queue-group-count">
+                                                {format!("{group_count} edits")}
+                                            </span>
+                                        }.into_any()
                                     } else {
                                         view! { <span></span> }.into_any()
                                     }}

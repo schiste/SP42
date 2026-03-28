@@ -108,6 +108,8 @@ pub struct SessionActionExecutionRequest {
     pub summary: Option<String>,
     #[serde(default)]
     pub selected_text: Option<String>,
+    #[serde(default)]
+    pub batch_rev_ids: Option<Vec<u64>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -810,6 +812,7 @@ mod tests {
             selected_text: None,
             undo_after_rev_id: None,
             summary: Some("test note".to_string()),
+            batch_rev_ids: None,
         };
         let response = SessionActionExecutionResponse {
             wiki_id: "frwiki".to_string(),

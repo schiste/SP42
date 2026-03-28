@@ -255,15 +255,31 @@ async fn execute_session_action(
         }
         SessionActionKind::Patrol => {
             let token = execute_fetch_token(client, config, TokenKind::Patrol).await?;
-            execute_patrol(
+            let rev_ids = payload
+                .batch_rev_ids
+                .clone()
+                .unwrap_or_else(|| vec![payload.rev_id]);
+            let mut response = execute_patrol(
                 client,
                 config,
                 &PatrolRequest {
-                    rev_id: payload.rev_id,
-                    token,
+                    rev_id: rev_ids[0],
+                    token: token.clone(),
                 },
             )
-            .await
+            .await?;
+            for rid in rev_ids.iter().skip(1) {
+                response = execute_patrol(
+                    client,
+                    config,
+                    &PatrolRequest {
+                        rev_id: *rid,
+                        token: token.clone(),
+                    },
+                )
+                .await?;
+            }
+            Ok(response)
         }
         SessionActionKind::Undo => {
             let token = execute_fetch_token(client, config, TokenKind::Csrf).await?;

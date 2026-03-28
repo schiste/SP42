@@ -288,7 +288,9 @@ pub fn PatrolSurface() -> impl IntoView {
 
             console::info(&format!(
                 "[SP42] action {} on rev {} title={:?}",
-                kind.label(), edit.event.rev_id, edit.event.title
+                kind.label(),
+                edit.event.rev_id,
+                edit.event.title
             ));
             match execute_dev_auth_action(&request).await {
                 Ok(response) => {
@@ -298,16 +300,30 @@ pub fn PatrolSurface() -> impl IntoView {
                             kind.label(),
                             edit.event.rev_id
                         ));
-                        // Remove the acted-on edit and select the next one
-                        let mut edits = all_edits.get_untracked();
-                        edits.retain(|e| e.event.rev_id != edit.event.rev_id);
-                        set_all_edits.set(edits);
-                        let queue = queue_signal.get_untracked();
-                        let next_rev = queue
-                            .get(idx)
-                            .or_else(|| queue.last())
+                        // Figure out the next edit before removing
+                        let current_queue = queue_signal.get_untracked();
+                        let acted_rev = edit.event.rev_id;
+                        let next_rev = current_queue
+                            .iter()
+                            .skip_while(|e| e.event.rev_id != acted_rev)
+                            .nth(1)
+                            .or_else(|| {
+                                current_queue
+                                    .iter()
+                                    .rev()
+                                    .skip_while(|e| e.event.rev_id != acted_rev)
+                                    .nth(1)
+                            })
                             .map(|e| e.event.rev_id);
+
+                        // Remove the acted-on edit
+                        let mut edits = all_edits.get_untracked();
+                        edits.retain(|e| e.event.rev_id != acted_rev);
+                        set_all_edits.set(edits);
                         set_selected_rev_id.set(next_rev);
+                        console::debug(&format!(
+                            "[SP42] removed rev {acted_rev}, next → {next_rev:?}"
+                        ));
                         set_review_note.set(String::new());
                         // Re-fetch to get fresh diff for the new selection
                         set_selection_only_refetch.set(true);
@@ -394,7 +410,8 @@ pub fn PatrolSurface() -> impl IntoView {
             let first_rev = queue.first().map(|e| e.event.rev_id);
             console::info(&format!(
                 "[SP42] filters changed → {} visible edits, selecting rev {:?}",
-                queue.len(), first_rev
+                queue.len(),
+                first_rev
             ));
             set_selected_rev_id.set(first_rev);
         }
@@ -420,7 +437,10 @@ pub fn PatrolSurface() -> impl IntoView {
 
         let cache = diff_cache.get_untracked();
         if let Some(diff) = cache.get(&rev_id) {
-            console::debug(&format!("[SP42] diff cache HIT rev {rev_id} ({} segments)", diff.segments.len()));
+            console::debug(&format!(
+                "[SP42] diff cache HIT rev {rev_id} ({} segments)",
+                diff.segments.len()
+            ));
             set_current_diff.set(Some(diff.clone()));
             return current_rev;
         }

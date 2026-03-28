@@ -1,5 +1,7 @@
+use std::collections::HashMap;
+
 use leptos::prelude::*;
-use sp42_core::{LiveOperatorView, SessionActionExecutionRequest, SessionActionKind};
+use sp42_core::{LiveOperatorView, SessionActionExecutionRequest, SessionActionKind, StructuredDiff};
 
 use crate::components::action_bar::ActionBar;
 use crate::components::context_header::ContextHeader;
@@ -9,7 +11,7 @@ use crate::components::queue_column::QueueColumn;
 use crate::components::{PatrolScenarioPanel, PatrolSessionDigestPanel, ShellStatePanel};
 use crate::platform::auth::{bootstrap_dev_auth_session, execute_dev_auth_action};
 use crate::platform::eventstream::{StreamEvent, start_eventstream};
-use crate::platform::live::fetch_live_operator_view;
+use crate::platform::live::{fetch_diff, fetch_live_operator_view};
 
 /// Read `rev=N` from the URL hash fragment.
 fn rev_id_from_hash() -> Option<u64> {
@@ -61,6 +63,9 @@ pub fn PatrolSurface() -> impl IntoView {
     let (show_help, set_show_help) = signal(false);
     let (show_backoffice, set_show_backoffice) = signal(false);
     let (diff_loading, set_diff_loading) = signal(false);
+    let (current_diff, set_current_diff) = signal(None::<StructuredDiff>);
+    let (diff_cache, set_diff_cache) = signal(HashMap::<u64, StructuredDiff>::new());
+    let (queue_signal, set_queue_signal) = signal(Vec::<sp42_core::QueuedEdit>::new());
     let (selection_only_refetch, set_selection_only_refetch) = signal(false);
     let (bootstrap_attempted, set_bootstrap_attempted) = signal(false);
     let (bootstrap_error, set_bootstrap_error) = signal(None::<String>);
@@ -111,29 +116,48 @@ pub fn PatrolSurface() -> impl IntoView {
                     }
                     set_load_error.set(None);
                     set_next_continue.set(view.next_continue.clone());
-                    // On selection-only re-fetches, keep the existing queue
-                    // so items don't jump around; only update diff/context.
-                    if selection_only_refetch.get_untracked() {
-                        set_selection_only_refetch.set(false);
-                        if let Some(mut existing) = view_data.get_untracked() {
-                            existing.diff = view.diff;
-                            existing.scoring_context = view.scoring_context;
-                            existing.review_workbench = view.review_workbench;
-                            existing.action_preflight = view.action_preflight;
-                            existing.selected_index = view.selected_index;
-                            set_view_data.set(Some(existing));
-                        } else {
-                            set_view_data.set(Some(view));
+                    // Cache the initial diff from the server response
+                    if let (Some(diff), Some(sel_idx)) = (&view.diff, view.selected_index) {
+                        if let Some(edit) = view.queue.get(sel_idx) {
+                            let mut c = diff_cache.get_untracked();
+                            c.insert(edit.event.rev_id, diff.clone());
+                            set_diff_cache.set(c);
                         }
-                    } else {
-                        // On initial load, select the edit from the URL hash if present
+                    }
+                    if let Some(ref diff) = view.diff {
+                        set_current_diff.set(Some(diff.clone()));
+                    }
+                    // On initial load, select the edit from the URL hash if present
+                    if !selection_only_refetch.get_untracked() {
                         if let Some(target_rev) = rev_id_from_hash() {
                             if let Some(idx) = view.queue.iter().position(|q| q.event.rev_id == target_rev) {
                                 set_selected_index.set(idx);
                             }
                         }
-                        set_view_data.set(Some(view));
+                        set_queue_signal.set(view.queue.clone());
                     }
+                    set_selection_only_refetch.set(false);
+                    // Prefetch diffs for all queue items in the background
+                    let prefetch_queue = view.queue.clone();
+                    let prefetch_wiki = view.wiki_id.clone();
+                    wasm_bindgen_futures::spawn_local(async move {
+                        for item in &prefetch_queue {
+                            let rev_id = item.event.rev_id;
+                            if diff_cache.get_untracked().contains_key(&rev_id) {
+                                continue;
+                            }
+                            let old_rev_id = item.event.old_rev_id.unwrap_or(0);
+                            if old_rev_id == 0 {
+                                continue;
+                            }
+                            if let Ok(Some(diff)) = fetch_diff(&prefetch_wiki, rev_id, old_rev_id).await {
+                                let mut c = diff_cache.get_untracked();
+                                c.insert(rev_id, diff);
+                                set_diff_cache.set(c);
+                            }
+                        }
+                    });
+                    set_view_data.set(Some(view));
                     set_diff_loading.set(false);
                 }
                 Err(error) => {
@@ -187,19 +211,18 @@ pub fn PatrolSurface() -> impl IntoView {
                             kind.label(),
                             edit.event.rev_id
                         ));
-                        // Remove the acted-on edit from the local queue
-                        if let Some(mut current_view) = view_data.get_untracked() {
-                            if idx < current_view.queue.len() {
-                                current_view.queue.remove(idx);
-                            }
-                            let new_idx = if idx >= current_view.queue.len() && !current_view.queue.is_empty() {
-                                current_view.queue.len() - 1
-                            } else {
-                                idx
-                            };
-                            set_view_data.set(Some(current_view));
-                            set_selected_index.set(new_idx);
+                        // Remove the acted-on edit from the queue
+                        let mut q = queue_signal.get_untracked();
+                        if idx < q.len() {
+                            q.remove(idx);
                         }
+                        let new_idx = if idx >= q.len() && !q.is_empty() {
+                            q.len() - 1
+                        } else {
+                            idx
+                        };
+                        set_queue_signal.set(q);
+                        set_selected_index.set(new_idx);
                         set_review_note.set(String::new());
                         // Re-fetch to get fresh diff for the new selection
                         set_selection_only_refetch.set(true);
@@ -231,20 +254,39 @@ pub fn PatrolSurface() -> impl IntoView {
         load_action.dispatch_local(());
     });
 
-    // Re-fetch when the user selects a different edit so the diff updates.
-    // Also update the URL hash so the edit is shareable.
+    // When selection changes, look up diff from cache or fetch it.
     Effect::new(move |prev: Option<usize>| {
         let idx = selected_index.get();
-        if let Some(v) = view_data.get_untracked() {
-            if let Some(edit) = v.queue.get(idx) {
-                set_hash_rev(edit.event.rev_id);
-            }
-        }
-        if let Some(prev_idx) = prev {
-            if prev_idx != idx {
-                set_diff_loading.set(true);
-                set_selection_only_refetch.set(true);
-                load_action.dispatch_local(());
+        let queue = queue_signal.get_untracked();
+        if let Some(edit) = queue.get(idx) {
+            set_hash_rev(edit.event.rev_id);
+            let rev_id = edit.event.rev_id;
+            let cache = diff_cache.get_untracked();
+            if let Some(diff) = cache.get(&rev_id) {
+                set_current_diff.set(Some(diff.clone()));
+            } else if let Some(prev_idx) = prev {
+                if prev_idx != idx {
+                    set_diff_loading.set(true);
+                    set_current_diff.set(None);
+                    let old_rev_id = edit.event.old_rev_id.unwrap_or(0);
+                    let wiki_id = edit.event.wiki_id.clone();
+                    wasm_bindgen_futures::spawn_local(async move {
+                        match fetch_diff(&wiki_id, rev_id, old_rev_id).await {
+                            Ok(diff) => {
+                                if let Some(ref d) = diff {
+                                    let mut c = diff_cache.get_untracked();
+                                    c.insert(rev_id, d.clone());
+                                    set_diff_cache.set(c);
+                                }
+                                set_current_diff.set(diff);
+                            }
+                            Err(_) => {
+                                set_current_diff.set(None);
+                            }
+                        }
+                        set_diff_loading.set(false);
+                    });
+                }
             }
         }
         idx
@@ -286,21 +328,20 @@ pub fn PatrolSurface() -> impl IntoView {
 
         let queued = stream_event_to_queued_edit(&event);
 
-        // Don't add duplicates
-        if let Some(mut current_view) = view_data.get_untracked() {
-            if current_view.queue.iter().any(|q| q.event.rev_id == queued.event.rev_id) {
-                return;
-            }
-            current_view.queue.insert(0, queued);
-            // Cap queue size
-            if current_view.queue.len() > 50 {
-                current_view.queue.truncate(50);
-            }
-            set_view_data.set(Some(current_view));
-            // Shift selected index to keep the same item selected
-            let idx = selected_index.get_untracked();
-            set_selected_index.set(idx + 1);
+        // Only insert into the queue signal — don't touch view_data
+        // so the diff/context don't re-render
+        let mut q = queue_signal.get_untracked();
+        if q.iter().any(|existing| existing.event.rev_id == queued.event.rev_id) {
+            return;
         }
+        q.insert(0, queued);
+        if q.len() > 50 {
+            q.truncate(50);
+        }
+        // Shift selected index so the current item stays selected
+        let idx = selected_index.get_untracked();
+        set_selected_index.set(idx + 1);
+        set_queue_signal.set(q);
     });
 
     let on_keydown = move |event: leptos::ev::KeyboardEvent| {
@@ -608,10 +649,11 @@ pub fn PatrolSurface() -> impl IntoView {
                     />
 
                     {move || {
-                        if let Some(view) = view_data.get() {
+                        let queue = queue_signal.get();
+                        if !queue.is_empty() {
                             view! {
                                 <QueueColumn
-                                    queue=view.queue.clone()
+                                    queue=queue
                                     selected_index=selected_index
                                     set_selected_index=set_selected_index
                                 />
@@ -644,10 +686,9 @@ pub fn PatrolSurface() -> impl IntoView {
 
                     <div style="grid-area:main;min-width:0;min-height:0;display:grid;grid-template-rows:auto 1fr;overflow:hidden;">
                         {move || {
-                            let edit = view_data.get().and_then(|v| {
-                                let idx = selected_index.get();
-                                v.queue.get(idx).cloned()
-                            });
+                            let queue = queue_signal.get();
+                            let idx = selected_index.get();
+                            let edit = queue.get(idx).cloned();
                             view! { <ContextHeader edit=edit /> }.into_any()
                         }}
                         <div style="overflow-y:auto;overflow-x:hidden;">
@@ -661,18 +702,8 @@ pub fn PatrolSurface() -> impl IntoView {
                                             </div>
                                         </div>
                                     }.into_any()
-                                } else if let Some(view) = view_data.get() {
-                                    view! { <DiffViewer diff=view.diff.clone() /> }.into_any()
                                 } else {
-                                    view! {
-                                        <div class="grid-center text-muted" style="height:100%;">
-                                            {if load_error.get().is_some() {
-                                                "Diff unavailable."
-                                            } else {
-                                                "Loading diff..."
-                                            }}
-                                        </div>
-                                    }.into_any()
+                                    view! { <DiffViewer diff=current_diff.get() /> }.into_any()
                                 }
                             }}
                         </div>

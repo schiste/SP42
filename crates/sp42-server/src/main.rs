@@ -597,6 +597,7 @@ fn build_router(state: AppState) -> Router {
         .route(OPERATOR_READINESS_PATH, get(get_operator_readiness))
         .route(OPERATOR_REPORT_PATH, get(get_operator_report))
         .route("/operator/live/{wiki_id}", get(get_live_operator_view))
+        .route("/operator/diff/{wiki_id}/{rev_id}/{old_rev_id}", get(get_revision_diff))
         .route("/operator/runtime/{wiki_id}", get(get_operator_runtime))
         .route(
             "/operator/storage/layout/{wiki_id}",
@@ -2377,6 +2378,34 @@ async fn access_token_for_request(state: &AppState, headers: &HeaderMap) -> Opti
         .await
         .map(|session| session.access_token)
         .or_else(|| state.local_oauth.access_token().map(ToString::to_string))
+}
+
+async fn get_revision_diff(
+    Path((wiki_id, rev_id, old_rev_id)): Path<(String, u64, u64)>,
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Result<Json<Option<sp42_core::StructuredDiff>>, (StatusCode, Json<serde_json::Value>)> {
+    let access_token = access_token_for_request(&state, &headers).await.ok_or_else(|| {
+        (
+            StatusCode::UNAUTHORIZED,
+            Json(serde_json::json!({"error": "no access token"})),
+        )
+    })?;
+    let config = config_for_state_wiki(&state, &wiki_id)?;
+    let revisions =
+        fetch_revision_texts(&state.http_client, &access_token, &config, &[old_rev_id, rev_id])
+            .await
+            .map_err(|e| {
+                (
+                    StatusCode::BAD_GATEWAY,
+                    Json(serde_json::json!({"error": e})),
+                )
+            })?;
+    let diff = match (revisions.get(&old_rev_id), revisions.get(&rev_id)) {
+        (Some(before), Some(after)) => Some(diff_lines(before, after)),
+        _ => None,
+    };
+    Ok(Json(diff))
 }
 
 async fn fetch_revision_diff(

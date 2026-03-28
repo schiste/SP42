@@ -18,5 +18,13 @@
     <link data-trunk rel="copy-dir" href="crates/sp42-app/static/icons" />
     <link data-trunk rel="css" href="crates/sp42-app/static/style.css" />
   </head>
-  <body></body>
+  <body>
+    <div id="sp42-loading" style="display:grid;place-items:center;height:100vh;background:#08111f;color:#8b9fc0;font-family:system-ui,sans-serif;">
+      <div style="text-align:center;">
+        <div style="margin:0 auto;width:32px;height:32px;border:3px solid rgba(148,163,184,.18);border-top-color:#8fb7ff;border-radius:50%;animation:sp42-spin .8s linear infinite;"></div>
+        <p style="margin-top:12px;font-size:13px;">Loading SP42...</p>
+        <style>@keyframes sp42-spin{to{transform:rotate(360deg)}}</style>
+      </div>
+    </div>
+  </body>
 </html>

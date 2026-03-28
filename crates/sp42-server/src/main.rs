@@ -568,6 +568,7 @@ fn build_router(state: AppState) -> Router {
     let browser_shell = if app_dist_dir.join("index.html").is_file() {
         Some(
             ServeDir::new(&app_dist_dir)
+                .precompressed_gzip()
                 .not_found_service(ServeFile::new(app_dist_dir.join("index.html"))),
         )
     } else {
@@ -597,7 +598,10 @@ fn build_router(state: AppState) -> Router {
         .route(OPERATOR_READINESS_PATH, get(get_operator_readiness))
         .route(OPERATOR_REPORT_PATH, get(get_operator_report))
         .route("/operator/live/{wiki_id}", get(get_live_operator_view))
-        .route("/operator/diff/{wiki_id}/{rev_id}/{old_rev_id}", get(get_revision_diff))
+        .route(
+            "/operator/diff/{wiki_id}/{rev_id}/{old_rev_id}",
+            get(get_revision_diff),
+        )
         .route("/operator/runtime/{wiki_id}", get(get_operator_runtime))
         .route(
             "/operator/storage/layout/{wiki_id}",
@@ -2385,22 +2389,28 @@ async fn get_revision_diff(
     State(state): State<AppState>,
     headers: HeaderMap,
 ) -> Result<Json<Option<sp42_core::StructuredDiff>>, (StatusCode, Json<serde_json::Value>)> {
-    let access_token = access_token_for_request(&state, &headers).await.ok_or_else(|| {
+    let access_token = access_token_for_request(&state, &headers)
+        .await
+        .ok_or_else(|| {
+            (
+                StatusCode::UNAUTHORIZED,
+                Json(serde_json::json!({"error": "no access token"})),
+            )
+        })?;
+    let config = config_for_state_wiki(&state, &wiki_id)?;
+    let revisions = fetch_revision_texts(
+        &state.http_client,
+        &access_token,
+        &config,
+        &[old_rev_id, rev_id],
+    )
+    .await
+    .map_err(|e| {
         (
-            StatusCode::UNAUTHORIZED,
-            Json(serde_json::json!({"error": "no access token"})),
+            StatusCode::BAD_GATEWAY,
+            Json(serde_json::json!({"error": e})),
         )
     })?;
-    let config = config_for_state_wiki(&state, &wiki_id)?;
-    let revisions =
-        fetch_revision_texts(&state.http_client, &access_token, &config, &[old_rev_id, rev_id])
-            .await
-            .map_err(|e| {
-                (
-                    StatusCode::BAD_GATEWAY,
-                    Json(serde_json::json!({"error": e})),
-                )
-            })?;
     let diff = match (revisions.get(&old_rev_id), revisions.get(&rev_id)) {
         (Some(before), Some(after)) => Some(diff_lines(before, after)),
         _ => None,
@@ -2552,26 +2562,27 @@ pub(crate) async fn fetch_page_wikitext(
         });
     }
 
-    let v: serde_json::Value = serde_json::from_slice(&response.body).map_err(|e| {
-        ActionError::Execution {
+    let v: serde_json::Value =
+        serde_json::from_slice(&response.body).map_err(|e| ActionError::Execution {
             message: format!("page JSON failed: {e}"),
             code: None,
             http_status: None,
             retryable: false,
-        }
-    })?;
+        })?;
 
     // Navigate: query.pages[0].revisions[0].slots.main.content
     let content = v
         .pointer("/query/pages/0/revisions/0/slots/main/content")
         .and_then(serde_json::Value::as_str);
 
-    content.map(ToString::to_string).ok_or_else(|| ActionError::Execution {
-        message: format!("page content not found for: {title}"),
-        code: Some("missing-content".to_string()),
-        http_status: None,
-        retryable: false,
-    })
+    content
+        .map(ToString::to_string)
+        .ok_or_else(|| ActionError::Execution {
+            message: format!("page content not found for: {title}"),
+            code: Some("missing-content".to_string()),
+            http_status: None,
+            retryable: false,
+        })
 }
 
 fn operator_endpoint_manifest() -> Vec<OperatorEndpointDescriptor> {

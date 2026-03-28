@@ -83,6 +83,18 @@ struct HunkData {
     segments: Vec<SegmentData>,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum DiffDisplayMode {
+    SideBySide,
+    Unified,
+}
+
+#[derive(Clone)]
+struct SideBySideRow {
+    left: Option<SegmentData>,
+    right: Option<SegmentData>,
+}
+
 #[component]
 pub fn DiffViewer(
     diff: Option<StructuredDiff>,
@@ -118,6 +130,7 @@ pub fn DiffViewer(
     };
 
     let (show_full, set_show_full) = signal(false);
+    let (display_mode, set_display_mode) = signal(DiffDisplayMode::SideBySide);
     let collapsed_plan = compute_visibility(&diff.segments, 3);
 
     let seg_data: Vec<SegmentData> = diff
@@ -176,10 +189,32 @@ pub fn DiffViewer(
                 >
                     {mode_label}
                 </span>
+                {if diff_mode == DiffMode::Lines {
+                    view! {
+                        <div style="display:flex;gap:4px;margin-inline-start:auto;">
+                            <button
+                                class="btn btn-ghost btn-compact"
+                                style:opacity=move || if display_mode.get() == DiffDisplayMode::SideBySide { "1" } else { "0.7" }
+                                on:click=move |_| set_display_mode.set(DiffDisplayMode::SideBySide)
+                            >
+                                "Side by side"
+                            </button>
+                            <button
+                                class="btn btn-ghost btn-compact"
+                                style:opacity=move || if display_mode.get() == DiffDisplayMode::Unified { "1" } else { "0.7" }
+                                on:click=move |_| set_display_mode.set(DiffDisplayMode::Unified)
+                            >
+                                "Unified"
+                            </button>
+                        </div>
+                    }.into_any()
+                } else {
+                    view! { <span style="margin-inline-start:auto;"></span> }.into_any()
+                }}
 
                 <button
                     class="btn btn-ghost btn-compact"
-                    style="margin-inline-start:auto;padding:2px 8px;font-size:11px;"
+                    style="padding:2px 8px;font-size:11px;"
                     on:click=move |_| set_show_full.update(|v| *v = !*v)
                 >
                     {move || if show_full.get() { "Show changes only" } else { "Show full diff" }}
@@ -192,7 +227,38 @@ pub fn DiffViewer(
                     let render = |seg: &SegmentData, line: usize| {
                         render_segment_data(seg, line, diff_mode, has_menu, set_menu_pos)
                     };
-                    if show_full.get() {
+                    if diff_mode == DiffMode::Lines && display_mode.get() == DiffDisplayMode::SideBySide {
+                        if show_full.get() {
+                            render_side_by_side_rows(
+                                build_side_by_side_rows(&seg_data),
+                                diff_mode,
+                                has_menu,
+                                set_menu_pos,
+                            )
+                        } else if !hunk_data.is_empty() {
+                            hunk_data
+                                .iter()
+                                .enumerate()
+                                .map(|(index, hunk)| {
+                                    render_hunk_side_by_side(
+                                        hunk,
+                                        index + 1,
+                                        diff_mode,
+                                        has_menu,
+                                        set_menu_pos,
+                                    )
+                                })
+                                .collect_view()
+                                .into_any()
+                        } else {
+                            render_side_by_side_rows(
+                                build_side_by_side_rows(&seg_data),
+                                diff_mode,
+                                has_menu,
+                                set_menu_pos,
+                            )
+                        }
+                    } else if show_full.get() {
                         seg_data
                             .iter()
                             .enumerate()
@@ -355,6 +421,306 @@ fn render_hunk(
                     .collect_view()}
             </div>
         </section>
+    }
+    .into_any()
+}
+
+fn render_hunk_side_by_side(
+    hunk: &HunkData,
+    ordinal: usize,
+    diff_mode: DiffMode,
+    has_menu: bool,
+    set_menu_pos: WriteSignal<Option<(i32, i32, String)>>,
+) -> leptos::tachys::view::any_view::AnyView {
+    let title = hunk_title(hunk, ordinal);
+    let section_label = hunk_section_label(hunk);
+    let marker_badges = hunk
+        .markers
+        .iter()
+        .map(diff_marker_label)
+        .collect::<Vec<_>>();
+    let note = hunk.notes.first().cloned();
+    let move_badge = hunk.move_role.map(|role| match role {
+        DiffMoveRole::Source => "Moved from here",
+        DiffMoveRole::Target => "Moved to here",
+    });
+    let rows = build_side_by_side_rows(&hunk.segments);
+
+    view! {
+        <section
+            style="display:grid;gap:8px;margin-block-end:14px;padding:10px 0 0;\
+                   border-block-start:1px solid var(--border-light);"
+        >
+            <header style="display:grid;gap:6px;padding:0 0 2px;">
+                <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+                    <strong style="font-size:12px;text-transform:uppercase;letter-spacing:0.08em;color:var(--muted);">
+                        {title}
+                    </strong>
+                    <span style="font-size:11px;color:var(--subtle);">
+                        {section_label}
+                    </span>
+                    {move || {
+                        move_badge
+                            .map(|badge| {
+                                view! {
+                                    <span
+                                        style="padding:2px 6px;border-radius:999px;font-size:10px;\
+                                               background:rgba(59,130,246,.12);color:#bfdbfe;border:1px solid rgba(59,130,246,.25);"
+                                    >
+                                        {badge}
+                                    </span>
+                                }.into_any()
+                            })
+                            .unwrap_or_else(|| view! { <span></span> }.into_any())
+                    }}
+                    {marker_badges
+                        .iter()
+                        .map(|label| {
+                            let label = (*label).to_string();
+                            view! {
+                                <span
+                                    style="padding:2px 6px;border-radius:999px;font-size:10px;\
+                                           background:rgba(248,250,252,.06);color:var(--muted);border:1px solid var(--border-light);"
+                                >
+                                    {label}
+                                </span>
+                            }
+                        })
+                        .collect_view()}
+                </div>
+                {move || {
+                    note.clone()
+                        .map(|text| {
+                            view! {
+                                <div style="font-size:11px;line-height:1.45;color:var(--muted);">
+                                    {text}
+                                </div>
+                            }.into_any()
+                        })
+                        .unwrap_or_else(|| view! { <span></span> }.into_any())
+                }}
+            </header>
+            {render_side_by_side_rows(rows, diff_mode, has_menu, set_menu_pos)}
+        </section>
+    }
+    .into_any()
+}
+
+fn build_side_by_side_rows(segments: &[SegmentData]) -> Vec<SideBySideRow> {
+    let mut rows = Vec::new();
+    let mut index = 0usize;
+
+    while index < segments.len() {
+        let current = segments[index].clone();
+        match current.kind {
+            DiffSegmentKind::Equal => {
+                rows.push(SideBySideRow {
+                    left: Some(current.clone()),
+                    right: Some(current),
+                });
+                index += 1;
+            }
+            DiffSegmentKind::Delete => {
+                if let Some(next) = segments.get(index + 1)
+                    && next.kind == DiffSegmentKind::Insert
+                {
+                    rows.push(SideBySideRow {
+                        left: Some(current),
+                        right: Some(next.clone()),
+                    });
+                    index += 2;
+                } else {
+                    rows.push(SideBySideRow {
+                        left: Some(current),
+                        right: None,
+                    });
+                    index += 1;
+                }
+            }
+            DiffSegmentKind::Insert => {
+                rows.push(SideBySideRow {
+                    left: None,
+                    right: Some(current),
+                });
+                index += 1;
+            }
+        }
+    }
+
+    rows
+}
+
+fn render_side_by_side_rows(
+    rows: Vec<SideBySideRow>,
+    diff_mode: DiffMode,
+    has_menu: bool,
+    set_menu_pos: WriteSignal<Option<(i32, i32, String)>>,
+) -> leptos::tachys::view::any_view::AnyView {
+    view! {
+        <div style="display:grid;gap:2px;">
+            <div
+                style="display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:10px;\
+                       padding:0 0 6px;border-block-end:1px solid var(--border-light);"
+            >
+                <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.08em;color:var(--muted);">
+                    "Before"
+                </div>
+                <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.08em;color:var(--muted);">
+                    "After"
+                </div>
+            </div>
+            {rows
+                .into_iter()
+                .enumerate()
+                .map(|(index, row)| render_side_by_side_row(&row, index + 1, diff_mode, has_menu, set_menu_pos))
+                .collect_view()}
+        </div>
+    }
+    .into_any()
+}
+
+fn render_side_by_side_row(
+    row: &SideBySideRow,
+    fallback_line_num: usize,
+    diff_mode: DiffMode,
+    has_menu: bool,
+    set_menu_pos: WriteSignal<Option<(i32, i32, String)>>,
+) -> leptos::tachys::view::any_view::AnyView {
+    view! {
+        <div style="display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:10px;">
+            {render_side_by_side_cell(
+                row.left.as_ref(),
+                fallback_line_num,
+                diff_mode,
+                has_menu,
+                set_menu_pos,
+                false,
+            )}
+            {render_side_by_side_cell(
+                row.right.as_ref(),
+                fallback_line_num,
+                diff_mode,
+                has_menu,
+                set_menu_pos,
+                true,
+            )}
+        </div>
+    }
+    .into_any()
+}
+
+fn render_side_by_side_cell(
+    segment: Option<&SegmentData>,
+    fallback_line_num: usize,
+    diff_mode: DiffMode,
+    has_menu: bool,
+    set_menu_pos: WriteSignal<Option<(i32, i32, String)>>,
+    allow_insert_menu: bool,
+) -> leptos::tachys::view::any_view::AnyView {
+    let Some(segment) = segment else {
+        return view! {
+            <div
+                style="min-height:1.4em;border-radius:var(--radius-sm);background:rgba(255,255,255,0.02);\
+                       border:1px solid rgba(255,255,255,0.03);"
+            ></div>
+        }
+        .into_any();
+    };
+
+    let (class, prefix) = match segment.kind {
+        DiffSegmentKind::Delete => ("diff-delete", "-"),
+        DiffSegmentKind::Insert => ("diff-insert", "+"),
+        DiffSegmentKind::Equal => ("diff-equal", " "),
+    };
+    let line_label = if allow_insert_menu {
+        format_line_label(segment.after.as_ref(), diff_mode, fallback_line_num)
+    } else {
+        format_line_label(segment.before.as_ref(), diff_mode, fallback_line_num)
+    };
+    let aria = match segment.kind {
+        DiffSegmentKind::Delete => "Removed: ",
+        DiffSegmentKind::Insert => "Added: ",
+        DiffSegmentKind::Equal => "",
+    };
+    let aria_text = format!("{aria}{}", segment.text.trim_end());
+    let text = segment.text.clone();
+    let has_highlights = !segment.inline_highlights.is_empty();
+    let menu_text = text.clone();
+    let is_insert = allow_insert_menu && segment.kind == DiffSegmentKind::Insert;
+
+    let contextmenu = move |ev: leptos::ev::MouseEvent| {
+        if is_insert && has_menu {
+            ev.prevent_default();
+            #[cfg(target_arch = "wasm32")]
+            {
+                use wasm_bindgen::JsCast;
+                let selection = web_sys::window()
+                    .and_then(|w| {
+                        let f = js_sys::Reflect::get(&w, &"getSelection".into()).ok()?;
+                        let f = f.dyn_into::<js_sys::Function>().ok()?;
+                        let sel = f.call0(&w).ok()?;
+                        let text = sel.as_string().or_else(|| {
+                            sel.dyn_ref::<js_sys::Object>()
+                                .map(|o| o.to_string().as_string().unwrap_or_default())
+                        })?;
+                        if text.trim().is_empty() {
+                            None
+                        } else {
+                            Some(text)
+                        }
+                    })
+                    .unwrap_or_else(|| menu_text.trim().to_string());
+                set_menu_pos.set(Some((ev.client_x(), ev.client_y(), selection)));
+            }
+        }
+    };
+
+    view! {
+        <div
+            class="diff-line"
+            aria-label=aria_text
+            on:contextmenu=contextmenu
+            style="border-radius:var(--radius-sm);overflow:hidden;"
+        >
+            <span
+                class="diff-line-num"
+                aria-hidden="true"
+                style="width:56px;font-family:var(--font-mono);"
+            >
+                {line_label}
+            </span>
+            <span style="width:10px;color:var(--subtle);flex-shrink:0;user-select:none;">
+                {prefix}
+            </span>
+            <pre
+                class=class
+                dir="auto"
+                style="margin:0;flex:1;white-space:pre-wrap;word-break:break-all;unicode-bidi:plaintext;"
+            >
+                {if has_highlights {
+                    segment
+                        .inline_highlights
+                        .iter()
+                        .map(|span| {
+                            let highlight_style = match span.kind {
+                                DiffSegmentKind::Delete => "background:rgba(239,68,68,.35);border-radius:2px;",
+                                DiffSegmentKind::Insert => "background:rgba(34,197,94,.35);border-radius:2px;",
+                                DiffSegmentKind::Equal => "",
+                            };
+                            let t = span.text.clone();
+                            if highlight_style.is_empty() {
+                                view! { <span>{t}</span> }.into_any()
+                            } else {
+                                view! { <mark style=highlight_style>{t}</mark> }.into_any()
+                            }
+                        })
+                        .collect_view()
+                        .into_any()
+                } else {
+                    view! { <span>{text}</span> }.into_any()
+                }}
+            </pre>
+        </div>
     }
     .into_any()
 }

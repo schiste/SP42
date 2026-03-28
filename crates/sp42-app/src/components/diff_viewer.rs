@@ -512,8 +512,7 @@ fn render_hunk_side_by_side(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn render_rendered_hunk_preview(
-    hunk: &HunkData,
+fn render_rendered_hunk_toggle(
     hunk_index: usize,
     rendered_context: Option<(String, u64, u64)>,
     expanded_rendered_hunks: ReadSignal<HashSet<usize>>,
@@ -587,50 +586,67 @@ fn render_rendered_hunk_preview(
         });
     };
 
+    view! {
+        <button
+            class="btn btn-ghost btn-compact"
+            style="min-height:22px;padding:1px 8px;font-size:10px;margin-inline-start:auto;"
+            on:click=toggle
+        >
+            {move || {
+                if expanded_rendered_hunks.get().contains(&hunk_index) {
+                    "Hide rendered"
+                } else {
+                    "Show rendered"
+                }
+            }}
+        </button>
+    }
+    .into_any()
+}
+
+#[allow(clippy::too_many_arguments)]
+fn render_rendered_hunk_preview(
+    hunk: &HunkData,
+    hunk_index: usize,
+    rendered_context: Option<(String, u64, u64)>,
+    expanded_rendered_hunks: ReadSignal<HashSet<usize>>,
+    _set_expanded_rendered_hunks: WriteSignal<HashSet<usize>>,
+    rendered_hunk_cache: ReadSignal<HashMap<usize, RenderedHunkPreview>>,
+    _set_rendered_hunk_cache: WriteSignal<HashMap<usize, RenderedHunkPreview>>,
+    rendered_hunk_loading: ReadSignal<HashSet<usize>>,
+    _set_rendered_hunk_loading: WriteSignal<HashSet<usize>>,
+    rendered_hunk_errors: ReadSignal<HashMap<usize, String>>,
+    _set_rendered_hunk_errors: WriteSignal<HashMap<usize, String>>,
+) -> leptos::tachys::view::any_view::AnyView {
+    if rendered_context.is_none() {
+        return view! { <span></span> }.into_any();
+    }
+
     let before_highlights = collect_rendered_highlight_phrases(hunk, DiffSegmentKind::Delete);
     let after_highlights = collect_rendered_highlight_phrases(hunk, DiffSegmentKind::Insert);
 
     view! {
-        <div style="display:grid;gap:6px;">
-            <div style="display:flex;justify-content:flex-end;">
-                <button
-                    class="btn btn-ghost btn-compact"
-                    style="min-height:24px;padding:1px 8px;font-size:10px;"
-                    on:click=toggle
-                >
-                    {move || {
-                        if expanded_rendered_hunks.get().contains(&hunk_index) {
-                            "Hide rendered"
-                        } else {
-                            "Show rendered"
-                        }
-                    }}
-                </button>
-            </div>
-            {move || {
-                if !expanded_rendered_hunks.get().contains(&hunk_index) {
-                    return view! { <span></span> }.into_any();
-                }
+        {move || {
+            if !expanded_rendered_hunks.get().contains(&hunk_index) {
+                return view! { <span></span> }.into_any();
+            }
 
-                if rendered_hunk_loading.get().contains(&hunk_index) {
-                    return view! {
-                        <div class="card" style="padding:10px;gap:6px;">
-                            <div class="text-muted" style="font-size:11px;">"Rendering hunk context..."</div>
-                        </div>
-                    }
-                    .into_any();
+            if rendered_hunk_loading.get().contains(&hunk_index) {
+                view! {
+                    <div class="card" style="padding:10px;gap:6px;">
+                        <div class="text-muted" style="font-size:11px;">"Rendering hunk context..."</div>
+                    </div>
                 }
-
-                if let Some(error) = rendered_hunk_errors.get().get(&hunk_index).cloned() {
-                    return view! {
-                        <div class="card" style="padding:10px;gap:6px;border-color:rgba(239,68,68,.3);">
-                            <strong style="font-size:11px;color:#fca5a5;">"Rendered preview unavailable"</strong>
-                            <div style="font-size:11px;color:var(--muted);">{error}</div>
-                        </div>
-                    }
-                    .into_any();
+                .into_any()
+            } else if let Some(error) = rendered_hunk_errors.get().get(&hunk_index).cloned() {
+                view! {
+                    <div class="card" style="padding:10px;gap:6px;border-color:rgba(239,68,68,.3);">
+                        <strong style="font-size:11px;color:#fca5a5;">"Rendered preview unavailable"</strong>
+                        <div style="font-size:11px;color:var(--muted);">{error}</div>
+                    </div>
                 }
-
+                .into_any()
+            } else {
                 let Some(preview) = rendered_hunk_cache.get().get(&hunk_index).cloned() else {
                     return view! { <span></span> }.into_any();
                 };
@@ -675,8 +691,8 @@ fn render_rendered_hunk_preview(
                     </div>
                 }
                 .into_any()
-            }}
-        </div>
+            }
+        }}
     }
     .into_any()
 }
@@ -706,7 +722,11 @@ fn RenderedHtmlPane(
     view! { <div class="rendered-hunk-html" node_ref=container_ref></div> }
 }
 
-fn render_hunk_header(hunk: &HunkData, ordinal: usize) -> leptos::tachys::view::any_view::AnyView {
+fn render_hunk_header(
+    hunk: &HunkData,
+    ordinal: usize,
+    rendered_toggle: leptos::tachys::view::any_view::AnyView,
+) -> leptos::tachys::view::any_view::AnyView {
     let title = hunk_title(hunk, ordinal);
     let section_label = hunk_section_label(hunk);
     let marker_badges = hunk
@@ -721,7 +741,7 @@ fn render_hunk_header(hunk: &HunkData, ordinal: usize) -> leptos::tachys::view::
     let note = hunk.notes.first().cloned();
 
     view! {
-        <header style="display:grid;gap:4px;padding:0 0 1px;">
+        <header style="padding:0 0 1px;">
             <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;min-height:20px;">
                 <strong style="font-size:11px;text-transform:uppercase;letter-spacing:0.06em;color:var(--muted);line-height:1.1;">
                     {title}
@@ -758,19 +778,18 @@ fn render_hunk_header(hunk: &HunkData, ordinal: usize) -> leptos::tachys::view::
                         }
                     })
                     .collect_view()}
-            </div>
-            {move || {
                 note.clone()
                     .map(|text| {
                         view! {
-                            <div style="font-size:10px;line-height:1.3;color:var(--muted);">
+                            <span style="font-size:10px;line-height:1.2;color:var(--muted);">
                                 {text}
-                            </div>
+                            </span>
                         }
                         .into_any()
                     })
                     .unwrap_or_else(|| view! { <span></span> }.into_any())
-            }}
+                {rendered_toggle}
+            </div>
         </header>
     }
     .into_any()
@@ -1276,6 +1295,7 @@ fn apply_rendered_highlights(
     phrases: &[RenderedHighlightPhrase],
     highlight_class: &str,
 ) {
+    #[cfg(target_arch = "wasm32")]
     use wasm_bindgen::JsCast;
 
     if phrases.is_empty() {

@@ -1,33 +1,29 @@
 use std::collections::HashMap;
 
 use axum::{
-    extract::{OriginalUri, Path, Query, State},
-    http::{
-        header::SET_COOKIE,
-        HeaderMap, StatusCode,
-    },
-    response::{IntoResponse, Redirect, Response},
     Json,
+    extract::{OriginalUri, Path, Query, State},
+    http::{HeaderMap, StatusCode, header::SET_COOKIE},
+    response::{IntoResponse, Redirect, Response},
 };
 use tracing::info;
 
-use crate::{
-    auth_session_view, auth_session_view_without_session, bootstrap_status,
-    build_authorization_url, capability_report_for_local_token, capability_report_for_request,
-    current_status, effective_session_scopes, expired_session_cookie_header,
-    generate_oauth_state, generate_pkce_verifier, install_session, invalid_payload,
-    next_session_id, parse_callback_query, prune_expired_sessions, probe_with_targets,
-    runtime_debug, session_cookie_header, session_cookie_value, split_scope_string,
-    store_pending_oauth_login, take_pending_oauth_login, to_status, AppState, AuthLoginQuery,
-    CachedCapabilityReport, DevAuthBootstrapRequest, DevAuthBootstrapStatus,
-    DevAuthCapabilityReport, OAuthCallback, OAuthSessionView, PendingOAuthLogin,
-    RuntimeDebugStatus, ServerRng, StoredSession, PENDING_OAUTH_TTL_MS,
-    SESSION_IDLE_TIMEOUT_MS,
-};
 use crate::oauth_runtime::{
     exchange_authorization_code, fetch_oauth_profile, internal_error,
-    oauth_client_config_for_request, oauth_client_config_from_pending,
-    redirect_with_status, sanitize_redirect_target, validate_bootstrap_payload,
+    oauth_client_config_for_request, oauth_client_config_from_pending, redirect_with_status,
+    sanitize_redirect_target, validate_bootstrap_payload,
+};
+use crate::{
+    AppState, AuthLoginQuery, CachedCapabilityReport, DevAuthBootstrapRequest,
+    DevAuthBootstrapStatus, DevAuthCapabilityReport, OAuthCallback, OAuthSessionView,
+    PENDING_OAUTH_TTL_MS, PendingOAuthLogin, RuntimeDebugStatus, SESSION_IDLE_TIMEOUT_MS,
+    ServerRng, StoredSession, auth_session_view, auth_session_view_without_session,
+    bootstrap_status, build_authorization_url, capability_report_for_local_token,
+    capability_report_for_request, current_status, effective_session_scopes,
+    expired_session_cookie_header, generate_oauth_state, generate_pkce_verifier, install_session,
+    invalid_payload, next_session_id, parse_callback_query, probe_with_targets,
+    prune_expired_sessions, runtime_debug, session_cookie_header, session_cookie_value,
+    split_scope_string, store_pending_oauth_login, take_pending_oauth_login, to_status,
 };
 
 pub(crate) async fn get_runtime_debug(

@@ -1,15 +1,12 @@
 use std::{collections::HashMap, sync::atomic::Ordering};
 
-use axum::http::{
-    header::COOKIE,
-    HeaderMap, HeaderValue,
-};
+use axum::http::{HeaderMap, HeaderValue, header::COOKIE};
 
 use crate::{
-    AppState, DevAuthBootstrapStatus, DevAuthCapabilityReport, DevAuthSessionStatus, FlagState,
-    LocalOAuthConfig, OAuthSessionView, PendingOAuthLogin, SessionSnapshot, StoredSession,
-    AUTH_LOGIN_PATH, AUTH_LOGOUT_PATH, SESSION_ABSOLUTE_TIMEOUT_MS,
-    SESSION_COOKIE_MAX_AGE_SECONDS, SESSION_COOKIE_NAME, SESSION_IDLE_TIMEOUT_MS,
+    AUTH_LOGIN_PATH, AUTH_LOGOUT_PATH, AppState, DevAuthBootstrapStatus, DevAuthCapabilityReport,
+    DevAuthSessionStatus, FlagState, LocalOAuthConfig, OAuthSessionView, PendingOAuthLogin,
+    SESSION_ABSOLUTE_TIMEOUT_MS, SESSION_COOKIE_MAX_AGE_SECONDS, SESSION_COOKIE_NAME,
+    SESSION_IDLE_TIMEOUT_MS, SessionSnapshot, StoredSession,
 };
 
 pub(crate) fn effective_session_scopes(report: &DevAuthCapabilityReport) -> Vec<String> {

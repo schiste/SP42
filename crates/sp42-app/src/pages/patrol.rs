@@ -1169,7 +1169,15 @@ pub fn PatrolSurface() -> impl IntoView {
                     </div>
 
                     {move || {
-                        if let Some(view) = view_data.get() {
+                        let has_view = view_data.get().is_some();
+                        let has_queue = !queue_signal.get().is_empty();
+                        if has_view || has_queue {
+                            let preflight = view_data.get()
+                                .map(|v| v.action_preflight.clone())
+                                .unwrap_or_default();
+                            let capabilities = view_data.get()
+                                .map(|v| v.capabilities.clone())
+                                .unwrap_or_default();
                             view! {
                                 <div class="action-bar">
                                     <input
@@ -1188,8 +1196,8 @@ pub fn PatrolSurface() -> impl IntoView {
                                         }
                                     />
                                     <ActionBar
-                                        preflight=view.action_preflight.clone()
-                                        capabilities=view.capabilities.clone()
+                                        preflight=preflight
+                                        capabilities=capabilities
                                         has_selection=Signal::derive(move || has_selection.get())
                                         action_pending=Signal::derive(move || action_pending.get())
                                         on_action=set_action_trigger

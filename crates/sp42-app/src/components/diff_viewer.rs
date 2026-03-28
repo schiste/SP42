@@ -1,6 +1,12 @@
 use leptos::prelude::*;
 use sp42_core::{DiffSegment, DiffSegmentKind, InlineSpan, StructuredDiff};
 
+/// Action triggered from the diff context menu.
+#[derive(Debug, Clone)]
+pub struct TagAction {
+    pub text: String,
+}
+
 /// Describes whether a segment should be rendered or collapsed into a separator.
 #[derive(Clone)]
 enum SegmentVisibility {
@@ -59,7 +65,12 @@ struct SegmentData {
 }
 
 #[component]
-pub fn DiffViewer(diff: Option<StructuredDiff>) -> impl IntoView {
+pub fn DiffViewer(
+    diff: Option<StructuredDiff>,
+    #[prop(optional)] on_tag: Option<WriteSignal<Option<TagAction>>>,
+) -> impl IntoView {
+    let (menu_pos, set_menu_pos) = signal(None::<(i32, i32, String)>);
+
     let Some(diff) = diff else {
         return view! {
             <div role="main" aria-label="Diff viewer" class="grid-center text-muted" style="height:100%;">
@@ -119,11 +130,15 @@ pub fn DiffViewer(diff: Option<StructuredDiff>) -> impl IntoView {
 
             <div style="padding:10px;">
                 {move || {
+                    let has_menu = on_tag.is_some();
+                    let render = |seg: &SegmentData, line: usize| {
+                        render_segment_data(seg, line, has_menu, set_menu_pos)
+                    };
                     if show_full.get() {
                         seg_data
                             .iter()
                             .enumerate()
-                            .map(|(idx, seg)| render_segment_data(seg, idx + 1))
+                            .map(|(idx, seg)| render(seg, idx + 1))
                             .collect_view()
                             .into_any()
                     } else {
@@ -140,7 +155,7 @@ pub fn DiffViewer(diff: Option<StructuredDiff>) -> impl IntoView {
                                     .into_any()
                                 }
                                 SegmentVisibility::Visible(idx) => {
-                                    render_segment_data(&seg_data[*idx], *idx + 1)
+                                    render(&seg_data[*idx], *idx + 1)
                                 }
                             })
                             .collect_view()
@@ -148,6 +163,34 @@ pub fn DiffViewer(diff: Option<StructuredDiff>) -> impl IntoView {
                     }
                 }}
             </div>
+            {move || {
+                let Some((x, y, text)) = menu_pos.get() else {
+                    return view! { <span></span> }.into_any();
+                };
+                let dismiss = move |_| set_menu_pos.set(None);
+                let citation_click = {
+                    let text = text.clone();
+                    move |_| {
+                        if let Some(on_tag) = on_tag {
+                            on_tag.set(Some(TagAction { text: text.clone() }));
+                        }
+                        set_menu_pos.set(None);
+                    }
+                };
+                view! {
+                    <div class="context-menu-backdrop" on:click=dismiss>
+                        <div
+                            class="context-menu"
+                            style=format!("left:{x}px;top:{y}px;")
+                            on:click=move |ev| ev.stop_propagation()
+                        >
+                            <button class="context-menu-item" on:click=citation_click>
+                                "Citation needed"
+                            </button>
+                        </div>
+                    </div>
+                }.into_any()
+            }}
         </div>
     }
     .into_any()
@@ -156,6 +199,8 @@ pub fn DiffViewer(diff: Option<StructuredDiff>) -> impl IntoView {
 fn render_segment_data(
     segment: &SegmentData,
     line_num: usize,
+    has_menu: bool,
+    set_menu_pos: WriteSignal<Option<(i32, i32, String)>>,
 ) -> leptos::tachys::view::any_view::AnyView {
     let (class, prefix) = match segment.kind {
         DiffSegmentKind::Delete => ("diff-delete", "-"),
@@ -169,11 +214,31 @@ fn render_segment_data(
     };
     let aria_text = format!("{aria}{}", segment.text.trim_end());
     let text = segment.text.clone();
+    let is_insert = segment.kind == DiffSegmentKind::Insert;
+    let menu_text = text.clone();
 
     let has_highlights = !segment.inline_highlights.is_empty();
 
+    let contextmenu = move |ev: leptos::ev::MouseEvent| {
+        if is_insert && has_menu {
+            ev.prevent_default();
+            // Try to get selected text, fall back to full segment text
+            #[cfg(target_arch = "wasm32")]
+            {
+                let selection = web_sys::window()
+                    .and_then(|w| w.get_selection().ok().flatten())
+                    .and_then(|s| {
+                        let text = s.to_string().as_string().unwrap_or_default();
+                        if text.trim().is_empty() { None } else { Some(text) }
+                    })
+                    .unwrap_or_else(|| menu_text.trim().to_string());
+                set_menu_pos.set(Some((ev.client_x(), ev.client_y(), selection)));
+            }
+        }
+    };
+
     view! {
-        <div class="diff-line" aria-label=aria_text>
+        <div class="diff-line" aria-label=aria_text on:contextmenu=contextmenu>
             <span class="diff-line-num">
                 {format!("{line_num}")}
             </span>

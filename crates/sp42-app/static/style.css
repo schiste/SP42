@@ -596,6 +596,42 @@ body {
   place-items: center;
 }
 
+/* ─── Context Menu ─── */
+.context-menu-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+}
+
+.context-menu {
+  position: fixed;
+  min-width: 180px;
+  padding: 4px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+  z-index: 51;
+}
+
+.context-menu-item {
+  display: block;
+  width: 100%;
+  padding: 8px 12px;
+  border: none;
+  border-radius: 2px;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+  text-align: start;
+  cursor: pointer;
+}
+
+.context-menu-item:hover {
+  background: rgba(143, 183, 255, 0.12);
+}
+
 /* ─── Spinner ─── */
 @keyframes sp42-spin {
   to {

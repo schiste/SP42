@@ -351,6 +351,7 @@ pub fn PatrolSurface() -> impl IntoView {
                     let groups = group_rev_ids.get_untracked();
                     groups.get(&edit.event.rev_id).cloned()
                 },
+                replacement_text: None,
             };
 
             let batch_count = request.batch_rev_ids.as_ref().map_or(1, Vec::len);
@@ -599,6 +600,50 @@ pub fn PatrolSurface() -> impl IntoView {
         current_rev
     });
 
+    // Handle inline edit from double-click
+    Effect::new(move |_| {
+        let Some(action) = edit_action.get() else { return };
+        set_edit_action.set(None);
+        let queue = queue_signal.get_untracked();
+        let idx = selected_index.get_untracked();
+        let Some(edit) = queue.get(idx) else { return };
+        let request = SessionActionExecutionRequest {
+            wiki_id: edit.event.wiki_id.clone(),
+            kind: SessionActionKind::InlineEdit,
+            rev_id: edit.event.rev_id,
+            title: Some(edit.event.title.clone()),
+            target_user: None,
+            undo_after_rev_id: None,
+            summary: Some("SP42: inline edit".to_string()),
+            selected_text: Some(action.original_text),
+            batch_rev_ids: None,
+            replacement_text: Some(action.new_text),
+        };
+        console::info(&format!("[SP42] inline edit on rev {}", request.rev_id));
+        set_action_status.set("Saving inline edit...".to_string());
+        wasm_bindgen_futures::spawn_local(async move {
+            match execute_dev_auth_action(&request).await {
+                Ok(r) if r.accepted => {
+                    set_action_status.set(format!("Edit saved on rev {}", request.rev_id));
+                    let mut c = diff_cache.get_untracked();
+                    c.remove(&request.rev_id);
+                    set_diff_cache.set(c);
+                    set_diff_loading.set(true);
+                    let q = queue_signal.get_untracked();
+                    if let Some(item) = q.get(selected_index.get_untracked()) {
+                        let old = item.event.old_rev_id.unwrap_or(0);
+                        if let Ok(Some(d)) = fetch_diff(&item.event.wiki_id, item.event.rev_id, old).await {
+                            set_current_diff.set(Some(d));
+                        }
+                    }
+                    set_diff_loading.set(false);
+                }
+                Ok(r) => set_action_status.set(format!("Edit rejected: {}", r.message.unwrap_or_default())),
+                Err(e) => set_action_status.set(format!("Edit error: {e}")),
+            }
+        });
+    });
+
     // Handle citation needed from context menu
     Effect::new(move |_| {
         let Some(action) = tag_action.get() else {
@@ -620,6 +665,7 @@ pub fn PatrolSurface() -> impl IntoView {
             summary: Some("SP42: added {{refnec}}".to_string()),
             selected_text: Some(action.text),
             batch_rev_ids: None,
+            replacement_text: None,
         };
 
         set_action_status.set("Adding citation needed...".to_string());

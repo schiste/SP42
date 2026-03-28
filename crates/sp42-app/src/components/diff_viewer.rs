@@ -249,7 +249,7 @@ pub fn DiffViewer(
                     if diff_mode == DiffMode::Lines && display_mode.get() == DiffDisplayMode::SideBySide {
                         if show_full.get() {
                             render_side_by_side_rows(
-                                build_side_by_side_rows(&seg_data),
+                                build_side_by_side_rows(&seg_data, diff_mode),
                                 diff_mode,
                                 has_menu,
                                 set_menu_pos,
@@ -271,7 +271,7 @@ pub fn DiffViewer(
                                 .into_any()
                         } else {
                             render_side_by_side_rows(
-                                build_side_by_side_rows(&seg_data),
+                                build_side_by_side_rows(&seg_data, diff_mode),
                                 diff_mode,
                                 has_menu,
                                 set_menu_pos,
@@ -859,6 +859,7 @@ fn render_segment_data(
     let after_line = format_line_label(segment.after.as_ref(), diff_mode, fallback_line_num);
 
     let has_highlights = !segment.inline_highlights.is_empty();
+    let highlights = segment.inline_highlights.clone();
 
     let line_idx = fallback_line_num;
     let original_for_edit = text.clone();
@@ -977,7 +978,7 @@ fn render_segment_data(
                     <span style="width:10px;color:var(--subtle);flex-shrink:0;user-select:none;">{prefix}</span>
                     <pre class=class dir="auto" style="margin:0;flex:1;white-space:pre-wrap;word-break:break-all;unicode-bidi:plaintext;">
                         {if has_highlights {
-                            segment.inline_highlights.iter().map(|span| {
+                            highlights.iter().map(|span| {
                                 let hs = match span.kind {
                                     DiffSegmentKind::Delete => "background:rgba(239,68,68,.35);border-radius:2px;",
                                     DiffSegmentKind::Insert => "background:rgba(34,197,94,.35);border-radius:2px;",

@@ -65,7 +65,55 @@ pub fn PatrolSurface() -> impl IntoView {
     let (diff_loading, set_diff_loading) = signal(false);
     let (current_diff, set_current_diff) = signal(None::<StructuredDiff>);
     let (diff_cache, set_diff_cache) = signal(HashMap::<u64, StructuredDiff>::new());
-    let (queue_signal, set_queue_signal) = signal(Vec::<sp42_core::QueuedEdit>::new());
+    let (all_edits, set_all_edits) = signal(Vec::<sp42_core::QueuedEdit>::new());
+
+    // Derived filtered queue — re-computes instantly when filters or all_edits change
+    let queue_signal = Memo::new(move |_| {
+        let edits = all_edits.get();
+        let f = filters.get();
+        edits
+            .into_iter()
+            .filter(|item| {
+                if f.unpatrolled_only && item.event.is_patrolled.is_enabled() {
+                    return false;
+                }
+                if !f.include_bots && item.event.is_bot.is_enabled() {
+                    return false;
+                }
+                if !f.include_minor && item.event.is_minor.is_enabled() {
+                    return false;
+                }
+                if !f.include_new_pages && item.event.is_new_page.is_enabled() {
+                    return false;
+                }
+                match &item.event.performer {
+                    sp42_core::EditorIdentity::Anonymous { .. } => {
+                        if !f.include_anonymous { return false; }
+                    }
+                    sp42_core::EditorIdentity::Temporary { .. } => {
+                        if !f.include_temporary { return false; }
+                    }
+                    sp42_core::EditorIdentity::Registered { .. } => {
+                        if !f.include_registered { return false; }
+                    }
+                }
+                if let Some(ref tag) = f.tag_filter {
+                    if !tag.trim().is_empty()
+                        && !item.event.tags.iter().any(|t| t == tag.trim())
+                    {
+                        return false;
+                    }
+                }
+                if let Some(min) = f.min_score {
+                    if item.score.total < min {
+                        return false;
+                    }
+                }
+                true
+            })
+            .take(f.limit as usize)
+            .collect::<Vec<_>>()
+    });
     let (selection_only_refetch, set_selection_only_refetch) = signal(false);
     let (bootstrap_attempted, set_bootstrap_attempted) = signal(false);
     let (bootstrap_error, set_bootstrap_error) = signal(None::<String>);
@@ -134,7 +182,7 @@ pub fn PatrolSurface() -> impl IntoView {
                                 set_selected_index.set(idx);
                             }
                         }
-                        set_queue_signal.set(view.queue.clone());
+                        set_all_edits.set(view.queue.clone());
                     }
                     set_selection_only_refetch.set(false);
                     // Prefetch diffs for all queue items in the background
@@ -225,7 +273,7 @@ pub fn PatrolSurface() -> impl IntoView {
                         } else {
                             idx
                         };
-                        set_queue_signal.set(q);
+                        set_all_edits.set(q);
                         set_selected_index.set(new_idx);
                         set_review_note.set(String::new());
                         // Re-fetch to get fresh diff for the new selection
@@ -249,13 +297,22 @@ pub fn PatrolSurface() -> impl IntoView {
         }
     });
 
-    let queue_len = Memo::new(move |_| view_data.get().map_or(0, |v| v.queue.len()));
+    let queue_len = Memo::new(move |_| queue_signal.get().len());
     let has_selection = Memo::new(move |_| selected_index.get() < queue_len.get());
 
+    // Initial fetch on mount
+    Effect::new(move |ran: Option<bool>| {
+        if ran.is_none() {
+            load_action.dispatch_local(());
+        }
+        true
+    });
+
+    // Filter changes apply instantly via the queue_signal Memo —
+    // just reset selection, no server round-trip needed
     Effect::new(move |_| {
         let _ = filters.get();
         set_selected_index.set(0);
-        load_action.dispatch_local(());
     });
 
     // When selection changes, look up diff from cache or fetch it.
@@ -312,54 +369,26 @@ pub fn PatrolSurface() -> impl IntoView {
         }
     });
 
-    // Start live EventStreams SSE — insert new edits into the queue in real-time
+    // Start live EventStreams SSE — insert all edits unfiltered,
+    // the queue_signal Memo applies filters reactively
     start_eventstream(DEFAULT_WIKI_ID, move |event: StreamEvent| {
-        let filters = filters.get_untracked();
-
-        // Apply client-side filters
-        if event.patrolled && filters.unpatrolled_only {
-            return;
-        }
-        if event.bot && !filters.include_bots {
-            return;
-        }
-        if event.minor && !filters.include_minor {
-            return;
-        }
-        if !filters.include_new_pages && event.new_page {
-            return;
-        }
-
-        // Editor type filters
-        let is_ip = event.user.chars().all(|c| c.is_ascii_digit() || c == '.' || c == ':');
-        let is_temp = event.user.starts_with('~');
-        let is_registered = !is_ip && !is_temp;
-        if is_ip && !filters.include_anonymous {
-            return;
-        }
-        if is_temp && !filters.include_temporary {
-            return;
-        }
-        if is_registered && !filters.include_registered {
-            return;
-        }
-
         let queued = stream_event_to_queued_edit(&event);
-
-        // Only insert into the queue signal — don't touch view_data
-        // so the diff/context don't re-render
-        let mut q = queue_signal.get_untracked();
-        if q.iter().any(|existing| existing.event.rev_id == queued.event.rev_id) {
+        let mut edits = all_edits.get_untracked();
+        if edits.iter().any(|e| e.event.rev_id == queued.event.rev_id) {
             return;
         }
-        q.insert(0, queued);
-        if q.len() > 50 {
-            q.truncate(50);
+        edits.insert(0, queued);
+        if edits.len() > 200 {
+            edits.truncate(200);
         }
         // Shift selected index so the current item stays selected
-        let idx = selected_index.get_untracked();
-        set_selected_index.set(idx + 1);
-        set_queue_signal.set(q);
+        let prev_queue_len = queue_signal.get_untracked().len();
+        set_all_edits.set(edits);
+        let new_queue_len = queue_signal.get_untracked().len();
+        if new_queue_len > prev_queue_len {
+            let idx = selected_index.get_untracked();
+            set_selected_index.set(idx + (new_queue_len - prev_queue_len));
+        }
     });
 
     let on_keydown = move |event: leptos::ev::KeyboardEvent| {

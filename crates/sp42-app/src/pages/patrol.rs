@@ -421,13 +421,19 @@ pub fn PatrolSurface() -> impl IntoView {
             match execute_dev_auth_action(&request).await {
                 Ok(response) if response.accepted => {
                     set_action_status
-                        .set(format!("Citation needed added for rev {}", request.rev_id));
+                        .set(format!("Citation needed + patrolled rev {}", request.rev_id));
+                    // Remove from queue (it's now patrolled)
+                    let mut edits = all_edits.get_untracked();
+                    if let Some(pos) = edits.iter().position(|e| e.event.rev_id == request.rev_id) {
+                        edits.remove(pos);
+                        set_all_edits.set(edits);
+                    }
                     // Invalidate the diff cache for this rev
                     let mut c = diff_cache.get_untracked();
                     c.remove(&request.rev_id);
                     set_diff_cache.set(c);
                     set_diff_loading.set(true);
-                    // Re-fetch diff to show the template
+                    // Re-fetch diff for the next item
                     let edit_data = queue_signal.get_untracked();
                     if let Some(item) = edit_data.get(selected_index.get_untracked()) {
                         let old = item.event.old_rev_id.unwrap_or(0);

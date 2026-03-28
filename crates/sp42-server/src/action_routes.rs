@@ -320,7 +320,7 @@ async fn execute_session_action(
                 .summary
                 .clone()
                 .unwrap_or_else(|| format!("SP42: added {{{{{template}}}}}"));
-            execute_wiki_page_save(
+            let save_response = execute_wiki_page_save(
                 client,
                 config,
                 &WikiPageSaveRequest {
@@ -335,7 +335,24 @@ async fn execute_session_action(
                     minor: FlagState::Disabled,
                 },
             )
-            .await
+            .await?;
+
+            // Also patrol the original edit
+            if let Ok(patrol_token) =
+                execute_fetch_token(client, config, TokenKind::Patrol).await
+            {
+                let _ = execute_patrol(
+                    client,
+                    config,
+                    &PatrolRequest {
+                        rev_id: payload.rev_id,
+                        token: patrol_token,
+                    },
+                )
+                .await;
+            }
+
+            Ok(save_response)
         }
     }
 }

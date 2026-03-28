@@ -69,6 +69,40 @@ pub struct StructuredDiff {
 }
 
 #[must_use]
+pub fn detect_link_addition_only(diff: &StructuredDiff) -> Option<String> {
+    if diff.stats.insert_segments == 0 || diff.stats.delete_segments > 0 {
+        return None;
+    }
+
+    let mut inserted_wrapper_chars = 0usize;
+    for segment in &diff.segments {
+        if segment.kind != DiffSegmentKind::Insert {
+            continue;
+        }
+        let inserted = segment.text.trim();
+        if inserted.is_empty() {
+            continue;
+        }
+        if !inserted
+            .chars()
+            .all(|ch| ch.is_whitespace() || matches!(ch, '[' | ']'))
+        {
+            return None;
+        }
+        inserted_wrapper_chars += inserted
+            .chars()
+            .filter(|ch| matches!(ch, '[' | ']'))
+            .count();
+    }
+
+    (inserted_wrapper_chars >= 4).then(|| {
+        format!(
+            "inserted only wikilink wrapper characters ({inserted_wrapper_chars} bracket chars)"
+        )
+    })
+}
+
+#[must_use]
 pub fn diff_lines(before: &str, after: &str) -> StructuredDiff {
     let mut diff = collect_segments(
         DiffMode::Lines,
@@ -230,7 +264,7 @@ fn count_text_lines(text: &str) -> usize {
 
 #[cfg(test)]
 mod tests {
-    use super::{DiffMode, DiffSegmentKind, diff_chars, diff_lines};
+    use super::{DiffMode, DiffSegmentKind, detect_link_addition_only, diff_chars, diff_lines};
 
     #[test]
     fn line_diff_marks_insertions() {
@@ -349,5 +383,26 @@ mod tests {
 
         assert!(diff.segments.iter().all(|segment| segment.before.is_none()));
         assert!(diff.segments.iter().all(|segment| segment.after.is_none()));
+    }
+
+    #[test]
+    fn detects_pure_link_wrapper_addition() {
+        let diff = diff_chars("Paris", "[[Paris]]");
+
+        assert!(detect_link_addition_only(&diff).is_some());
+    }
+
+    #[test]
+    fn rejects_link_addition_when_other_text_is_inserted() {
+        let diff = diff_chars("Paris", "[[Paris]] touristique");
+
+        assert!(detect_link_addition_only(&diff).is_none());
+    }
+
+    #[test]
+    fn rejects_link_addition_when_content_is_deleted() {
+        let diff = diff_chars("Paris ville", "[[Paris]]");
+
+        assert!(detect_link_addition_only(&diff).is_none());
     }
 }

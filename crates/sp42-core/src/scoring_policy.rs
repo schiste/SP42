@@ -16,12 +16,13 @@ const ACTIVE_FRWIKI_VANDALISM_POLICY_YAML: &str =
 const CANDIDATE_FRWIKI_TIGHTEN_IDENTITY_CAP_YAML: &str =
     include_str!("../../../configs/scoring/candidate/frwiki-vandalism-tighten-identity-cap.yaml");
 
-const REQUIRED_RULES: [&str; 13] = [
+const REQUIRED_RULES: [&str; 14] = [
     "anonymous_user",
     "temporary_account",
     "new_page",
     "reverted_before",
     "large_content_removal",
+    "link_addition",
     "profanity",
     "link_spam",
     "trusted_user",
@@ -261,6 +262,7 @@ pub fn compile_scoring_policy(
         new_page: rule_weight(document, "new_page"),
         reverted_before: rule_weight(document, "reverted_before"),
         large_content_removal: rule_weight(document, "large_content_removal"),
+        link_addition: rule_weight(document, "link_addition"),
         profanity: rule_weight(document, "profanity"),
         link_spam: rule_weight(document, "link_spam"),
         trusted_user: rule_weight(document, "trusted_user"),
@@ -539,6 +541,7 @@ fn signal_from_slug(slug: &str) -> Result<ScoringSignal, ScoringPolicyError> {
         "new_page" => Ok(ScoringSignal::NewPage),
         "reverted_before" => Ok(ScoringSignal::RevertedBefore),
         "large_content_removal" => Ok(ScoringSignal::LargeContentRemoval),
+        "link_addition" => Ok(ScoringSignal::LinkAddition),
         "profanity" => Ok(ScoringSignal::Profanity),
         "link_spam" => Ok(ScoringSignal::LinkSpam),
         "trusted_user" => Ok(ScoringSignal::TrustedUser),

@@ -248,6 +248,16 @@ fn apply_context_signals(
         }
     }
 
+    if context.link_addition_only.is_enabled() {
+        push_signal(
+            ScoringSignal::LinkAddition,
+            weights.link_addition,
+            Some("only wikilink wrapper characters were added".to_string()),
+            total,
+            contributions,
+        );
+    }
+
     if let Some(cluster_size) = context.duplicate_cluster_size
         && cluster_size > 1
     {
@@ -644,6 +654,7 @@ mod tests {
                 new_page: i32::MAX,
                 reverted_before: i32::MAX,
                 large_content_removal: i32::MAX,
+                link_addition: i32::MAX,
                 profanity: i32::MAX,
                 link_spam: i32::MAX,
                 trusted_user: i32::MIN,
@@ -771,6 +782,25 @@ mod tests {
     }
 
     #[test]
+    fn applies_link_addition_signal_from_context() {
+        let event = sample_event();
+        let context = ScoringContext {
+            link_addition_only: true.into(),
+            ..ScoringContext::default()
+        };
+
+        let score = score_edit_with_context(&event, &ScoringConfig::default(), &context)
+            .expect("score should compute");
+
+        let link_addition = score
+            .contributions
+            .iter()
+            .find(|entry| entry.signal == ScoringSignal::LinkAddition);
+
+        assert_eq!(link_addition.map(|entry| entry.weight), Some(-12));
+    }
+
+    #[test]
     fn applies_identity_cap_adjustment() {
         let event = sample_event();
         let config = ScoringConfig {
@@ -893,6 +923,7 @@ mod tests {
                     new_page,
                     reverted_before,
                     large_content_removal,
+                    link_addition: 0,
                     profanity,
                     link_spam,
                     trusted_user,

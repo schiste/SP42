@@ -22,6 +22,7 @@ pub fn build_scoring_context(inputs: &ContextInputs) -> ScoringContext {
             .map(build_user_risk_profile),
         liftwing_risk: normalize_liftwing_probability(inputs.liftwing_probability),
         trust_override: crate::types::FlagState::Disabled,
+        link_addition_only: crate::types::FlagState::Disabled,
         duplicate_cluster_size: None,
     }
 }

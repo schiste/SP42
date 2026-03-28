@@ -376,6 +376,7 @@ fn build_context_section(context: Option<&ScoringContext>) -> PatrolScenarioSect
                         .liftwing_risk
                         .map_or_else(|| "none".to_string(), |value| format!("{value:.2}"))
                 ),
+                format!("link_addition_only={}", context.link_addition_only),
             ];
 
             if let Some(user_risk) = &context.user_risk {

@@ -90,7 +90,7 @@ pub use dev_auth::{
 };
 pub use diff_engine::{
     DiffLineSpan, DiffMode, DiffSegment, DiffSegmentKind, DiffStats, InlineSpan, StructuredDiff,
-    diff_chars, diff_lines,
+    detect_link_addition_only, diff_chars, diff_lines,
 };
 pub use errors::{
     ActionError, BacklogRuntimeError, CodecError, ConfigError, CoordinationError, DevAuthError,

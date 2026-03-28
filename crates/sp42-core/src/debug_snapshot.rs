@@ -111,11 +111,12 @@ fn push_selected_snapshot(snapshot: &mut DebugSnapshot, selected: &QueuedEdit) {
 
 fn push_scoring_context_snapshot(snapshot: &mut DebugSnapshot, scoring_context: &ScoringContext) {
     snapshot.summary_lines.push(format!(
-        "context user_risk={} liftwing={}",
+        "context user_risk={} liftwing={} link_addition_only={}",
         scoring_context.user_risk.is_some(),
         scoring_context
             .liftwing_risk
-            .map_or_else(|| "none".to_string(), |value| format!("{value:.2}"))
+            .map_or_else(|| "none".to_string(), |value| format!("{value:.2}")),
+        scoring_context.link_addition_only
     ));
 
     if let Some(user_risk) = &scoring_context.user_risk {

@@ -109,6 +109,7 @@ pub struct ScoreWeights {
     pub new_page: i32,
     pub reverted_before: i32,
     pub large_content_removal: i32,
+    pub link_addition: i32,
     pub profanity: i32,
     pub link_spam: i32,
     pub trusted_user: i32,
@@ -220,6 +221,7 @@ pub enum ScoringSignal {
     NewPage,
     RevertedBefore,
     LargeContentRemoval,
+    LinkAddition,
     Profanity,
     LinkSpam,
     TrustedUser,
@@ -240,6 +242,7 @@ impl std::fmt::Display for ScoringSignal {
             Self::NewPage => "New page",
             Self::RevertedBefore => "Reverted before",
             Self::LargeContentRemoval => "Large content removal",
+            Self::LinkAddition => "Link addition",
             Self::Profanity => "Profanity",
             Self::LinkSpam => "Link spam",
             Self::TrustedUser => "Trusted user",
@@ -316,6 +319,8 @@ pub struct ScoringContext {
     pub liftwing_risk: Option<f32>,
     #[serde(default)]
     pub trust_override: FlagState,
+    #[serde(default)]
+    pub link_addition_only: FlagState,
     pub duplicate_cluster_size: Option<u32>,
 }
 

@@ -69,6 +69,10 @@ rules:
     enabled: true
     weight: 15
     threshold: -500
+  link_addition:
+    enabled: true
+    weight: -12
+    notes: constructive linkification that only adds wikilink wrappers should lower patrol priority
   profanity:
     enabled: true
     weight: 30

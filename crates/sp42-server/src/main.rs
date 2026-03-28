@@ -56,10 +56,11 @@ use sp42_core::{
     build_authorization_url, build_debug_snapshot, build_live_operator_action_preflight,
     build_patrol_scenario_report, build_patrol_session_digest, build_ranked_queue_with_policy,
     build_review_workbench, build_scoring_context, build_shell_state_model,
-    build_wiki_storage_plan, default_public_storage_document, diff_lines, execute_fetch_token,
-    execute_liftwing_score, execute_recent_changes, generate_oauth_state, generate_pkce_verifier,
-    load_wiki_storage_document, parse_callback_query, render_wiki_storage_document_page,
-    render_wiki_storage_index_page, resolve_wiki_storage_document, save_wiki_storage_document,
+    build_wiki_storage_plan, default_public_storage_document, detect_link_addition_only,
+    diff_lines, execute_fetch_token, execute_liftwing_score, execute_recent_changes,
+    generate_oauth_state, generate_pkce_verifier, load_wiki_storage_document, parse_callback_query,
+    render_wiki_storage_document_page, render_wiki_storage_index_page,
+    resolve_wiki_storage_document, save_wiki_storage_document, score_edit_with_context,
 };
 
 use crate::coordination::{
@@ -985,6 +986,7 @@ struct IngestionSupervisorSnapshot {
 
 struct SelectedReviewState {
     scoring_context: Option<sp42_core::ScoringContext>,
+    selected_score: Option<sp42_core::CompositeScore>,
     diff: Option<sp42_core::StructuredDiff>,
     review_workbench: Option<sp42_core::ReviewWorkbench>,
     readiness: ServerHealthStatus,
@@ -1942,6 +1944,12 @@ async fn load_selected_review_state(
     auth: &DevAuthSessionStatus,
     selected: Option<&QueuedEdit>,
 ) -> Result<SelectedReviewState, String> {
+    let mut scoring_context = selected.map(|_| {
+        build_scoring_context(&ContextInputs {
+            talk_page_wikitext: None,
+            liftwing_probability: None,
+        })
+    });
     let liftwing_risk = if let Some(item) = selected {
         execute_liftwing_score(
             &BearerHttpClient::new(state.http_client.clone(), access_token.to_string()),
@@ -1955,17 +1963,27 @@ async fn load_selected_review_state(
     } else {
         None
     };
-    let scoring_context = liftwing_risk.map(|probability| {
-        build_scoring_context(&ContextInputs {
-            talk_page_wikitext: None,
-            liftwing_probability: Some(probability),
-        })
-    });
+    if let Some(probability) = liftwing_risk
+        && let Some(context) = &mut scoring_context
+    {
+        context.liftwing_risk = Some(probability);
+    }
     let diff = if let Some(item) = selected {
         fetch_revision_diff(&state.http_client, access_token, config, item).await?
     } else {
         None
     };
+    if let Some(diff) = diff.as_ref()
+        && let Some(context) = &mut scoring_context
+        && detect_link_addition_only(diff).is_some()
+    {
+        context.link_addition_only = FlagState::Enabled;
+    }
+    let selected_score = selected
+        .zip(scoring_context.as_ref())
+        .and_then(|(item, context)| {
+            score_edit_with_context(&item.event, &config.scoring, context).ok()
+        });
     let readiness = server_readiness(state, headers).await;
     let coordination_state = state.coordination.room_state_summary(wiki_id).await;
     let coordination_room = state
@@ -1988,6 +2006,7 @@ async fn load_selected_review_state(
 
     Ok(SelectedReviewState {
         scoring_context,
+        selected_score,
         diff,
         review_workbench,
         readiness,

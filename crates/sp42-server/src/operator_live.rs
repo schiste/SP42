@@ -99,6 +99,12 @@ pub(crate) async fn load_live_operator_assembly(
     phase_timings.push(operator_phase_timing("selection", phase_started));
 
     let mut queue_state = queue_state;
+    if let Some(index) = effective_index
+        && let Some(score) = selected_review.selected_score.clone()
+        && let Some(item) = queue_state.queue.get_mut(index)
+    {
+        item.score = score;
+    }
     queue_state.selected_index = effective_index;
 
     Ok(LiveOperatorAssembly {

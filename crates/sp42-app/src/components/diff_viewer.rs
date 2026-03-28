@@ -991,11 +991,7 @@ fn render_side_by_side_cell(
                         .inline_highlights
                         .iter()
                         .map(|span| {
-                            let highlight_style = match span.kind {
-                                DiffSegmentKind::Delete => "background:rgba(239,68,68,.35);border-radius:2px;",
-                                DiffSegmentKind::Insert => "background:rgba(34,197,94,.35);border-radius:2px;",
-                                DiffSegmentKind::Equal => "",
-                            };
+                            let highlight_style = inline_highlight_style(span);
                             let t = span.text.clone();
                             if highlight_style.is_empty() {
                                 view! { <span>{t}</span> }.into_any()
@@ -1425,6 +1421,18 @@ fn is_whole_word_match(text: &str, start: usize, end: usize) -> bool {
     prev_ok && next_ok
 }
 
+fn inline_highlight_style(span: &InlineSpan) -> &'static str {
+    if span.text.trim().is_empty() {
+        return "";
+    }
+
+    match span.kind {
+        DiffSegmentKind::Delete => "background:rgba(239,68,68,.35);border-radius:2px;",
+        DiffSegmentKind::Insert => "background:rgba(34,197,94,.35);border-radius:2px;",
+        DiffSegmentKind::Equal => "",
+    }
+}
+
 fn render_segment_data(
     segment: &SegmentData,
     fallback_line_num: usize,
@@ -1573,11 +1581,7 @@ fn render_segment_data(
                     <pre class=class dir="auto" style="margin:0;flex:1;white-space:pre-wrap;word-break:break-all;unicode-bidi:plaintext;">
                         {if has_highlights {
                             highlights.iter().map(|span| {
-                                let hs = match span.kind {
-                                    DiffSegmentKind::Delete => "background:rgba(239,68,68,.35);border-radius:2px;",
-                                    DiffSegmentKind::Insert => "background:rgba(34,197,94,.35);border-radius:2px;",
-                                    DiffSegmentKind::Equal => "",
-                                };
+                                let hs = inline_highlight_style(span);
                                 let t = span.text.clone();
                                 if hs.is_empty() { view! { <span>{t}</span> }.into_any() }
                                 else { view! { <mark style=hs>{t}</mark> }.into_any() }
@@ -1861,5 +1865,16 @@ mod tests {
         assert!(texts.contains(&"long".to_string()));
         assert!(texts.contains(&"changed".to_string()));
         assert!(texts.contains(&"sentence".to_string()));
+    }
+
+    #[test]
+    fn whitespace_only_inline_spans_are_not_emphasized() {
+        assert_eq!(
+            super::inline_highlight_style(&sp42_core::InlineSpan {
+                kind: DiffSegmentKind::Delete,
+                text: "               ".to_string(),
+            }),
+            ""
+        );
     }
 }

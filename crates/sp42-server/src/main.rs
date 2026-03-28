@@ -96,6 +96,8 @@ const AUTH_SESSION_PATH: &str = "/auth/session";
 const AUTH_LOGOUT_PATH: &str = "/auth/logout";
 const REVISION_ARTIFACT_CACHE_TTL_MS: i64 = 5 * 60 * 1000;
 const RENDERED_HUNK_CACHE_TTL_MS: i64 = 5 * 60 * 1000;
+const WIKIMEDIA_API_RETRY_ATTEMPTS: usize = 3;
+const WIKIMEDIA_API_RETRY_DELAY_MS: u64 = 150;
 
 #[derive(Clone)]
 struct AppState {
@@ -2855,31 +2857,21 @@ async fn fetch_revision_sections(
     config: &WikiConfig,
     rev_id: u64,
 ) -> Result<Vec<(String, u32)>, String> {
-    let response = client
-        .get(config.api_url.clone())
-        .bearer_auth(access_token)
-        .query(&[
+    let oldid = rev_id.to_string();
+    let body = fetch_wikimedia_api_bytes(
+        client,
+        access_token,
+        config,
+        &[
             ("action", "parse"),
-            ("oldid", rev_id.to_string().as_str()),
+            ("oldid", oldid.as_str()),
             ("prop", "sections"),
             ("format", "json"),
             ("formatversion", "2"),
-        ])
-        .send()
-        .await
-        .map_err(|error| format!("section lookup transport failed: {error}"))?;
-    let status = response.status();
-    let body = response
-        .bytes()
-        .await
-        .map_err(|error| format!("section lookup body failed: {error}"))?;
-    if !status.is_success() {
-        return Err(format!(
-            "section lookup failed with HTTP {}: {}",
-            status.as_u16(),
-            truncate_response_body(&body)
-        ));
-    }
+        ],
+        "section lookup",
+    )
+    .await?;
 
     let value: serde_json::Value = serde_json::from_slice(&body)
         .map_err(|error| format!("section lookup JSON failed: {error}"))?;
@@ -2909,32 +2901,23 @@ async fn fetch_rendered_section_html(
     rev_id: u64,
     section_index: u32,
 ) -> Result<String, String> {
-    let response = client
-        .get(config.api_url.clone())
-        .bearer_auth(access_token)
-        .query(&[
+    let oldid = rev_id.to_string();
+    let section = section_index.to_string();
+    let body = fetch_wikimedia_api_bytes(
+        client,
+        access_token,
+        config,
+        &[
             ("action", "parse"),
-            ("oldid", rev_id.to_string().as_str()),
+            ("oldid", oldid.as_str()),
             ("prop", "text"),
-            ("section", section_index.to_string().as_str()),
+            ("section", section.as_str()),
             ("format", "json"),
             ("formatversion", "2"),
-        ])
-        .send()
-        .await
-        .map_err(|error| format!("rendered section transport failed: {error}"))?;
-    let status = response.status();
-    let body = response
-        .bytes()
-        .await
-        .map_err(|error| format!("rendered section body failed: {error}"))?;
-    if !status.is_success() {
-        return Err(format!(
-            "rendered section failed with HTTP {}: {}",
-            status.as_u16(),
-            truncate_response_body(&body)
-        ));
-    }
+        ],
+        "rendered section",
+    )
+    .await?;
 
     let value: serde_json::Value = serde_json::from_slice(&body)
         .map_err(|error| format!("rendered section JSON failed: {error}"))?;
@@ -3013,10 +2996,11 @@ async fn fetch_revision_texts(
         .map(ToString::to_string)
         .collect::<Vec<_>>()
         .join("|");
-    let response = client
-        .get(config.api_url.clone())
-        .bearer_auth(access_token)
-        .query(&[
+    let body = fetch_wikimedia_api_bytes(
+        client,
+        access_token,
+        config,
+        &[
             ("action", "query"),
             ("prop", "revisions"),
             ("revids", revids.as_str()),
@@ -3024,22 +3008,10 @@ async fn fetch_revision_texts(
             ("rvslots", "main"),
             ("format", "json"),
             ("formatversion", "2"),
-        ])
-        .send()
-        .await
-        .map_err(|error| format!("revision lookup transport failed: {error}"))?;
-    let status = response.status();
-    let body = response
-        .bytes()
-        .await
-        .map_err(|error| format!("revision lookup body failed: {error}"))?;
-    if !status.is_success() {
-        return Err(format!(
-            "revision lookup failed with HTTP {}: {}",
-            status.as_u16(),
-            truncate_response_body(&body)
-        ));
-    }
+        ],
+        "revision lookup",
+    )
+    .await?;
 
     let parsed: serde_json::Value = serde_json::from_slice(&body)
         .map_err(|error| format!("revision lookup JSON failed: {error}"))?;
@@ -3071,6 +3043,76 @@ async fn fetch_revision_texts(
     }
 
     Ok(map)
+}
+
+async fn fetch_wikimedia_api_bytes(
+    client: &reqwest::Client,
+    access_token: &str,
+    config: &WikiConfig,
+    query: &[(&str, &str)],
+    label: &str,
+) -> Result<Vec<u8>, String> {
+    let mut last_error = None;
+
+    for attempt in 1..=WIKIMEDIA_API_RETRY_ATTEMPTS {
+        let response = client
+            .get(config.api_url.clone())
+            .bearer_auth(access_token)
+            .query(query)
+            .send()
+            .await;
+
+        match response {
+            Ok(response) => {
+                let status = response.status();
+                let body = response
+                    .bytes()
+                    .await
+                    .map_err(|error| format!("{label} body failed: {error}"))?
+                    .to_vec();
+
+                if status.is_success() {
+                    return Ok(body);
+                }
+
+                let retryable = matches!(
+                    status,
+                    StatusCode::TOO_MANY_REQUESTS
+                        | StatusCode::BAD_GATEWAY
+                        | StatusCode::SERVICE_UNAVAILABLE
+                        | StatusCode::GATEWAY_TIMEOUT
+                );
+                let message = format!(
+                    "{label} failed with HTTP {} on attempt {attempt}/{}: {}",
+                    status.as_u16(),
+                    WIKIMEDIA_API_RETRY_ATTEMPTS,
+                    truncate_response_body(&body)
+                );
+                if retryable && attempt < WIKIMEDIA_API_RETRY_ATTEMPTS {
+                    warn!(label, attempt, status = status.as_u16(), "retrying wikimedia api request");
+                    tokio::time::sleep(Duration::from_millis(WIKIMEDIA_API_RETRY_DELAY_MS)).await;
+                    last_error = Some(message);
+                    continue;
+                }
+                return Err(message);
+            }
+            Err(error) => {
+                let message = format!(
+                    "{label} transport failed on attempt {attempt}/{}: {error}",
+                    WIKIMEDIA_API_RETRY_ATTEMPTS
+                );
+                if attempt < WIKIMEDIA_API_RETRY_ATTEMPTS {
+                    warn!(label, attempt, error = %error, "retrying wikimedia api transport failure");
+                    tokio::time::sleep(Duration::from_millis(WIKIMEDIA_API_RETRY_DELAY_MS)).await;
+                    last_error = Some(message);
+                    continue;
+                }
+                return Err(message);
+            }
+        }
+    }
+
+    Err(last_error.unwrap_or_else(|| format!("{label} failed without a response")))
 }
 
 pub(crate) async fn fetch_page_wikitext(

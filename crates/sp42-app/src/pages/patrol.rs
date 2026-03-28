@@ -994,33 +994,50 @@ pub fn PatrolSurface() -> impl IntoView {
                             let edit = queue.get(idx).cloned();
                             view! { <ContextHeader edit=edit /> }.into_any()
                         }}
-                        <div
-                            style="display:grid;grid-template-columns:minmax(0,1fr) minmax(260px,320px);\
-                                   gap:10px;overflow:hidden;padding-top:10px;"
-                        >
-                            <div style="min-width:0;overflow-y:auto;overflow-x:hidden;">
-                                {move || {
-                                    if diff_loading.get() {
+                        {move || {
+                            let report = current_media_diff.get();
+                            let show_media_diff = report.as_ref().is_some_and(MediaDiffReport::has_changes);
+                            let layout_style = if show_media_diff {
+                                "display:grid;grid-template-columns:minmax(0,1fr) minmax(260px,320px);\
+                                 gap:10px;overflow:hidden;padding-top:10px;"
+                            } else {
+                                "display:grid;grid-template-columns:minmax(0,1fr);\
+                                 gap:10px;overflow:hidden;padding-top:10px;"
+                            };
+
+                            view! {
+                                <div style=layout_style>
+                                    <div style="min-width:0;overflow-y:auto;overflow-x:hidden;">
+                                        {move || {
+                                            if diff_loading.get() {
+                                                view! {
+                                                    <div class="grid-center" style="height:100%;">
+                                                        <div style="text-align:center;">
+                                                            <div class="spinner" style="margin:0 auto;"></div>
+                                                            <p class="text-muted" style="margin-top:10px;font-size:12px;">"Loading diff..."</p>
+                                                        </div>
+                                                    </div>
+                                                }.into_any()
+                                            } else {
+                                                view! { <DiffViewer diff=current_diff.get() on_tag=set_tag_action /> }.into_any()
+                                            }
+                                        }}
+                                    </div>
+                                    {if show_media_diff {
                                         view! {
-                                            <div class="grid-center" style="height:100%;">
-                                                <div style="text-align:center;">
-                                                    <div class="spinner" style="margin:0 auto;"></div>
-                                                    <p class="text-muted" style="margin-top:10px;font-size:12px;">"Loading diff..."</p>
-                                                </div>
+                                            <div style="min-width:0;overflow:hidden;">
+                                                <MediaDiffGallery
+                                                    report=report
+                                                    loading=Signal::derive(move || media_diff_loading.get())
+                                                />
                                             </div>
                                         }.into_any()
                                     } else {
-                                        view! { <DiffViewer diff=current_diff.get() on_tag=set_tag_action /> }.into_any()
-                                    }
-                                }}
-                            </div>
-                            <div style="min-width:0;overflow:hidden;">
-                                <MediaDiffGallery
-                                    report=current_media_diff.get()
-                                    loading=Signal::derive(move || media_diff_loading.get())
-                                />
-                            </div>
-                        </div>
+                                        view! { <span></span> }.into_any()
+                                    }}
+                                </div>
+                            }.into_any()
+                        }}
                     </div>
 
                     {move || {

@@ -2535,10 +2535,13 @@ async fn fetch_revision_media_diff_by_ids(
     fetch_revision_text_pair(client, access_token, config, rev_id, old_rev_id)
         .await
         .map(|pair| {
-            pair.map(|(before, after)| {
+            pair.and_then(|(before, after)| {
                 let mut report = build_media_diff(&before, &after);
+                if !report.has_changes() {
+                    return None;
+                }
                 populate_media_preview_urls(config, &mut report);
-                report
+                Some(report)
             })
         })
 }

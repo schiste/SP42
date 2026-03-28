@@ -6,3 +6,27 @@ dist = "dist"
 addresses = ["127.0.0.1"]
 port = 4173
 open = false
+
+[[serve.proxy]]
+backend = "http://127.0.0.1:8788/operator"
+rewrite = "/operator"
+
+[[serve.proxy]]
+backend = "http://127.0.0.1:8788/dev"
+rewrite = "/dev"
+
+[[serve.proxy]]
+backend = "http://127.0.0.1:8788/healthz"
+rewrite = "/healthz"
+
+[[serve.proxy]]
+backend = "http://127.0.0.1:8788/coordination"
+rewrite = "/coordination"
+
+[[serve.proxy]]
+backend = "http://127.0.0.1:8788/debug"
+rewrite = "/debug"
+
+[[serve.proxy]]
+backend = "http://127.0.0.1:8788/actions"
+rewrite = "/actions"

@@ -184,12 +184,9 @@ pub fn PatrolSurface() -> impl IntoView {
             .unwrap_or(0)
     });
 
-    // Single authoritative source for the selected edit — all UI reads from this
-    let selected_edit = Memo::new(move |_| {
-        let queue = queue_signal.get();
-        let rev = selected_rev_id.get();
-        rev.and_then(|r| queue.iter().find(|e| e.event.rev_id == r).cloned())
-    });
+    // Single authoritative source for the selected edit.
+    // Only updated by explicit human actions — never by EventStream inserts.
+    let (selected_edit, set_selected_edit) = signal(None::<sp42_core::QueuedEdit>);
 
     let (selection_only_refetch, set_selection_only_refetch) = signal(false);
     let (bootstrap_attempted, set_bootstrap_attempted) = signal(false);
@@ -520,6 +517,11 @@ pub fn PatrolSurface() -> impl IntoView {
         }
 
         console::debug(&format!("[SP42] selection changed → rev {rev_id}"));
+
+        // Snapshot the selected edit — decoupled from queue updates
+        let queue = queue_signal.get_untracked();
+        let edit = queue.iter().find(|e| e.event.rev_id == rev_id).cloned();
+        set_selected_edit.set(edit);
 
         let cache = diff_cache.get_untracked();
         if let Some(diff) = cache.get(&rev_id) {

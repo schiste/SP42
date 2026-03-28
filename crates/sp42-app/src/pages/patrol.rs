@@ -376,41 +376,53 @@ pub fn PatrolSurface() -> impl IntoView {
     });
 
     // When selection changes, look up diff from cache or fetch it.
-    Effect::new(move |prev: Option<usize>| {
-        let idx = selected_index.get();
-        let queue = queue_signal.get_untracked();
-        if let Some(edit) = queue.get(idx) {
-            set_hash_rev(edit.event.rev_id);
-            let rev_id = edit.event.rev_id;
-            let cache = diff_cache.get_untracked();
-            if let Some(diff) = cache.get(&rev_id) {
-                set_current_diff.set(Some(diff.clone()));
-            } else if let Some(prev_idx) = prev {
-                if prev_idx != idx {
-                    set_diff_loading.set(true);
-                    set_current_diff.set(None);
-                    let old_rev_id = edit.event.old_rev_id.unwrap_or(0);
-                    let wiki_id = edit.event.wiki_id.clone();
-                    wasm_bindgen_futures::spawn_local(async move {
-                        match fetch_diff(&wiki_id, rev_id, old_rev_id).await {
-                            Ok(diff) => {
-                                if let Some(ref d) = diff {
-                                    let mut c = diff_cache.get_untracked();
-                                    c.insert(rev_id, d.clone());
-                                    set_diff_cache.set(c);
-                                }
-                                set_current_diff.set(diff);
-                            }
-                            Err(_) => {
-                                set_current_diff.set(None);
-                            }
-                        }
-                        set_diff_loading.set(false);
-                    });
-                }
-            }
+    Effect::new(move |prev_rev: Option<Option<u64>>| {
+        let current_rev = selected_rev_id.get();
+        let Some(rev_id) = current_rev else {
+            return current_rev;
+        };
+
+        // Update URL hash
+        set_hash_rev(rev_id);
+
+        // Skip if same rev as before
+        if prev_rev == Some(current_rev) {
+            return current_rev;
         }
-        idx
+
+        // Check cache first
+        let cache = diff_cache.get_untracked();
+        if let Some(diff) = cache.get(&rev_id) {
+            set_current_diff.set(Some(diff.clone()));
+            return current_rev;
+        }
+
+        // Fetch the diff
+        set_diff_loading.set(true);
+        set_current_diff.set(None);
+        let queue = queue_signal.get_untracked();
+        let idx = selected_index.get_untracked();
+        if let Some(edit) = queue.get(idx) {
+            let old_rev_id = edit.event.old_rev_id.unwrap_or(0);
+            let wiki_id = edit.event.wiki_id.clone();
+            wasm_bindgen_futures::spawn_local(async move {
+                match fetch_diff(&wiki_id, rev_id, old_rev_id).await {
+                    Ok(diff) => {
+                        if let Some(ref d) = diff {
+                            let mut c = diff_cache.get_untracked();
+                            c.insert(rev_id, d.clone());
+                            set_diff_cache.set(c);
+                        }
+                        set_current_diff.set(diff);
+                    }
+                    Err(_) => {
+                        set_current_diff.set(None);
+                    }
+                }
+                set_diff_loading.set(false);
+            });
+        }
+        current_rev
     });
 
     // Handle citation needed from context menu

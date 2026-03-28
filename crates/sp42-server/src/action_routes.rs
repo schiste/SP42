@@ -289,79 +289,94 @@ async fn execute_session_action(
             .await
         }
         SessionActionKind::TagCitationNeeded => {
-            let token = execute_fetch_token(client, config, TokenKind::Csrf).await?;
-            let title = payload.title.clone().unwrap_or_default();
-            let selected_text = payload.selected_text.clone().unwrap_or_default();
-            if selected_text.trim().is_empty() {
-                return Err(ActionError::Execution {
-                    message: "selected_text is required for citation tagging".to_string(),
-                    code: Some("invalid-input".to_string()),
-                    http_status: None,
-                    retryable: false,
-                });
-            }
-            let template = &config.templates.citation_needed;
-            let date = current_french_date();
-
-            // Fetch current page wikitext
-            let page_text = crate::fetch_page_wikitext(client, config, &title).await?;
-
-            // Wrap the selected text with the full template syntax:
-            // {{Référence nécessaire|selected text|date=mars 2026}}
-            // Use named param 1= if text contains '='
-            let text_param = if selected_text.contains('=') {
-                format!("1={selected_text}")
-            } else {
-                selected_text.clone()
-            };
-            let tagged = format!("{{{{{template}|{text_param}|date={date}}}}}");
-            let updated_text = page_text.replacen(&selected_text, &tagged, 1);
-            if updated_text == page_text {
-                return Err(ActionError::Execution {
-                    message: "selected text not found in page content".to_string(),
-                    code: Some("text-not-found".to_string()),
-                    http_status: None,
-                    retryable: false,
-                });
-            }
-            let summary = payload
-                .summary
-                .clone()
-                .unwrap_or_else(|| format!("SP42: {{{{{template}|date={date}}}}}"));
-            let save_response = execute_wiki_page_save(
-                client,
-                config,
-                &WikiPageSaveRequest {
-                    title,
-                    text: updated_text,
-                    token,
-                    summary: Some(summary),
-                    baserevid: Some(payload.rev_id),
-                    tags: Vec::new(),
-                    watchlist: None,
-                    create_only: FlagState::Disabled,
-                    minor: FlagState::Disabled,
-                },
-            )
-            .await?;
-
-            // Also patrol the original edit
-            if let Ok(patrol_token) =
-                execute_fetch_token(client, config, TokenKind::Patrol).await
-            {
-                let _ = execute_patrol(
-                    client,
-                    config,
-                    &PatrolRequest {
-                        rev_id: payload.rev_id,
-                        token: patrol_token,
-                    },
-                )
-                .await;
-            }
-
-            Ok(save_response)
+            execute_tag_citation_needed_action(client, config, payload).await
         }
+    }
+}
+
+async fn execute_tag_citation_needed_action(
+    client: &BearerHttpClient,
+    config: &sp42_core::WikiConfig,
+    payload: &SessionActionExecutionRequest,
+) -> Result<HttpResponse, ActionError> {
+    let token = execute_fetch_token(client, config, TokenKind::Csrf).await?;
+    let title = payload.title.clone().unwrap_or_default();
+    let selected_text = payload.selected_text.clone().unwrap_or_default();
+    if selected_text.trim().is_empty() {
+        return Err(ActionError::Execution {
+            message: "selected_text is required for citation tagging".to_string(),
+            code: Some("invalid-input".to_string()),
+            http_status: None,
+            retryable: false,
+        });
+    }
+    let template = &config.templates.citation_needed;
+    let date = current_french_date();
+    let page_text = crate::fetch_page_wikitext(client, config, &title).await?;
+    let updated_text = apply_citation_template(&page_text, &selected_text, template, &date)?;
+    let summary = payload
+        .summary
+        .clone()
+        .unwrap_or_else(|| format!("SP42: {{{{{template}|date={date}}}}}"));
+    let save_response = execute_wiki_page_save(
+        client,
+        config,
+        &WikiPageSaveRequest {
+            title,
+            text: updated_text,
+            token,
+            summary: Some(summary),
+            baserevid: Some(payload.rev_id),
+            tags: Vec::new(),
+            watchlist: None,
+            create_only: FlagState::Disabled,
+            minor: FlagState::Disabled,
+        },
+    )
+    .await?;
+    patrol_original_edit_if_possible(client, config, payload.rev_id).await;
+    Ok(save_response)
+}
+
+fn apply_citation_template(
+    page_text: &str,
+    selected_text: &str,
+    template: &str,
+    date: &str,
+) -> Result<String, ActionError> {
+    let text_param = if selected_text.contains('=') {
+        format!("1={selected_text}")
+    } else {
+        selected_text.to_string()
+    };
+    let tagged = format!("{{{{{template}|{text_param}|date={date}}}}}");
+    let updated_text = page_text.replacen(selected_text, &tagged, 1);
+    if updated_text == page_text {
+        return Err(ActionError::Execution {
+            message: "selected text not found in page content".to_string(),
+            code: Some("text-not-found".to_string()),
+            http_status: None,
+            retryable: false,
+        });
+    }
+    Ok(updated_text)
+}
+
+async fn patrol_original_edit_if_possible(
+    client: &BearerHttpClient,
+    config: &sp42_core::WikiConfig,
+    rev_id: u64,
+) {
+    if let Ok(patrol_token) = execute_fetch_token(client, config, TokenKind::Patrol).await {
+        let _ = execute_patrol(
+            client,
+            config,
+            &PatrolRequest {
+                rev_id,
+                token: patrol_token,
+            },
+        )
+        .await;
     }
 }
 
@@ -410,9 +425,13 @@ fn current_french_date() -> String {
     let days = secs / 86400;
     // Approximate year/month from epoch days
     let mut y = 1970i32;
-    let mut remaining = days as i32;
+    let mut remaining = i32::try_from(days).unwrap_or(i32::MAX);
     loop {
-        let days_in_year = if y % 4 == 0 && (y % 100 != 0 || y % 400 == 0) { 366 } else { 365 };
+        let days_in_year = if y % 4 == 0 && (y % 100 != 0 || y % 400 == 0) {
+            366
+        } else {
+            365
+        };
         if remaining < days_in_year {
             break;
         }

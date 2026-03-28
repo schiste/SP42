@@ -13,6 +13,8 @@ namespace_allowlist:
   - 6
   - 10
   - 14
+templates:
+  citation_needed: "refnec"
 scoring:
   base_score: 0
   max_score: 100

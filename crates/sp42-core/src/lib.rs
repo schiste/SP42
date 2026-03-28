@@ -182,7 +182,7 @@ pub use types::{
     HttpRequest, HttpResponse, LocalOAuthSourceReport, PresenceHeartbeat, QueueHeuristicPolicy,
     QueuedEdit, RaceResolution, ScoreDelta, ScoreWeights, ScoringConfig, ScoringContext,
     ScoringSignal, ServerDebugSummary, ServerSentEvent, SignalContribution, UserRiskProfile,
-    WarningLevel, WebSocketFrame, WikiConfig,
+    WarningLevel, WebSocketFrame, WikiConfig, WikiTemplates,
 };
 pub use user_analyzer::{
     UserRiskCache, build_user_risk_profile, count_warning_templates, parse_warning_level,

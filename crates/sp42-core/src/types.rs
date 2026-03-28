@@ -308,6 +308,28 @@ pub struct WikiConfig {
     pub namespace_allowlist: Vec<i32>,
     #[serde(default)]
     pub scoring: ScoringConfig,
+    #[serde(default)]
+    pub templates: WikiTemplates,
+}
+
+/// Per-wiki template names for tagging actions. Each value is the short
+/// template name without braces (e.g. `"refnec"` → `{{refnec}}`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WikiTemplates {
+    #[serde(default = "default_citation_needed")]
+    pub citation_needed: String,
+}
+
+impl Default for WikiTemplates {
+    fn default() -> Self {
+        Self {
+            citation_needed: default_citation_needed(),
+        }
+    }
+}
+
+fn default_citation_needed() -> String {
+    "refnec".to_string()
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

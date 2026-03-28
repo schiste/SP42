@@ -139,6 +139,7 @@ pub fn build_session_action_execution_requests(
             target_user: Some(performer_label(&item.event.performer)),
             undo_after_rev_id: None,
             summary: note.map(ToString::to_string),
+            selected_text: None,
         },
         SessionActionExecutionRequest {
             wiki_id: item.event.wiki_id.clone(),
@@ -148,6 +149,7 @@ pub fn build_session_action_execution_requests(
             target_user: None,
             undo_after_rev_id: None,
             summary: note.map(ToString::to_string),
+            selected_text: None,
         },
         SessionActionExecutionRequest {
             wiki_id: item.event.wiki_id.clone(),
@@ -157,6 +159,7 @@ pub fn build_session_action_execution_requests(
             target_user: None,
             undo_after_rev_id: Some(undo_after_rev_id),
             summary: note.map(ToString::to_string),
+            selected_text: None,
         },
     ])
 }

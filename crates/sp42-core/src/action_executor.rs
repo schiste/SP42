@@ -82,6 +82,7 @@ pub enum SessionActionKind {
     Rollback,
     Patrol,
     Undo,
+    TagCitationNeeded,
 }
 
 impl SessionActionKind {
@@ -91,6 +92,7 @@ impl SessionActionKind {
             Self::Rollback => "rollback",
             Self::Patrol => "patrol",
             Self::Undo => "undo",
+            Self::TagCitationNeeded => "tag-citation-needed",
         }
     }
 }
@@ -104,6 +106,8 @@ pub struct SessionActionExecutionRequest {
     pub target_user: Option<String>,
     pub undo_after_rev_id: Option<u64>,
     pub summary: Option<String>,
+    #[serde(default)]
+    pub selected_text: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

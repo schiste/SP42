@@ -89,7 +89,8 @@ pub use dev_auth::{
     parse_action_execution_status, parse_dev_auth_status,
 };
 pub use diff_engine::{
-    DiffSegment, DiffSegmentKind, DiffStats, InlineSpan, StructuredDiff, diff_chars, diff_lines,
+    DiffLineSpan, DiffMode, DiffSegment, DiffSegmentKind, DiffStats, InlineSpan, StructuredDiff,
+    diff_chars, diff_lines,
 };
 pub use errors::{
     ActionError, BacklogRuntimeError, CodecError, ConfigError, CoordinationError, DevAuthError,

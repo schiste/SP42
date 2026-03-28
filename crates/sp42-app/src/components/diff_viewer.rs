@@ -1,5 +1,5 @@
 use leptos::prelude::*;
-use sp42_core::{DiffSegment, DiffSegmentKind, InlineSpan, StructuredDiff};
+use sp42_core::{DiffLineSpan, DiffMode, DiffSegment, DiffSegmentKind, InlineSpan, StructuredDiff};
 
 /// Action triggered from the diff context menu.
 #[derive(Debug, Clone)]
@@ -61,6 +61,8 @@ fn compute_visibility(segments: &[DiffSegment], context_lines: usize) -> Vec<Seg
 struct SegmentData {
     kind: DiffSegmentKind,
     text: String,
+    before: Option<DiffLineSpan>,
+    after: Option<DiffLineSpan>,
     inline_highlights: Vec<InlineSpan>,
 }
 
@@ -92,6 +94,11 @@ pub fn DiffViewer(
     let stats_added = diff.stats.insert_segments;
     let stats_removed = diff.stats.delete_segments;
     let stats_unchanged = diff.stats.equal_segments;
+    let diff_mode = diff.mode;
+    let mode_label = match diff_mode {
+        DiffMode::Lines => "line diff",
+        DiffMode::Chars => "character diff",
+    };
 
     let (show_full, set_show_full) = signal(false);
     let collapsed_plan = compute_visibility(&diff.segments, 3);
@@ -102,6 +109,8 @@ pub fn DiffViewer(
         .map(|s| SegmentData {
             kind: s.kind,
             text: s.text,
+            before: s.before,
+            after: s.after,
             inline_highlights: s.inline_highlights,
         })
         .collect();
@@ -118,6 +127,12 @@ pub fn DiffViewer(
                 <span>
                     {format!("{stats_unchanged} unchanged")}
                 </span>
+                <span
+                    class="diff-mode"
+                    style="text-transform:uppercase;letter-spacing:0.04em;"
+                >
+                    {mode_label}
+                </span>
 
                 <button
                     class="btn btn-ghost btn-compact"
@@ -132,7 +147,7 @@ pub fn DiffViewer(
                 {move || {
                     let has_menu = on_tag.is_some();
                     let render = |seg: &SegmentData, line: usize| {
-                        render_segment_data(seg, line, has_menu, set_menu_pos)
+                        render_segment_data(seg, line, diff_mode, has_menu, set_menu_pos)
                     };
                     if show_full.get() {
                         seg_data
@@ -198,7 +213,8 @@ pub fn DiffViewer(
 
 fn render_segment_data(
     segment: &SegmentData,
-    line_num: usize,
+    fallback_line_num: usize,
+    diff_mode: DiffMode,
     has_menu: bool,
     set_menu_pos: WriteSignal<Option<(i32, i32, String)>>,
 ) -> leptos::tachys::view::any_view::AnyView {
@@ -216,6 +232,8 @@ fn render_segment_data(
     let text = segment.text.clone();
     let is_insert = segment.kind == DiffSegmentKind::Insert;
     let menu_text = text.clone();
+    let before_line = format_line_label(segment.before.as_ref(), diff_mode, fallback_line_num);
+    let after_line = format_line_label(segment.after.as_ref(), diff_mode, fallback_line_num);
 
     let has_highlights = !segment.inline_highlights.is_empty();
 
@@ -231,9 +249,15 @@ fn render_segment_data(
                         let f = js_sys::Reflect::get(&w, &"getSelection".into()).ok()?;
                         let f = f.dyn_into::<js_sys::Function>().ok()?;
                         let sel = f.call0(&w).ok()?;
-                        let text = sel.as_string()
-                            .or_else(|| sel.dyn_ref::<js_sys::Object>().map(|o| o.to_string().as_string().unwrap_or_default()))?;
-                        if text.trim().is_empty() { None } else { Some(text) }
+                        let text = sel.as_string().or_else(|| {
+                            sel.dyn_ref::<js_sys::Object>()
+                                .map(|o| o.to_string().as_string().unwrap_or_default())
+                        })?;
+                        if text.trim().is_empty() {
+                            None
+                        } else {
+                            Some(text)
+                        }
                     })
                     .unwrap_or_else(|| menu_text.trim().to_string());
                 set_menu_pos.set(Some((ev.client_x(), ev.client_y(), selection)));
@@ -243,13 +267,28 @@ fn render_segment_data(
 
     view! {
         <div class="diff-line" aria-label=aria_text on:contextmenu=contextmenu>
-            <span class="diff-line-num">
-                {format!("{line_num}")}
+            <span
+                class="diff-line-num"
+                aria-hidden="true"
+                style="width:56px;font-family:var(--font-mono);"
+            >
+                {before_line}
+            </span>
+            <span
+                class="diff-line-num"
+                aria-hidden="true"
+                style="width:56px;font-family:var(--font-mono);"
+            >
+                {after_line}
             </span>
             <span style="width:10px;color:var(--subtle);flex-shrink:0;user-select:none;">
                 {prefix}
             </span>
-            <pre class=class style="margin:0;flex:1;white-space:pre-wrap;word-break:break-all;">
+            <pre
+                class=class
+                dir="auto"
+                style="margin:0;flex:1;white-space:pre-wrap;word-break:break-all;unicode-bidi:plaintext;"
+            >
                 {if has_highlights {
                     segment
                         .inline_highlights
@@ -276,4 +315,102 @@ fn render_segment_data(
         </div>
     }
     .into_any()
+}
+
+fn format_line_label(
+    span: Option<&DiffLineSpan>,
+    diff_mode: DiffMode,
+    fallback_line_num: usize,
+) -> String {
+    match diff_mode {
+        DiffMode::Lines => match span {
+            Some(span) if span.line_count > 1 => {
+                format!(
+                    "{}-{}",
+                    span.start_line,
+                    span.start_line + span.line_count - 1
+                )
+            }
+            Some(span) => span.start_line.to_string(),
+            None => String::new(),
+        },
+        DiffMode::Chars => fallback_line_num.to_string(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use sp42_core::{DiffLineSpan, DiffMode, DiffSegment, DiffSegmentKind};
+
+    use super::{SegmentVisibility, compute_visibility, format_line_label};
+
+    fn segment(kind: DiffSegmentKind) -> DiffSegment {
+        DiffSegment {
+            kind,
+            text: match kind {
+                DiffSegmentKind::Equal => "same\n".to_string(),
+                DiffSegmentKind::Delete => "old\n".to_string(),
+                DiffSegmentKind::Insert => "new\n".to_string(),
+            },
+            before: None,
+            after: None,
+            inline_highlights: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn compute_visibility_collapses_distant_equal_runs() {
+        let segments = vec![
+            segment(DiffSegmentKind::Equal),
+            segment(DiffSegmentKind::Equal),
+            segment(DiffSegmentKind::Delete),
+            segment(DiffSegmentKind::Insert),
+            segment(DiffSegmentKind::Equal),
+            segment(DiffSegmentKind::Equal),
+            segment(DiffSegmentKind::Equal),
+            segment(DiffSegmentKind::Equal),
+        ];
+
+        let visibility = compute_visibility(&segments, 1);
+
+        assert!(matches!(visibility[0], SegmentVisibility::Separator(1)));
+        assert!(matches!(visibility[1], SegmentVisibility::Visible(1)));
+        assert!(matches!(visibility[2], SegmentVisibility::Visible(2)));
+        assert!(matches!(visibility[3], SegmentVisibility::Visible(3)));
+        assert!(matches!(visibility[4], SegmentVisibility::Visible(4)));
+        assert!(matches!(visibility[5], SegmentVisibility::Separator(3)));
+    }
+
+    #[test]
+    fn format_line_label_uses_real_line_ranges_for_line_diffs() {
+        let span = DiffLineSpan {
+            start_line: 12,
+            line_count: 3,
+        };
+
+        assert_eq!(format_line_label(Some(&span), DiffMode::Lines, 99), "12-14");
+        assert_eq!(
+            format_line_label(
+                Some(&DiffLineSpan {
+                    start_line: 7,
+                    line_count: 1,
+                }),
+                DiffMode::Lines,
+                99
+            ),
+            "7"
+        );
+        assert_eq!(format_line_label(None, DiffMode::Lines, 99), "");
+    }
+
+    #[test]
+    fn format_line_label_falls_back_for_char_diffs() {
+        let span = DiffLineSpan {
+            start_line: 12,
+            line_count: 3,
+        };
+
+        assert_eq!(format_line_label(Some(&span), DiffMode::Chars, 4), "4");
+        assert_eq!(format_line_label(None, DiffMode::Chars, 4), "4");
+    }
 }

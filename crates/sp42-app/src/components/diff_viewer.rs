@@ -1,6 +1,6 @@
 use std::collections::{HashMap, HashSet};
 
-use leptos::prelude::*;
+use leptos::{html, prelude::*};
 use sp42_core::{
     DiffHunkKind, DiffLineSpan, DiffMarker, DiffMode, DiffMoveRole, DiffSegment, DiffSegmentKind,
     InlineSpan, RenderedHunkPreview, StructuredDiff,
@@ -113,6 +113,12 @@ struct SideBySideCell {
     text: String,
     line_label: String,
     inline_highlights: Vec<InlineSpan>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct RenderedHighlightPhrase {
+    text: String,
+    whole_word_only: bool,
 }
 
 #[component]
@@ -418,6 +424,7 @@ fn render_hunk(
         >
             {render_hunk_header(hunk, ordinal)}
             {render_rendered_hunk_preview(
+                hunk,
                 hunk_index,
                 rendered_context.clone(),
                 expanded_rendered_hunks,
@@ -486,6 +493,7 @@ fn render_hunk_side_by_side(
         >
             {render_hunk_header(hunk, ordinal)}
             {render_rendered_hunk_preview(
+                hunk,
                 hunk_index,
                 rendered_context.clone(),
                 expanded_rendered_hunks,
@@ -505,6 +513,7 @@ fn render_hunk_side_by_side(
 
 #[allow(clippy::too_many_arguments)]
 fn render_rendered_hunk_preview(
+    hunk: &HunkData,
     hunk_index: usize,
     rendered_context: Option<(String, u64, u64)>,
     expanded_rendered_hunks: ReadSignal<HashSet<usize>>,
@@ -578,6 +587,9 @@ fn render_rendered_hunk_preview(
         });
     };
 
+    let before_highlights = collect_rendered_highlight_phrases(hunk, DiffSegmentKind::Delete);
+    let after_highlights = collect_rendered_highlight_phrases(hunk, DiffSegmentKind::Insert);
+
     view! {
         <div style="display:grid;gap:6px;">
             <div style="display:flex;justify-content:flex-end;">
@@ -632,13 +644,21 @@ fn render_rendered_hunk_preview(
                             <div style="display:grid;gap:6px;min-width:0;">
                                 <div class="section-header">{"Before · "}{before.section_label.clone()}</div>
                                 <div class="card" style="padding:8px;background:rgba(255,255,255,0.02);min-width:0;">
-                                    <div class="rendered-hunk-html" inner_html=before.html.clone()></div>
+                                    <RenderedHtmlPane
+                                        html=before.html.clone()
+                                        highlight_phrases=before_highlights.clone()
+                                        highlight_class="rendered-hunk-highlight-remove"
+                                    />
                                 </div>
                             </div>
                             <div style="display:grid;gap:6px;min-width:0;">
                                 <div class="section-header">{"After · "}{after.section_label.clone()}</div>
                                 <div class="card" style="padding:8px;background:rgba(255,255,255,0.02);min-width:0;">
-                                    <div class="rendered-hunk-html" inner_html=after.html.clone()></div>
+                                    <RenderedHtmlPane
+                                        html=after.html.clone()
+                                        highlight_phrases=after_highlights.clone()
+                                        highlight_class="rendered-hunk-highlight-add"
+                                    />
                                 </div>
                             </div>
                         </div>
@@ -659,6 +679,31 @@ fn render_rendered_hunk_preview(
         </div>
     }
     .into_any()
+}
+
+#[component]
+fn RenderedHtmlPane(
+    html: String,
+    highlight_phrases: Vec<RenderedHighlightPhrase>,
+    highlight_class: &'static str,
+) -> impl IntoView {
+    let container_ref = NodeRef::<html::Div>::new();
+
+    Effect::new(move |_| {
+        if let Some(container) = container_ref.get() {
+            container.set_inner_html(&html);
+            #[cfg(target_arch = "wasm32")]
+            use wasm_bindgen::JsCast;
+            #[cfg(target_arch = "wasm32")]
+            apply_rendered_highlights(
+                container.unchecked_into::<web_sys::Element>(),
+                &highlight_phrases,
+                highlight_class,
+            );
+        }
+    });
+
+    view! { <div class="rendered-hunk-html" node_ref=container_ref></div> }
 }
 
 fn render_hunk_header(hunk: &HunkData, ordinal: usize) -> leptos::tachys::view::any_view::AnyView {
@@ -1067,6 +1112,299 @@ fn diff_marker_label(marker: &DiffMarker) -> &'static str {
     }
 }
 
+fn collect_rendered_highlight_phrases(
+    hunk: &HunkData,
+    target_kind: DiffSegmentKind,
+) -> Vec<RenderedHighlightPhrase> {
+    let mut phrases = Vec::new();
+    let mut seen = HashSet::new();
+
+    for segment in hunk.segments.iter().filter(|segment| segment.kind == target_kind) {
+        if !segment.inline_highlights.is_empty() {
+            for span in segment
+                .inline_highlights
+                .iter()
+                .filter(|span| span.kind == target_kind)
+            {
+                push_rendered_highlight_phrases(&mut phrases, &mut seen, &span.text, false);
+            }
+        } else {
+            push_rendered_highlight_phrases(&mut phrases, &mut seen, &segment.text, true);
+        }
+    }
+
+    phrases.sort_by(|left, right| {
+        right
+            .text
+            .len()
+            .cmp(&left.text.len())
+            .then_with(|| left.text.cmp(&right.text))
+    });
+    phrases.truncate(24);
+    phrases
+}
+
+fn push_rendered_highlight_phrases(
+    phrases: &mut Vec<RenderedHighlightPhrase>,
+    seen: &mut HashSet<String>,
+    raw: &str,
+    fallback_only: bool,
+) {
+    for line in split_text_lines(raw) {
+        for phrase in build_rendered_highlight_candidates(&line, fallback_only) {
+            let dedupe_key = format!("{}:{}", phrase.whole_word_only as u8, phrase.text);
+            if seen.insert(dedupe_key) {
+                phrases.push(phrase);
+            }
+        }
+    }
+}
+
+fn normalize_rendered_highlight_phrase(raw: &str) -> Option<String> {
+    let collapsed = raw.split_whitespace().collect::<Vec<_>>().join(" ");
+    let trimmed = collapsed.trim();
+    if trimmed.len() < 3 {
+        return None;
+    }
+    if !trimmed.chars().any(|ch| ch.is_alphanumeric()) {
+        return None;
+    }
+    let has_markup = ["[[", "]]", "{{", "}}", "|", "http://", "https://", "="]
+        .iter()
+        .any(|token| trimmed.contains(token));
+    if has_markup {
+        return None;
+    }
+    Some(trimmed.to_string())
+}
+
+fn build_rendered_highlight_candidates(
+    raw: &str,
+    fallback_only: bool,
+) -> Vec<RenderedHighlightPhrase> {
+    let Some(normalized) = normalize_rendered_highlight_phrase(raw) else {
+        return Vec::new();
+    };
+
+    let tokens = extract_rendered_word_tokens(&normalized);
+    if tokens.is_empty() {
+        return Vec::new();
+    }
+
+    let mut candidates = Vec::new();
+
+    if !fallback_only && tokens.len() <= 4 && normalized.len() <= 48 {
+        candidates.push(RenderedHighlightPhrase {
+            text: normalized.clone(),
+            whole_word_only: true,
+        });
+    }
+
+    if !fallback_only && tokens.len() > 1 {
+        for window in (2..=3).rev() {
+            if tokens.len() < window {
+                continue;
+            }
+            for index in 0..=tokens.len() - window {
+                let phrase = tokens[index..index + window].join(" ");
+                if phrase.len() >= 5 {
+                    candidates.push(RenderedHighlightPhrase {
+                        text: phrase,
+                        whole_word_only: true,
+                    });
+                }
+            }
+        }
+    }
+
+    for token in tokens {
+        if token.chars().count() >= 3 {
+            candidates.push(RenderedHighlightPhrase {
+                text: token,
+                whole_word_only: true,
+            });
+        }
+    }
+
+    candidates
+}
+
+fn extract_rendered_word_tokens(text: &str) -> Vec<String> {
+    let mut tokens = Vec::new();
+    let mut current = String::new();
+
+    for ch in text.chars() {
+        if ch.is_alphanumeric() {
+            current.push(ch);
+        } else if (ch == '\'' || ch == '’' || ch == '-' || ch == '_')
+            && !current.is_empty()
+        {
+            current.push(ch);
+        } else if !current.is_empty() {
+            trim_token_suffix(&mut current);
+            if current.chars().any(|ch| ch.is_alphanumeric()) {
+                tokens.push(std::mem::take(&mut current));
+            } else {
+                current.clear();
+            }
+        }
+    }
+
+    if !current.is_empty() {
+        trim_token_suffix(&mut current);
+        if current.chars().any(|ch| ch.is_alphanumeric()) {
+            tokens.push(current);
+        }
+    }
+
+    tokens
+}
+
+fn trim_token_suffix(token: &mut String) {
+    while token
+        .chars()
+        .last()
+        .is_some_and(|ch| !ch.is_alphanumeric())
+    {
+        token.pop();
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+fn apply_rendered_highlights(
+    root: web_sys::Element,
+    phrases: &[RenderedHighlightPhrase],
+    highlight_class: &str,
+) {
+    use wasm_bindgen::JsCast;
+
+    if phrases.is_empty() {
+        return;
+    }
+    let Some(document) = crate::platform::globals::browser_document() else {
+        return;
+    };
+
+    let mut text_nodes = Vec::new();
+    collect_text_nodes(root.as_ref(), &mut text_nodes);
+
+    for text_node in text_nodes {
+        let Some(parent) = text_node.parent_element() else {
+            continue;
+        };
+        if matches!(
+            parent.tag_name().as_str(),
+            "SCRIPT" | "STYLE" | "NOSCRIPT" | "MARK"
+        ) {
+            continue;
+        }
+        let original = text_node.data();
+        let matches = find_rendered_highlight_matches(&original, phrases);
+        if matches.is_empty() {
+            continue;
+        }
+
+        let fragment = document.create_document_fragment();
+        let mut cursor = 0usize;
+        for (start, end) in matches {
+            if start > cursor {
+                let text = document.create_text_node(&original[cursor..start]);
+                let _ = fragment.append_child(text.as_ref());
+            }
+            if let Ok(mark) = document.create_element("mark") {
+                let _ = mark.set_attribute("class", highlight_class);
+                mark.set_text_content(Some(&original[start..end]));
+                let _ = fragment.append_child(mark.as_ref());
+            }
+            cursor = end;
+        }
+        if cursor < original.len() {
+            let text = document.create_text_node(&original[cursor..]);
+            let _ = fragment.append_child(text.as_ref());
+        }
+        let _ = parent.replace_child(fragment.as_ref(), text_node.as_ref());
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+fn collect_text_nodes(node: &web_sys::Node, nodes: &mut Vec<web_sys::Text>) {
+    use wasm_bindgen::JsCast;
+
+    if node.node_type() == web_sys::Node::TEXT_NODE {
+        if let Ok(text) = node.clone().dyn_into::<web_sys::Text>() {
+            nodes.push(text);
+        }
+        return;
+    }
+
+    let mut child = node.first_child();
+    while let Some(current) = child {
+        let next = current.next_sibling();
+        collect_text_nodes(&current, nodes);
+        child = next;
+    }
+}
+
+fn find_rendered_highlight_matches(
+    text: &str,
+    phrases: &[RenderedHighlightPhrase],
+) -> Vec<(usize, usize)> {
+    let mut matches = Vec::new();
+    let mut cursor = 0usize;
+
+    while cursor < text.len() {
+        let candidate = phrases
+            .iter()
+            .filter_map(|phrase| {
+                find_rendered_phrase_match(text, cursor, phrase)
+            })
+            .min_by(|left, right| {
+                left.0
+                    .cmp(&right.0)
+                    .then_with(|| right.1.cmp(&left.1))
+            });
+
+        let Some((start, len)) = candidate else {
+            break;
+        };
+        let end = start + len;
+        matches.push((start, end));
+        cursor = end;
+    }
+
+    matches
+}
+
+fn find_rendered_phrase_match(
+    text: &str,
+    cursor: usize,
+    phrase: &RenderedHighlightPhrase,
+) -> Option<(usize, usize)> {
+    let mut search_from = cursor;
+    while search_from < text.len() {
+        let offset = text[search_from..].find(&phrase.text)?;
+        let start = search_from + offset;
+        let end = start + phrase.text.len();
+        if !phrase.whole_word_only || is_whole_word_match(text, start, end) {
+            return Some((start, phrase.text.len()));
+        }
+        search_from = end;
+    }
+    None
+}
+
+fn is_whole_word_match(text: &str, start: usize, end: usize) -> bool {
+    let prev_ok = text[..start]
+        .chars()
+        .next_back()
+        .is_none_or(|ch| !ch.is_alphanumeric());
+    let next_ok = text[end..]
+        .chars()
+        .next()
+        .is_none_or(|ch| !ch.is_alphanumeric());
+    prev_ok && next_ok
+}
+
 fn render_segment_data(
     segment: &SegmentData,
     fallback_line_num: usize,
@@ -1261,8 +1599,9 @@ mod tests {
     use sp42_core::{DiffLineSpan, DiffMode, DiffSegment, DiffSegmentKind};
 
     use super::{
-        SegmentData, SegmentVisibility, build_side_by_side_rows, compute_visibility,
-        format_line_label,
+        RenderedHighlightPhrase, SegmentData, SegmentVisibility, build_rendered_highlight_candidates,
+        build_side_by_side_rows, compute_visibility, extract_rendered_word_tokens,
+        find_rendered_highlight_matches, format_line_label, normalize_rendered_highlight_phrase,
     };
 
     fn segment(kind: DiffSegmentKind) -> DiffSegment {
@@ -1430,5 +1769,77 @@ mod tests {
             rows[1].right.as_ref().map(|cell| cell.line_label.as_str()),
             Some("9")
         );
+    }
+
+    #[test]
+    fn normalize_rendered_highlight_phrase_filters_markup_noise() {
+        assert_eq!(
+            normalize_rendered_highlight_phrase("  Added text here  "),
+            Some("Added text here".to_string())
+        );
+        assert_eq!(normalize_rendered_highlight_phrase("{{Infobox}}"), None);
+        assert_eq!(normalize_rendered_highlight_phrase("[[File:Example.jpg]]"), None);
+        assert_eq!(normalize_rendered_highlight_phrase("  "), None);
+    }
+
+    #[test]
+    fn rendered_highlight_matches_prefer_longer_phrase_at_same_position() {
+        let matches = find_rendered_highlight_matches(
+            "Added a major city landmark",
+            &[
+                RenderedHighlightPhrase {
+                    text: "Added".to_string(),
+                    whole_word_only: true,
+                },
+                RenderedHighlightPhrase {
+                    text: "Added a major".to_string(),
+                    whole_word_only: true,
+                },
+            ],
+        );
+
+        assert_eq!(matches, vec![(0, "Added a major".len())]);
+    }
+
+    #[test]
+    fn rendered_highlight_matches_respect_word_boundaries() {
+        let matches = find_rendered_highlight_matches(
+            "Capitales parisiennes",
+            &[RenderedHighlightPhrase {
+                text: "pari".to_string(),
+                whole_word_only: true,
+            }],
+        );
+
+        assert!(matches.is_empty());
+    }
+
+    #[test]
+    fn extract_rendered_word_tokens_keeps_short_meaningful_units() {
+        assert_eq!(
+            extract_rendered_word_tokens("Jean-Pierre d'Arc 2024"),
+            vec![
+                "Jean-Pierre".to_string(),
+                "d'Arc".to_string(),
+                "2024".to_string()
+            ]
+        );
+    }
+
+    #[test]
+    fn build_rendered_highlight_candidates_avoids_long_sentence_fallbacks() {
+        let candidates = build_rendered_highlight_candidates(
+            "This is a long changed sentence with many words in it",
+            true,
+        );
+        let texts = candidates
+            .into_iter()
+            .map(|candidate| candidate.text)
+            .collect::<Vec<_>>();
+
+        assert!(!texts.contains(&"This is a long changed sentence with many words in it".to_string()));
+        assert!(texts.contains(&"long".to_string()));
+        assert!(texts.contains(&"changed".to_string()));
+        assert!(texts.contains(&"sentence".to_string()));
     }
 }

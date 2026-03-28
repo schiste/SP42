@@ -275,6 +275,25 @@ body {
   overflow-x: auto;
 }
 
+.rendered-hunk-html mark {
+  padding: 0 0.12em;
+  border-radius: 0.22em;
+  box-decoration-break: clone;
+  -webkit-box-decoration-break: clone;
+}
+
+.rendered-hunk-highlight-add {
+  background: rgba(34, 197, 94, 0.24);
+  color: inherit;
+  box-shadow: inset 0 0 0 1px rgba(34, 197, 94, 0.18);
+}
+
+.rendered-hunk-highlight-remove {
+  background: rgba(239, 68, 68, 0.2);
+  color: inherit;
+  box-shadow: inset 0 0 0 1px rgba(239, 68, 68, 0.16);
+}
+
 
 /* ─── Buttons ─── */
 .btn {

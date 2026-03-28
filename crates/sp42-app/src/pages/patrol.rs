@@ -328,7 +328,6 @@ pub fn PatrolSurface() -> impl IntoView {
                 set_action_pending.set(false);
                 return;
             };
-            let idx = selected_index.get();
             let Some(edit) = selected_edit.get_untracked() else {
                 set_action_pending.set(false);
                 return;
@@ -1140,9 +1139,9 @@ pub fn PatrolSurface() -> impl IntoView {
                                                 view! {
                                                     <DiffViewer
                                                         diff=current_diff.get()
-                                                        wiki_id=selected.as_ref().map(|edit| edit.event.wiki_id.clone())
-                                                        rev_id=selected.as_ref().map(|edit| edit.event.rev_id)
-                                                        old_rev_id=selected.as_ref().and_then(|edit| edit.event.old_rev_id)
+                                                        wiki_id=selected.as_ref().map(|e| e.event.wiki_id.clone()).unwrap_or_default()
+                                                        rev_id=selected.as_ref().map(|e| e.event.rev_id).unwrap_or(0)
+                                                        old_rev_id=selected.as_ref().and_then(|e| e.event.old_rev_id).unwrap_or(0)
                                                         on_tag=set_tag_action
                                                         on_edit=set_edit_action
                                                     />

@@ -2,6 +2,7 @@ pub mod auth;
 pub mod bootstrap;
 pub mod coordination;
 pub mod debug;
+pub mod eventstream;
 pub mod globals;
 pub(crate) mod http;
 pub mod live;

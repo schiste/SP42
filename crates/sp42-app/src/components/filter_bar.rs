@@ -23,9 +23,9 @@ impl Default for PatrolFilterParams {
         Self {
             limit: 15,
             include_bots: false,
-            unpatrolled_only: false,
+            unpatrolled_only: true,
             include_minor: true,
-            include_registered: true,
+            include_registered: false,
             include_anonymous: true,
             include_temporary: true,
             include_new_pages: true,
@@ -406,9 +406,9 @@ mod tests {
         let qs = params.to_query_string();
         assert!(qs.contains("limit=15"));
         assert!(!qs.contains("include_bots"));
-        assert!(!qs.contains("unpatrolled_only"));
+        assert!(qs.contains("unpatrolled_only=true"));
         assert!(!qs.contains("include_minor"));
-        assert!(!qs.contains("include_registered"));
+        assert!(qs.contains("include_registered=false"));
         assert!(!qs.contains("include_anonymous"));
         assert!(!qs.contains("include_temporary"));
         assert!(!qs.contains("include_new_pages"));

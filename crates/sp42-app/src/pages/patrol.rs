@@ -8,6 +8,7 @@ use crate::components::filter_bar::{FilterBar, PatrolFilterParams};
 use crate::components::queue_column::QueueColumn;
 use crate::components::{PatrolScenarioPanel, PatrolSessionDigestPanel, ShellStatePanel};
 use crate::platform::auth::{bootstrap_dev_auth_session, execute_dev_auth_action};
+use crate::platform::eventstream::{StreamEvent, start_eventstream};
 use crate::platform::live::fetch_live_operator_view;
 
 const DEFAULT_WIKI_ID: &str = "frwiki";
@@ -147,12 +148,22 @@ pub fn PatrolSurface() -> impl IntoView {
                             kind.label(),
                             edit.event.rev_id
                         ));
-                        let queue_len = view.queue.len();
-                        if idx + 1 < queue_len {
-                            set_selected_index.set(idx + 1);
+                        // Remove the acted-on edit from the local queue
+                        if let Some(mut current_view) = view_data.get_untracked() {
+                            if idx < current_view.queue.len() {
+                                current_view.queue.remove(idx);
+                            }
+                            let new_idx = if idx >= current_view.queue.len() && !current_view.queue.is_empty() {
+                                current_view.queue.len() - 1
+                            } else {
+                                idx
+                            };
+                            set_view_data.set(Some(current_view));
+                            set_selected_index.set(new_idx);
                         }
                         set_review_note.set(String::new());
-                        // Re-fetch fresh queue
+                        // Re-fetch to get fresh diff for the new selection
+                        set_selection_only_refetch.set(true);
                         load_action.dispatch_local(());
                     } else {
                         set_action_status.set(format!(
@@ -207,6 +218,43 @@ pub fn PatrolSurface() -> impl IntoView {
             if idx + 1 < queue_len.get() {
                 set_selected_index.set(idx + 1);
             }
+        }
+    });
+
+    // Start live EventStreams SSE — insert new edits into the queue in real-time
+    start_eventstream(DEFAULT_WIKI_ID, move |event: StreamEvent| {
+        let filters = filters.get_untracked();
+
+        // Apply client-side filters
+        if event.patrolled && filters.unpatrolled_only {
+            return;
+        }
+        if event.bot && !filters.include_bots {
+            return;
+        }
+        if !filters.include_anonymous && event.user.chars().all(|c| c.is_ascii_digit() || c == '.') {
+            return;
+        }
+        if !filters.include_new_pages && event.new_page {
+            return;
+        }
+
+        let queued = stream_event_to_queued_edit(&event);
+
+        // Don't add duplicates
+        if let Some(mut current_view) = view_data.get_untracked() {
+            if current_view.queue.iter().any(|q| q.event.rev_id == queued.event.rev_id) {
+                return;
+            }
+            current_view.queue.insert(0, queued);
+            // Cap queue size
+            if current_view.queue.len() > 50 {
+                current_view.queue.truncate(50);
+            }
+            set_view_data.set(Some(current_view));
+            // Shift selected index to keep the same item selected
+            let idx = selected_index.get_untracked();
+            set_selected_index.set(idx + 1);
         }
     });
 
@@ -627,5 +675,79 @@ pub fn PatrolSurface() -> impl IntoView {
                 </div>
             }.into_any()
         }}
+    }
+}
+
+/// Convert a live SSE event into a QueuedEdit with a basic client-side score.
+fn stream_event_to_queued_edit(event: &StreamEvent) -> sp42_core::QueuedEdit {
+    use sp42_core::{
+        CompositeScore, EditEvent, EditorIdentity, FlagState, QueuedEdit, SignalContribution,
+        ScoringSignal,
+    };
+
+    let is_anon = event.user.chars().all(|c| c.is_ascii_digit() || c == '.' || c == ':');
+    let performer = if is_anon {
+        EditorIdentity::Anonymous {
+            label: event.user.clone(),
+        }
+    } else if event.user.starts_with('~') {
+        EditorIdentity::Temporary {
+            label: event.user.clone(),
+        }
+    } else {
+        EditorIdentity::Registered {
+            username: event.user.clone(),
+        }
+    };
+
+    // Basic client-side scoring
+    let mut score = 0i32;
+    let mut contributions = Vec::new();
+    if is_anon {
+        score += 20;
+        contributions.push(SignalContribution {
+            signal: ScoringSignal::AnonymousUser,
+            weight: 20,
+            note: None,
+        });
+    }
+    if matches!(performer, EditorIdentity::Temporary { .. }) {
+        score += 20;
+        contributions.push(SignalContribution {
+            signal: ScoringSignal::AnonymousUser,
+            weight: 20,
+            note: Some("temporary account".to_string()),
+        });
+    }
+    if event.byte_delta().abs() > 500 {
+        score += 15;
+        contributions.push(SignalContribution {
+            signal: ScoringSignal::LargeContentRemoval,
+            weight: 15,
+            note: None,
+        });
+    }
+
+    QueuedEdit {
+        event: EditEvent {
+            wiki_id: event.wiki.clone(),
+            title: event.title.clone(),
+            namespace: event.namespace,
+            rev_id: event.rev_id,
+            old_rev_id: event.old_rev_id,
+            performer,
+            timestamp_ms: event.timestamp_ms,
+            is_bot: FlagState::from(event.bot),
+            is_minor: FlagState::from(event.minor),
+            is_new_page: FlagState::from(event.new_page),
+            tags: Vec::new(),
+            comment: event.comment.clone(),
+            byte_delta: event.byte_delta(),
+            is_patrolled: FlagState::from(event.patrolled),
+        },
+        score: CompositeScore {
+            total: score,
+            contributions,
+        },
     }
 }

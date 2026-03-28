@@ -729,6 +729,41 @@ body {
   background: rgba(143, 183, 255, 0.12);
 }
 
+/* ─── Inline Edit ─── */
+.diff-edit-container {
+  padding: 4px 10px;
+  background: rgba(143, 183, 255, 0.06);
+  border: 1px solid var(--accent);
+  border-radius: var(--radius-sm);
+  margin: 2px 0;
+}
+
+.diff-edit-textarea {
+  width: 100%;
+  min-height: 60px;
+  padding: 8px;
+  background: var(--input);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  font-family: var(--mono);
+  font-size: 13px;
+  line-height: 1.4;
+  resize: vertical;
+  box-sizing: border-box;
+}
+
+.diff-edit-textarea:focus {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.diff-edit-actions {
+  display: flex;
+  gap: 7px;
+  margin-top: 6px;
+}
+
 /* ─── Spinner ─── */
 @keyframes sp42-spin {
   to {

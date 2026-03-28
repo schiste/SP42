@@ -58,6 +58,18 @@ Optional:
 ./scripts/build-local.sh
 ```
 
+For a reproducible release build:
+
+```sh
+./scripts/build-release.sh
+```
+
+For CI-shaped builds with deterministic caching:
+
+```sh
+./scripts/build-local.sh --ci --locked
+```
+
 ### 2. Run the localhost server
 
 ```sh
@@ -83,7 +95,13 @@ rustup target add wasm32-unknown-unknown
 ./scripts/build-frontend.sh
 ```
 
-If you use `trunk`:
+To generate Cargo timings reports:
+
+```sh
+./scripts/build-timings.sh
+```
+
+For live frontend development from the repository root:
 
 ```sh
 trunk serve
@@ -116,6 +134,9 @@ The file is ignored by `.gitignore`.
 ```sh
 ./scripts/clean-house.sh
 ./scripts/build-local.sh
+./scripts/build-local.sh --ci --locked
+./scripts/build-release.sh
+./scripts/build-timings.sh
 cargo test --workspace
 cargo clippy --workspace --all-targets --all-features -- -D warnings
 cargo doc --workspace --no-deps
@@ -125,6 +146,19 @@ Selected utility scripts:
 
 - `./scripts/local-operator-smoke.sh`
 - `./scripts/check-doc-consistency.sh`
+- `./scripts/clean-house.sh --purge-target`
+
+Cargo-native helpers:
+
+- `cargo ci-build`
+- `cargo ci-test`
+- `cargo ci-clippy`
+- `cargo timings`
+
+Optional shared compiler cache:
+
+- Set `SP42_USE_SCCACHE=1` to require `sccache`
+- Leave `SP42_USE_SCCACHE` unset to auto-enable `sccache` when available without making it mandatory
 
 ## Documentation
 

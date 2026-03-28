@@ -307,6 +307,7 @@ async fn execute_session_action(
         SessionActionKind::TagCitationNeeded => {
             execute_tag_citation_needed_action(client, config, payload).await
         }
+        SessionActionKind::InlineEdit => execute_inline_edit_action(client, config, payload).await,
     }
 }
 
@@ -334,6 +335,57 @@ async fn execute_tag_citation_needed_action(
         .summary
         .clone()
         .unwrap_or_else(|| format!("SP42: {{{{{template}|date={date}}}}}"));
+    let save_response = execute_wiki_page_save(
+        client,
+        config,
+        &WikiPageSaveRequest {
+            title,
+            text: updated_text,
+            token,
+            summary: Some(summary),
+            baserevid: Some(payload.rev_id),
+            tags: Vec::new(),
+            watchlist: None,
+            create_only: FlagState::Disabled,
+            minor: FlagState::Disabled,
+        },
+    )
+    .await?;
+    patrol_original_edit_if_possible(client, config, payload.rev_id).await;
+    Ok(save_response)
+}
+
+async fn execute_inline_edit_action(
+    client: &BearerHttpClient,
+    config: &sp42_core::WikiConfig,
+    payload: &SessionActionExecutionRequest,
+) -> Result<HttpResponse, ActionError> {
+    let token = execute_fetch_token(client, config, TokenKind::Csrf).await?;
+    let title = payload.title.clone().unwrap_or_default();
+    let original = payload.selected_text.clone().unwrap_or_default();
+    let replacement = payload.replacement_text.clone().unwrap_or_default();
+    if original.trim().is_empty() {
+        return Err(ActionError::Execution {
+            message: "selected_text (original) is required for inline edit".to_string(),
+            code: Some("invalid-input".to_string()),
+            http_status: None,
+            retryable: false,
+        });
+    }
+    let page_text = crate::fetch_page_wikitext(client, config, &title).await?;
+    let updated_text = page_text.replacen(&original, &replacement, 1);
+    if updated_text == page_text {
+        return Err(ActionError::Execution {
+            message: "original text not found in page content".to_string(),
+            code: Some("text-not-found".to_string()),
+            http_status: None,
+            retryable: false,
+        });
+    }
+    let summary = payload
+        .summary
+        .clone()
+        .unwrap_or_else(|| "SP42: inline edit".to_string());
     let save_response = execute_wiki_page_save(
         client,
         config,
@@ -513,6 +565,7 @@ pub(crate) fn action_feedback_for_entry(entry: &ActionExecutionLogEntry) -> Stri
         SessionActionKind::Patrol => "Patrol",
         SessionActionKind::Undo => "Undo",
         SessionActionKind::TagCitationNeeded => "Citation needed",
+        SessionActionKind::InlineEdit => "Inline edit",
     };
     let rationale = entry
         .summary
@@ -757,6 +810,19 @@ pub(crate) fn validate_action_request(
                 return Err(invalid_payload(
                     "selected_text is required for citation tagging",
                 ));
+            }
+            if !capabilities.capabilities.editing.can_edit {
+                return Err(forbidden_error(
+                    "The authenticated session does not currently have edit capability on this wiki.",
+                ));
+            }
+        }
+        SessionActionKind::InlineEdit => {
+            if payload.title.as_deref().is_none_or(str::is_empty) {
+                return Err(invalid_payload("title is required for inline edit"));
+            }
+            if payload.selected_text.as_deref().is_none_or(str::is_empty) {
+                return Err(invalid_payload("selected_text is required for inline edit"));
             }
             if !capabilities.capabilities.editing.can_edit {
                 return Err(forbidden_error(

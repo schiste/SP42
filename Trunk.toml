@@ -1,6 +1,12 @@
 [build]
 target = "index.html"
-dist = "dist"
+dist = "target/dist/sp42-app"
+filehash = true
+minify = "on_release"
+public_url = "/"
+
+[watch]
+watch = ["crates/sp42-app/src", "crates/sp42-app/static", "crates/sp42-core/src"]
 
 [serve]
 addresses = ["127.0.0.1"]

@@ -26,7 +26,7 @@ Patrol scenarios are currently reported through shared action and reporting path
 
 The repo includes a single local operator smoke entrypoint:
 
-- `./scripts/local-operator-smoke.sh` runs targeted `sp42-core` backlog tests, the authenticated multi-user coordination websocket test, builds the server/CLI/desktop/browser shells, starts the localhost server, and exercises the raw server readiness/operator/history surfaces plus the CLI parity-report and session-digest paths
+- `./scripts/local-operator-smoke.sh` runs targeted `sp42-core` backlog tests, the authenticated multi-user coordination websocket test, builds the server/CLI/desktop/browser shells with the shared workspace cache, starts the localhost server, and exercises the raw server readiness/operator/history surfaces plus the CLI parity-report and session-digest paths
 - it also checks the browser wasm build, the desktop shell snapshot, and the Tauri shell contract
 - it stays local-first and does not require Wikimedia credentials
 - it is the fastest way to sanity-check the current operator surface end to end without live dependencies

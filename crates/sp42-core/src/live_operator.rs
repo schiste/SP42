@@ -346,6 +346,14 @@ fn action_availability(
                 reasons.push("CSRF token is unavailable.".to_string());
             }
         }
+        SessionActionKind::InlineEdit => {
+            if !capabilities.capabilities.editing.can_edit {
+                reasons.push("Edit capability is unavailable.".to_string());
+            }
+            if !capabilities.token_availability.csrf_token_available {
+                reasons.push("CSRF token is unavailable.".to_string());
+            }
+        }
     }
 
     let available = reasons.is_empty();
@@ -401,6 +409,7 @@ fn is_recommended(kind: SessionActionKind, item: &QueuedEdit) -> bool {
             !has_trusted_suppression && (has_duplicate_pattern || item.score.total >= 40)
         }
         SessionActionKind::TagCitationNeeded => false,
+        SessionActionKind::InlineEdit => false,
     }
 }
 

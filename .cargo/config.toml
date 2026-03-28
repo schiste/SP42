@@ -1,0 +1,17 @@
+[alias]
+ci-build = ["build", "--workspace", "--all-targets", "--profile", "ci", "--locked"]
+ci-test = ["test", "--workspace", "--profile", "ci", "--locked"]
+ci-clippy = ["clippy", "--workspace", "--all-targets", "--all-features", "--profile", "ci", "--locked", "--", "-D", "warnings"]
+ci-doc = ["doc", "--workspace", "--no-deps", "--profile", "ci", "--locked"]
+timings = ["build", "--workspace", "--all-targets", "--profile", "ci", "--timings", "--locked"]
+
+[build]
+target-dir = "target"
+build-dir = "target/.build/{workspace-path-hash}"
+dep-info-basedir = "."
+
+[future-incompat-report]
+frequency = "always"
+
+[cache]
+auto-clean-frequency = "1 day"

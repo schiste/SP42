@@ -8,7 +8,7 @@ use sp42_core::{
 
 use crate::components::action_bar::ActionBar;
 use crate::components::context_header::ContextHeader;
-use crate::components::diff_viewer::{DiffViewer, TagAction};
+use crate::components::diff_viewer::{DiffViewer, EditAction, TagAction};
 use crate::components::filter_bar::{FilterBar, PatrolFilterParams};
 use crate::components::media_diff_gallery::MediaDiffGallery;
 use crate::components::queue_column::QueueColumn;
@@ -76,6 +76,7 @@ pub fn PatrolSurface() -> impl IntoView {
     let (all_edits, set_all_edits) = signal(Vec::<sp42_core::QueuedEdit>::new());
 
     let (tag_action, set_tag_action) = signal(None::<TagAction>);
+    let (edit_action, set_edit_action) = signal(None::<EditAction>);
     let (group_rev_ids, set_group_rev_ids) = signal(HashMap::<u64, Vec<u64>>::new());
 
     // Derived filtered + optionally grouped queue
@@ -136,7 +137,11 @@ pub fn PatrolSurface() -> impl IntoView {
         // Group by (title, performer label)
         let mut groups: Vec<(String, Vec<sp42_core::QueuedEdit>)> = Vec::new();
         for item in filtered {
-            let key = format!("{}|{}", item.event.title, performer_key(&item.event.performer));
+            let key = format!(
+                "{}|{}",
+                item.event.title,
+                performer_key(&item.event.performer)
+            );
             if let Some(group) = groups.iter_mut().find(|(k, _)| k == &key) {
                 group.1.push(item);
             } else {
@@ -1079,7 +1084,7 @@ pub fn PatrolSurface() -> impl IntoView {
                                                     </div>
                                                 }.into_any()
                                             } else {
-                                                view! { <DiffViewer diff=current_diff.get() on_tag=set_tag_action /> }.into_any()
+                                                view! { <DiffViewer diff=current_diff.get() on_tag=set_tag_action on_edit=set_edit_action /> }.into_any()
                                             }
                                         }}
                                     </div>

@@ -413,12 +413,20 @@ fn build_diff_hunks(
                     .filter(|segment| segment.kind != DiffSegmentKind::Equal)
                     .filter_map(|segment| segment.after.as_ref()),
             );
-            let before = changed_before
-                .clone()
-                .or_else(|| merge_line_spans(hunk_segments.iter().filter_map(|segment| segment.before.as_ref())));
-            let after = changed_after
-                .clone()
-                .or_else(|| merge_line_spans(hunk_segments.iter().filter_map(|segment| segment.after.as_ref())));
+            let before = changed_before.clone().or_else(|| {
+                merge_line_spans(
+                    hunk_segments
+                        .iter()
+                        .filter_map(|segment| segment.before.as_ref()),
+                )
+            });
+            let after = changed_after.clone().or_else(|| {
+                merge_line_spans(
+                    hunk_segments
+                        .iter()
+                        .filter_map(|segment| segment.after.as_ref()),
+                )
+            });
             let kind = classify_hunk_kind(&hunk_segments);
             let markers = collect_hunk_markers(&hunk_segments);
             let notes = build_hunk_notes(kind, &markers, before.as_ref(), after.as_ref());
@@ -428,8 +436,14 @@ fn build_diff_hunks(
                 before: before.clone(),
                 after: after.clone(),
                 section: DiffSectionContext {
-                    before: resolve_section_label(changed_before.as_ref().or(before.as_ref()), &before_sections),
-                    after: resolve_section_label(changed_after.as_ref().or(after.as_ref()), &after_sections),
+                    before: resolve_section_label(
+                        changed_before.as_ref().or(before.as_ref()),
+                        &before_sections,
+                    ),
+                    after: resolve_section_label(
+                        changed_after.as_ref().or(after.as_ref()),
+                        &after_sections,
+                    ),
                 },
                 markers,
                 notes,
@@ -496,8 +510,12 @@ fn merge_line_spans<'a>(spans: impl Iterator<Item = &'a DiffLineSpan>) -> Option
 }
 
 fn classify_hunk_kind(segments: &[DiffSegment]) -> DiffHunkKind {
-    let has_insert = segments.iter().any(|segment| segment.kind == DiffSegmentKind::Insert);
-    let has_delete = segments.iter().any(|segment| segment.kind == DiffSegmentKind::Delete);
+    let has_insert = segments
+        .iter()
+        .any(|segment| segment.kind == DiffSegmentKind::Insert);
+    let has_delete = segments
+        .iter()
+        .any(|segment| segment.kind == DiffSegmentKind::Delete);
 
     match (has_insert, has_delete) {
         (true, false) => DiffHunkKind::Addition,
@@ -527,7 +545,10 @@ fn parse_section_heading(line: &str) -> Option<String> {
     (!heading.is_empty()).then(|| heading.to_string())
 }
 
-fn resolve_section_label(span: Option<&DiffLineSpan>, sections: &[(usize, String)]) -> Option<String> {
+fn resolve_section_label(
+    span: Option<&DiffLineSpan>,
+    sections: &[(usize, String)],
+) -> Option<String> {
     let line = span?.start_line;
     sections
         .iter()
@@ -568,7 +589,10 @@ fn collect_hunk_markers(segments: &[DiffSegment]) -> Vec<DiffMarker> {
     if lowered.contains("{{") {
         markers.push(DiffMarker::Template);
     }
-    if combined.lines().any(|line| parse_section_heading(line).is_some()) {
+    if combined
+        .lines()
+        .any(|line| parse_section_heading(line).is_some())
+    {
         markers.push(DiffMarker::Heading);
     }
     if contains_interwiki_markup(&lowered) {
@@ -726,7 +750,10 @@ fn is_probable_move_match(left: &str, right: &str) -> bool {
         return false;
     }
 
-    let shared = left_words.iter().filter(|word| right_words.contains(*word)).count();
+    let shared = left_words
+        .iter()
+        .filter(|word| right_words.contains(*word))
+        .count();
     let total = left_words.len() + right_words.len() - shared;
     if total == 0 {
         return true;
@@ -1157,10 +1184,11 @@ mod tests {
             .count();
 
         assert_eq!(move_hunks, 1);
-        assert!(diff
-            .hunks
-            .iter()
-            .any(|hunk| hunk.notes.iter().any(|note| note.contains("moved block"))));
+        assert!(
+            diff.hunks
+                .iter()
+                .any(|hunk| hunk.notes.iter().any(|note| note.contains("moved block")))
+        );
     }
 
     #[test]

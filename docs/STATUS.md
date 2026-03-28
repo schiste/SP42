@@ -64,6 +64,11 @@ PWA packaging and offline installability are now effectively complete for local 
 
 The workspace is currently kept green with:
 
+- `./scripts/build-local.sh`
+- `./scripts/build-local.sh --ci --locked`
+- `./scripts/build-frontend.sh`
+- `./scripts/build-release.sh`
+- `./scripts/build-timings.sh`
 - `cargo test --workspace`
 - `cargo clippy --workspace --all-targets --all-features -- -D warnings`
 - `cargo build --workspace`

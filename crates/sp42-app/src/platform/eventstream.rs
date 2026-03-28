@@ -55,11 +55,7 @@ pub fn parse_stream_event(json: &str) -> Option<StreamEvent> {
             .get("patrolled")
             .and_then(|b| b.as_bool())
             .unwrap_or(false),
-        timestamp_ms: v
-            .get("timestamp")
-            .and_then(|t| t.as_i64())
-            .unwrap_or(0)
-            * 1000,
+        timestamp_ms: v.get("timestamp").and_then(|t| t.as_i64()).unwrap_or(0) * 1000,
         comment: v
             .get("comment")
             .and_then(|c| c.as_str())

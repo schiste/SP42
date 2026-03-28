@@ -83,6 +83,7 @@ pub enum SessionActionKind {
     Patrol,
     Undo,
     TagCitationNeeded,
+    InlineEdit,
 }
 
 impl SessionActionKind {
@@ -93,6 +94,7 @@ impl SessionActionKind {
             Self::Patrol => "patrol",
             Self::Undo => "undo",
             Self::TagCitationNeeded => "tag-citation-needed",
+            Self::InlineEdit => "inline-edit",
         }
     }
 }
@@ -110,6 +112,8 @@ pub struct SessionActionExecutionRequest {
     pub selected_text: Option<String>,
     #[serde(default)]
     pub batch_rev_ids: Option<Vec<u64>>,
+    #[serde(default)]
+    pub replacement_text: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -813,6 +817,7 @@ mod tests {
             undo_after_rev_id: None,
             summary: Some("test note".to_string()),
             batch_rev_ids: None,
+            replacement_text: None,
         };
         let response = SessionActionExecutionResponse {
             wiki_id: "frwiki".to_string(),

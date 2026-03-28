@@ -54,14 +54,13 @@ use sp42_core::{
     WikiStorageDocument, WikiStorageDocumentKind, WikiStorageLoadedDocument, WikiStoragePlan,
     WikiStoragePlanInput, WikiStorageWriteOutcome, WikiStorageWriteRequest,
     build_authorization_url, build_debug_snapshot, build_live_operator_action_preflight,
-    build_media_diff, build_patrol_scenario_report,
-    build_patrol_session_digest, build_ranked_queue_with_policy, build_review_workbench,
-    build_scoring_context, build_shell_state_model, build_wiki_storage_plan,
-    default_public_storage_document, diff_lines, execute_fetch_token, execute_liftwing_score,
-    execute_recent_changes, generate_oauth_state, generate_pkce_verifier,
-    load_wiki_storage_document, parse_callback_query, render_wiki_storage_document_page,
-    render_wiki_storage_index_page, resolve_wiki_storage_document, save_wiki_storage_document,
-    score_edit_with_context,
+    build_media_diff, build_patrol_scenario_report, build_patrol_session_digest,
+    build_ranked_queue_with_policy, build_review_workbench, build_scoring_context,
+    build_shell_state_model, build_wiki_storage_plan, default_public_storage_document, diff_lines,
+    execute_fetch_token, execute_liftwing_score, execute_recent_changes, generate_oauth_state,
+    generate_pkce_verifier, load_wiki_storage_document, parse_callback_query,
+    render_wiki_storage_document_page, render_wiki_storage_index_page,
+    resolve_wiki_storage_document, save_wiki_storage_document, score_edit_with_context,
 };
 
 use crate::coordination::{
@@ -679,8 +678,10 @@ fn browser_app_dist_dir() -> PathBuf {
         || {
             PathBuf::from(env!("CARGO_MANIFEST_DIR"))
                 .join("..")
-                .join("sp42-app")
+                .join("..")
+                .join("target")
                 .join("dist")
+                .join("sp42-app")
         },
         PathBuf::from,
     )
@@ -795,7 +796,7 @@ async fn browser_shell_unavailable() -> impl IntoResponse {
       <h1>SP42 frontend build missing</h1>
       <p>Build the browser app first:</p>
       <p><code>./scripts/build-frontend.sh</code></p>
-      <p>Or run live development from <code>crates/sp42-app</code> with <code>trunk serve</code>.</p>
+      <p>Or run live development from the repository root with <code>trunk serve</code>.</p>
     </main>
   </body>
 </html>"#,
@@ -1987,8 +1988,10 @@ async fn load_selected_review_state(
     if let Some(diff) = diff.as_ref()
         && let Some(context) = &mut scoring_context
     {
-        let hints =
-            sp42_core::diff_engine::analyze_diff_for_scoring(diff, &config.scoring.signal_parameters);
+        let hints = sp42_core::diff_engine::analyze_diff_for_scoring(
+            diff,
+            &config.scoring.signal_parameters,
+        );
         context.link_addition_only = FlagState::from(hints.link_addition_only());
         context.reference_addition_only = FlagState::from(hints.reference_addition_only());
         context.category_addition_only = FlagState::from(hints.category_addition_only());

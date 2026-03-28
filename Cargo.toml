@@ -47,4 +47,17 @@ pedantic = "deny"
 
 [profile.release]
 codegen-units = 1
+debug = 0
+incremental = false
 lto = "thin"
+strip = "debuginfo"
+
+[profile.ci]
+inherits = "dev"
+codegen-units = 64
+debug = 0
+incremental = false
+
+[profile.web-release]
+inherits = "release"
+opt-level = "z"

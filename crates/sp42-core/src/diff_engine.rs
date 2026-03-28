@@ -1,5 +1,7 @@
 //! Structured diff generation lives here.
 
+use std::collections::HashMap;
+
 use serde::{Deserialize, Serialize};
 use similar::{ChangeTag, TextDiff};
 
@@ -289,43 +291,390 @@ fn compute_inline_highlights(segments: &mut [DiffSegment]) {
         if segments[i].kind == DiffSegmentKind::Delete
             && segments[i + 1].kind == DiffSegmentKind::Insert
         {
-            let word_diff =
-                TextDiff::from_words(segments[i].text.as_str(), segments[i + 1].text.as_str());
-            let mut del_spans = Vec::new();
-            let mut ins_spans = Vec::new();
-            for change in word_diff.iter_all_changes() {
-                let span_text = change.to_string_lossy().to_string();
-                match change.tag() {
-                    ChangeTag::Equal => {
-                        del_spans.push(InlineSpan {
-                            kind: DiffSegmentKind::Equal,
-                            text: span_text.clone(),
-                        });
-                        ins_spans.push(InlineSpan {
-                            kind: DiffSegmentKind::Equal,
-                            text: span_text,
-                        });
-                    }
-                    ChangeTag::Delete => {
-                        del_spans.push(InlineSpan {
-                            kind: DiffSegmentKind::Delete,
-                            text: span_text,
-                        });
-                    }
-                    ChangeTag::Insert => {
-                        ins_spans.push(InlineSpan {
-                            kind: DiffSegmentKind::Insert,
-                            text: span_text,
-                        });
-                    }
-                }
-            }
+            let (del_spans, ins_spans) =
+                compute_inline_highlight_pair(&segments[i].text, &segments[i + 1].text);
             segments[i].inline_highlights = del_spans;
             segments[i + 1].inline_highlights = ins_spans;
             i += 2;
         } else {
             i += 1;
         }
+    }
+}
+
+fn compute_inline_highlight_pair(before: &str, after: &str) -> (Vec<InlineSpan>, Vec<InlineSpan>) {
+    let before_tokens = tokenize_inline_anchors(before);
+    let after_tokens = tokenize_inline_anchors(after);
+    let (before_equal_ranges, after_equal_ranges) =
+        collect_equal_anchor_ranges(before, &before_tokens, after, &after_tokens);
+
+    if before_equal_ranges.is_empty() && after_equal_ranges.is_empty() {
+        return compute_inline_highlight_pair_word_diff(before, after);
+    }
+
+    (
+        build_inline_spans_from_equal_ranges(before, &before_equal_ranges, DiffSegmentKind::Delete),
+        build_inline_spans_from_equal_ranges(after, &after_equal_ranges, DiffSegmentKind::Insert),
+    )
+}
+
+fn compute_inline_highlight_pair_word_diff(
+    before: &str,
+    after: &str,
+) -> (Vec<InlineSpan>, Vec<InlineSpan>) {
+    let word_diff = TextDiff::from_words(before, after);
+    let mut del_spans = Vec::new();
+    let mut ins_spans = Vec::new();
+    for change in word_diff.iter_all_changes() {
+        let span_text = change.to_string_lossy().to_string();
+        match change.tag() {
+            ChangeTag::Equal => {
+                del_spans.push(InlineSpan {
+                    kind: DiffSegmentKind::Equal,
+                    text: span_text.clone(),
+                });
+                ins_spans.push(InlineSpan {
+                    kind: DiffSegmentKind::Equal,
+                    text: span_text,
+                });
+            }
+            ChangeTag::Delete => {
+                del_spans.push(InlineSpan {
+                    kind: DiffSegmentKind::Delete,
+                    text: span_text,
+                });
+            }
+            ChangeTag::Insert => {
+                ins_spans.push(InlineSpan {
+                    kind: DiffSegmentKind::Insert,
+                    text: span_text,
+                });
+            }
+        }
+    }
+    (del_spans, ins_spans)
+}
+
+#[derive(Debug, Clone)]
+struct InlineAnchorToken {
+    normalized: String,
+    start: usize,
+    end: usize,
+}
+
+type InlineNgramHit = (usize, usize, usize);
+type InlineAnchorCandidate = (usize, usize, usize, usize, usize, usize, usize, usize);
+
+fn tokenize_inline_anchors(text: &str) -> Vec<InlineAnchorToken> {
+    let mut tokens = Vec::new();
+    let mut cursor = 0usize;
+
+    while cursor < text.len() {
+        let rest = &text[cursor..];
+
+        if let Some(end) = consume_balanced_construct(rest, "[[", "]]") {
+            let raw = &rest[..end];
+            tokens.push(InlineAnchorToken {
+                normalized: raw.to_ascii_lowercase(),
+                start: cursor,
+                end: cursor + end,
+            });
+            cursor += end;
+            continue;
+        }
+
+        if let Some(end) = consume_balanced_construct(rest, "{{", "}}") {
+            let raw = &rest[..end];
+            tokens.push(InlineAnchorToken {
+                normalized: raw.to_ascii_lowercase(),
+                start: cursor,
+                end: cursor + end,
+            });
+            cursor += end;
+            continue;
+        }
+
+        if let Some(end) = consume_ref_construct(rest) {
+            let raw = &rest[..end];
+            tokens.push(InlineAnchorToken {
+                normalized: raw.to_ascii_lowercase(),
+                start: cursor,
+                end: cursor + end,
+            });
+            cursor += end;
+            continue;
+        }
+
+        let Some(ch) = rest.chars().next() else {
+            break;
+        };
+
+        if ch.is_alphanumeric() {
+            let start = cursor;
+            let mut end = cursor + ch.len_utf8();
+            for next in text[end..].chars() {
+                if next.is_alphanumeric() || matches!(next, '\'' | '’' | '-' | '_') {
+                    end += next.len_utf8();
+                    continue;
+                }
+                break;
+            }
+            let raw = &text[start..end];
+            tokens.push(InlineAnchorToken {
+                normalized: raw.to_ascii_lowercase(),
+                start,
+                end,
+            });
+            cursor = end;
+            continue;
+        }
+
+        cursor += ch.len_utf8();
+    }
+
+    tokens
+}
+
+fn consume_balanced_construct(input: &str, open: &str, close: &str) -> Option<usize> {
+    if !input.starts_with(open) {
+        return None;
+    }
+
+    let mut depth = 0usize;
+    let mut cursor = 0usize;
+    while cursor < input.len() {
+        let rest = &input[cursor..];
+        if rest.starts_with(open) {
+            depth += 1;
+            cursor += open.len();
+            continue;
+        }
+        if rest.starts_with(close) {
+            depth = depth.saturating_sub(1);
+            cursor += close.len();
+            if depth == 0 {
+                return Some(cursor);
+            }
+            continue;
+        }
+        let ch = rest.chars().next()?;
+        cursor += ch.len_utf8();
+    }
+
+    None
+}
+
+fn consume_ref_construct(input: &str) -> Option<usize> {
+    let lowered = input.to_ascii_lowercase();
+    if !lowered.starts_with("<ref") {
+        return None;
+    }
+    if let Some(end) = lowered.find("/>") {
+        return Some(end + 2);
+    }
+    let close_start = lowered.find("</ref>")?;
+    Some(close_start + "</ref>".len())
+}
+
+fn collect_equal_anchor_ranges(
+    before_text: &str,
+    before_tokens: &[InlineAnchorToken],
+    after_text: &str,
+    after_tokens: &[InlineAnchorToken],
+) -> (Vec<(usize, usize)>, Vec<(usize, usize)>) {
+    let mut before_occurrences: HashMap<String, Vec<InlineNgramHit>> = HashMap::new();
+    let mut after_occurrences: HashMap<String, Vec<InlineNgramHit>> = HashMap::new();
+    let max_ngram = before_tokens.len().min(after_tokens.len()).min(8);
+
+    for n in (1..=max_ngram).rev() {
+        for (index, (phrase, start, end)) in collect_inline_ngrams(before_tokens, n) {
+            before_occurrences
+                .entry(phrase)
+                .or_default()
+                .push((index, start, end));
+        }
+        for (index, (phrase, start, end)) in collect_inline_ngrams(after_tokens, n) {
+            after_occurrences
+                .entry(phrase)
+                .or_default()
+                .push((index, start, end));
+        }
+    }
+
+    let mut candidates: Vec<InlineAnchorCandidate> = Vec::new();
+    for (phrase, before_hits) in &before_occurrences {
+        let Some(after_hits) = after_occurrences.get(phrase) else {
+            continue;
+        };
+        if before_hits.len() != 1 || after_hits.len() != 1 {
+            continue;
+        }
+        let (before_index, before_start, before_end) = before_hits[0];
+        let (after_index, after_start, after_end) = after_hits[0];
+        let token_count = phrase.split('\u{1f}').count();
+        let char_count = phrase.chars().filter(|ch| *ch != '\u{1f}').count();
+        let has_markup = phrase.contains("[[") || phrase.contains("{{") || phrase.contains("<ref");
+        if token_count == 1 && char_count < 4 && !has_markup {
+            continue;
+        }
+        if token_count == 1 && char_count < 8 && phrase.chars().all(char::is_alphanumeric) {
+            continue;
+        }
+        candidates.push((
+            token_count,
+            char_count,
+            before_index,
+            after_index,
+            before_start,
+            before_end,
+            after_start,
+            after_end,
+        ));
+    }
+
+    candidates.sort_by(|left, right| {
+        right
+            .0
+            .cmp(&left.0)
+            .then_with(|| right.1.cmp(&left.1))
+            .then_with(|| left.2.cmp(&right.2))
+            .then_with(|| left.3.cmp(&right.3))
+    });
+
+    let mut before_used = vec![false; before_text.len()];
+    let mut after_used = vec![false; after_text.len()];
+    let mut before_ranges = Vec::new();
+    let mut after_ranges = Vec::new();
+
+    for (_, _, _, _, before_start, before_end, after_start, after_end) in candidates {
+        if range_is_used(&before_used, before_start, before_end)
+            || range_is_used(&after_used, after_start, after_end)
+        {
+            continue;
+        }
+
+        mark_used(&mut before_used, before_start, before_end);
+        mark_used(&mut after_used, after_start, after_end);
+        before_ranges.push((before_start, before_end));
+        after_ranges.push((after_start, after_end));
+    }
+
+    before_ranges.sort_unstable();
+    after_ranges.sort_unstable();
+    (merge_touching_ranges(before_ranges), merge_touching_ranges(after_ranges))
+}
+
+fn collect_inline_ngrams<'a>(
+    tokens: &'a [InlineAnchorToken],
+    n: usize,
+) -> impl Iterator<Item = (usize, (String, usize, usize))> + 'a {
+    tokens.windows(n).enumerate().map(move |(index, window)| {
+        let start = window.first().expect("window start").start;
+        let end = window.last().expect("window end").end;
+        let normalized = window
+            .iter()
+            .map(|token| token.normalized.as_str())
+            .collect::<Vec<_>>()
+            .join("\u{1f}");
+        (index, (normalized, start, end))
+    })
+}
+
+fn range_is_used(used: &[bool], start: usize, end: usize) -> bool {
+    used[start..end].iter().any(|slot| *slot)
+}
+
+fn mark_used(used: &mut [bool], start: usize, end: usize) {
+    for slot in &mut used[start..end] {
+        *slot = true;
+    }
+}
+
+fn merge_touching_ranges(mut ranges: Vec<(usize, usize)>) -> Vec<(usize, usize)> {
+    if ranges.is_empty() {
+        return ranges;
+    }
+    ranges.sort_unstable();
+    let mut merged = vec![ranges[0]];
+    for (start, end) in ranges.into_iter().skip(1) {
+        let last = merged.last_mut().expect("merged range");
+        if start <= last.1 {
+            last.1 = last.1.max(end);
+        } else {
+            merged.push((start, end));
+        }
+    }
+    merged
+}
+
+fn build_inline_spans_from_equal_ranges(
+    text: &str,
+    equal_ranges: &[(usize, usize)],
+    change_kind: DiffSegmentKind,
+) -> Vec<InlineSpan> {
+    let mut spans = Vec::new();
+    let mut cursor = 0usize;
+
+    for &(start, end) in equal_ranges {
+        if start > cursor {
+            push_change_span(text, cursor, start, change_kind, &mut spans);
+        }
+        if end > start {
+            spans.push(InlineSpan {
+                kind: DiffSegmentKind::Equal,
+                text: text[start..end].to_string(),
+            });
+        }
+        cursor = end;
+    }
+
+    if cursor < text.len() {
+        push_change_span(text, cursor, text.len(), change_kind, &mut spans);
+    }
+
+    if spans.is_empty() {
+        spans.push(InlineSpan {
+            kind: change_kind,
+            text: text.to_string(),
+        });
+    }
+
+    spans
+}
+
+fn push_change_span(
+    text: &str,
+    start: usize,
+    end: usize,
+    change_kind: DiffSegmentKind,
+    spans: &mut Vec<InlineSpan>,
+) {
+    if start >= end {
+        return;
+    }
+    let chunk = &text[start..end];
+    let leading_ws_len = chunk.len() - chunk.trim_start().len();
+    let trailing_ws_len = chunk.len() - chunk.trim_end().len();
+    let change_start = start + leading_ws_len;
+    let change_end = end.saturating_sub(trailing_ws_len);
+
+    if leading_ws_len > 0 {
+        spans.push(InlineSpan {
+            kind: DiffSegmentKind::Equal,
+            text: text[start..change_start].to_string(),
+        });
+    }
+    if change_end > change_start {
+        spans.push(InlineSpan {
+            kind: change_kind,
+            text: text[change_start..change_end].to_string(),
+        });
+    }
+    if trailing_ws_len > 0 {
+        spans.push(InlineSpan {
+            kind: DiffSegmentKind::Equal,
+            text: text[change_end..end].to_string(),
+        });
     }
 }
 
@@ -1115,6 +1464,60 @@ mod tests {
                 .inline_highlights
                 .iter()
                 .any(|span| span.kind == DiffSegmentKind::Delete)
+        );
+    }
+
+    #[test]
+    fn inline_highlights_preserve_reordered_common_phrase_as_equal() {
+        let before = "'''Auguste Joubert''' est un homme politique français, né le 7 avril 1903.";
+        let after = "'''Auguste Joubert''', né le 7 avril 1903, est un homme politique français.";
+        let diff = diff_lines(before, after);
+
+        let delete_seg = diff
+            .segments
+            .iter()
+            .find(|s| s.kind == DiffSegmentKind::Delete)
+            .expect("should have a delete segment");
+        let insert_seg = diff
+            .segments
+            .iter()
+            .find(|s| s.kind == DiffSegmentKind::Insert)
+            .expect("should have an insert segment");
+
+        assert!(
+            delete_seg.inline_highlights.iter().any(|span| {
+                span.kind == DiffSegmentKind::Equal
+                    && span.text.contains("est un homme politique français")
+            }),
+            "moved common phrase should remain equal on delete side"
+        );
+        assert!(
+            insert_seg.inline_highlights.iter().any(|span| {
+                span.kind == DiffSegmentKind::Equal
+                    && span.text.contains("est un homme politique français")
+            }),
+            "moved common phrase should remain equal on insert side"
+        );
+    }
+
+    #[test]
+    fn inline_highlights_do_not_mark_whitespace_padding_as_changed() {
+        let before = "| fonction1                     = [[Député français]]\n";
+        let after = "| fonction1               = [[Député français]]\n";
+        let diff = diff_lines(before, after);
+
+        let delete_seg = diff
+            .segments
+            .iter()
+            .find(|s| s.kind == DiffSegmentKind::Delete)
+            .expect("should have a delete segment");
+
+        assert!(
+            delete_seg
+                .inline_highlights
+                .iter()
+                .all(|span| span.kind != DiffSegmentKind::Delete || !span.text.trim().is_empty()),
+            "whitespace-only change spans should not be highlighted as delete"
         );
     }
 

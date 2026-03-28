@@ -184,6 +184,13 @@ pub fn PatrolSurface() -> impl IntoView {
             .unwrap_or(0)
     });
 
+    // Single authoritative source for the selected edit — all UI reads from this
+    let selected_edit = Memo::new(move |_| {
+        let queue = queue_signal.get();
+        let rev = selected_rev_id.get();
+        rev.and_then(|r| queue.iter().find(|e| e.event.rev_id == r).cloned())
+    });
+
     let (selection_only_refetch, set_selection_only_refetch) = signal(false);
     let (bootstrap_attempted, set_bootstrap_attempted) = signal(false);
     let (bootstrap_error, set_bootstrap_error) = signal(None::<String>);
@@ -322,7 +329,7 @@ pub fn PatrolSurface() -> impl IntoView {
                 return;
             };
             let idx = selected_index.get();
-            let Some(edit) = view.queue.get(idx) else {
+            let Some(edit) = selected_edit.get_untracked() else {
                 set_action_pending.set(false);
                 return;
             };
@@ -483,11 +490,16 @@ pub fn PatrolSurface() -> impl IntoView {
         if prev_filters.as_ref() != Some(&current) {
             let queue = queue_signal.get_untracked();
             let first_rev = queue.first().map(|e| e.event.rev_id);
-            console::info(&format!(
-                "[SP42] filters changed → {} visible edits, selecting rev {:?}",
+            let message = format!(
+                "[SP42] filters changed → {} visible edits{}",
                 queue.len(),
-                first_rev
-            ));
+                first_rev.map_or_else(String::new, |rev_id| format!(", selecting rev {rev_id}"))
+            );
+            if queue.is_empty() {
+                console::debug(&message);
+            } else {
+                console::info(&message);
+            }
             set_selected_rev_id.set(first_rev);
         }
         current
@@ -523,9 +535,7 @@ pub fn PatrolSurface() -> impl IntoView {
         console::debug(&format!("[SP42] diff cache MISS rev {rev_id} — fetching"));
         set_diff_loading.set(true);
         set_current_diff.set(None);
-        let queue = queue_signal.get_untracked();
-        let idx = selected_index.get_untracked();
-        if let Some(edit) = queue.get(idx) {
+        if let Some(edit) = selected_edit.get_untracked() {
             let old_rev_id = edit.event.old_rev_id.unwrap_or(0);
             let wiki_id = edit.event.wiki_id.clone();
             wasm_bindgen_futures::spawn_local(async move {
@@ -569,9 +579,7 @@ pub fn PatrolSurface() -> impl IntoView {
 
         set_media_diff_loading.set(true);
         set_current_media_diff.set(None);
-        let queue = queue_signal.get_untracked();
-        let idx = selected_index.get_untracked();
-        if let Some(edit) = queue.get(idx) {
+        if let Some(edit) = selected_edit.get_untracked() {
             let old_rev_id = edit.event.old_rev_id.unwrap_or(0);
             if old_rev_id == 0 {
                 set_media_diff_loading.set(false);
@@ -602,11 +610,11 @@ pub fn PatrolSurface() -> impl IntoView {
 
     // Handle inline edit from double-click
     Effect::new(move |_| {
-        let Some(action) = edit_action.get() else { return };
+        let Some(action) = edit_action.get() else {
+            return;
+        };
         set_edit_action.set(None);
-        let queue = queue_signal.get_untracked();
-        let idx = selected_index.get_untracked();
-        let Some(edit) = queue.get(idx) else { return };
+        let Some(edit) = selected_edit.get_untracked() else { return };
         let request = SessionActionExecutionRequest {
             wiki_id: edit.event.wiki_id.clone(),
             kind: SessionActionKind::InlineEdit,
@@ -629,16 +637,18 @@ pub fn PatrolSurface() -> impl IntoView {
                     c.remove(&request.rev_id);
                     set_diff_cache.set(c);
                     set_diff_loading.set(true);
-                    let q = queue_signal.get_untracked();
-                    if let Some(item) = q.get(selected_index.get_untracked()) {
+                    if let Some(item) = selected_edit.get_untracked() {
                         let old = item.event.old_rev_id.unwrap_or(0);
-                        if let Ok(Some(d)) = fetch_diff(&item.event.wiki_id, item.event.rev_id, old).await {
+                        if let Ok(Some(d)) =
+                            fetch_diff(&item.event.wiki_id, item.event.rev_id, old).await
+                        {
                             set_current_diff.set(Some(d));
                         }
                     }
                     set_diff_loading.set(false);
                 }
-                Ok(r) => set_action_status.set(format!("Edit rejected: {}", r.message.unwrap_or_default())),
+                Ok(r) => set_action_status
+                    .set(format!("Edit rejected: {}", r.message.unwrap_or_default())),
                 Err(e) => set_action_status.set(format!("Edit error: {e}")),
             }
         });
@@ -651,9 +661,7 @@ pub fn PatrolSurface() -> impl IntoView {
         };
         set_tag_action.set(None);
 
-        let queue = queue_signal.get_untracked();
-        let idx = selected_index.get_untracked();
-        let Some(edit) = queue.get(idx) else { return };
+        let Some(edit) = selected_edit.get_untracked() else { return };
 
         let request = SessionActionExecutionRequest {
             wiki_id: edit.event.wiki_id.clone(),
@@ -687,9 +695,7 @@ pub fn PatrolSurface() -> impl IntoView {
                     c.remove(&request.rev_id);
                     set_diff_cache.set(c);
                     set_diff_loading.set(true);
-                    // Re-fetch diff for the next item
-                    let edit_data = queue_signal.get_untracked();
-                    if let Some(item) = edit_data.get(selected_index.get_untracked()) {
+                    if let Some(item) = selected_edit.get_untracked() {
                         let old = item.event.old_rev_id.unwrap_or(0);
                         if let Ok(Some(diff)) =
                             fetch_diff(&item.event.wiki_id, item.event.rev_id, old).await
@@ -729,24 +735,27 @@ pub fn PatrolSurface() -> impl IntoView {
         }
     });
 
-    // Start live EventStreams SSE — insert all edits unfiltered,
-    // the queue_signal Memo applies filters reactively
-    start_eventstream(DEFAULT_WIKI_ID, move |event: StreamEvent| {
-        let queued = stream_event_to_queued_edit(&event);
-        let mut edits = all_edits.get_untracked();
-        if edits.iter().any(|e| e.event.rev_id == queued.event.rev_id) {
-            return;
+    // Start live EventStreams SSE only once; the queue_signal Memo applies filters reactively.
+    Effect::new(move |started: Option<bool>| {
+        if started.is_none() {
+            start_eventstream(DEFAULT_WIKI_ID, move |event: StreamEvent| {
+                let queued = stream_event_to_queued_edit(&event);
+                let mut edits = all_edits.get_untracked();
+                if edits.iter().any(|e| e.event.rev_id == queued.event.rev_id) {
+                    return;
+                }
+                console::debug(&format!(
+                    "[SP42] SSE: rev {} \"{}\" by {} (score {})",
+                    queued.event.rev_id, queued.event.title, event.user, queued.score.total
+                ));
+                edits.insert(0, queued);
+                if edits.len() > 200 {
+                    edits.truncate(200);
+                }
+                set_all_edits.set(edits);
+            });
         }
-        console::debug(&format!(
-            "[SP42] SSE: rev {} \"{}\" by {} (score {})",
-            queued.event.rev_id, queued.event.title, event.user, queued.score.total
-        ));
-        edits.insert(0, queued);
-        if edits.len() > 200 {
-            edits.truncate(200);
-        }
-        // No index shift needed — selection is tracked by rev_id
-        set_all_edits.set(edits);
+        true
     });
 
     let on_keydown = move |event: leptos::ev::KeyboardEvent| {
@@ -1100,10 +1109,7 @@ pub fn PatrolSurface() -> impl IntoView {
 
                     <div style="grid-area:main;min-width:0;min-height:0;display:grid;grid-template-rows:auto 1fr;overflow:hidden;">
                         {move || {
-                            let queue = queue_signal.get();
-                            let idx = selected_index.get();
-                            let edit = queue.get(idx).cloned();
-                            view! { <ContextHeader edit=edit /> }.into_any()
+                            view! { <ContextHeader edit=selected_edit.get() /> }.into_any()
                         }}
                         {move || {
                             let report = current_media_diff.get();
@@ -1120,6 +1126,7 @@ pub fn PatrolSurface() -> impl IntoView {
                                 <div style=layout_style>
                                     <div style="min-width:0;overflow-y:auto;overflow-x:hidden;">
                                         {move || {
+                                            let selected = selected_edit.get();
                                             if diff_loading.get() {
                                                 view! {
                                                     <div class="grid-center" style="height:100%;">
@@ -1130,7 +1137,16 @@ pub fn PatrolSurface() -> impl IntoView {
                                                     </div>
                                                 }.into_any()
                                             } else {
-                                                view! { <DiffViewer diff=current_diff.get() on_tag=set_tag_action on_edit=set_edit_action /> }.into_any()
+                                                view! {
+                                                    <DiffViewer
+                                                        diff=current_diff.get()
+                                                        wiki_id=selected.as_ref().map(|edit| edit.event.wiki_id.clone())
+                                                        rev_id=selected.as_ref().map(|edit| edit.event.rev_id)
+                                                        old_rev_id=selected.as_ref().and_then(|edit| edit.event.old_rev_id)
+                                                        on_tag=set_tag_action
+                                                        on_edit=set_edit_action
+                                                    />
+                                                }.into_any()
                                             }
                                         }}
                                     </div>

@@ -48,19 +48,20 @@ use sp42_core::{
     LiveOperatorView, LocalOAuthConfigStatus, LocalOAuthSourceReport, OAuthCallback,
     OAuthClientConfig, OAuthTokenResponse, PatrolScenarioReportInputs, PatrolSessionDigestInputs,
     PublicAuditLedgerEntry, PublicStorageDocumentData, QueueHeuristicPolicy, QueuedEdit,
-    RecentChangesQuery, ServerDebugSummary, SessionActionExecutionRequest,
-    SessionActionExecutionResponse, SessionActionKind, ShellStateInputs, Storage,
-    StreamRuntimeStatus, SystemClock, TokenKind, WikiConfig, WikiStorageConfig,
-    WikiStorageDocument, WikiStorageDocumentKind, WikiStorageLoadedDocument, WikiStoragePlan,
-    WikiStoragePlanInput, WikiStorageWriteOutcome, WikiStorageWriteRequest,
-    build_authorization_url, build_debug_snapshot, build_live_operator_action_preflight,
-    build_media_diff, build_patrol_scenario_report, build_patrol_session_digest,
-    build_ranked_queue_with_policy, build_review_workbench, build_scoring_context,
-    build_shell_state_model, build_wiki_storage_plan, default_public_storage_document, diff_lines,
-    execute_fetch_token, execute_liftwing_score, execute_recent_changes, generate_oauth_state,
-    generate_pkce_verifier, load_wiki_storage_document, parse_callback_query,
-    render_wiki_storage_document_page, render_wiki_storage_index_page,
-    resolve_wiki_storage_document, save_wiki_storage_document, score_edit_with_context,
+    RecentChangesQuery, RenderedHunkPreview, RenderedHunkSide, ServerDebugSummary,
+    SessionActionExecutionRequest, SessionActionExecutionResponse, SessionActionKind,
+    ShellStateInputs, Storage, StreamRuntimeStatus, StructuredDiff, SystemClock, TokenKind,
+    WikiConfig, WikiStorageConfig, WikiStorageDocument, WikiStorageDocumentKind,
+    WikiStorageLoadedDocument, WikiStoragePlan, WikiStoragePlanInput, WikiStorageWriteOutcome,
+    WikiStorageWriteRequest, build_authorization_url, build_debug_snapshot,
+    build_live_operator_action_preflight, build_media_diff, build_patrol_scenario_report,
+    build_patrol_session_digest, build_ranked_queue_with_policy, build_review_workbench,
+    build_scoring_context, build_shell_state_model, build_wiki_storage_plan,
+    default_public_storage_document, diff_lines, execute_fetch_token, execute_liftwing_score,
+    execute_recent_changes, generate_oauth_state, generate_pkce_verifier,
+    load_wiki_storage_document, parse_callback_query, render_wiki_storage_document_page,
+    render_wiki_storage_index_page, resolve_wiki_storage_document, save_wiki_storage_document,
+    score_edit_with_context,
 };
 
 use crate::coordination::{
@@ -73,6 +74,8 @@ type SharedSessions = Arc<RwLock<HashMap<String, StoredSession>>>;
 type SharedCapabilityCache = Arc<RwLock<Option<CachedCapabilityReport>>>;
 type SharedPendingOAuthLogins = Arc<RwLock<HashMap<String, PendingOAuthLogin>>>;
 type SharedIngestionSupervisor = Arc<RwLock<HashMap<String, IngestionSupervisorSnapshot>>>;
+type SharedRevisionArtifactCache = Arc<RwLock<HashMap<String, CachedRevisionArtifacts>>>;
+type SharedRenderedHunkCache = Arc<RwLock<HashMap<String, CachedRenderedHunkPreview>>>;
 
 const SESSION_COOKIE_NAME: &str = "sp42_dev_session";
 const CAPABILITY_CACHE_TTL_MS: i64 = 30_000;
@@ -91,12 +94,16 @@ const AUTH_LOGIN_PATH: &str = "/auth/login";
 const AUTH_CALLBACK_PATH: &str = "/auth/callback";
 const AUTH_SESSION_PATH: &str = "/auth/session";
 const AUTH_LOGOUT_PATH: &str = "/auth/logout";
+const REVISION_ARTIFACT_CACHE_TTL_MS: i64 = 5 * 60 * 1000;
+const RENDERED_HUNK_CACHE_TTL_MS: i64 = 5 * 60 * 1000;
 
 #[derive(Clone)]
 struct AppState {
     capability_cache: SharedCapabilityCache,
     sessions: SharedSessions,
     pending_oauth_logins: SharedPendingOAuthLogins,
+    revision_artifacts: SharedRevisionArtifactCache,
+    rendered_hunks: SharedRenderedHunkCache,
     http_client: reqwest::Client,
     local_oauth: LocalOAuthConfig,
     runtime_storage_root: PathBuf,
@@ -113,6 +120,24 @@ struct AppState {
 struct CachedCapabilityReport {
     fetched_at_ms: i64,
     report: DevAuthCapabilityReport,
+}
+
+#[derive(Debug, Clone)]
+struct RevisionArtifacts {
+    diff: StructuredDiff,
+    media_diff: Option<sp42_core::MediaDiffReport>,
+}
+
+#[derive(Debug, Clone)]
+struct CachedRevisionArtifacts {
+    fetched_at_ms: i64,
+    artifacts: RevisionArtifacts,
+}
+
+#[derive(Debug, Clone)]
+struct CachedRenderedHunkPreview {
+    fetched_at_ms: i64,
+    preview: RenderedHunkPreview,
 }
 
 #[derive(Debug, Clone)]
@@ -524,6 +549,8 @@ async fn main() -> Result<(), std::io::Error> {
         capability_cache: Arc::new(RwLock::new(None)),
         sessions: Arc::new(RwLock::new(HashMap::new())),
         pending_oauth_logins: Arc::new(RwLock::new(HashMap::new())),
+        revision_artifacts: Arc::new(RwLock::new(HashMap::new())),
+        rendered_hunks: Arc::new(RwLock::new(HashMap::new())),
         http_client: build_http_client()?,
         local_oauth: LocalOAuthConfig::load(),
         runtime_storage_root: runtime_storage_root(),
@@ -607,6 +634,10 @@ fn build_router(state: AppState) -> Router {
             "/operator/media-diff/{wiki_id}/{rev_id}/{old_rev_id}",
             get(get_revision_media_diff),
         )
+        .route(
+            "/operator/rendered-hunk/{wiki_id}/{rev_id}/{old_rev_id}/{hunk_index}",
+            get(get_rendered_hunk_preview),
+        )
         .route("/operator/runtime/{wiki_id}", get(get_operator_runtime))
         .route(
             "/operator/storage/layout/{wiki_id}",
@@ -639,6 +670,11 @@ fn build_router(state: AppState) -> Router {
         )
         .route("/dev/auth/bootstrap/status", get(get_bootstrap_status))
         .route("/healthz", get(get_healthz))
+        .route("/manifest.json", get(get_manifest_json))
+        .route("/sw.js", get(get_service_worker))
+        .route("/offline.html", get(get_offline_html))
+        .route("/icons/{icon_name}", get(get_static_icon))
+        .route("/favicon.ico", get(get_favicon))
         .with_state(state)
         .layer(
             CorsLayer::new()
@@ -685,6 +721,13 @@ fn browser_app_dist_dir() -> PathBuf {
         },
         PathBuf::from,
     )
+}
+
+fn app_static_dir() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .join("sp42-app")
+        .join("static")
 }
 
 fn runtime_storage_root() -> PathBuf {
@@ -801,6 +844,60 @@ async fn browser_shell_unavailable() -> impl IntoResponse {
   </body>
 </html>"#,
     )
+}
+
+fn static_asset_path(file_name: &str) -> PathBuf {
+    let dist_candidate = browser_app_dist_dir().join(file_name);
+    if dist_candidate.is_file() {
+        dist_candidate
+    } else {
+        app_static_dir().join(file_name)
+    }
+}
+
+async fn get_manifest_json() -> impl IntoResponse {
+    serve_static_file(
+        static_asset_path("manifest.json"),
+        "application/manifest+json",
+    )
+    .await
+}
+
+async fn get_service_worker() -> impl IntoResponse {
+    serve_static_file(static_asset_path("sw.js"), "application/javascript").await
+}
+
+async fn get_offline_html() -> impl IntoResponse {
+    serve_static_file(
+        static_asset_path("offline.html"),
+        "text/html; charset=utf-8",
+    )
+    .await
+}
+
+async fn get_static_icon(Path(icon_name): Path<String>) -> impl IntoResponse {
+    let candidate = app_static_dir().join("icons").join(&icon_name);
+    if candidate.is_file() {
+        serve_static_file(candidate, "image/svg+xml").await
+    } else {
+        StatusCode::NOT_FOUND.into_response()
+    }
+}
+
+async fn get_favicon() -> impl IntoResponse {
+    Redirect::temporary("/icons/sp42-icon-192.svg")
+}
+
+async fn serve_static_file(path: PathBuf, content_type: &'static str) -> Response {
+    match tokio::fs::read(path).await {
+        Ok(bytes) => (
+            StatusCode::OK,
+            [(CONTENT_TYPE, HeaderValue::from_static(content_type))],
+            bytes,
+        )
+            .into_response(),
+        Err(_) => StatusCode::NOT_FOUND.into_response(),
+    }
 }
 
 async fn coordination_socket(
@@ -1976,12 +2073,12 @@ async fn load_selected_review_state(
         context.liftwing_risk = Some(probability);
     }
     let diff = if let Some(item) = selected {
-        fetch_revision_diff(&state.http_client, access_token, config, item).await?
+        fetch_revision_diff(state, access_token, config, item).await?
     } else {
         None
     };
     let media_diff = if let Some(item) = selected {
-        fetch_revision_media_diff(&state.http_client, access_token, config, item).await?
+        fetch_revision_media_diff(state, access_token, config, item).await?
     } else {
         None
     };
@@ -2441,20 +2538,14 @@ async fn get_revision_diff(
             )
         })?;
     let config = config_for_state_wiki(&state, &wiki_id)?;
-    let diff = fetch_revision_diff_by_ids(
-        &state.http_client,
-        &access_token,
-        &config,
-        rev_id,
-        old_rev_id,
-    )
-    .await
-    .map_err(|error| {
-        (
-            StatusCode::BAD_GATEWAY,
-            Json(serde_json::json!({"error": error})),
-        )
-    })?;
+    let diff = fetch_revision_diff_by_ids(&state, &access_token, &config, rev_id, old_rev_id)
+        .await
+        .map_err(|error| {
+            (
+                StatusCode::BAD_GATEWAY,
+                Json(serde_json::json!({"error": error})),
+            )
+        })?;
     Ok(Json(diff))
 }
 
@@ -2472,25 +2563,42 @@ async fn get_revision_media_diff(
             )
         })?;
     let config = config_for_state_wiki(&state, &wiki_id)?;
-    let report = fetch_revision_media_diff_by_ids(
-        &state.http_client,
+    let report =
+        fetch_revision_media_diff_by_ids(&state, &access_token, &config, rev_id, old_rev_id)
+            .await
+            .map_err(|error| {
+                (
+                    StatusCode::BAD_GATEWAY,
+                    Json(serde_json::json!({"error": error})),
+                )
+            })?;
+    Ok(Json(report))
+}
+
+async fn get_rendered_hunk_preview(
+    Path((wiki_id, rev_id, old_rev_id, hunk_index)): Path<(String, u64, u64, usize)>,
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Result<Json<Option<RenderedHunkPreview>>, (StatusCode, Json<serde_json::Value>)> {
+    let access_token = access_token_for_request(&state, &headers)
+        .await
+        .ok_or_else(|| unauthorized_error("No authenticated Wikimedia session is active."))?;
+    let config = config_for_state_wiki(&state, &wiki_id)?;
+    let preview = fetch_rendered_hunk_preview_by_ids(
+        &state,
         &access_token,
         &config,
         rev_id,
         old_rev_id,
+        hunk_index,
     )
     .await
-    .map_err(|error| {
-        (
-            StatusCode::BAD_GATEWAY,
-            Json(serde_json::json!({"error": error})),
-        )
-    })?;
-    Ok(Json(report))
+    .map_err(gateway_error)?;
+    Ok(Json(preview))
 }
 
 async fn fetch_revision_diff(
-    client: &reqwest::Client,
+    state: &AppState,
     access_token: &str,
     config: &WikiConfig,
     item: &QueuedEdit,
@@ -2499,11 +2607,11 @@ async fn fetch_revision_diff(
         return Ok(None);
     };
 
-    fetch_revision_diff_by_ids(client, access_token, config, item.event.rev_id, old_rev_id).await
+    fetch_revision_diff_by_ids(state, access_token, config, item.event.rev_id, old_rev_id).await
 }
 
 async fn fetch_revision_media_diff(
-    client: &reqwest::Client,
+    state: &AppState,
     access_token: &str,
     config: &WikiConfig,
     item: &QueuedEdit,
@@ -2512,41 +2620,163 @@ async fn fetch_revision_media_diff(
         return Ok(None);
     };
 
-    fetch_revision_media_diff_by_ids(client, access_token, config, item.event.rev_id, old_rev_id)
+    fetch_revision_media_diff_by_ids(state, access_token, config, item.event.rev_id, old_rev_id)
         .await
 }
 
 async fn fetch_revision_diff_by_ids(
-    client: &reqwest::Client,
+    state: &AppState,
     access_token: &str,
     config: &WikiConfig,
     rev_id: u64,
     old_rev_id: u64,
 ) -> Result<Option<sp42_core::StructuredDiff>, String> {
-    fetch_revision_text_pair(client, access_token, config, rev_id, old_rev_id)
+    revision_artifacts_for_pair(state, access_token, config, rev_id, old_rev_id)
         .await
-        .map(|pair| pair.map(|(before, after)| diff_lines(&before, &after)))
+        .map(|artifacts| artifacts.map(|artifacts| artifacts.diff))
 }
 
 async fn fetch_revision_media_diff_by_ids(
-    client: &reqwest::Client,
+    state: &AppState,
     access_token: &str,
     config: &WikiConfig,
     rev_id: u64,
     old_rev_id: u64,
 ) -> Result<Option<sp42_core::MediaDiffReport>, String> {
-    fetch_revision_text_pair(client, access_token, config, rev_id, old_rev_id)
+    revision_artifacts_for_pair(state, access_token, config, rev_id, old_rev_id)
         .await
-        .map(|pair| {
-            pair.and_then(|(before, after)| {
-                let mut report = build_media_diff(&before, &after);
-                if !report.has_changes() {
-                    return None;
-                }
-                populate_media_preview_urls(config, &mut report);
-                Some(report)
-            })
-        })
+        .map(|artifacts| artifacts.and_then(|artifacts| artifacts.media_diff))
+}
+
+async fn fetch_rendered_hunk_preview_by_ids(
+    state: &AppState,
+    access_token: &str,
+    config: &WikiConfig,
+    rev_id: u64,
+    old_rev_id: u64,
+    hunk_index: usize,
+) -> Result<Option<RenderedHunkPreview>, String> {
+    let cache_key = rendered_hunk_cache_key(&config.wiki_id, rev_id, old_rev_id, hunk_index);
+    let now_ms = state.clock.now_ms();
+    {
+        let guard = state.rendered_hunks.read().await;
+        if let Some(cached) = guard.get(&cache_key)
+            && now_ms.saturating_sub(cached.fetched_at_ms) < RENDERED_HUNK_CACHE_TTL_MS
+        {
+            return Ok(Some(cached.preview.clone()));
+        }
+    }
+
+    let Some(artifacts) =
+        revision_artifacts_for_pair(state, access_token, config, rev_id, old_rev_id).await?
+    else {
+        return Ok(None);
+    };
+    let Some(hunk) = artifacts.diff.hunks.get(hunk_index) else {
+        return Ok(None);
+    };
+
+    let before = render_revision_section_side(
+        &state.http_client,
+        access_token,
+        config,
+        old_rev_id,
+        hunk.section.before.as_deref(),
+    )
+    .await?;
+    let after = render_revision_section_side(
+        &state.http_client,
+        access_token,
+        config,
+        rev_id,
+        hunk.section.after.as_deref(),
+    )
+    .await?;
+
+    let mut warnings = Vec::new();
+    if before.missing {
+        warnings.push(format!(
+            "Before revision section \"{}\" could not be rendered directly; the article structure may have changed.",
+            before.section_label
+        ));
+    }
+    if after.missing {
+        warnings.push(format!(
+            "After revision section \"{}\" could not be rendered directly; the article structure may have changed.",
+            after.section_label
+        ));
+    }
+    warnings.push(
+        "Rendered preview is section-scoped and may omit cross-section references or context-sensitive template output."
+            .to_string(),
+    );
+
+    let preview = RenderedHunkPreview {
+        hunk_index,
+        before,
+        after,
+        warnings,
+    };
+
+    let mut guard = state.rendered_hunks.write().await;
+    guard.insert(
+        cache_key,
+        CachedRenderedHunkPreview {
+            fetched_at_ms: now_ms,
+            preview: preview.clone(),
+        },
+    );
+
+    Ok(Some(preview))
+}
+
+async fn revision_artifacts_for_pair(
+    state: &AppState,
+    access_token: &str,
+    config: &WikiConfig,
+    rev_id: u64,
+    old_rev_id: u64,
+) -> Result<Option<RevisionArtifacts>, String> {
+    let cache_key = revision_artifact_cache_key(&config.wiki_id, rev_id, old_rev_id);
+    let now_ms = state.clock.now_ms();
+    {
+        let guard = state.revision_artifacts.read().await;
+        if let Some(cached) = guard.get(&cache_key)
+            && now_ms.saturating_sub(cached.fetched_at_ms) < REVISION_ARTIFACT_CACHE_TTL_MS
+        {
+            return Ok(Some(cached.artifacts.clone()));
+        }
+    }
+
+    let Some((before_text, after_text)) =
+        fetch_revision_text_pair(&state.http_client, access_token, config, rev_id, old_rev_id)
+            .await?
+    else {
+        return Ok(None);
+    };
+
+    let diff = diff_lines(&before_text, &after_text);
+    let media_diff = {
+        let mut report = build_media_diff(&before_text, &after_text);
+        if report.has_changes() {
+            populate_media_preview_urls(config, &mut report);
+            Some(report)
+        } else {
+            None
+        }
+    };
+    let artifacts = RevisionArtifacts { diff, media_diff };
+
+    let mut guard = state.revision_artifacts.write().await;
+    guard.insert(
+        cache_key,
+        CachedRevisionArtifacts {
+            fetched_at_ms: now_ms,
+            artifacts: artifacts.clone(),
+        },
+    );
+
+    Ok(Some(artifacts))
 }
 
 async fn fetch_revision_text_pair(
@@ -2566,6 +2796,168 @@ async fn fetch_revision_text_pair(
     };
 
     Ok(Some((before.clone(), after.clone())))
+}
+
+fn revision_artifact_cache_key(wiki_id: &str, rev_id: u64, old_rev_id: u64) -> String {
+    format!("{wiki_id}:{old_rev_id}:{rev_id}")
+}
+
+fn rendered_hunk_cache_key(
+    wiki_id: &str,
+    rev_id: u64,
+    old_rev_id: u64,
+    hunk_index: usize,
+) -> String {
+    format!("{wiki_id}:{old_rev_id}:{rev_id}:hunk:{hunk_index}")
+}
+
+async fn render_revision_section_side(
+    client: &reqwest::Client,
+    access_token: &str,
+    config: &WikiConfig,
+    rev_id: u64,
+    section_label: Option<&str>,
+) -> Result<RenderedHunkSide, String> {
+    let label = section_label.unwrap_or("Lead").trim();
+    if label.is_empty() || label == "Lead" {
+        let html = fetch_rendered_section_html(client, access_token, config, rev_id, 0).await?;
+        return Ok(RenderedHunkSide {
+            section_label: "Lead".to_string(),
+            html,
+            missing: false,
+        });
+    }
+
+    let sections = fetch_revision_sections(client, access_token, config, rev_id).await?;
+    let Some(section_index) = sections
+        .into_iter()
+        .find_map(|(candidate_label, index)| (candidate_label == label).then_some(index))
+    else {
+        return Ok(RenderedHunkSide {
+            section_label: label.to_string(),
+            html: String::new(),
+            missing: true,
+        });
+    };
+
+    let html =
+        fetch_rendered_section_html(client, access_token, config, rev_id, section_index).await?;
+    Ok(RenderedHunkSide {
+        section_label: label.to_string(),
+        html,
+        missing: false,
+    })
+}
+
+async fn fetch_revision_sections(
+    client: &reqwest::Client,
+    access_token: &str,
+    config: &WikiConfig,
+    rev_id: u64,
+) -> Result<Vec<(String, u32)>, String> {
+    let response = client
+        .get(config.api_url.clone())
+        .bearer_auth(access_token)
+        .query(&[
+            ("action", "parse"),
+            ("oldid", rev_id.to_string().as_str()),
+            ("prop", "sections"),
+            ("format", "json"),
+            ("formatversion", "2"),
+        ])
+        .send()
+        .await
+        .map_err(|error| format!("section lookup transport failed: {error}"))?;
+    let status = response.status();
+    let body = response
+        .bytes()
+        .await
+        .map_err(|error| format!("section lookup body failed: {error}"))?;
+    if !status.is_success() {
+        return Err(format!(
+            "section lookup failed with HTTP {}: {}",
+            status.as_u16(),
+            truncate_response_body(&body)
+        ));
+    }
+
+    let value: serde_json::Value = serde_json::from_slice(&body)
+        .map_err(|error| format!("section lookup JSON failed: {error}"))?;
+    let sections = value
+        .get("parse")
+        .and_then(|value| value.get("sections"))
+        .and_then(serde_json::Value::as_array)
+        .ok_or_else(|| "section lookup payload does not contain parse.sections".to_string())?;
+
+    Ok(sections
+        .iter()
+        .filter_map(|section| {
+            let label = section.get("line")?.as_str()?.trim();
+            let index = section.get("index")?;
+            let index = index
+                .as_u64()
+                .or_else(|| index.as_str().and_then(|text| text.parse::<u64>().ok()))?;
+            Some((label.to_string(), index as u32))
+        })
+        .collect())
+}
+
+async fn fetch_rendered_section_html(
+    client: &reqwest::Client,
+    access_token: &str,
+    config: &WikiConfig,
+    rev_id: u64,
+    section_index: u32,
+) -> Result<String, String> {
+    let response = client
+        .get(config.api_url.clone())
+        .bearer_auth(access_token)
+        .query(&[
+            ("action", "parse"),
+            ("oldid", rev_id.to_string().as_str()),
+            ("prop", "text"),
+            ("section", section_index.to_string().as_str()),
+            ("format", "json"),
+            ("formatversion", "2"),
+        ])
+        .send()
+        .await
+        .map_err(|error| format!("rendered section transport failed: {error}"))?;
+    let status = response.status();
+    let body = response
+        .bytes()
+        .await
+        .map_err(|error| format!("rendered section body failed: {error}"))?;
+    if !status.is_success() {
+        return Err(format!(
+            "rendered section failed with HTTP {}: {}",
+            status.as_u16(),
+            truncate_response_body(&body)
+        ));
+    }
+
+    let value: serde_json::Value = serde_json::from_slice(&body)
+        .map_err(|error| format!("rendered section JSON failed: {error}"))?;
+    extract_parse_html(&value)
+}
+
+fn extract_parse_html(value: &serde_json::Value) -> Result<String, String> {
+    let text = value
+        .get("parse")
+        .and_then(|value| value.get("text"))
+        .ok_or_else(|| "rendered section payload does not contain parse.text".to_string())?;
+
+    if let Some(html) = text.as_str() {
+        return Ok(html.to_string());
+    }
+
+    if let Some(object) = text.as_object() {
+        if let Some(html) = object.get("*").and_then(serde_json::Value::as_str) {
+            return Ok(html.to_string());
+        }
+    }
+
+    Err("rendered section payload does not expose HTML text".to_string())
 }
 
 fn populate_media_preview_urls(config: &WikiConfig, report: &mut sp42_core::MediaDiffReport) {
@@ -3597,6 +3989,8 @@ mod tests {
             capability_cache: Arc::new(tokio::sync::RwLock::new(None)),
             sessions: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
             pending_oauth_logins: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
+            revision_artifacts: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
+            rendered_hunks: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
             http_client: reqwest::Client::builder()
                 .timeout(Duration::from_secs(5))
                 .user_agent(sp42_core::branding::USER_AGENT)
@@ -4135,6 +4529,8 @@ mod tests {
             capability_cache: Arc::new(tokio::sync::RwLock::new(None)),
             sessions: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
             pending_oauth_logins: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
+            revision_artifacts: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
+            rendered_hunks: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
             http_client: reqwest::Client::builder()
                 .user_agent(sp42_core::branding::USER_AGENT)
                 .build()
@@ -4609,6 +5005,8 @@ mod tests {
             capability_cache: Arc::new(tokio::sync::RwLock::new(None)),
             sessions: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
             pending_oauth_logins: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
+            revision_artifacts: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
+            rendered_hunks: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
             http_client: reqwest::Client::builder()
                 .user_agent(sp42_core::branding::USER_AGENT)
                 .build()
@@ -4676,6 +5074,8 @@ mod tests {
             capability_cache: Arc::new(tokio::sync::RwLock::new(None)),
             sessions: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
             pending_oauth_logins: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
+            revision_artifacts: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
+            rendered_hunks: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
             http_client: reqwest::Client::builder()
                 .user_agent(sp42_core::branding::USER_AGENT)
                 .build()
@@ -4766,6 +5166,8 @@ mod tests {
             capability_cache: Arc::new(tokio::sync::RwLock::new(None)),
             sessions: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
             pending_oauth_logins: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
+            revision_artifacts: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
+            rendered_hunks: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
             http_client: reqwest::Client::builder()
                 .user_agent(sp42_core::branding::USER_AGENT)
                 .build()
@@ -4937,6 +5339,8 @@ mod tests {
             capability_cache: Arc::new(tokio::sync::RwLock::new(None)),
             sessions: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
             pending_oauth_logins: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
+            revision_artifacts: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
+            rendered_hunks: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
             http_client: reqwest::Client::builder()
                 .timeout(Duration::from_secs(5))
                 .user_agent(sp42_core::branding::USER_AGENT)
@@ -5016,6 +5420,8 @@ mod tests {
             capability_cache: Arc::new(tokio::sync::RwLock::new(None)),
             sessions: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
             pending_oauth_logins: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
+            revision_artifacts: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
+            rendered_hunks: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
             http_client: reqwest::Client::builder()
                 .timeout(Duration::from_secs(5))
                 .user_agent(sp42_core::branding::USER_AGENT)
@@ -5101,6 +5507,8 @@ mod tests {
             capability_cache: Arc::new(tokio::sync::RwLock::new(None)),
             sessions: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
             pending_oauth_logins: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
+            revision_artifacts: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
+            rendered_hunks: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
             http_client: reqwest::Client::builder()
                 .timeout(Duration::from_secs(5))
                 .user_agent(sp42_core::branding::USER_AGENT)

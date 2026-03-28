@@ -73,7 +73,7 @@ pub(crate) async fn post_json_bytes(
     body: String,
     context: &str,
 ) -> Result<Vec<u8>, String> {
-    let request = Request::post(url)
+    let request = include_credentials(Request::post(url))
         .header("content-type", "application/json")
         .body(body)
         .map_err(|error| format!("{context}: {}", error))?;

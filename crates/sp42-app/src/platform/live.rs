@@ -1,4 +1,4 @@
-use sp42_core::{LiveOperatorView, MediaDiffReport, StructuredDiff};
+use sp42_core::{LiveOperatorView, MediaDiffReport, RenderedHunkPreview, StructuredDiff};
 
 use crate::components::filter_bar::PatrolFilterParams;
 
@@ -8,6 +8,7 @@ use super::http::get_bytes;
 const LIVE_OPERATOR_URL_PREFIX: &str = "/operator/live";
 const DIFF_URL_PREFIX: &str = "/operator/diff";
 const MEDIA_DIFF_URL_PREFIX: &str = "/operator/media-diff";
+const RENDERED_HUNK_URL_PREFIX: &str = "/operator/rendered-hunk";
 
 #[cfg(target_arch = "wasm32")]
 pub async fn fetch_live_operator_view(
@@ -71,4 +72,26 @@ pub async fn fetch_media_diff(
     _old_rev_id: u64,
 ) -> Result<Option<MediaDiffReport>, String> {
     Err("Media diff fetch is only available in the browser runtime.".to_string())
+}
+
+#[cfg(target_arch = "wasm32")]
+pub async fn fetch_rendered_hunk(
+    wiki_id: &str,
+    rev_id: u64,
+    old_rev_id: u64,
+    hunk_index: usize,
+) -> Result<Option<RenderedHunkPreview>, String> {
+    let url = format!("{RENDERED_HUNK_URL_PREFIX}/{wiki_id}/{rev_id}/{old_rev_id}/{hunk_index}");
+    let bytes = get_bytes(&url, "fetch rendered hunk").await?;
+    serde_json::from_slice(&bytes).map_err(|error| format!("parse rendered hunk: {error}"))
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub async fn fetch_rendered_hunk(
+    _wiki_id: &str,
+    _rev_id: u64,
+    _old_rev_id: u64,
+    _hunk_index: usize,
+) -> Result<Option<RenderedHunkPreview>, String> {
+    Err("Rendered hunk fetch is only available in the browser runtime.".to_string())
 }

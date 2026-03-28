@@ -91,8 +91,9 @@ pub use dev_auth::{
 };
 pub use diff_engine::{
     DiffHunk, DiffHunkKind, DiffLineSpan, DiffMarker, DiffMode, DiffMoveRole, DiffScoringHints,
-    DiffSectionContext, DiffSegment, DiffSegmentKind, DiffStats, InlineSpan, StructuredDiff,
-    analyze_diff_for_scoring, detect_link_addition_only, diff_chars, diff_lines,
+    DiffSectionContext, DiffSegment, DiffSegmentKind, DiffStats, InlineSpan, RenderedHunkPreview,
+    RenderedHunkSide, StructuredDiff, analyze_diff_for_scoring, detect_link_addition_only,
+    diff_chars, diff_lines,
 };
 pub use errors::{
     ActionError, BacklogRuntimeError, CodecError, ConfigError, CoordinationError, DevAuthError,

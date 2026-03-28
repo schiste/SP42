@@ -1,8 +1,12 @@
+use std::collections::{HashMap, HashSet};
+
 use leptos::prelude::*;
 use sp42_core::{
     DiffHunkKind, DiffLineSpan, DiffMarker, DiffMode, DiffMoveRole, DiffSegment, DiffSegmentKind,
-    InlineSpan, StructuredDiff,
+    InlineSpan, RenderedHunkPreview, StructuredDiff,
 };
+
+use crate::platform::live::fetch_rendered_hunk;
 
 /// Action triggered from the diff context menu.
 #[derive(Debug, Clone)]
@@ -114,11 +118,19 @@ struct SideBySideCell {
 #[component]
 pub fn DiffViewer(
     diff: Option<StructuredDiff>,
+    #[prop(optional)] wiki_id: Option<String>,
+    #[prop(optional)] rev_id: Option<u64>,
+    #[prop(optional)] old_rev_id: Option<u64>,
     #[prop(optional)] on_tag: Option<WriteSignal<Option<TagAction>>>,
     #[prop(optional)] on_edit: Option<WriteSignal<Option<EditAction>>>,
 ) -> impl IntoView {
     let (menu_pos, set_menu_pos) = signal(None::<(i32, i32, String)>);
     let (editing_line, set_editing_line) = signal(None::<(usize, String)>);
+    let (expanded_rendered_hunks, set_expanded_rendered_hunks) = signal(HashSet::<usize>::new());
+    let (rendered_hunk_cache, set_rendered_hunk_cache) =
+        signal(HashMap::<usize, RenderedHunkPreview>::new());
+    let (rendered_hunk_loading, set_rendered_hunk_loading) = signal(HashSet::<usize>::new());
+    let (rendered_hunk_errors, set_rendered_hunk_errors) = signal(HashMap::<usize, String>::new());
     let _ = (&on_edit, &editing_line, &set_editing_line);
 
     let Some(diff) = diff else {
@@ -151,6 +163,8 @@ pub fn DiffViewer(
     let (show_full, set_show_full) = signal(false);
     let (display_mode, set_display_mode) = signal(DiffDisplayMode::SideBySide);
     let collapsed_plan = compute_visibility(&diff.segments, 3);
+    let rendered_context =
+        old_rev_id.and_then(|old_rev_id| Some((wiki_id.clone()?, rev_id?, old_rev_id)));
 
     let seg_data: Vec<SegmentData> = diff
         .segments
@@ -262,9 +276,19 @@ pub fn DiffViewer(
                                     render_hunk_side_by_side(
                                         hunk,
                                         index + 1,
+                                        index,
                                         diff_mode,
                                         has_menu,
                                         set_menu_pos,
+                                        rendered_context.clone(),
+                                        expanded_rendered_hunks,
+                                        set_expanded_rendered_hunks,
+                                        rendered_hunk_cache,
+                                        set_rendered_hunk_cache,
+                                        rendered_hunk_loading,
+                                        set_rendered_hunk_loading,
+                                        rendered_hunk_errors,
+                                        set_rendered_hunk_errors,
                                     )
                                 })
                                 .collect_view()
@@ -292,12 +316,22 @@ pub fn DiffViewer(
                                 render_hunk(
                                     hunk,
                                     index + 1,
+                                    index,
                                     diff_mode,
                                     has_menu,
                                     set_menu_pos,
                                     editing_line,
                                     set_editing_line,
                                     on_edit,
+                                    rendered_context.clone(),
+                                    expanded_rendered_hunks,
+                                    set_expanded_rendered_hunks,
+                                    rendered_hunk_cache,
+                                    set_rendered_hunk_cache,
+                                    rendered_hunk_loading,
+                                    set_rendered_hunk_loading,
+                                    rendered_hunk_errors,
+                                    set_rendered_hunk_errors,
                                 )
                             })
                             .collect_view()
@@ -360,12 +394,22 @@ pub fn DiffViewer(
 fn render_hunk(
     hunk: &HunkData,
     ordinal: usize,
+    hunk_index: usize,
     diff_mode: DiffMode,
     has_menu: bool,
     set_menu_pos: WriteSignal<Option<(i32, i32, String)>>,
     editing_line: ReadSignal<Option<(usize, String)>>,
     set_editing_line: WriteSignal<Option<(usize, String)>>,
     on_edit: Option<WriteSignal<Option<EditAction>>>,
+    rendered_context: Option<(String, u64, u64)>,
+    expanded_rendered_hunks: ReadSignal<HashSet<usize>>,
+    set_expanded_rendered_hunks: WriteSignal<HashSet<usize>>,
+    rendered_hunk_cache: ReadSignal<HashMap<usize, RenderedHunkPreview>>,
+    set_rendered_hunk_cache: WriteSignal<HashMap<usize, RenderedHunkPreview>>,
+    rendered_hunk_loading: ReadSignal<HashSet<usize>>,
+    set_rendered_hunk_loading: WriteSignal<HashSet<usize>>,
+    rendered_hunk_errors: ReadSignal<HashMap<usize, String>>,
+    set_rendered_hunk_errors: WriteSignal<HashMap<usize, String>>,
 ) -> leptos::tachys::view::any_view::AnyView {
     view! {
         <section
@@ -373,6 +417,18 @@ fn render_hunk(
                    border-block-start:1px solid var(--border-light);"
         >
             {render_hunk_header(hunk, ordinal)}
+            {render_rendered_hunk_preview(
+                hunk_index,
+                rendered_context.clone(),
+                expanded_rendered_hunks,
+                set_expanded_rendered_hunks,
+                rendered_hunk_cache,
+                set_rendered_hunk_cache,
+                rendered_hunk_loading,
+                set_rendered_hunk_loading,
+                rendered_hunk_errors,
+                set_rendered_hunk_errors,
+            )}
             <div style="display:grid;gap:2px;">
                 {hunk
                     .segments
@@ -407,9 +463,19 @@ fn render_hunk(
 fn render_hunk_side_by_side(
     hunk: &HunkData,
     ordinal: usize,
+    hunk_index: usize,
     diff_mode: DiffMode,
     has_menu: bool,
     set_menu_pos: WriteSignal<Option<(i32, i32, String)>>,
+    rendered_context: Option<(String, u64, u64)>,
+    expanded_rendered_hunks: ReadSignal<HashSet<usize>>,
+    set_expanded_rendered_hunks: WriteSignal<HashSet<usize>>,
+    rendered_hunk_cache: ReadSignal<HashMap<usize, RenderedHunkPreview>>,
+    set_rendered_hunk_cache: WriteSignal<HashMap<usize, RenderedHunkPreview>>,
+    rendered_hunk_loading: ReadSignal<HashSet<usize>>,
+    set_rendered_hunk_loading: WriteSignal<HashSet<usize>>,
+    rendered_hunk_errors: ReadSignal<HashMap<usize, String>>,
+    set_rendered_hunk_errors: WriteSignal<HashMap<usize, String>>,
 ) -> leptos::tachys::view::any_view::AnyView {
     let rows = build_side_by_side_rows(&hunk.segments, diff_mode);
 
@@ -419,8 +485,178 @@ fn render_hunk_side_by_side(
                    border-block-start:1px solid var(--border-light);"
         >
             {render_hunk_header(hunk, ordinal)}
+            {render_rendered_hunk_preview(
+                hunk_index,
+                rendered_context.clone(),
+                expanded_rendered_hunks,
+                set_expanded_rendered_hunks,
+                rendered_hunk_cache,
+                set_rendered_hunk_cache,
+                rendered_hunk_loading,
+                set_rendered_hunk_loading,
+                rendered_hunk_errors,
+                set_rendered_hunk_errors,
+            )}
             {render_side_by_side_rows(rows, diff_mode, has_menu, set_menu_pos)}
         </section>
+    }
+    .into_any()
+}
+
+#[allow(clippy::too_many_arguments)]
+fn render_rendered_hunk_preview(
+    hunk_index: usize,
+    rendered_context: Option<(String, u64, u64)>,
+    expanded_rendered_hunks: ReadSignal<HashSet<usize>>,
+    set_expanded_rendered_hunks: WriteSignal<HashSet<usize>>,
+    rendered_hunk_cache: ReadSignal<HashMap<usize, RenderedHunkPreview>>,
+    set_rendered_hunk_cache: WriteSignal<HashMap<usize, RenderedHunkPreview>>,
+    rendered_hunk_loading: ReadSignal<HashSet<usize>>,
+    set_rendered_hunk_loading: WriteSignal<HashSet<usize>>,
+    rendered_hunk_errors: ReadSignal<HashMap<usize, String>>,
+    set_rendered_hunk_errors: WriteSignal<HashMap<usize, String>>,
+) -> leptos::tachys::view::any_view::AnyView {
+    let Some((wiki_id, rev_id, old_rev_id)) = rendered_context else {
+        return view! { <span></span> }.into_any();
+    };
+
+    let toggle = move |_| {
+        let is_expanded = expanded_rendered_hunks
+            .get_untracked()
+            .contains(&hunk_index);
+        let mut expanded = expanded_rendered_hunks.get_untracked();
+        if is_expanded {
+            expanded.remove(&hunk_index);
+            set_expanded_rendered_hunks.set(expanded);
+            return;
+        }
+
+        expanded.insert(hunk_index);
+        set_expanded_rendered_hunks.set(expanded);
+
+        if rendered_hunk_cache
+            .get_untracked()
+            .contains_key(&hunk_index)
+            || rendered_hunk_loading.get_untracked().contains(&hunk_index)
+        {
+            return;
+        }
+
+        let wiki_id = wiki_id.clone();
+        wasm_bindgen_futures::spawn_local(async move {
+            let mut loading = rendered_hunk_loading.get_untracked();
+            loading.insert(hunk_index);
+            set_rendered_hunk_loading.set(loading);
+
+            match fetch_rendered_hunk(&wiki_id, rev_id, old_rev_id, hunk_index).await {
+                Ok(Some(preview)) => {
+                    let mut cache = rendered_hunk_cache.get_untracked();
+                    cache.insert(hunk_index, preview);
+                    set_rendered_hunk_cache.set(cache);
+                    let mut errors = rendered_hunk_errors.get_untracked();
+                    errors.remove(&hunk_index);
+                    set_rendered_hunk_errors.set(errors);
+                }
+                Ok(None) => {
+                    let mut errors = rendered_hunk_errors.get_untracked();
+                    errors.insert(
+                        hunk_index,
+                        "No rendered preview is available for this hunk.".to_string(),
+                    );
+                    set_rendered_hunk_errors.set(errors);
+                }
+                Err(error) => {
+                    let mut errors = rendered_hunk_errors.get_untracked();
+                    errors.insert(hunk_index, error);
+                    set_rendered_hunk_errors.set(errors);
+                }
+            }
+
+            let mut loading = rendered_hunk_loading.get_untracked();
+            loading.remove(&hunk_index);
+            set_rendered_hunk_loading.set(loading);
+        });
+    };
+
+    view! {
+        <div style="display:grid;gap:6px;">
+            <div style="display:flex;justify-content:flex-end;">
+                <button
+                    class="btn btn-ghost btn-compact"
+                    style="min-height:24px;padding:1px 8px;font-size:10px;"
+                    on:click=toggle
+                >
+                    {move || {
+                        if expanded_rendered_hunks.get().contains(&hunk_index) {
+                            "Hide rendered"
+                        } else {
+                            "Show rendered"
+                        }
+                    }}
+                </button>
+            </div>
+            {move || {
+                if !expanded_rendered_hunks.get().contains(&hunk_index) {
+                    return view! { <span></span> }.into_any();
+                }
+
+                if rendered_hunk_loading.get().contains(&hunk_index) {
+                    return view! {
+                        <div class="card" style="padding:10px;gap:6px;">
+                            <div class="text-muted" style="font-size:11px;">"Rendering hunk context..."</div>
+                        </div>
+                    }
+                    .into_any();
+                }
+
+                if let Some(error) = rendered_hunk_errors.get().get(&hunk_index).cloned() {
+                    return view! {
+                        <div class="card" style="padding:10px;gap:6px;border-color:rgba(239,68,68,.3);">
+                            <strong style="font-size:11px;color:#fca5a5;">"Rendered preview unavailable"</strong>
+                            <div style="font-size:11px;color:var(--muted);">{error}</div>
+                        </div>
+                    }
+                    .into_any();
+                }
+
+                let Some(preview) = rendered_hunk_cache.get().get(&hunk_index).cloned() else {
+                    return view! { <span></span> }.into_any();
+                };
+
+                let warnings = preview.warnings.clone();
+                let before = preview.before.clone();
+                let after = preview.after.clone();
+                view! {
+                    <div class="card" style="padding:10px;gap:8px;">
+                        <div style="display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:10px;">
+                            <div style="display:grid;gap:6px;min-width:0;">
+                                <div class="section-header">{"Before · "}{before.section_label.clone()}</div>
+                                <div class="card" style="padding:8px;background:rgba(255,255,255,0.02);min-width:0;">
+                                    <div class="rendered-hunk-html" inner_html=before.html.clone()></div>
+                                </div>
+                            </div>
+                            <div style="display:grid;gap:6px;min-width:0;">
+                                <div class="section-header">{"After · "}{after.section_label.clone()}</div>
+                                <div class="card" style="padding:8px;background:rgba(255,255,255,0.02);min-width:0;">
+                                    <div class="rendered-hunk-html" inner_html=after.html.clone()></div>
+                                </div>
+                            </div>
+                        </div>
+                        {warnings
+                            .into_iter()
+                            .map(|warning| {
+                                view! {
+                                    <div style="font-size:10px;line-height:1.35;color:var(--muted);">
+                                        {warning}
+                                    </div>
+                                }
+                            })
+                            .collect_view()}
+                    </div>
+                }
+                .into_any()
+            }}
+        </div>
     }
     .into_any()
 }

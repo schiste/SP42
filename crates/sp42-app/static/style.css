@@ -253,6 +253,28 @@ body {
   line-height: 1.4;
 }
 
+.rendered-hunk-html {
+  min-width: 0;
+  color: var(--text);
+  font-family: var(--font-sans);
+  font-size: 12px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.rendered-hunk-html img,
+.rendered-hunk-html video,
+.rendered-hunk-html audio {
+  max-width: 100%;
+  height: auto;
+}
+
+.rendered-hunk-html table {
+  width: 100%;
+  display: block;
+  overflow-x: auto;
+}
+
 
 /* ─── Buttons ─── */
 .btn {

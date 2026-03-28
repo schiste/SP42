@@ -123,6 +123,27 @@ pub struct StructuredDiff {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct RenderedHunkSide {
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub section_label: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub html: String,
+    #[serde(default)]
+    pub missing: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct RenderedHunkPreview {
+    pub hunk_index: usize,
+    #[serde(default)]
+    pub before: RenderedHunkSide,
+    #[serde(default)]
+    pub after: RenderedHunkSide,
+    #[serde(default)]
+    pub warnings: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub struct DiffAdditiveOnlyHints {
     pub link_addition_only: bool,
     pub reference_addition_only: bool,

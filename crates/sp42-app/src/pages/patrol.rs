@@ -199,7 +199,11 @@ pub fn PatrolSurface() -> impl IntoView {
                 undo_after_rev_id: edit.event.old_rev_id,
                 summary: {
                     let note = review_note.get();
-                    if note.is_empty() { None } else { Some(note) }
+                    if note.is_empty() {
+                        Some("SP42".to_string())
+                    } else {
+                        Some(format!("SP42: {note}"))
+                    }
                 },
             };
 
@@ -319,10 +323,24 @@ pub fn PatrolSurface() -> impl IntoView {
         if event.bot && !filters.include_bots {
             return;
         }
-        if !filters.include_anonymous && event.user.chars().all(|c| c.is_ascii_digit() || c == '.') {
+        if event.minor && !filters.include_minor {
             return;
         }
         if !filters.include_new_pages && event.new_page {
+            return;
+        }
+
+        // Editor type filters
+        let is_ip = event.user.chars().all(|c| c.is_ascii_digit() || c == '.' || c == ':');
+        let is_temp = event.user.starts_with('~');
+        let is_registered = !is_ip && !is_temp;
+        if is_ip && !filters.include_anonymous {
+            return;
+        }
+        if is_temp && !filters.include_temporary {
+            return;
+        }
+        if is_registered && !filters.include_registered {
             return;
         }
 

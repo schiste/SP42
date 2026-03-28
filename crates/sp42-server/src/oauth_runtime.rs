@@ -1,9 +1,9 @@
-use axum::http::{HeaderMap, StatusCode, header::HOST};
 use axum::Json;
+use axum::http::{HeaderMap, StatusCode, header::HOST};
 
 use crate::{
-    invalid_payload, AppState, DevAuthBootstrapRequest, LocalOAuthConfig, OAuthClientConfig,
-    OAuthProfileResponse, OAuthTokenResponse, PendingOAuthLogin, AUTH_CALLBACK_PATH,
+    AUTH_CALLBACK_PATH, AppState, DevAuthBootstrapRequest, LocalOAuthConfig, OAuthClientConfig,
+    OAuthProfileResponse, OAuthTokenResponse, PendingOAuthLogin, invalid_payload,
 };
 
 pub(crate) fn internal_error(message: &str) -> (StatusCode, Json<serde_json::Value>) {

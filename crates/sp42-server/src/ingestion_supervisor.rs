@@ -1,13 +1,13 @@
 use std::time::Duration;
 
 use sp42_core::{
-    build_ranked_queue, BacklogRuntime, BacklogRuntimeConfig, QueuedEdit, StreamRuntimeStatus,
-    WikiConfig,
+    BacklogRuntime, BacklogRuntimeConfig, QueuedEdit, StreamRuntimeStatus, WikiConfig,
+    build_ranked_queue,
 };
 
 use crate::{
-    default_limit, persisted_stream_status, resolved_wiki_config, runtime_storage_for, AppState,
-    BearerHttpClient, IngestionSupervisorSnapshot,
+    AppState, BearerHttpClient, IngestionSupervisorSnapshot, default_limit,
+    persisted_stream_status, resolved_wiki_config, runtime_storage_for,
 };
 
 pub(crate) fn supervisor_poll_interval_ms() -> u64 {

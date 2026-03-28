@@ -306,7 +306,6 @@ async fn wait_for_health(client: &Client, base_url: &str, child: &mut Child) -> 
     }
 }
 
-
 fn dump_runtime_root(runtime_root: &Path) {
     eprintln!("runtime root: {}", runtime_root.display());
     if let Ok(entries) = fs::read_dir(runtime_root) {
@@ -502,7 +501,10 @@ async fn auth_logout_clears_bootstrapped_session_state() {
         .expect("auth session response should parse");
     assert_eq!(session_json["authenticated"], serde_json::json!(true));
     assert_eq!(session_json["username"], serde_json::json!("Schiste"));
-    assert_eq!(session_json["bridge_mode"], serde_json::json!("local-env-token"));
+    assert_eq!(
+        session_json["bridge_mode"],
+        serde_json::json!("local-env-token")
+    );
 
     let logout = client
         .post(format!("{base_url}/auth/logout"))

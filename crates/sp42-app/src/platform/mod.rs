@@ -1,5 +1,6 @@
 pub mod auth;
 pub mod bootstrap;
+pub mod console;
 pub mod coordination;
 pub mod debug;
 pub mod eventstream;

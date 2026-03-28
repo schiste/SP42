@@ -13,6 +13,13 @@ pub fn ContextHeader(edit: Option<QueuedEdit>) -> impl IntoView {
         .into_any();
     };
 
+    let (show_score_details, set_show_score_details) = signal(false);
+    let selected_rev_id = edit.event.rev_id;
+    Effect::new(move |_| {
+        let _ = selected_rev_id;
+        set_show_score_details.set(false);
+    });
+
     let score = edit.score.total;
     let (tier_color, tier_icon) = score_tier(score);
     let user_label = match &edit.event.performer {
@@ -57,37 +64,84 @@ pub fn ContextHeader(edit: Option<QueuedEdit>) -> impl IntoView {
     let diff_url = format!("{base}/w/index.php?diff={rev_id}&oldid={old_rev_id}");
 
     view! {
-        <div class="context-header">
-            <span class="context-score" style=format!("color:{tier_color};")>
-                {score.to_string()} " " {tier_icon}
-            </span>
-            <span class="context-separator">"|"</span>
-            <span class="context-user">
-                {user_label} " " <span class="text-muted">{"(" }{user_type}{")"}</span>
-            </span>
-            <span class="context-separator">"|"</span>
-            <span style=format!("color:{delta_color};font-weight:700;")>
-                {delta_str} " bytes"
-            </span>
-            {if !top_signals.is_empty() {
-                view! {
-                    <span class="context-separator">"|"</span>
-                    <span class="context-signals">
-                        {top_signals.join(" · ")}
+        <div class="context-header-shell">
+            <div class="context-header">
+                <button
+                    type="button"
+                    class="context-score-button"
+                    on:click=move |_| {
+                        set_show_score_details.update(|open| *open = !*open);
+                    }
+                    aria-expanded=move || show_score_details.get().to_string()
+                    title="Show score details"
+                >
+                    <span class="context-score" style=format!("color:{tier_color};")>
+                        {score.to_string()} " " {tier_icon}
                     </span>
+                </button>
+                <span class="context-separator">"|"</span>
+                <span class="context-user">
+                    {user_label} " " <span class="text-muted">{"(" }{user_type}{")"}</span>
+                </span>
+                <span class="context-separator">"|"</span>
+                <span style=format!("color:{delta_color};font-weight:700;")>
+                    {delta_str} " bytes"
+                </span>
+                {if !top_signals.is_empty() {
+                    view! {
+                        <span class="context-separator">"|"</span>
+                        <span class="context-signals">
+                            {top_signals.join(" · ")}
+                        </span>
+                    }.into_any()
+                } else {
+                    view! { <span></span> }.into_any()
+                }}
+                <div class="flex-spacer"></div>
+                <a
+                    href=diff_url
+                    target="_blank"
+                    rel="noopener"
+                    class="context-link"
+                >
+                    "View on wiki"
+                </a>
+            </div>
+            {move || {
+                if !show_score_details.get() {
+                    return view! { <span></span> }.into_any();
+                }
+                let details = edit
+                    .score
+                    .contributions
+                    .iter()
+                    .filter(|e| e.weight != 0)
+                    .map(|entry| {
+                        let wp = if entry.weight > 0 { "+" } else { "" };
+                        let tone = if entry.weight > 0 { "var(--danger)" } else { "var(--success)" };
+                        let note = entry.note.clone();
+                        view! {
+                            <li class="score-details-item">
+                                <div class="score-details-line">
+                                    <span class="score-details-signal">{entry.signal.to_string()}</span>
+                                    <span class="score-details-weight" style=format!("color:{tone};")>
+                                        {format!("{wp}{}", entry.weight)}
+                                    </span>
+                                </div>
+                                {note.map(|v| view! { <div class="score-details-note">{v}</div> })}
+                            </li>
+                        }
+                    })
+                    .collect_view();
+                view! {
+                    <div class="score-details-panel">
+                        <div class="score-details-summary">
+                            <span>"Score details"</span>
+                        </div>
+                        <ul class="score-details-list">{details}</ul>
+                    </div>
                 }.into_any()
-            } else {
-                view! { <span></span> }.into_any()
             }}
-            <div class="flex-spacer"></div>
-            <a
-                href=diff_url
-                target="_blank"
-                rel="noopener"
-                class="context-link"
-            >
-                "View on wiki"
-            </a>
         </div>
     }
     .into_any()

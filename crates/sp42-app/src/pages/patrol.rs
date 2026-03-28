@@ -12,6 +12,7 @@ use crate::components::filter_bar::{FilterBar, PatrolFilterParams};
 use crate::components::queue_column::QueueColumn;
 use crate::components::{PatrolScenarioPanel, PatrolSessionDigestPanel, ShellStatePanel};
 use crate::platform::auth::{bootstrap_dev_auth_session, execute_dev_auth_action};
+use crate::platform::console;
 use crate::platform::eventstream::{StreamEvent, start_eventstream};
 use crate::platform::live::{fetch_diff, fetch_live_operator_view};
 
@@ -192,9 +193,21 @@ pub fn PatrolSurface() -> impl IntoView {
                         set_current_diff.set(Some(diff.clone()));
                     }
                     if !selection_only_refetch.get_untracked() {
+                        console::info(&format!(
+                            "[SP42] server load: {} edits, diff={}",
+                            view.queue.len(),
+                            view.diff.is_some()
+                        ));
                         if let Some(target_rev) = rev_id_from_hash() {
+                            console::debug(&format!(
+                                "[SP42] selecting rev from hash: {target_rev}"
+                            ));
                             set_selected_rev_id.set(Some(target_rev));
                         } else if let Some(first) = view.queue.first() {
+                            console::debug(&format!(
+                                "[SP42] selecting first: rev {}",
+                                first.event.rev_id
+                            ));
                             set_selected_rev_id.set(Some(first.event.rev_id));
                         }
                         set_all_edits.set(view.queue.clone());
@@ -273,6 +286,10 @@ pub fn PatrolSurface() -> impl IntoView {
                 selected_text: None,
             };
 
+            console::info(&format!(
+                "[SP42] action {} on rev {} title={:?}",
+                kind.label(), edit.event.rev_id, edit.event.title
+            ));
             match execute_dev_auth_action(&request).await {
                 Ok(response) => {
                     if response.accepted {
@@ -374,7 +391,12 @@ pub fn PatrolSurface() -> impl IntoView {
         let current = filters.get();
         if prev_filters.as_ref() != Some(&current) {
             let queue = queue_signal.get_untracked();
-            set_selected_rev_id.set(queue.first().map(|e| e.event.rev_id));
+            let first_rev = queue.first().map(|e| e.event.rev_id);
+            console::info(&format!(
+                "[SP42] filters changed → {} visible edits, selecting rev {:?}",
+                queue.len(), first_rev
+            ));
+            set_selected_rev_id.set(first_rev);
         }
         current
     });
@@ -394,14 +416,16 @@ pub fn PatrolSurface() -> impl IntoView {
             return current_rev;
         }
 
-        // Check cache first
+        console::debug(&format!("[SP42] selection changed → rev {rev_id}"));
+
         let cache = diff_cache.get_untracked();
         if let Some(diff) = cache.get(&rev_id) {
+            console::debug(&format!("[SP42] diff cache HIT rev {rev_id} ({} segments)", diff.segments.len()));
             set_current_diff.set(Some(diff.clone()));
             return current_rev;
         }
 
-        // Fetch the diff
+        console::debug(&format!("[SP42] diff cache MISS rev {rev_id} — fetching"));
         set_diff_loading.set(true);
         set_current_diff.set(None);
         let queue = queue_signal.get_untracked();
@@ -520,6 +544,10 @@ pub fn PatrolSurface() -> impl IntoView {
         if edits.iter().any(|e| e.event.rev_id == queued.event.rev_id) {
             return;
         }
+        console::debug(&format!(
+            "[SP42] SSE: rev {} \"{}\" by {} (score {})",
+            queued.event.rev_id, queued.event.title, event.user, queued.score.total
+        ));
         edits.insert(0, queued);
         if edits.len() > 200 {
             edits.truncate(200);

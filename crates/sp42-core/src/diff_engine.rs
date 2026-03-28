@@ -179,10 +179,7 @@ mod tests {
 
     #[test]
     fn inline_highlights_show_changed_words_in_adjacent_delete_insert() {
-        let diff = diff_lines(
-            "the quick brown fox\n",
-            "the slow brown cat\n",
-        );
+        let diff = diff_lines("the quick brown fox\n", "the slow brown cat\n");
 
         // Delete + Insert pair should both have inline highlights
         let delete_seg = diff
@@ -206,13 +203,17 @@ mod tests {
         );
 
         // The changed words should be marked, unchanged words should be Equal
-        assert!(delete_seg
-            .inline_highlights
-            .iter()
-            .any(|span| span.kind == DiffSegmentKind::Equal));
-        assert!(delete_seg
-            .inline_highlights
-            .iter()
-            .any(|span| span.kind == DiffSegmentKind::Delete));
+        assert!(
+            delete_seg
+                .inline_highlights
+                .iter()
+                .any(|span| span.kind == DiffSegmentKind::Equal)
+        );
+        assert!(
+            delete_seg
+                .inline_highlights
+                .iter()
+                .any(|span| span.kind == DiffSegmentKind::Delete)
+        );
     }
 }

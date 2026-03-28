@@ -422,7 +422,7 @@ fn render_hunk(
             style="display:grid;gap:6px;margin-block-end:12px;padding:7px 0 0;\
                    border-block-start:1px solid var(--border-light);"
         >
-            {render_hunk_header(hunk, ordinal)}
+            {render_hunk_header(hunk, ordinal, view! { <span></span> }.into_any())}
             {render_rendered_hunk_preview(
                 hunk,
                 hunk_index,
@@ -491,7 +491,7 @@ fn render_hunk_side_by_side(
             style="display:grid;gap:6px;margin-block-end:12px;padding:7px 0 0;\
                    border-block-start:1px solid var(--border-light);"
         >
-            {render_hunk_header(hunk, ordinal)}
+            {render_hunk_header(hunk, ordinal, view! { <span></span> }.into_any())}
             {render_rendered_hunk_preview(
                 hunk,
                 hunk_index,
@@ -511,7 +511,7 @@ fn render_hunk_side_by_side(
     .into_any()
 }
 
-#[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments, dead_code)]
 fn render_rendered_hunk_toggle(
     hunk_index: usize,
     rendered_context: Option<(String, u64, u64)>,
@@ -738,7 +738,7 @@ fn render_hunk_header(
         DiffMoveRole::Source => "Moved from here",
         DiffMoveRole::Target => "Moved to here",
     });
-    let note = hunk.notes.first().cloned();
+    let _note = hunk.notes.first().cloned();
 
     view! {
         <header style="padding:0 0 1px;">
@@ -1295,7 +1295,7 @@ fn apply_rendered_highlights(
     phrases: &[RenderedHighlightPhrase],
     highlight_class: &str,
 ) {
-    #[cfg(target_arch = "wasm32")]
+    #[allow(unused_imports)]
     use wasm_bindgen::JsCast;
 
     if phrases.is_empty() {

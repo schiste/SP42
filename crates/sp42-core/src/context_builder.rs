@@ -23,6 +23,12 @@ pub fn build_scoring_context(inputs: &ContextInputs) -> ScoringContext {
         liftwing_risk: normalize_liftwing_probability(inputs.liftwing_probability),
         trust_override: crate::types::FlagState::Disabled,
         link_addition_only: crate::types::FlagState::Disabled,
+        reference_addition_only: crate::types::FlagState::Disabled,
+        category_addition_only: crate::types::FlagState::Disabled,
+        interwiki_addition_only: crate::types::FlagState::Disabled,
+        mass_blanking_detected: crate::types::FlagState::Disabled,
+        inserted_profanity_detected: crate::types::FlagState::Disabled,
+        repeated_character_noise_detected: crate::types::FlagState::Disabled,
         duplicate_cluster_size: None,
     }
 }

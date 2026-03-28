@@ -368,6 +368,35 @@ fn build_queue_section(
 fn build_context_section(context: Option<&ScoringContext>) -> PatrolScenarioSection {
     match context {
         Some(context) => {
+            let active_diff_flags = [
+                ("link_addition", context.link_addition_only.is_enabled()),
+                (
+                    "reference_addition",
+                    context.reference_addition_only.is_enabled(),
+                ),
+                (
+                    "category_addition",
+                    context.category_addition_only.is_enabled(),
+                ),
+                (
+                    "interwiki_addition",
+                    context.interwiki_addition_only.is_enabled(),
+                ),
+                ("mass_blanking", context.mass_blanking_detected.is_enabled()),
+                (
+                    "inserted_profanity",
+                    context.inserted_profanity_detected.is_enabled(),
+                ),
+                (
+                    "repeated_character_noise",
+                    context.repeated_character_noise_detected.is_enabled(),
+                ),
+            ]
+            .into_iter()
+            .filter_map(|(label, enabled)| enabled.then_some(label))
+            .collect::<Vec<_>>()
+            .join(",");
+
             let mut summary_lines = vec![
                 format!("user_risk={}", context.user_risk.is_some()),
                 format!(
@@ -376,7 +405,14 @@ fn build_context_section(context: Option<&ScoringContext>) -> PatrolScenarioSect
                         .liftwing_risk
                         .map_or_else(|| "none".to_string(), |value| format!("{value:.2}"))
                 ),
-                format!("link_addition_only={}", context.link_addition_only),
+                format!(
+                    "diff_flags={}",
+                    if active_diff_flags.is_empty() {
+                        "none".to_string()
+                    } else {
+                        active_diff_flags
+                    }
+                ),
             ];
 
             if let Some(user_risk) = &context.user_risk {

@@ -110,13 +110,54 @@ fn push_selected_snapshot(snapshot: &mut DebugSnapshot, selected: &QueuedEdit) {
 }
 
 fn push_scoring_context_snapshot(snapshot: &mut DebugSnapshot, scoring_context: &ScoringContext) {
+    let active_diff_flags = [
+        (
+            "link_addition",
+            scoring_context.link_addition_only.is_enabled(),
+        ),
+        (
+            "reference_addition",
+            scoring_context.reference_addition_only.is_enabled(),
+        ),
+        (
+            "category_addition",
+            scoring_context.category_addition_only.is_enabled(),
+        ),
+        (
+            "interwiki_addition",
+            scoring_context.interwiki_addition_only.is_enabled(),
+        ),
+        (
+            "mass_blanking",
+            scoring_context.mass_blanking_detected.is_enabled(),
+        ),
+        (
+            "inserted_profanity",
+            scoring_context.inserted_profanity_detected.is_enabled(),
+        ),
+        (
+            "repeated_character_noise",
+            scoring_context
+                .repeated_character_noise_detected
+                .is_enabled(),
+        ),
+    ]
+    .into_iter()
+    .filter_map(|(label, enabled)| enabled.then_some(label))
+    .collect::<Vec<_>>()
+    .join(",");
+
     snapshot.summary_lines.push(format!(
-        "context user_risk={} liftwing={} link_addition_only={}",
+        "context user_risk={} liftwing={} diff_flags={}",
         scoring_context.user_risk.is_some(),
         scoring_context
             .liftwing_risk
             .map_or_else(|| "none".to_string(), |value| format!("{value:.2}")),
-        scoring_context.link_addition_only
+        if active_diff_flags.is_empty() {
+            "none".to_string()
+        } else {
+            active_diff_flags
+        }
     ));
 
     if let Some(user_risk) = &scoring_context.user_risk {

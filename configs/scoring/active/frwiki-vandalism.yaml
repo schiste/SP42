@@ -73,6 +73,30 @@ rules:
     enabled: true
     weight: -12
     notes: constructive linkification that only adds wikilink wrappers should lower patrol priority
+  reference_addition:
+    enabled: true
+    weight: -14
+    notes: adding only references or citation templates should lower patrol priority
+  category_addition:
+    enabled: true
+    weight: -10
+    notes: adding only category links is usually constructive maintenance
+  interwiki_addition:
+    enabled: true
+    weight: -10
+    notes: adding only interwiki or language links is usually constructive maintenance
+  mass_blanking:
+    enabled: true
+    weight: 25
+    notes: substantial deletion with little replacement should raise patrol priority
+  inserted_profanity:
+    enabled: true
+    weight: 35
+    notes: profanity in inserted diff text is a strong vandalism signal
+  repeated_character_noise:
+    enabled: true
+    weight: 20
+    notes: repeated-character noise in inserted diff text should raise patrol priority
   profanity:
     enabled: true
     weight: 30

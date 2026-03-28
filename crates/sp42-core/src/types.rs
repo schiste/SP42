@@ -110,6 +110,12 @@ pub struct ScoreWeights {
     pub reverted_before: i32,
     pub large_content_removal: i32,
     pub link_addition: i32,
+    pub reference_addition: i32,
+    pub category_addition: i32,
+    pub interwiki_addition: i32,
+    pub mass_blanking: i32,
+    pub inserted_profanity: i32,
+    pub repeated_character_noise: i32,
     pub profanity: i32,
     pub link_spam: i32,
     pub trusted_user: i32,
@@ -222,6 +228,12 @@ pub enum ScoringSignal {
     RevertedBefore,
     LargeContentRemoval,
     LinkAddition,
+    ReferenceAddition,
+    CategoryAddition,
+    InterwikiAddition,
+    MassBlanking,
+    InsertedProfanity,
+    RepeatedCharacterNoise,
     Profanity,
     LinkSpam,
     TrustedUser,
@@ -243,6 +255,12 @@ impl std::fmt::Display for ScoringSignal {
             Self::RevertedBefore => "Reverted before",
             Self::LargeContentRemoval => "Large content removal",
             Self::LinkAddition => "Link addition",
+            Self::ReferenceAddition => "Reference addition",
+            Self::CategoryAddition => "Category addition",
+            Self::InterwikiAddition => "Interwiki addition",
+            Self::MassBlanking => "Mass blanking",
+            Self::InsertedProfanity => "Inserted profanity",
+            Self::RepeatedCharacterNoise => "Repeated character noise",
             Self::Profanity => "Profanity",
             Self::LinkSpam => "Link spam",
             Self::TrustedUser => "Trusted user",
@@ -321,6 +339,18 @@ pub struct ScoringContext {
     pub trust_override: FlagState,
     #[serde(default)]
     pub link_addition_only: FlagState,
+    #[serde(default)]
+    pub reference_addition_only: FlagState,
+    #[serde(default)]
+    pub category_addition_only: FlagState,
+    #[serde(default)]
+    pub interwiki_addition_only: FlagState,
+    #[serde(default)]
+    pub mass_blanking_detected: FlagState,
+    #[serde(default)]
+    pub inserted_profanity_detected: FlagState,
+    #[serde(default)]
+    pub repeated_character_noise_detected: FlagState,
     pub duplicate_cluster_size: Option<u32>,
 }
 

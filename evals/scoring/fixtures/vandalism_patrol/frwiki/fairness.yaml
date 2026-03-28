@@ -1,0 +1,7 @@
+checks:
+  - cohort: newcomer
+    metric: false_positive_regression_bps
+  - cohort: temporary
+    metric: false_positive_regression_bps
+  - cohort: anonymous
+    metric: false_positive_regression_bps

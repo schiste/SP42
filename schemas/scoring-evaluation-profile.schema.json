@@ -1,0 +1,79 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://sp42.local/schemas/scoring-evaluation-profile.schema.json",
+  "title": "SP42 Scoring Evaluation Profile",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "name",
+    "domain",
+    "required_gates",
+    "fixture_sets",
+    "fairness",
+    "performance_budget_ms"
+  ],
+  "properties": {
+    "name": {
+      "type": "string",
+      "minLength": 1
+    },
+    "domain": {
+      "type": "string",
+      "minLength": 1
+    },
+    "required_gates": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "string",
+        "enum": [
+          "config_validation",
+          "invariants",
+          "regression_cases",
+          "ranking_checks",
+          "fairness_checks",
+          "explanation_completeness",
+          "latency_budget"
+        ]
+      }
+    },
+    "fixture_sets": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "regression",
+        "ranking",
+        "invariants"
+      ],
+      "properties": {
+        "regression": { "type": "string", "minLength": 1 },
+        "ranking": { "type": "string", "minLength": 1 },
+        "invariants": { "type": "string", "minLength": 1 },
+        "fairness": { "type": ["string", "null"] }
+      }
+    },
+    "fairness": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "track_newcomers",
+        "track_temporary",
+        "track_anonymous"
+      ],
+      "properties": {
+        "track_newcomers": { "type": "boolean" },
+        "track_temporary": { "type": "boolean" },
+        "track_anonymous": { "type": "boolean" }
+      }
+    },
+    "performance_budget_ms": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "notes": {
+      "type": "array",
+      "default": [],
+      "items": { "type": "string" }
+    }
+  }
+}

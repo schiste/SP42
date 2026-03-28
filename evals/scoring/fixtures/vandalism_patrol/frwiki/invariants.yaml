@@ -1,0 +1,7 @@
+invariants:
+  - slug: score_bounds
+    rule: final score must stay within configured bounds
+  - slug: disabled_rule_zero_contribution
+    rule: a disabled rule must contribute nothing
+  - slug: identity_modifier_only
+    rule: identity contribution must remain bounded by the policy cap

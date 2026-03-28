@@ -1,0 +1,209 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://sp42.local/schemas/scoring-policy.schema.json",
+  "title": "SP42 Scoring Policy",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "domain",
+    "wiki_id",
+    "policy_version",
+    "evaluation_profile",
+    "lifecycle",
+    "dimensions",
+    "identity",
+    "queue",
+    "rules"
+  ],
+  "properties": {
+    "domain": {
+      "type": "string",
+      "enum": [
+        "vandalism_patrol",
+        "article_quality",
+        "sourcing_review",
+        "structured_data",
+        "maintenance",
+        "policy_compliance",
+        "custom"
+      ]
+    },
+    "wiki_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "policy_version": {
+      "type": "string",
+      "pattern": "^v[0-9]+\\.[0-9]+$"
+    },
+    "evaluation_profile": {
+      "type": "string",
+      "minLength": 1
+    },
+    "inherits_from": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "lifecycle": {
+      "type": "string",
+      "enum": [
+        "active",
+        "candidate",
+        "suggested"
+      ]
+    },
+    "dimensions": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "content",
+        "actor",
+        "subject",
+        "context",
+        "temporal",
+        "policy",
+        "external_evaluation"
+      ],
+      "properties": {
+        "content": { "type": "number", "minimum": 0 },
+        "actor": { "type": "number", "minimum": 0 },
+        "subject": { "type": "number", "minimum": 0 },
+        "context": { "type": "number", "minimum": 0 },
+        "temporal": { "type": "number", "minimum": 0 },
+        "policy": { "type": "number", "minimum": 0 },
+        "external_evaluation": { "type": "number", "minimum": 0 }
+      }
+    },
+    "identity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "contribution_cap",
+        "anonymous_modifier_enabled",
+        "temporary_modifier_enabled",
+        "account_age_modifier_enabled"
+      ],
+      "properties": {
+        "contribution_cap": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "anonymous_modifier_enabled": { "type": "boolean" },
+        "temporary_modifier_enabled": { "type": "boolean" },
+        "account_age_modifier_enabled": { "type": "boolean" }
+      }
+    },
+    "queue": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "default_limit",
+        "max_limit",
+        "min_score_cutoff"
+      ],
+      "properties": {
+        "default_limit": { "type": "integer", "minimum": 1 },
+        "max_limit": { "type": "integer", "minimum": 1 },
+        "min_score_cutoff": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "rules": {
+      "type": "object",
+      "minProperties": 1,
+      "additionalProperties": {
+        "$ref": "#/$defs/ruleConfig"
+      }
+    },
+    "combination_rules": {
+      "type": "array",
+      "default": [],
+      "items": {
+        "$ref": "#/$defs/combinationRule"
+      }
+    },
+    "external_evaluation_config": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "liftwing": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "enabled",
+            "role",
+            "max_contribution"
+          ],
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "role": {
+              "type": "string",
+              "enum": [
+                "disabled",
+                "supporting_signal",
+                "tie_breaker"
+              ]
+            },
+            "max_contribution": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        }
+      }
+    },
+    "fairness": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "max_newcomer_fp_regression_bps",
+        "max_temporary_fp_regression_bps",
+        "max_anonymous_fp_regression_bps"
+      ],
+      "properties": {
+        "max_newcomer_fp_regression_bps": { "type": "integer", "minimum": 0 },
+        "max_temporary_fp_regression_bps": { "type": "integer", "minimum": 0 },
+        "max_anonymous_fp_regression_bps": { "type": "integer", "minimum": 0 }
+      }
+    }
+  },
+  "$defs": {
+    "ruleConfig": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "enabled",
+        "weight"
+      ],
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "weight": { "type": "integer" },
+        "threshold": { "type": ["integer", "number", "null"] },
+        "max_bonus": { "type": ["integer", "null"] },
+        "notes": { "type": "string" }
+      }
+    },
+    "combinationRule": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "slug",
+        "enabled",
+        "weight",
+        "when_all"
+      ],
+      "properties": {
+        "slug": { "type": "string", "minLength": 1 },
+        "enabled": { "type": "boolean" },
+        "weight": { "type": "integer" },
+        "when_all": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "notes": { "type": "string" }
+      }
+    }
+  }
+}

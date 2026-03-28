@@ -1,0 +1,89 @@
+domain: vandalism_patrol
+wiki_id: frwiki
+policy_version: v0.1
+evaluation_profile: vandalism_patrol_default
+inherits_from: frwiki-vandalism
+lifecycle: candidate
+
+dimensions:
+  content: 1.0
+  actor: 0.35
+  subject: 0.35
+  context: 0.60
+  temporal: 0.40
+  policy: 0.30
+  external_evaluation: 0.35
+
+identity:
+  contribution_cap: 18
+  anonymous_modifier_enabled: true
+  temporary_modifier_enabled: true
+  account_age_modifier_enabled: false
+
+queue:
+  default_limit: 25
+  max_limit: 250
+  min_score_cutoff: 0
+
+rules:
+  anonymous_user:
+    enabled: true
+    weight: 20
+    notes: reduced to keep identity as a modifier
+  temporary_account:
+    enabled: true
+    weight: 16
+  new_page:
+    enabled: true
+    weight: 20
+  reverted_before:
+    enabled: true
+    weight: 30
+  large_content_removal:
+    enabled: true
+    weight: 15
+    threshold: -500
+  profanity:
+    enabled: true
+    weight: 30
+  link_spam:
+    enabled: true
+    weight: 20
+  trusted_user:
+    enabled: true
+    weight: -35
+  bot_like_edit:
+    enabled: true
+    weight: -50
+  liftwing_risk:
+    enabled: true
+    weight: 35
+  warning_history:
+    enabled: true
+    weight: 25
+  obvious_vandalism:
+    enabled: true
+    weight: 35
+  duplicate_pattern:
+    enabled: true
+    weight: 18
+    max_bonus: 18
+
+combination_rules:
+  - slug: duplicate_pattern_and_obvious_vandalism
+    enabled: true
+    weight: 15
+    when_all:
+      - duplicate_pattern
+      - obvious_vandalism
+
+external_evaluation_config:
+  liftwing:
+    enabled: true
+    role: supporting_signal
+    max_contribution: 35
+
+fairness:
+  max_newcomer_fp_regression_bps: 40
+  max_temporary_fp_regression_bps: 40
+  max_anonymous_fp_regression_bps: 40

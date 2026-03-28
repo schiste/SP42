@@ -1,0 +1,7 @@
+cases:
+  - slug: obvious_vandalism_burst
+    expectation: high_priority
+    notes: obvious vandalism should remain near the top of the queue
+  - slug: trusted_established_cleanup
+    expectation: low_priority
+    notes: trusted-user suppression should keep benign maintenance edits low

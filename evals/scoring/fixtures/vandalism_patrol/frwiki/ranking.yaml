@@ -1,0 +1,7 @@
+comparisons:
+  - higher: obvious_vandalism_burst
+    lower: benign_newcomer_cleanup
+    reason: high-confidence vandalism must outrank ordinary low-risk edits
+  - higher: duplicate_attack_cluster
+    lower: isolated_suspicious_edit
+    reason: burst attacks should outrank one-off suspicious edits

@@ -18,6 +18,14 @@ SP42 is currently alpha software. The repository is public and buildable, but it
 - Live Wikimedia integration is still the main remaining external milestone
 - Multi-user production auth is not implemented yet
 
+Phase summary:
+
+- `Phase 1`: offline patrol core and queueing, effectively complete for local/offline development
+- `Phase 2`: coordination and shared room state, effectively complete for local development
+- `Phase 3`: browser, CLI, and desktop shells with shared reports, shared shell-state, telemetry, and the interactive patrol rail, effectively complete for local development
+- `Phase 4`: live Wikimedia integration, pending real credentials and external verification
+- `Phase 5`: PWA/offline packaging and installability, effectively complete for local development
+
 Detailed status lives in [docs/STATUS.md](docs/STATUS.md).
 
 ## Repository Layout
@@ -122,6 +130,8 @@ Selected utility scripts:
 
 - [docs/STATUS.md](docs/STATUS.md): phase-by-phase project status
 - [docs/DEVELOPER_SURFACE.md](docs/DEVELOPER_SURFACE.md): developer-oriented surface summary
+- [docs/scoring/SCORING_CONSTITUTION.md](docs/scoring/SCORING_CONSTITUTION.md): scoring system principles and technical rules
+- [docs/scoring/POLICY_LAYOUT.md](docs/scoring/POLICY_LAYOUT.md): scoring policy and evaluation directory layout
 - [docs/FRONTEND_DESIGN_CONTRACT.md](docs/FRONTEND_DESIGN_CONTRACT.md): frontend contract
 - [docs/adr/0001-foundational-decisions.md](docs/adr/0001-foundational-decisions.md): foundational architecture decisions
 - [docs/adr/0002-local-dev-auth-bridge.md](docs/adr/0002-local-dev-auth-bridge.md): local auth bridge decision

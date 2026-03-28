@@ -105,6 +105,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: bash scripts/check-doc-consistency.sh
+      - run: bash scripts/check-scoring-governance.sh
 
   coverage:
     runs-on: ubuntu-latest

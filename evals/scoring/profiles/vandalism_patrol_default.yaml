@@ -1,0 +1,27 @@
+name: vandalism_patrol_default
+domain: vandalism_patrol
+required_gates:
+  - config_validation
+  - invariants
+  - regression_cases
+  - ranking_checks
+  - fairness_checks
+  - explanation_completeness
+  - latency_budget
+
+fixture_sets:
+  regression: evals/scoring/fixtures/vandalism_patrol/frwiki/regression.yaml
+  ranking: evals/scoring/fixtures/vandalism_patrol/frwiki/ranking.yaml
+  invariants: evals/scoring/fixtures/vandalism_patrol/frwiki/invariants.yaml
+  fairness: evals/scoring/fixtures/vandalism_patrol/frwiki/fairness.yaml
+
+fairness:
+  track_newcomers: true
+  track_temporary: true
+  track_anonymous: true
+
+performance_budget_ms: 50
+
+notes:
+  - Designed for live vandalism triage.
+  - Candidate policies must not exceed fairness regression thresholds declared in the policy file.

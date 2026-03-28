@@ -1,7 +1,9 @@
 use std::collections::HashMap;
 
 use leptos::prelude::*;
-use sp42_core::{LiveOperatorView, SessionActionExecutionRequest, SessionActionKind, StructuredDiff};
+use sp42_core::{
+    LiveOperatorView, SessionActionExecutionRequest, SessionActionKind, StructuredDiff,
+};
 
 use crate::components::action_bar::ActionBar;
 use crate::components::context_header::ContextHeader;
@@ -52,7 +54,7 @@ const DEFAULT_WIKI_ID: &str = "frwiki";
 pub fn PatrolSurface() -> impl IntoView {
     let (view_data, set_view_data) = signal(None::<LiveOperatorView>);
     let (load_error, set_load_error) = signal(None::<String>);
-    let (selected_index, set_selected_index) = signal(0usize);
+    let (selected_rev_id, set_selected_rev_id) = signal(None::<u64>);
     let (action_trigger, set_action_trigger) = signal(None::<SessionActionKind>);
     let (skip_trigger, set_skip_trigger) = signal(false);
     let (action_pending, set_action_pending) = signal(false);
@@ -90,19 +92,23 @@ pub fn PatrolSurface() -> impl IntoView {
                 }
                 match &item.event.performer {
                     sp42_core::EditorIdentity::Anonymous { .. } => {
-                        if !f.include_anonymous { return false; }
+                        if !f.include_anonymous {
+                            return false;
+                        }
                     }
                     sp42_core::EditorIdentity::Temporary { .. } => {
-                        if !f.include_temporary { return false; }
+                        if !f.include_temporary {
+                            return false;
+                        }
                     }
                     sp42_core::EditorIdentity::Registered { .. } => {
-                        if !f.include_registered { return false; }
+                        if !f.include_registered {
+                            return false;
+                        }
                     }
                 }
                 if let Some(ref tag) = f.tag_filter {
-                    if !tag.trim().is_empty()
-                        && !item.event.tags.iter().any(|t| t == tag.trim())
-                    {
+                    if !tag.trim().is_empty() && !item.event.tags.iter().any(|t| t == tag.trim()) {
                         return false;
                     }
                 }
@@ -116,6 +122,14 @@ pub fn PatrolSurface() -> impl IntoView {
             .take(f.limit as usize)
             .collect::<Vec<_>>()
     });
+    // Derive the selected index from rev_id — stable across queue reorders
+    let selected_index = Memo::new(move |_| {
+        let queue = queue_signal.get();
+        let rev = selected_rev_id.get();
+        rev.and_then(|r| queue.iter().position(|e| e.event.rev_id == r))
+            .unwrap_or(0)
+    });
+
     let (selection_only_refetch, set_selection_only_refetch) = signal(false);
     let (bootstrap_attempted, set_bootstrap_attempted) = signal(false);
     let (bootstrap_error, set_bootstrap_error) = signal(None::<String>);
@@ -177,12 +191,11 @@ pub fn PatrolSurface() -> impl IntoView {
                     if let Some(ref diff) = view.diff {
                         set_current_diff.set(Some(diff.clone()));
                     }
-                    // On initial load, select the edit from the URL hash if present
                     if !selection_only_refetch.get_untracked() {
                         if let Some(target_rev) = rev_id_from_hash() {
-                            if let Some(idx) = view.queue.iter().position(|q| q.event.rev_id == target_rev) {
-                                set_selected_index.set(idx);
-                            }
+                            set_selected_rev_id.set(Some(target_rev));
+                        } else if let Some(first) = view.queue.first() {
+                            set_selected_rev_id.set(Some(first.event.rev_id));
                         }
                         set_all_edits.set(view.queue.clone());
                     }
@@ -200,7 +213,9 @@ pub fn PatrolSurface() -> impl IntoView {
                             if old_rev_id == 0 {
                                 continue;
                             }
-                            if let Ok(Some(diff)) = fetch_diff(&prefetch_wiki, rev_id, old_rev_id).await {
+                            if let Ok(Some(diff)) =
+                                fetch_diff(&prefetch_wiki, rev_id, old_rev_id).await
+                            {
                                 let mut c = diff_cache.get_untracked();
                                 c.insert(rev_id, diff);
                                 set_diff_cache.set(c);
@@ -266,18 +281,16 @@ pub fn PatrolSurface() -> impl IntoView {
                             kind.label(),
                             edit.event.rev_id
                         ));
-                        // Remove the acted-on edit from the queue
-                        let mut q = queue_signal.get_untracked();
-                        if idx < q.len() {
-                            q.remove(idx);
-                        }
-                        let new_idx = if idx >= q.len() && !q.is_empty() {
-                            q.len() - 1
-                        } else {
-                            idx
-                        };
-                        set_all_edits.set(q);
-                        set_selected_index.set(new_idx);
+                        // Remove the acted-on edit and select the next one
+                        let mut edits = all_edits.get_untracked();
+                        edits.retain(|e| e.event.rev_id != edit.event.rev_id);
+                        set_all_edits.set(edits);
+                        let queue = queue_signal.get_untracked();
+                        let next_rev = queue
+                            .get(idx)
+                            .or_else(|| queue.last())
+                            .map(|e| e.event.rev_id);
+                        set_selected_rev_id.set(next_rev);
                         set_review_note.set(String::new());
                         // Re-fetch to get fresh diff for the new selection
                         set_selection_only_refetch.set(true);
@@ -305,10 +318,13 @@ pub fn PatrolSurface() -> impl IntoView {
                                 Ok(response) if response.accepted => {
                                     set_action_status.set(format!(
                                         "{} accepted for rev {} (re-authenticated)",
-                                        kind.label(), edit.event.rev_id
+                                        kind.label(),
+                                        edit.event.rev_id
                                     ));
                                     let mut q = all_edits.get_untracked();
-                                    if let Some(pos) = q.iter().position(|e| e.event.rev_id == edit.event.rev_id) {
+                                    if let Some(pos) =
+                                        q.iter().position(|e| e.event.rev_id == edit.event.rev_id)
+                                    {
                                         q.remove(pos);
                                         set_all_edits.set(q);
                                     }
@@ -317,7 +333,8 @@ pub fn PatrolSurface() -> impl IntoView {
                                 Ok(response) => {
                                     set_action_status.set(format!(
                                         "{} rejected: {}",
-                                        kind.label(), response.message.unwrap_or_default()
+                                        kind.label(),
+                                        response.message.unwrap_or_default()
                                     ));
                                 }
                                 Err(retry_error) => {
@@ -325,7 +342,8 @@ pub fn PatrolSurface() -> impl IntoView {
                                 }
                             }
                         } else {
-                            set_action_status.set("Re-authentication failed. Reload the page.".to_string());
+                            set_action_status
+                                .set("Re-authentication failed. Reload the page.".to_string());
                         }
                     } else {
                         set_action_status.set(format!("Action error: {error}"));
@@ -353,7 +371,8 @@ pub fn PatrolSurface() -> impl IntoView {
     // just reset selection, no server round-trip needed
     Effect::new(move |_| {
         let _ = filters.get();
-        set_selected_index.set(0);
+        let queue = queue_signal.get();
+        set_selected_rev_id.set(queue.first().map(|e| e.event.rev_id));
     });
 
     // When selection changes, look up diff from cache or fetch it.
@@ -420,8 +439,10 @@ pub fn PatrolSurface() -> impl IntoView {
         wasm_bindgen_futures::spawn_local(async move {
             match execute_dev_auth_action(&request).await {
                 Ok(response) if response.accepted => {
-                    set_action_status
-                        .set(format!("Citation needed + patrolled rev {}", request.rev_id));
+                    set_action_status.set(format!(
+                        "Citation needed + patrolled rev {}",
+                        request.rev_id
+                    ));
                     // Remove from queue (it's now patrolled)
                     let mut edits = all_edits.get_untracked();
                     if let Some(pos) = edits.iter().position(|e| e.event.rev_id == request.rev_id) {
@@ -468,8 +489,9 @@ pub fn PatrolSurface() -> impl IntoView {
         if skip_trigger.get() {
             set_skip_trigger.set(false);
             let idx = selected_index.get();
-            if idx + 1 < queue_len.get() {
-                set_selected_index.set(idx + 1);
+            let queue = queue_signal.get_untracked();
+            if let Some(next) = queue.get(idx + 1) {
+                set_selected_rev_id.set(Some(next.event.rev_id));
             }
         }
     });
@@ -486,14 +508,8 @@ pub fn PatrolSurface() -> impl IntoView {
         if edits.len() > 200 {
             edits.truncate(200);
         }
-        // Shift selected index so the current item stays selected
-        let prev_queue_len = queue_signal.get_untracked().len();
+        // No index shift needed — selection is tracked by rev_id
         set_all_edits.set(edits);
-        let new_queue_len = queue_signal.get_untracked().len();
-        if new_queue_len > prev_queue_len {
-            let idx = selected_index.get_untracked();
-            set_selected_index.set(idx + (new_queue_len - prev_queue_len));
-        }
     });
 
     let on_keydown = move |event: leptos::ev::KeyboardEvent| {
@@ -517,15 +533,19 @@ pub fn PatrolSurface() -> impl IntoView {
             "ArrowUp" => {
                 event.prevent_default();
                 let idx = selected_index.get();
+                let queue = queue_signal.get();
                 if idx > 0 {
-                    set_selected_index.set(idx - 1);
+                    if let Some(prev) = queue.get(idx - 1) {
+                        set_selected_rev_id.set(Some(prev.event.rev_id));
+                    }
                 }
             }
             "ArrowDown" => {
                 event.prevent_default();
                 let idx = selected_index.get();
-                if idx + 1 < queue_len.get() {
-                    set_selected_index.set(idx + 1);
+                let queue = queue_signal.get();
+                if let Some(next) = queue.get(idx + 1) {
+                    set_selected_rev_id.set(Some(next.event.rev_id));
                 }
             }
             "D" if event.ctrl_key() && event.shift_key() => {
@@ -806,8 +826,8 @@ pub fn PatrolSurface() -> impl IntoView {
                             view! {
                                 <QueueColumn
                                     queue=queue
-                                    selected_index=selected_index
-                                    set_selected_index=set_selected_index
+                                    selected_rev_id=Signal::derive(move || selected_rev_id.get())
+                                    set_selected_rev_id=set_selected_rev_id
                                 />
                             }
                                 .into_any()
@@ -909,11 +929,14 @@ pub fn PatrolSurface() -> impl IntoView {
 /// Convert a live SSE event into a QueuedEdit with a basic client-side score.
 fn stream_event_to_queued_edit(event: &StreamEvent) -> sp42_core::QueuedEdit {
     use sp42_core::{
-        CompositeScore, EditEvent, EditorIdentity, FlagState, QueuedEdit, SignalContribution,
-        ScoringSignal,
+        CompositeScore, EditEvent, EditorIdentity, FlagState, QueuedEdit, ScoringSignal,
+        SignalContribution,
     };
 
-    let is_anon = event.user.chars().all(|c| c.is_ascii_digit() || c == '.' || c == ':');
+    let is_anon = event
+        .user
+        .chars()
+        .all(|c| c.is_ascii_digit() || c == '.' || c == ':');
     let performer = if is_anon {
         EditorIdentity::Anonymous {
             label: event.user.clone(),

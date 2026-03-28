@@ -6,8 +6,8 @@ use super::style::score_tier;
 #[component]
 pub fn QueueColumn(
     queue: Vec<QueuedEdit>,
-    selected_index: ReadSignal<usize>,
-    set_selected_index: WriteSignal<usize>,
+    selected_rev_id: Signal<Option<u64>>,
+    set_selected_rev_id: WriteSignal<Option<u64>>,
 ) -> impl IntoView {
     let count = queue.len();
     view! {
@@ -28,7 +28,7 @@ pub fn QueueColumn(
                 {queue
                     .into_iter()
                     .enumerate()
-                    .map(|(index, item)| {
+                    .map(|(_index, item)| {
                         let score = item.score.total;
                         let title = item.event.title.clone();
                         let is_patrolled = item.event.is_patrolled.is_enabled();
@@ -42,18 +42,19 @@ pub fn QueueColumn(
                         let delta_str = if delta > 0 { format!("+{delta}") } else { delta.to_string() };
                         let delta_color = if delta > 0 { "var(--success)" } else if delta < 0 { "var(--danger)" } else { "var(--muted)" };
 
+                        let rev_id = item.event.rev_id;
                         view! {
                             <button
                                 class="queue-item"
                                 style=move || {
-                                    if selected_index.get() == index {
+                                    if selected_rev_id.get() == Some(rev_id) {
                                         format!("border-inline-start:3px solid {tier_color};background:var(--selected);{}", if is_patrolled { "opacity:0.5;" } else { "" })
                                     } else {
                                         format!("border-inline-start:3px solid transparent;{}", if is_patrolled { "opacity:0.5;" } else { "" })
                                     }
                                 }
-                                on:click=move |_| set_selected_index.set(index)
-                                aria-pressed=move || (selected_index.get() == index).to_string()
+                                on:click=move |_| set_selected_rev_id.set(Some(rev_id))
+                                aria-pressed=move || (selected_rev_id.get() == Some(rev_id)).to_string()
                             >
                                 <div class="queue-item-top">
                                     <span class="queue-score" style=format!("color:{tier_color};")>

@@ -1,0 +1,28 @@
+use sp42_core::ArticleInventory;
+
+#[cfg(target_arch = "wasm32")]
+use super::http::get_bytes;
+
+const ARTICLE_URL_PREFIX: &str = "/operator/article";
+
+#[cfg(target_arch = "wasm32")]
+pub async fn fetch_article_inventory(
+    wiki_id: &str,
+    title: &str,
+) -> Result<ArticleInventory, String> {
+    let query = url::form_urlencoded::Serializer::new(String::new())
+        .append_pair("title", title)
+        .finish();
+    let url = format!("{ARTICLE_URL_PREFIX}/{wiki_id}?{query}");
+    let bytes = get_bytes(&url, "fetch article inventory").await?;
+
+    serde_json::from_slice(&bytes).map_err(|error| format!("parse article inventory: {error}"))
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub async fn fetch_article_inventory(
+    _wiki_id: &str,
+    _title: &str,
+) -> Result<ArticleInventory, String> {
+    Err("Article inventory fetch is only available in the browser runtime.".to_string())
+}

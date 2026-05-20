@@ -36,7 +36,7 @@ pub fn wasm_start() {
 
 #[cfg(target_arch = "wasm32")]
 fn warm_browser_platform_symbols() {
-    use crate::platform::{auth, bootstrap, coordination, debug, globals, pwa};
+    use crate::platform::{article, auth, bootstrap, coordination, debug, globals, pwa};
 
     let _ = pwa::manifest_path;
     let _ = pwa::service_worker_path;
@@ -98,6 +98,8 @@ fn warm_browser_platform_symbols() {
     let _ = debug::preview_server_debug_summary;
     let _ = debug::runtime_debug_status_lines;
     let _ = debug::server_debug_summary_lines;
+
+    let _ = article::fetch_article_inventory;
 
     let _ = bootstrap::collect_browser_bootstrap_snapshot;
     let _ = bootstrap::bootstrap_status_sections;

@@ -40,20 +40,21 @@ use tracing_subscriber::EnvFilter;
 
 use sp42_core::{
     ActionExecutionHistoryReport, ActionExecutionLogEntry, ActionExecutionStatusReport,
-    BacklogRuntime, BacklogRuntimeConfig, Clock, ContextInputs, CoordinationRoomSummary,
-    CoordinationSnapshot, CoordinationState, DebugSnapshotInputs, DevAuthBootstrapRequest,
-    DevAuthCapabilityReport, DevAuthSessionStatus, EditorIdentity, FileStorage, FlagState,
-    LiftWingRequest, LiveOperatorBackendStatus, LiveOperatorHeuristicProvenance,
-    LiveOperatorPhaseTiming, LiveOperatorPublicDocuments, LiveOperatorQuery, LiveOperatorTelemetry,
-    LiveOperatorView, LocalOAuthConfigStatus, LocalOAuthSourceReport, OAuthCallback,
-    OAuthClientConfig, OAuthTokenResponse, PatrolScenarioReportInputs, PatrolSessionDigestInputs,
-    PublicAuditLedgerEntry, PublicStorageDocumentData, QueueHeuristicPolicy, QueuedEdit,
-    RecentChangesQuery, RenderedHunkPreview, RenderedHunkSide, ServerDebugSummary,
-    SessionActionExecutionRequest, SessionActionExecutionResponse, SessionActionKind,
-    ShellStateInputs, Storage, StreamRuntimeStatus, StructuredDiff, SystemClock, TokenKind,
-    WikiConfig, WikiStorageConfig, WikiStorageDocument, WikiStorageDocumentKind,
-    WikiStorageLoadedDocument, WikiStoragePlan, WikiStoragePlanInput, WikiStorageWriteOutcome,
-    WikiStorageWriteRequest, build_authorization_url, build_debug_snapshot,
+    ArticleInventory, BacklogRuntime, BacklogRuntimeConfig, Clock, ContextInputs,
+    CoordinationRoomSummary, CoordinationSnapshot, CoordinationState, DebugSnapshotInputs,
+    DevAuthBootstrapRequest, DevAuthCapabilityReport, DevAuthSessionStatus, EditorIdentity,
+    FileStorage, FlagState, LiftWingRequest, LiveOperatorBackendStatus,
+    LiveOperatorHeuristicProvenance, LiveOperatorPhaseTiming, LiveOperatorPublicDocuments,
+    LiveOperatorQuery, LiveOperatorTelemetry, LiveOperatorView, LocalOAuthConfigStatus,
+    LocalOAuthSourceReport, OAuthCallback, OAuthClientConfig, OAuthTokenResponse,
+    PatrolScenarioReportInputs, PatrolSessionDigestInputs, PublicAuditLedgerEntry,
+    PublicStorageDocumentData, QueueHeuristicPolicy, QueuedEdit, RecentChangesQuery,
+    RenderedHunkPreview, RenderedHunkSide, ServerDebugSummary, SessionActionExecutionRequest,
+    SessionActionExecutionResponse, SessionActionKind, ShellStateInputs, Storage,
+    StreamRuntimeStatus, StructuredDiff, SystemClock, TokenKind, WikiConfig, WikiStorageConfig,
+    WikiStorageDocument, WikiStorageDocumentKind, WikiStorageLoadedDocument, WikiStoragePlan,
+    WikiStoragePlanInput, WikiStorageWriteOutcome, WikiStorageWriteRequest,
+    build_article_inventory, build_authorization_url, build_debug_snapshot,
     build_live_operator_action_preflight, build_media_diff, build_patrol_scenario_report,
     build_patrol_session_digest, build_ranked_queue_with_policy, build_review_workbench,
     build_scoring_context, build_shell_state_model, build_wiki_storage_plan,
@@ -605,7 +606,31 @@ fn build_router(state: AppState) -> Router {
         None
     };
 
-    let router = Router::new()
+    let router = operator_routes(Router::new())
+        .with_state(state)
+        .layer(
+            CorsLayer::new()
+                .allow_credentials(true)
+                .allow_origin([
+                    HeaderValue::from_static("http://127.0.0.1:4173"),
+                    HeaderValue::from_static("http://localhost:4173"),
+                    HeaderValue::from_static("http://127.0.0.1:8788"),
+                    HeaderValue::from_static("http://localhost:8788"),
+                ])
+                .allow_methods([Method::GET, Method::POST, Method::DELETE])
+                .allow_headers([CONTENT_TYPE, COOKIE]),
+        )
+        .layer(middleware::from_fn(disable_response_caching));
+
+    if let Some(browser_shell) = browser_shell {
+        router.fallback_service(browser_shell)
+    } else {
+        router.route("/", get(browser_shell_unavailable))
+    }
+}
+
+fn operator_routes(router: Router<AppState>) -> Router<AppState> {
+    router
         .route("/coordination/rooms", get(get_coordination_snapshot))
         .route(
             "/coordination/rooms/{wiki_id}",
@@ -628,6 +653,7 @@ fn build_router(state: AppState) -> Router {
         .route(OPERATOR_READINESS_PATH, get(get_operator_readiness))
         .route(OPERATOR_REPORT_PATH, get(get_operator_report))
         .route("/operator/live/{wiki_id}", get(get_live_operator_view))
+        .route("/operator/article/{wiki_id}", get(get_article_inventory))
         .route(
             "/operator/diff/{wiki_id}/{rev_id}/{old_rev_id}",
             get(get_revision_diff),
@@ -677,26 +703,6 @@ fn build_router(state: AppState) -> Router {
         .route("/offline.html", get(get_offline_html))
         .route("/icons/{icon_name}", get(get_static_icon))
         .route("/favicon.ico", get(get_favicon))
-        .with_state(state)
-        .layer(
-            CorsLayer::new()
-                .allow_credentials(true)
-                .allow_origin([
-                    HeaderValue::from_static("http://127.0.0.1:4173"),
-                    HeaderValue::from_static("http://localhost:4173"),
-                    HeaderValue::from_static("http://127.0.0.1:8788"),
-                    HeaderValue::from_static("http://localhost:8788"),
-                ])
-                .allow_methods([Method::GET, Method::POST, Method::DELETE])
-                .allow_headers([CONTENT_TYPE, COOKIE]),
-        )
-        .layer(middleware::from_fn(disable_response_caching));
-
-    if let Some(browser_shell) = browser_shell {
-        router.fallback_service(browser_shell)
-    } else {
-        router.route("/", get(browser_shell_unavailable))
-    }
 }
 
 async fn disable_response_caching(request: axum::extract::Request, next: Next) -> Response {
@@ -1063,6 +1069,11 @@ struct LiveViewFilterParams {
     rccontinue: Option<String>,
     #[serde(default)]
     selected_index: Option<usize>,
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct ArticleInventoryQuery {
+    title: String,
 }
 
 struct LiveOperatorBootstrap {
@@ -2524,6 +2535,25 @@ async fn access_token_for_request(state: &AppState, headers: &HeaderMap) -> Opti
         .await
         .map(|session| session.access_token)
         .or_else(|| state.local_oauth.access_token().map(ToString::to_string))
+}
+
+async fn get_article_inventory(
+    Path(wiki_id): Path<String>,
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Query(query): Query<ArticleInventoryQuery>,
+) -> Result<Json<ArticleInventory>, (StatusCode, Json<serde_json::Value>)> {
+    let title = query.title.trim();
+    if title.is_empty() {
+        return Err(invalid_payload("title is required"));
+    }
+
+    let context = authenticated_wiki_context(&state, &headers, &wiki_id).await?;
+    let wikitext = fetch_page_wikitext(&context.client, &context.config, title)
+        .await
+        .map_err(|error| gateway_error(format!("article fetch failed: {error}")))?;
+
+    Ok(Json(build_article_inventory(&wiki_id, title, &wikitext)))
 }
 
 async fn get_revision_diff(

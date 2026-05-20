@@ -24,6 +24,7 @@
 //! ```
 
 pub mod action_executor;
+pub mod article_inventory;
 pub mod backlog_runtime;
 pub mod branding;
 pub mod config_parser;
@@ -67,6 +68,9 @@ pub use action_executor::{
     build_patrol_request, build_rollback_request, build_token_request, build_undo_request,
     build_wiki_page_save_request, execute_fetch_token, execute_patrol, execute_rollback,
     execute_undo, execute_wiki_page_save, parse_action_response_summary, parse_token_response,
+};
+pub use article_inventory::{
+    ArticleInventory, ArticleReference, article_inventory_notes, build_article_inventory,
 };
 pub use backlog_runtime::{BacklogRuntime, BacklogRuntimeConfig, BacklogRuntimeStatus};
 pub use config_parser::parse_wiki_config;

@@ -66,6 +66,43 @@ sp42_frontend_dist_dir() {
   printf '%s/target/dist/sp42-app\n' "$repo_root"
 }
 
+sp42_clean_build_slate() {
+  local repo_root="$1"
+
+  if [[ "${SP42_BUILD_SLATE_CLEANED:-0}" == "1" ]]; then
+    return 0
+  fi
+
+  "$repo_root/scripts/clean-house.sh" --purge-target
+  export SP42_BUILD_SLATE_CLEANED=1
+}
+
+sp42_run_xtask() {
+  local repo_root="$1"
+  local task="$2"
+  shift 2
+
+  local cargo_bin
+  cargo_bin="$(sp42_cargo_bin)"
+  local cargo_flags=(-q -p xtask)
+
+  for arg in "$@"; do
+    case "$arg" in
+      --locked)
+        cargo_flags+=(--locked)
+        ;;
+      --frozen)
+        cargo_flags+=(--frozen)
+        ;;
+      --offline)
+        cargo_flags+=(--offline)
+        ;;
+    esac
+  done
+
+  CARGO_BIN="$cargo_bin" "$cargo_bin" run "${cargo_flags[@]}" -- "$task" "$@"
+}
+
 sp42_maybe_enable_sccache() {
   local requested="${SP42_USE_SCCACHE:-auto}"
 

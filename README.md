@@ -58,16 +58,19 @@ Optional:
 ./scripts/build-local.sh
 ```
 
-For a reproducible release build:
+Builds are incremental by default. Pass `--clean` to any build entrypoint when
+you want to purge generated artifacts, including `target/`, before building.
+
+For a deployable web release build:
 
 ```sh
-./scripts/build-release.sh
+./scripts/build-web-release.sh
 ```
 
 For CI-shaped builds with deterministic caching:
 
 ```sh
-./scripts/build-local.sh --ci --locked
+./scripts/ci-all.sh
 ```
 
 ### 2. Run the localhost server
@@ -134,9 +137,14 @@ The file is ignored by `.gitignore`.
 ```sh
 ./scripts/clean-house.sh
 ./scripts/build-local.sh
-./scripts/build-local.sh --ci --locked
-./scripts/build-release.sh
+./scripts/build-local.sh --clean
+./scripts/build-server.sh
 ./scripts/build-timings.sh
+./scripts/build-frontend.sh
+./scripts/build-web-release.sh
+./scripts/package-vps.sh
+./scripts/build-desktop.sh --platform macos
+./scripts/ci-all.sh
 cargo test --workspace
 cargo clippy --workspace --all-targets --all-features -- -D warnings
 cargo doc --workspace --no-deps

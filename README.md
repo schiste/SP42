@@ -121,84 +121,30 @@ For live local development with the server and Trunk proxy running together:
 The dev command runs `sp42-server` on `127.0.0.1:8788` and Trunk on
 `127.0.0.1:4173`.
 
-For desktop app packaging, see [docs/DESKTOP_DISTRIBUTION.md](docs/DESKTOP_DISTRIBUTION.md).
-
-## Runtime Deployment Configuration
-
-The server reads these runtime settings:
-
-- `SP42_DEPLOYMENT_MODE=local|vps|desktop` controls deployment-sensitive defaults. It defaults to `local`.
-- `SP42_BIND_ADDR` controls the server bind address. It defaults to `127.0.0.1:8788`.
-- `SP42_PUBLIC_BASE_URL` sets the externally visible HTTP(S) base URL, for example `https://sp42.example.wmcloud.org`.
-- `SP42_APP_DIST_DIR` points the server at the compiled browser bundle.
-- `SP42_RUNTIME_DIR` points persistent runtime files at a deployable data directory.
-- `SP42_ALLOWED_ORIGINS` is a comma-separated list of extra credentialed CORS origins.
-
-The browser app uses same-origin API paths by default. For split frontend/API
-deployments, set `window.__SP42_RUNTIME_CONFIG__.apiBaseUrl`, add a
-`<meta name="sp42-api-base-url" content="...">` tag, or build the frontend with
-`SP42_API_BASE_URL`.
-
-In `vps` mode, local dev-token bootstrap is disabled and session cookies are
-marked `Secure`. Across modes, cookie-auth state-changing routes require an SP42
-CSRF header.
-
-## Local Wikimedia Development Auth
-
-SP42 supports a localhost-only single-user development auth path. This is for local testing only, not for public or multi-user deployment.
-
-Create a local file named `.env.wikimedia.local` at the repository root with:
-
-```env
-WIKIMEDIA_CLIENT_APPLICATION_KEY=...
-WIKIMEDIA_CLIENT_APPLICATION_SECRET=...
-WIKIMEDIA_ACCESS_TOKEN=...
-WIKIMEDIA_OAUTH_CALLBACK_URL=http://localhost:4173/oauth/callback
-```
-
-Rules:
-
-- Keep this file local only
-- Never commit it
-- Tokens must not be exposed to browser storage or client-side code
-- The browser should interact with Wikimedia only through the localhost bridge in development
-
-The file is ignored by `.gitignore`.
+For runtime settings, local credentials, and API base URL behavior, see
+[docs/RUNTIME_CONFIGURATION.md](docs/RUNTIME_CONFIGURATION.md). For desktop app
+packaging, see [docs/DESKTOP_DISTRIBUTION.md](docs/DESKTOP_DISTRIBUTION.md).
+For a Wikimedia Cloud VPS artifact, run `./scripts/package-vps.sh`; the
+generated package includes its own deployment README.
 
 ## Development Commands
 
 ```sh
-./scripts/clean-house.sh
 ./scripts/build-local.sh
 ./scripts/build-local.sh --clean
 ./scripts/build-server.sh
-./scripts/build-timings.sh
 ./scripts/build-frontend.sh
 ./scripts/build-web-release.sh
 ./scripts/package-vps.sh
-./scripts/build-desktop.sh --platform macos
+./scripts/build-desktop.sh --platform macos --debug
 ./scripts/dev-local.sh --smoke
 ./scripts/check-focused.sh
 ./scripts/ci-all.sh
-cargo test --workspace
-cargo clippy --workspace --all-targets --all-features -- -D warnings
-cargo doc --workspace --no-deps
 ```
 
-Selected utility scripts:
-
-- `./scripts/local-operator-smoke.sh`
-- `./scripts/dev-local.sh --smoke`
-- `./scripts/check-focused.sh`
-- `./scripts/check-doc-consistency.sh`
-- `./scripts/clean-house.sh --purge-target`
-
-Cargo-native helpers:
-
-- `cargo ci-build`
-- `cargo ci-test`
-- `cargo ci-clippy`
-- `cargo timings`
+Contributor validation expectations live in [CONTRIBUTING.md](CONTRIBUTING.md).
+Maintainer/full-CI commands live behind `./scripts/ci-all.sh` and the Cargo
+aliases in [.cargo/config.toml](.cargo/config.toml).
 
 Optional shared compiler cache:
 
@@ -210,6 +156,8 @@ Optional shared compiler cache:
 
 - [docs/STATUS.md](docs/STATUS.md): phase-by-phase project status
 - [docs/DEVELOPER_SURFACE.md](docs/DEVELOPER_SURFACE.md): developer-oriented surface summary
+- [docs/RUNTIME_CONFIGURATION.md](docs/RUNTIME_CONFIGURATION.md): runtime modes, API base URL config, and local auth
+- [docs/DESKTOP_DISTRIBUTION.md](docs/DESKTOP_DISTRIBUTION.md): macOS, Windows, and Linux desktop packaging
 - [CONTRIBUTING.md](CONTRIBUTING.md): contributor workflow and local checks
 - [GOVERNANCE.md](GOVERNANCE.md): maintainer model, protected areas, and release authority
 - [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md): participation expectations

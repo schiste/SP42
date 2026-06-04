@@ -68,7 +68,7 @@ All branding strings live in `sp42-core/src/branding.rs`. Renaming is a one-file
 
 ## Consequences
 
-- The Rust toolchain (rustup, cargo, wasm-pack, trunk) is required for all development
+- The Rust toolchain (`rustup`, `cargo`) and `trunk` are required for browser development
 - Contributors must know Rust (or be willing to learn) for code contributions
 - The wasm-bindgen bridge layer is eliminated (Leptos handles Wasm compilation internally)
 - Foundation build order is: traits → OAuth → EventStreams+EditEvent → Leptos layout shell (4 foundations, not 5)

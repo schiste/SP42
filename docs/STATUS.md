@@ -65,18 +65,14 @@ PWA packaging and offline installability are now effectively complete for local 
 The workspace is currently kept green with:
 
 - `./scripts/build-local.sh`
-- `./scripts/build-local.sh --ci --locked`
 - `./scripts/build-frontend.sh`
-- `./scripts/build-release.sh`
-- `./scripts/build-timings.sh`
-- `cargo test --workspace`
-- `cargo clippy --workspace --all-targets --all-features -- -D warnings`
-- `cargo build --workspace`
-- `cargo build -p sp42-app --target wasm32-unknown-unknown`
+- `./scripts/build-web-release.sh`
+- `./scripts/package-vps.sh`
+- `./scripts/check-focused.sh`
+- `./scripts/dev-local.sh --smoke`
+- `./scripts/ci-all.sh`
+- `./scripts/build-desktop.sh --platform macos --debug`
 - `cargo test --manifest-path crates/sp42-desktop/src-tauri/Cargo.toml`
-- `cargo clippy --manifest-path crates/sp42-desktop/src-tauri/Cargo.toml --all-targets --all-features --no-deps -- -D warnings`
-- `cargo audit`
-- `cargo deny check bans licenses sources`
 - README/STATUS drift checks in CI
 - `bash scripts/local-operator-smoke.sh` for the local operator flow
 - targeted multi-user coordination validation inside the local operator smoke path

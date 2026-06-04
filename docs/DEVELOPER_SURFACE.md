@@ -13,6 +13,10 @@ The server exposes a local readiness and operator-report surface for single-user
 - `GET /dev/auth/capabilities/{wiki_id}` returns a capability report for the selected wiki
 - `GET /operator/storage/layout/{wiki_id}` returns the canonical on-wiki public storage layout and sample rendered pages
 
+Runtime modes, bind addresses, public URLs, frontend API base URL behavior, and
+local Wikimedia credentials are documented in
+[docs/RUNTIME_CONFIGURATION.md](RUNTIME_CONFIGURATION.md).
+
 ## Patrol Scenario Reporting
 
 Patrol scenarios are currently reported through shared action and reporting paths:

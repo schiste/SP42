@@ -13,26 +13,26 @@ addresses = ["127.0.0.1"]
 port = 4173
 open = false
 
-[[serve.proxy]]
+[[proxies]]
 backend = "http://127.0.0.1:8788/operator"
 rewrite = "/operator"
 
-[[serve.proxy]]
+[[proxies]]
 backend = "http://127.0.0.1:8788/dev"
 rewrite = "/dev"
 
-[[serve.proxy]]
+[[proxies]]
 backend = "http://127.0.0.1:8788/healthz"
 rewrite = "/healthz"
 
-[[serve.proxy]]
+[[proxies]]
 backend = "http://127.0.0.1:8788/coordination"
 rewrite = "/coordination"
 
-[[serve.proxy]]
+[[proxies]]
 backend = "http://127.0.0.1:8788/debug"
 rewrite = "/debug"
 
-[[serve.proxy]]
+[[proxies]]
 backend = "http://127.0.0.1:8788/actions"
 rewrite = "/actions"

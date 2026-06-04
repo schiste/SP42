@@ -97,11 +97,24 @@ wait_for_url() {
 run_smoke_checks() {
   local server_url="http://${server_bind}"
   local trunk_url="http://${trunk_address}:${trunk_port}"
+  local smoke_wiki_id="${SP42_DEV_SMOKE_WIKI_ID:-frwiki}"
 
   /usr/bin/curl -fsS "${server_url}/healthz" >/dev/null
   /usr/bin/curl -fsS "${server_url}/debug/runtime" >/dev/null
   /usr/bin/curl -fsS "${server_url}/dev/auth/bootstrap/status" >/dev/null
   /usr/bin/curl -fsS "${trunk_url}/" >/dev/null
+  /usr/bin/curl -fsS "${trunk_url}/operator/live/${smoke_wiki_id}?limit=1" \
+    | python3 -c '
+import json
+import sys
+
+expected_wiki_id = sys.argv[1]
+payload = json.load(sys.stdin)
+if payload.get("project") != "SP42":
+    raise SystemExit("Trunk operator proxy returned JSON without project=SP42")
+if payload.get("wiki_id") != expected_wiki_id:
+    raise SystemExit("Trunk operator proxy returned JSON for the wrong wiki")
+' "$smoke_wiki_id"
   printf 'Local dev smoke checks passed.\n'
 }
 

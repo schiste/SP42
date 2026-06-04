@@ -16,6 +16,7 @@ pub fn run_app() {
 
     use crate::platform::bootstrap;
 
+    install_panic_hook();
     warm_browser_platform_symbols();
 
     spawn_local(async move {
@@ -26,6 +27,13 @@ pub fn run_app() {
     });
 
     mount_root_or_body(|| view! { <app::App /> });
+}
+
+#[cfg(target_arch = "wasm32")]
+fn install_panic_hook() {
+    std::panic::set_hook(Box::new(|panic_info| {
+        web_sys::console::error_1(&format!("[SP42] browser panic: {panic_info}").into());
+    }));
 }
 
 #[cfg(target_arch = "wasm32")]

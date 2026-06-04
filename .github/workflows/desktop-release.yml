@@ -1,0 +1,68 @@
+name: desktop-release
+
+env:
+  SP42_TAURI_CLI_VERSION: 2.10.1
+  SP42_TRUNK_VERSION: 0.21.14
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "desktop-v*"
+
+jobs:
+  build-desktop:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: macOS app and DMG
+            os: macos-latest
+            bundles: app,dmg
+          - name: Windows MSI and NSIS
+            os: windows-latest
+            bundles: msi,nsis
+          - name: Linux deb and AppImage
+            os: ubuntu-22.04
+            bundles: deb,appimage
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.92.0
+          targets: wasm32-unknown-unknown
+
+      - name: Install Linux Tauri dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev patchelf
+
+      - name: Install Tauri CLI and Trunk
+        shell: bash
+        run: |
+          cargo install tauri-cli --version "$SP42_TAURI_CLI_VERSION" --locked
+          cargo install trunk --version "$SP42_TRUNK_VERSION" --locked
+
+      - name: Prepare frontend and sidecar
+        shell: bash
+        run: crates/sp42-desktop/scripts/prepare-tauri-build.sh --release --locked
+
+      - name: Build unsigned desktop bundles
+        working-directory: crates/sp42-desktop/src-tauri
+        env:
+          CARGO_BUILD_BUILD_DIR: ${{ github.workspace }}/target/.build/tauri-desktop
+        run: cargo tauri build --ci --bundles ${{ matrix.bundles }} --no-sign -- --locked
+
+      - name: Upload desktop artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: sp42-desktop-${{ runner.os }}
+          path: |
+            target/**/bundle/**/*
+          if-no-files-found: error

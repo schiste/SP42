@@ -561,7 +561,10 @@ fn collect_equal_anchor_ranges(
 
     before_ranges.sort_unstable();
     after_ranges.sort_unstable();
-    (merge_touching_ranges(before_ranges), merge_touching_ranges(after_ranges))
+    (
+        merge_touching_ranges(before_ranges),
+        merge_touching_ranges(after_ranges),
+    )
 }
 
 fn collect_inline_ngrams<'a>(

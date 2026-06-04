@@ -6,7 +6,7 @@
   "build": {
     "beforeDevCommand": "",
     "beforeBuildCommand": "",
-    "frontendDist": "../sp42-app/dist"
+    "frontendDist": "../../target/dist/sp42-app"
   },
   "app": {
     "windows": [
@@ -18,4 +18,3 @@
     ]
   }
 }
-

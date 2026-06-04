@@ -66,6 +66,17 @@ sp42_frontend_dist_dir() {
   printf '%s/target/dist/sp42-app\n' "$repo_root"
 }
 
+sp42_prepend_cargo_path() {
+  local cargo_bin cargo_dir
+  cargo_bin="$(sp42_cargo_bin)"
+  cargo_dir="$(cd "$(dirname "$cargo_bin")" && pwd)"
+
+  case ":$PATH:" in
+    *":$cargo_dir:"*) ;;
+    *) export PATH="$cargo_dir:$PATH" ;;
+  esac
+}
+
 sp42_clean_build_slate() {
   local repo_root="$1"
 
@@ -153,6 +164,7 @@ sp42_setup_build_env() {
     fi
   fi
 
+  sp42_prepend_cargo_path
   sp42_maybe_enable_sccache
 
   case "$mode" in

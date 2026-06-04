@@ -6,15 +6,35 @@
   "build": {
     "beforeDevCommand": "",
     "beforeBuildCommand": "",
-    "frontendDist": "../../sp42-app/dist"
+    "frontendDist": "../../../target/dist/sp42-app"
   },
   "app": {
-    "windows": [
-      {
-        "title": "SP42",
-        "width": 1440,
-        "height": 960
-      }
-    ]
+    "windows": [],
+    "security": {
+      "csp": "default-src 'self' asset: http://asset.localhost; script-src 'self' 'unsafe-inline' 'unsafe-eval' asset: http://asset.localhost; style-src 'self' 'unsafe-inline' asset: http://asset.localhost; img-src 'self' data: blob: asset: http://asset.localhost https:; font-src 'self' data: asset: http://asset.localhost; connect-src 'self' ipc: http://ipc.localhost http://127.0.0.1:* http://localhost:* ws://127.0.0.1:* ws://localhost:* https: wss:; object-src 'none'; frame-ancestors 'none'; base-uri 'self'"
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "category": "Productivity",
+    "shortDescription": "Wikipedia patrolling workbench",
+    "longDescription": "SP42 is a Rust-first Wikipedia patrolling workbench with a bundled desktop shell.",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "externalBin": [
+      "binaries/sp42-server"
+    ],
+    "macOS": {
+      "entitlements": "./Entitlements.plist",
+      "hardenedRuntime": true,
+      "providerShortName": null,
+      "signingIdentity": null
+    }
   }
 }

@@ -1,0 +1,43 @@
+name: Feature request
+description: Propose a focused SP42 improvement.
+title: "feat: "
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What user or maintainer problem should this solve?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: Describe the smallest useful change.
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - core
+        - frontend
+        - server
+        - CLI
+        - desktop
+        - build/CI
+        - VPS/deployment
+        - documentation
+    validations:
+      required: true
+  - type: checkboxes
+    id: risk
+    attributes:
+      label: Review flags
+      options:
+        - label: This may affect auth, sessions, cookies, CSRF, or tokens.
+        - label: This may affect deployment/runtime configuration.
+        - label: This may affect scoring or Wikimedia action behavior.
+        - label: This may require an ADR.

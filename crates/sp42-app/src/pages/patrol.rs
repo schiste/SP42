@@ -615,7 +615,9 @@ pub fn PatrolSurface() -> impl IntoView {
             return;
         };
         set_edit_action.set(None);
-        let Some(edit) = selected_edit.get_untracked() else { return };
+        let Some(edit) = selected_edit.get_untracked() else {
+            return;
+        };
         let request = SessionActionExecutionRequest {
             wiki_id: edit.event.wiki_id.clone(),
             kind: SessionActionKind::InlineEdit,
@@ -662,7 +664,9 @@ pub fn PatrolSurface() -> impl IntoView {
         };
         set_tag_action.set(None);
 
-        let Some(edit) = selected_edit.get_untracked() else { return };
+        let Some(edit) = selected_edit.get_untracked() else {
+            return;
+        };
 
         let request = SessionActionExecutionRequest {
             wiki_id: edit.event.wiki_id.clone(),

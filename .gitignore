@@ -14,6 +14,8 @@
 **/dist/
 /coverage
 **/coverage/
+/crates/sp42-desktop/src-tauri/gen/
+/crates/sp42-desktop/src-tauri/binaries/sp42-server-*
 *.tmp
 *.swp
 *.swo

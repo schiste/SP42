@@ -6,12 +6,12 @@ use sp42_core::{
 };
 
 #[cfg(target_arch = "wasm32")]
-use super::{auth, coordination, http::get_bytes};
+use super::{auth, config::api_url, coordination, http::get_bytes};
 
-const DEBUG_SUMMARY_URL: &str = "http://127.0.0.1:8788/debug/summary";
-const DEBUG_RUNTIME_URL: &str = "http://127.0.0.1:8788/debug/runtime";
-const CAPABILITIES_URL_PREFIX: &str = "http://127.0.0.1:8788/dev/auth/capabilities";
-const ACTION_HISTORY_URL: &str = "http://127.0.0.1:8788/dev/actions/history";
+const DEBUG_SUMMARY_PATH: &str = "/debug/summary";
+const DEBUG_RUNTIME_PATH: &str = "/debug/runtime";
+const CAPABILITIES_PATH_PREFIX: &str = "/dev/auth/capabilities";
+const ACTION_HISTORY_PATH: &str = "/dev/actions/history";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DevActionHistoryRecord {
@@ -89,20 +89,20 @@ pub fn preview_dev_action_history() -> Vec<DevActionHistoryRecord> {
 
 #[cfg(target_arch = "wasm32")]
 pub async fn fetch_server_debug_summary() -> Result<ServerDebugSummary, String> {
-    let bytes = get_bytes(DEBUG_SUMMARY_URL, "fetch server debug summary").await?;
+    let bytes = get_bytes(&api_url(DEBUG_SUMMARY_PATH), "fetch server debug summary").await?;
     serde_json::from_slice(&bytes).map_err(|error| error.to_string())
 }
 
 #[cfg(target_arch = "wasm32")]
 pub async fn fetch_runtime_debug_status() -> Result<RuntimeDebugStatus, String> {
-    let bytes = get_bytes(DEBUG_RUNTIME_URL, "fetch runtime debug status").await?;
+    let bytes = get_bytes(&api_url(DEBUG_RUNTIME_PATH), "fetch runtime debug status").await?;
     parse_runtime_debug_status(&bytes)
 }
 
 #[cfg(target_arch = "wasm32")]
 pub async fn fetch_dev_auth_capabilities(wiki_id: &str) -> Result<DevAuthCapabilityReport, String> {
     let bytes = get_bytes(
-        &format!("{CAPABILITIES_URL_PREFIX}/{wiki_id}"),
+        &api_url(&format!("{CAPABILITIES_PATH_PREFIX}/{wiki_id}")),
         "fetch dev auth capabilities",
     )
     .await?;
@@ -111,7 +111,7 @@ pub async fn fetch_dev_auth_capabilities(wiki_id: &str) -> Result<DevAuthCapabil
 
 #[cfg(target_arch = "wasm32")]
 pub async fn fetch_dev_action_history() -> Result<Vec<DevActionHistoryRecord>, String> {
-    let bytes = get_bytes(ACTION_HISTORY_URL, "fetch dev action history").await?;
+    let bytes = get_bytes(&api_url(ACTION_HISTORY_PATH), "fetch dev action history").await?;
     parse_dev_action_history(&bytes)
 }
 
@@ -342,6 +342,7 @@ mod tests {
                 expires_at_ms: None,
                 token_present: true,
                 bridge_mode: "local".to_string(),
+                csrf_token: None,
                 local_token_available: true,
             },
             oauth: LocalOAuthConfigStatus {
@@ -363,6 +364,7 @@ mod tests {
                     expires_at_ms: None,
                     token_present: true,
                     bridge_mode: "local".to_string(),
+                    csrf_token: None,
                     local_token_available: true,
                 },
                 source_path: Some(".env.wikimedia.local".to_string()),

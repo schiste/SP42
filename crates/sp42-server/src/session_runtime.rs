@@ -37,6 +37,7 @@ pub(crate) fn auth_session_view_without_session(state: &AppState) -> OAuthSessio
         upstream_access_expires_at_ms: None,
         refresh_available: FlagState::Disabled,
         bridge_mode: "inactive".to_string(),
+        csrf_token: None,
         local_token_available: FlagState::from(state.local_oauth.access_token().is_some()),
         oauth_client_ready: FlagState::from(state.local_oauth.has_confidential_oauth_client()),
         login_path: AUTH_LOGIN_PATH.to_string(),
@@ -58,6 +59,7 @@ pub(crate) async fn auth_session_view(
             upstream_access_expires_at_ms: sessions_upstream_access_expiry(state, headers).await,
             refresh_available: FlagState::from(sessions_refresh_available(state, headers).await),
             bridge_mode: session.bridge_mode,
+            csrf_token: Some(session.csrf_token),
             local_token_available: FlagState::from(state.local_oauth.access_token().is_some()),
             oauth_client_ready: FlagState::from(state.local_oauth.has_confidential_oauth_client()),
             login_path: AUTH_LOGIN_PATH.to_string(),
@@ -118,6 +120,7 @@ pub(crate) fn to_status(
         token_present: session.is_some_and(|entry| !entry.access_token.is_empty()),
         bridge_mode: session
             .map_or_else(|| "inactive".to_string(), |entry| entry.bridge_mode.clone()),
+        csrf_token: session.map(|entry| entry.csrf_token.clone()),
         local_token_available: local_oauth.access_token().is_some(),
     }
 }
@@ -163,15 +166,32 @@ pub(crate) fn next_session_id(state: &AppState, current_ms: i64) -> String {
     )
 }
 
-pub(crate) fn session_cookie_header(session_id: &str) -> Option<HeaderValue> {
-    HeaderValue::from_str(&format!(
-        "{SESSION_COOKIE_NAME}={session_id}; HttpOnly; SameSite=Lax; Path=/; Max-Age={SESSION_COOKIE_MAX_AGE_SECONDS}"
-    ))
-    .ok()
+pub(crate) fn session_cookie_header(state: &AppState, session_id: &str) -> Option<HeaderValue> {
+    session_cookie_header_value(state, session_id, SESSION_COOKIE_MAX_AGE_SECONDS)
 }
 
-pub(crate) fn expired_session_cookie_header() -> HeaderValue {
-    HeaderValue::from_static("sp42_dev_session=deleted; HttpOnly; SameSite=Lax; Path=/; Max-Age=0")
+pub(crate) fn expired_session_cookie_header(state: &AppState) -> HeaderValue {
+    session_cookie_header_value(state, "deleted", 0).unwrap_or_else(|| {
+        HeaderValue::from_static(
+            "sp42_dev_session=deleted; HttpOnly; SameSite=Lax; Path=/; Max-Age=0",
+        )
+    })
+}
+
+fn session_cookie_header_value(
+    state: &AppState,
+    session_id: &str,
+    max_age_seconds: i64,
+) -> Option<HeaderValue> {
+    let secure = if state.deployment.mode.uses_secure_cookies() {
+        "; Secure"
+    } else {
+        ""
+    };
+    HeaderValue::from_str(&format!(
+        "{SESSION_COOKIE_NAME}={session_id}; HttpOnly; SameSite=Lax; Path=/; Max-Age={max_age_seconds}{secure}"
+    ))
+    .ok()
 }
 
 pub(crate) fn session_expires_at_ms(session: &StoredSession, current_time_ms: i64) -> i64 {
@@ -218,6 +238,7 @@ pub(crate) async fn current_session_snapshot(
         expires_at_ms: session.expires_at_ms,
         access_token: session.access_token.clone(),
         bridge_mode: session.bridge_mode.clone(),
+        csrf_token: session.csrf_token.clone(),
     })
 }
 
@@ -256,6 +277,7 @@ pub(crate) async fn current_status(
             expires_at_ms: session.expires_at_ms,
             token_present: true,
             bridge_mode: session.bridge_mode,
+            csrf_token: Some(session.csrf_token),
             local_token_available: state.local_oauth.access_token().is_some(),
         },
         None => to_status(None, &state.local_oauth, state.clock.now_ms()),

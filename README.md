@@ -48,6 +48,7 @@ Detailed status lives in [docs/STATUS.md](docs/STATUS.md).
 Optional:
 
 - `trunk` for serving the browser app during development
+- `sccache` for faster repeated local Rust builds
 - A local Wikimedia testing token in `.env.wikimedia.local` for the single-user auth bridge
 
 ## Quick Start
@@ -71,6 +72,12 @@ For CI-shaped builds with deterministic caching:
 
 ```sh
 ./scripts/ci-all.sh
+```
+
+For focused local checks during iteration:
+
+```sh
+./scripts/check-focused.sh
 ```
 
 ### 2. Run the localhost server
@@ -104,11 +111,37 @@ To generate Cargo timings reports:
 ./scripts/build-timings.sh
 ```
 
-For live frontend development from the repository root:
+For live local development with the server and Trunk proxy running together:
 
 ```sh
-trunk serve
+./scripts/dev-local.sh
+./scripts/dev-local.sh --smoke
 ```
+
+The dev command runs `sp42-server` on `127.0.0.1:8788` and Trunk on
+`127.0.0.1:4173`.
+
+For desktop app packaging, see [docs/DESKTOP_DISTRIBUTION.md](docs/DESKTOP_DISTRIBUTION.md).
+
+## Runtime Deployment Configuration
+
+The server reads these runtime settings:
+
+- `SP42_DEPLOYMENT_MODE=local|vps|desktop` controls deployment-sensitive defaults. It defaults to `local`.
+- `SP42_BIND_ADDR` controls the server bind address. It defaults to `127.0.0.1:8788`.
+- `SP42_PUBLIC_BASE_URL` sets the externally visible HTTP(S) base URL, for example `https://sp42.example.wmcloud.org`.
+- `SP42_APP_DIST_DIR` points the server at the compiled browser bundle.
+- `SP42_RUNTIME_DIR` points persistent runtime files at a deployable data directory.
+- `SP42_ALLOWED_ORIGINS` is a comma-separated list of extra credentialed CORS origins.
+
+The browser app uses same-origin API paths by default. For split frontend/API
+deployments, set `window.__SP42_RUNTIME_CONFIG__.apiBaseUrl`, add a
+`<meta name="sp42-api-base-url" content="...">` tag, or build the frontend with
+`SP42_API_BASE_URL`.
+
+In `vps` mode, local dev-token bootstrap is disabled and session cookies are
+marked `Secure`. Across modes, cookie-auth state-changing routes require an SP42
+CSRF header.
 
 ## Local Wikimedia Development Auth
 
@@ -144,6 +177,8 @@ The file is ignored by `.gitignore`.
 ./scripts/build-web-release.sh
 ./scripts/package-vps.sh
 ./scripts/build-desktop.sh --platform macos
+./scripts/dev-local.sh --smoke
+./scripts/check-focused.sh
 ./scripts/ci-all.sh
 cargo test --workspace
 cargo clippy --workspace --all-targets --all-features -- -D warnings
@@ -153,6 +188,8 @@ cargo doc --workspace --no-deps
 Selected utility scripts:
 
 - `./scripts/local-operator-smoke.sh`
+- `./scripts/dev-local.sh --smoke`
+- `./scripts/check-focused.sh`
 - `./scripts/check-doc-consistency.sh`
 - `./scripts/clean-house.sh --purge-target`
 
@@ -165,6 +202,7 @@ Cargo-native helpers:
 
 Optional shared compiler cache:
 
+- Install `sccache` for faster repeated local builds
 - Set `SP42_USE_SCCACHE=1` to require `sccache`
 - Leave `SP42_USE_SCCACHE` unset to auto-enable `sccache` when available without making it mandatory
 
@@ -172,6 +210,10 @@ Optional shared compiler cache:
 
 - [docs/STATUS.md](docs/STATUS.md): phase-by-phase project status
 - [docs/DEVELOPER_SURFACE.md](docs/DEVELOPER_SURFACE.md): developer-oriented surface summary
+- [CONTRIBUTING.md](CONTRIBUTING.md): contributor workflow and local checks
+- [GOVERNANCE.md](GOVERNANCE.md): maintainer model, protected areas, and release authority
+- [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md): participation expectations
+- [docs/REPO_CLEANUP_PLAN.md](docs/REPO_CLEANUP_PLAN.md): cleanup plan for contributor readiness
 - [docs/scoring/SCORING_CONSTITUTION.md](docs/scoring/SCORING_CONSTITUTION.md): scoring system principles and technical rules
 - [docs/scoring/POLICY_LAYOUT.md](docs/scoring/POLICY_LAYOUT.md): scoring policy and evaluation directory layout
 - [docs/FRONTEND_DESIGN_CONTRACT.md](docs/FRONTEND_DESIGN_CONTRACT.md): frontend contract

@@ -1,19 +1,20 @@
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+
+mod desktop;
 mod shell;
 
 fn main() {
-    let mut args = std::env::args().skip(1).peekable();
-    if args.peek().is_none() {
-        println!("{}", shell::render_shell_bootstrap());
+    let args = std::env::args().skip(1).collect::<Vec<_>>();
+    if shell::is_contract_invocation(&args) {
+        match shell::render_shell_bootstrap_from_args(args) {
+            Ok(output) => println!("{output}"),
+            Err(help_or_error) => println!("{help_or_error}"),
+        }
         return;
     }
 
-    let format = match shell::parse_shell_format(args) {
-        Ok(format) => format,
-        Err(help_or_error) => {
-            println!("{help_or_error}");
-            return;
-        }
-    };
-
-    println!("{}", shell::render_shell_bootstrap_with_format(format));
+    if let Err(error) = desktop::run() {
+        eprintln!("failed to run SP42 desktop app: {error}");
+        std::process::exit(1);
+    }
 }

@@ -461,6 +461,7 @@ mod tests {
                 expires_at_ms: Some(123),
                 token_present: true,
                 bridge_mode: "local-env-token".to_string(),
+                csrf_token: None,
                 local_token_available: true,
             },
             source_report: LocalOAuthSourceReport {

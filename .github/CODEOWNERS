@@ -1,0 +1,28 @@
+# Default ownership.
+* @schiste
+
+# Community and repository governance.
+/.github/ @schiste
+/CODE_OF_CONDUCT.md @schiste
+/CONTRIBUTING.md @schiste
+/GOVERNANCE.md @schiste
+/SECURITY.md @schiste
+/CONSTITUTION.md @schiste
+
+# Deployment, release, and build system.
+/.github/workflows/ @schiste
+/scripts/ @schiste
+/xtask/ @schiste
+/crates/sp42-desktop/ @schiste
+/docs/DESKTOP_DISTRIBUTION.md @schiste
+
+# Runtime security and server behavior.
+/crates/sp42-server/ @schiste
+/crates/sp42-core/src/dev_auth.rs @schiste
+/crates/sp42-app/src/platform/auth.rs @schiste
+/crates/sp42-app/src/platform/config.rs @schiste
+
+# Configuration contracts and architectural decisions.
+/configs/ @schiste
+/schemas/ @schiste
+/docs/adr/ @schiste

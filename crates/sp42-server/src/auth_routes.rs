@@ -22,8 +22,9 @@ use crate::{
     capability_report_for_request, current_status, effective_session_scopes,
     expired_session_cookie_header, generate_oauth_state, generate_pkce_verifier, install_session,
     invalid_payload, next_session_id, parse_callback_query, probe_with_targets,
-    prune_expired_sessions, runtime_debug, session_cookie_header, session_cookie_value,
-    split_scope_string, store_pending_oauth_login, take_pending_oauth_login, to_status,
+    prune_expired_sessions, require_session_csrf, runtime_debug, session_cookie_header,
+    session_cookie_value, split_scope_string, store_pending_oauth_login, take_pending_oauth_login,
+    to_status,
 };
 
 pub(crate) async fn get_runtime_debug(
@@ -142,6 +143,7 @@ pub(crate) async fn complete_auth_callback(
             .and_then(|seconds| i64::try_from(seconds).ok())
             .map(|seconds| current_ms.saturating_add(seconds.saturating_mul(1000))),
         bridge_mode: "wikimedia-oauth".to_string(),
+        csrf_token: next_csrf_token(),
         created_at_ms: current_ms,
         last_seen_at_ms: current_ms,
         capability_cache: HashMap::from([(
@@ -156,7 +158,7 @@ pub(crate) async fn complete_auth_callback(
     let session_id =
         install_session(state, session_cookie_value(headers), stored, current_ms).await;
 
-    let cookie = session_cookie_header(&session_id)
+    let cookie = session_cookie_header(state, &session_id)
         .ok_or_else(|| internal_error("failed to build session cookie header"))?;
 
     Ok((
@@ -224,13 +226,14 @@ pub(crate) async fn post_auth_logout(
     headers: HeaderMap,
 ) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
     if let Some(session_id) = session_cookie_value(&headers) {
+        require_session_csrf(&state, &headers).await?;
         let mut sessions = state.sessions.write().await;
         sessions.remove(&session_id);
     }
 
     Ok((
         StatusCode::OK,
-        [(SET_COOKIE, expired_session_cookie_header())],
+        [(SET_COOKIE, expired_session_cookie_header(&state))],
         Json(auth_session_view_without_session(&state)),
     ))
 }
@@ -255,6 +258,15 @@ pub(crate) async fn post_bootstrap_session(
     headers: HeaderMap,
     Json(payload): Json<DevAuthBootstrapRequest>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
+    if !state.deployment.mode.permits_dev_token_bootstrap() {
+        return Err((
+            StatusCode::FORBIDDEN,
+            Json(serde_json::json!({
+                "error": "Local dev-token bootstrap is disabled outside SP42_DEPLOYMENT_MODE=local"
+            })),
+        ));
+    }
+
     validate_bootstrap_payload(&payload)?;
 
     let Some(access_token) = state.local_oauth.access_token() else {
@@ -287,6 +299,7 @@ pub(crate) async fn post_bootstrap_session(
         refresh_token: None,
         upstream_access_expires_at_ms: None,
         bridge_mode: "local-env-token".to_string(),
+        csrf_token: next_csrf_token(),
         created_at_ms: current_ms,
         last_seen_at_ms: current_ms,
         capability_cache: HashMap::from([(
@@ -314,7 +327,7 @@ pub(crate) async fn post_bootstrap_session(
         "bootstrapped local dev-auth session"
     );
 
-    let cookie = session_cookie_header(&session_id)
+    let cookie = session_cookie_header(&state, &session_id)
         .ok_or_else(|| internal_error("failed to build session cookie header"))?;
 
     Ok((StatusCode::OK, [(SET_COOKIE, cookie)], Json(status)))
@@ -325,6 +338,7 @@ pub(crate) async fn delete_session(
     headers: HeaderMap,
 ) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
     if let Some(session_id) = session_cookie_value(&headers) {
+        require_session_csrf(&state, &headers).await?;
         let mut sessions = state.sessions.write().await;
         sessions.remove(&session_id);
         info!(
@@ -335,7 +349,7 @@ pub(crate) async fn delete_session(
 
     Ok((
         StatusCode::OK,
-        [(SET_COOKIE, expired_session_cookie_header())],
+        [(SET_COOKIE, expired_session_cookie_header(&state))],
         Json(to_status(None, &state.local_oauth, state.clock.now_ms())),
     ))
 }
@@ -347,4 +361,9 @@ pub(crate) async fn get_bootstrap_status(
     let auth = current_status(&state, &headers, true).await;
 
     Json(bootstrap_status(&state, &auth))
+}
+
+fn next_csrf_token() -> String {
+    let mut rng = ServerRng;
+    generate_oauth_state(&mut rng)
 }

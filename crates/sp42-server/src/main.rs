@@ -1,6 +1,7 @@
 mod action_routes;
 mod auth_routes;
 mod coordination;
+mod deployment;
 mod ingestion_supervisor;
 mod local_env;
 mod oauth_runtime;
@@ -22,6 +23,7 @@ use axum::extract::Path;
 use axum::extract::Query;
 use axum::extract::State;
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
+use axum::http::HeaderName;
 use axum::http::header::{CACHE_CONTROL, CONTENT_TYPE, COOKIE, PRAGMA};
 use axum::http::{HeaderMap, HeaderValue, Method, StatusCode};
 use axum::middleware::{self, Next};
@@ -33,7 +35,7 @@ use rand::Rng as _;
 use sp42_core::traits::HttpClient;
 use tokio::net::TcpListener;
 use tokio::sync::RwLock;
-use tower_http::cors::CorsLayer;
+use tower_http::cors::{AllowOrigin, CorsLayer};
 use tower_http::services::{ServeDir, ServeFile};
 use tracing::{info, warn};
 use tracing_subscriber::EnvFilter;
@@ -68,6 +70,7 @@ use sp42_core::{
 use crate::coordination::{
     CoordinationEnvelope, CoordinationRegistry, CoordinationRoomInspection, CoordinationRoomMetrics,
 };
+use crate::deployment::DeploymentConfig;
 use crate::local_env::LocalOAuthConfig;
 use crate::wikimedia_capabilities::{CapabilityProbeTargets, config_for_wiki, probe_with_targets};
 
@@ -79,6 +82,7 @@ type SharedRevisionArtifactCache = Arc<RwLock<HashMap<String, CachedRevisionArti
 type SharedRenderedHunkCache = Arc<RwLock<HashMap<String, CachedRenderedHunkPreview>>>;
 
 const SESSION_COOKIE_NAME: &str = "sp42_dev_session";
+const CSRF_HEADER_NAME: &str = "x-sp42-csrf-token";
 const CAPABILITY_CACHE_TTL_MS: i64 = 30_000;
 const SESSION_IDLE_TIMEOUT_MS: i64 = 30 * 60 * 1000;
 const SESSION_ABSOLUTE_TIMEOUT_MS: i64 = 8 * 60 * 60 * 1000;
@@ -114,6 +118,7 @@ struct AppState {
     capability_targets: CapabilityProbeTargets,
     clock: Arc<dyn Clock>,
     coordination: CoordinationRegistry,
+    deployment: DeploymentConfig,
     next_client_id: Arc<AtomicU64>,
     next_session_id: Arc<AtomicU64>,
     started_at: Instant,
@@ -152,6 +157,7 @@ struct StoredSession {
     refresh_token: Option<String>,
     upstream_access_expires_at_ms: Option<i64>,
     bridge_mode: String,
+    csrf_token: String,
     created_at_ms: i64,
     last_seen_at_ms: i64,
     capability_cache: HashMap<String, CachedCapabilityReport>,
@@ -176,6 +182,7 @@ struct SessionSnapshot {
     expires_at_ms: Option<i64>,
     access_token: String,
     bridge_mode: String,
+    csrf_token: String,
 }
 
 #[derive(Clone)]
@@ -204,6 +211,7 @@ struct OAuthSessionView {
     upstream_access_expires_at_ms: Option<i64>,
     refresh_available: FlagState,
     bridge_mode: String,
+    csrf_token: Option<String>,
     local_token_available: FlagState,
     oauth_client_ready: FlagState,
     login_path: String,
@@ -548,6 +556,13 @@ async fn main() -> Result<(), std::io::Error> {
         "starting localhost server"
     );
     let clock: Arc<dyn Clock> = Arc::new(SystemClock);
+    let deployment = DeploymentConfig::load().map_err(io::Error::other)?;
+    info!(
+        deployment_mode = deployment.mode.as_str(),
+        public_base_url = deployment.public_base_url.as_deref().unwrap_or(""),
+        allowed_origin_count = deployment.allowed_origins.len(),
+        "loaded runtime deployment configuration"
+    );
     let state = AppState {
         capability_cache: Arc::new(RwLock::new(None)),
         sessions: Arc::new(RwLock::new(HashMap::new())),
@@ -561,6 +576,7 @@ async fn main() -> Result<(), std::io::Error> {
         capability_targets: CapabilityProbeTargets::default(),
         clock: clock.clone(),
         coordination: CoordinationRegistry::new(clock),
+        deployment,
         next_client_id: Arc::new(AtomicU64::new(1)),
         next_session_id: Arc::new(AtomicU64::new(1)),
         started_at: Instant::now(),
@@ -606,19 +622,19 @@ fn build_router(state: AppState) -> Router {
         None
     };
 
+    let allowed_origins = state.deployment.allowed_origins.clone();
     let router = operator_routes(Router::new())
         .with_state(state)
         .layer(
             CorsLayer::new()
                 .allow_credentials(true)
-                .allow_origin([
-                    HeaderValue::from_static("http://127.0.0.1:4173"),
-                    HeaderValue::from_static("http://localhost:4173"),
-                    HeaderValue::from_static("http://127.0.0.1:8788"),
-                    HeaderValue::from_static("http://localhost:8788"),
-                ])
-                .allow_methods([Method::GET, Method::POST, Method::DELETE])
-                .allow_headers([CONTENT_TYPE, COOKIE]),
+                .allow_origin(AllowOrigin::list(allowed_origins))
+                .allow_methods([Method::GET, Method::POST, Method::PUT, Method::DELETE])
+                .allow_headers([
+                    CONTENT_TYPE,
+                    COOKIE,
+                    HeaderName::from_static(CSRF_HEADER_NAME),
+                ]),
         )
         .layer(middleware::from_fn(disable_response_caching));
 
@@ -771,6 +787,36 @@ async fn authenticated_wiki_context(
         client: BearerHttpClient::new(state.http_client.clone(), access_token),
         config,
     })
+}
+
+pub(crate) fn validate_csrf_header(
+    headers: &HeaderMap,
+    session: &SessionSnapshot,
+) -> Result<(), (StatusCode, Json<serde_json::Value>)> {
+    let Some(header_value) = headers
+        .get(CSRF_HEADER_NAME)
+        .and_then(|value| value.to_str().ok())
+    else {
+        return Err(forbidden_error("Missing CSRF token header."));
+    };
+
+    if header_value == session.csrf_token {
+        Ok(())
+    } else {
+        Err(forbidden_error("Invalid CSRF token header."))
+    }
+}
+
+pub(crate) async fn require_session_csrf(
+    state: &AppState,
+    headers: &HeaderMap,
+) -> Result<(), (StatusCode, Json<serde_json::Value>)> {
+    let Some(session) = current_session_snapshot(state, headers, false).await else {
+        return Err(unauthorized_error(
+            "No authenticated bridge session is active.",
+        ));
+    };
+    validate_csrf_header(headers, &session)
 }
 
 async fn required_csrf_token(
@@ -1224,6 +1270,7 @@ async fn put_storage_document(
     headers: HeaderMap,
     Json(payload): Json<StorageDocumentSavePayload>,
 ) -> Result<Json<WikiStorageWriteOutcome>, (StatusCode, Json<serde_json::Value>)> {
+    require_session_csrf(&state, &headers).await?;
     storage_routes::put_storage_document(Path(wiki_id), State(state), headers, Json(payload)).await
 }
 
@@ -1257,6 +1304,7 @@ async fn put_logical_storage_document(
     headers: HeaderMap,
     Json(payload): Json<LogicalStorageDocumentSavePayload>,
 ) -> Result<Json<LogicalStorageDocumentWriteView>, (StatusCode, Json<serde_json::Value>)> {
+    require_session_csrf(&state, &headers).await?;
     storage_routes::put_logical_storage_document(
         Path((wiki_id, realm, kind)),
         Query(query),
@@ -1289,6 +1337,7 @@ async fn put_public_storage_document(
     headers: HeaderMap,
     Json(payload): Json<PublicStorageDocumentSavePayload>,
 ) -> Result<Json<PublicStorageDocumentWriteView>, (StatusCode, Json<serde_json::Value>)> {
+    require_session_csrf(&state, &headers).await?;
     storage_routes::put_public_storage_document(
         Path((wiki_id, kind)),
         Query(query),
@@ -3119,7 +3168,12 @@ async fn fetch_wikimedia_api_bytes(
                     truncate_response_body(&body)
                 );
                 if retryable && attempt < WIKIMEDIA_API_RETRY_ATTEMPTS {
-                    warn!(label, attempt, status = status.as_u16(), "retrying wikimedia api request");
+                    warn!(
+                        label,
+                        attempt,
+                        status = status.as_u16(),
+                        "retrying wikimedia api request"
+                    );
                     tokio::time::sleep(Duration::from_millis(WIKIMEDIA_API_RETRY_DELAY_MS)).await;
                     last_error = Some(message);
                     continue;
@@ -3761,12 +3815,12 @@ fn next_session_id(state: &AppState, current_ms: i64) -> String {
     session_runtime::next_session_id(state, current_ms)
 }
 
-fn session_cookie_header(session_id: &str) -> Option<HeaderValue> {
-    session_runtime::session_cookie_header(session_id)
+fn session_cookie_header(state: &AppState, session_id: &str) -> Option<HeaderValue> {
+    session_runtime::session_cookie_header(state, session_id)
 }
 
-fn expired_session_cookie_header() -> HeaderValue {
-    session_runtime::expired_session_cookie_header()
+fn expired_session_cookie_header(state: &AppState) -> HeaderValue {
+    session_runtime::expired_session_cookie_header(state)
 }
 
 fn session_expires_at_ms(session: &StoredSession, current_time_ms: i64) -> i64 {
@@ -4042,6 +4096,7 @@ mod tests {
         operator_endpoint_manifest, to_status,
     };
     use crate::coordination::CoordinationRegistry;
+    use crate::deployment::{DeploymentConfig, DeploymentMode};
     use crate::local_env::LocalOAuthConfig;
     use crate::wikimedia_capabilities::CapabilityProbeTargets;
     use futures::{SinkExt, StreamExt};
@@ -4054,6 +4109,18 @@ mod tests {
     type TestWebSocket = tokio_tungstenite::WebSocketStream<
         tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
     >;
+
+    fn test_deployment_for_mode(mode: DeploymentMode) -> DeploymentConfig {
+        DeploymentConfig {
+            mode,
+            public_base_url: None,
+            allowed_origins: Vec::new(),
+        }
+    }
+
+    fn test_deployment() -> DeploymentConfig {
+        test_deployment_for_mode(DeploymentMode::Local)
+    }
 
     fn test_state() -> AppState {
         let clock: Arc<dyn Clock> = Arc::new(SystemClock);
@@ -4075,6 +4142,7 @@ mod tests {
             capability_targets: CapabilityProbeTargets::default(),
             clock: clock.clone(),
             coordination: CoordinationRegistry::new(clock),
+            deployment: test_deployment(),
             next_client_id: Arc::new(AtomicU64::new(1)),
             next_session_id: Arc::new(AtomicU64::new(1)),
             started_at: Instant::now(),
@@ -4409,6 +4477,7 @@ mod tests {
             refresh_token: None,
             upstream_access_expires_at_ms: None,
             bridge_mode: "local-env-token".to_string(),
+            csrf_token: "csrf-token".to_string(),
             created_at_ms,
             last_seen_at_ms: created_at_ms,
             capability_cache: HashMap::new(),
@@ -4493,6 +4562,7 @@ mod tests {
                 refresh_token: None,
                 upstream_access_expires_at_ms: None,
                 bridge_mode: "manual-dev-token".to_string(),
+                csrf_token: "csrf-token".to_string(),
                 created_at_ms: 0,
                 last_seen_at_ms: 0,
                 capability_cache: HashMap::new(),
@@ -4551,6 +4621,96 @@ mod tests {
             serde_json::from_slice(&body).expect("status should parse");
         assert!(!status.authenticated);
         assert_eq!(status.bridge_mode, "inactive");
+    }
+
+    #[tokio::test]
+    async fn dev_session_delete_requires_csrf_for_cookie_session() {
+        let state = test_state();
+        let session_id = "session-delete";
+        let created_at_ms = now_ms();
+        state.sessions.write().await.insert(
+            session_id.to_string(),
+            test_session("Example", "secret-token", created_at_ms),
+        );
+        let router = build_router(state.clone());
+        let cookie = format!("{}={session_id}", crate::SESSION_COOKIE_NAME);
+
+        let missing_csrf = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::DELETE)
+                    .uri("/dev/auth/session")
+                    .header(axum::http::header::COOKIE, &cookie)
+                    .body(Body::empty())
+                    .expect("request should build"),
+            )
+            .await
+            .expect("delete request should succeed");
+
+        assert_eq!(missing_csrf.status(), StatusCode::FORBIDDEN);
+        assert!(state.sessions.read().await.contains_key(session_id));
+
+        let valid_csrf = router
+            .oneshot(
+                Request::builder()
+                    .method(Method::DELETE)
+                    .uri("/dev/auth/session")
+                    .header(axum::http::header::COOKIE, cookie)
+                    .header(crate::CSRF_HEADER_NAME, "csrf-token")
+                    .body(Body::empty())
+                    .expect("request should build"),
+            )
+            .await
+            .expect("delete request should succeed");
+
+        assert_eq!(valid_csrf.status(), StatusCode::OK);
+        assert!(!state.sessions.read().await.contains_key(session_id));
+    }
+
+    #[tokio::test]
+    async fn bootstrap_session_is_disabled_outside_local_mode() {
+        let mut state = test_state();
+        state.deployment = test_deployment_for_mode(DeploymentMode::Vps);
+        let router = build_router(state);
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/dev/auth/session/bootstrap")
+                    .header("content-type", "application/json")
+                    .body(Body::from("{}"))
+                    .expect("request should build"),
+            )
+            .await
+            .expect("bootstrap request should succeed");
+
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+        let body = to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("response body should read");
+        let payload: serde_json::Value =
+            serde_json::from_slice(&body).expect("response should parse");
+        assert!(
+            payload
+                .get("error")
+                .and_then(serde_json::Value::as_str)
+                .is_some_and(|message| message.contains("SP42_DEPLOYMENT_MODE=local"))
+        );
+    }
+
+    #[test]
+    fn vps_session_cookie_is_secure() {
+        let mut state = test_state();
+        state.deployment = test_deployment_for_mode(DeploymentMode::Vps);
+        let cookie = super::session_cookie_header(&state, "session-cookie")
+            .expect("session cookie header should build")
+            .to_str()
+            .expect("session cookie header should be text")
+            .to_string();
+
+        assert!(cookie.contains("; Secure"));
+        assert!(cookie.contains("SameSite=Lax"));
     }
 
     #[tokio::test]
@@ -4616,6 +4776,7 @@ mod tests {
             },
             clock: clock.clone(),
             coordination: CoordinationRegistry::new(clock),
+            deployment: test_deployment(),
             next_client_id: Arc::new(AtomicU64::new(1)),
             next_session_id: Arc::new(AtomicU64::new(1)),
             started_at: Instant::now(),
@@ -4699,6 +4860,7 @@ mod tests {
                 expires_at_ms: Some(123),
                 token_present: true,
                 bridge_mode: "local-env-token".to_string(),
+                csrf_token: None,
                 local_token_available: true,
             },
             oauth: sp42_core::LocalOAuthConfigStatus {
@@ -4720,6 +4882,7 @@ mod tests {
                     expires_at_ms: Some(123),
                     token_present: true,
                     bridge_mode: "local-env-token".to_string(),
+                    csrf_token: None,
                     local_token_available: true,
                 },
                 source_path: Some(".env.wikimedia.local".to_string()),
@@ -4911,6 +5074,7 @@ mod tests {
                 refresh_token: None,
                 upstream_access_expires_at_ms: None,
                 bridge_mode: "manual-dev-token".to_string(),
+                csrf_token: "csrf-token".to_string(),
                 created_at_ms,
                 last_seen_at_ms: created_at_ms,
                 capability_cache: HashMap::new(),
@@ -4996,6 +5160,7 @@ mod tests {
                 refresh_token: None,
                 upstream_access_expires_at_ms: None,
                 bridge_mode: "manual-dev-token".to_string(),
+                csrf_token: "csrf-token".to_string(),
                 created_at_ms,
                 last_seen_at_ms: created_at_ms,
                 capability_cache: HashMap::new(),
@@ -5092,6 +5257,7 @@ mod tests {
             },
             clock: clock.clone(),
             coordination: CoordinationRegistry::new(clock),
+            deployment: test_deployment(),
             next_client_id: Arc::new(AtomicU64::new(1)),
             next_session_id: Arc::new(AtomicU64::new(1)),
             started_at: Instant::now(),
@@ -5161,6 +5327,7 @@ mod tests {
             },
             clock: clock.clone(),
             coordination: CoordinationRegistry::new(clock),
+            deployment: test_deployment(),
             next_client_id: Arc::new(AtomicU64::new(1)),
             next_session_id: Arc::new(AtomicU64::new(1)),
             started_at: Instant::now(),
@@ -5253,6 +5420,7 @@ mod tests {
             },
             clock: clock.clone(),
             coordination: CoordinationRegistry::new(clock),
+            deployment: test_deployment(),
             next_client_id: Arc::new(AtomicU64::new(1)),
             next_session_id: Arc::new(AtomicU64::new(1)),
             started_at: Instant::now(),
@@ -5428,6 +5596,7 @@ mod tests {
             },
             clock: clock.clone(),
             coordination: CoordinationRegistry::new(clock),
+            deployment: test_deployment(),
             next_client_id: Arc::new(AtomicU64::new(1)),
             next_session_id: Arc::new(AtomicU64::new(1)),
             started_at: Instant::now(),
@@ -5444,6 +5613,7 @@ mod tests {
                 refresh_token: None,
                 upstream_access_expires_at_ms: Some(current_ms + 60_000),
                 bridge_mode: "oauth".to_string(),
+                csrf_token: "csrf-token".to_string(),
                 created_at_ms: current_ms,
                 last_seen_at_ms: current_ms,
                 capability_cache: HashMap::new(),
@@ -5509,6 +5679,7 @@ mod tests {
             },
             clock: clock.clone(),
             coordination: CoordinationRegistry::new(clock),
+            deployment: test_deployment(),
             next_client_id: Arc::new(AtomicU64::new(1)),
             next_session_id: Arc::new(AtomicU64::new(1)),
             started_at: Instant::now(),
@@ -5525,6 +5696,7 @@ mod tests {
                 refresh_token: None,
                 upstream_access_expires_at_ms: Some(current_ms + 60_000),
                 bridge_mode: "oauth".to_string(),
+                csrf_token: "csrf-token".to_string(),
                 created_at_ms: current_ms,
                 last_seen_at_ms: current_ms,
                 capability_cache: HashMap::new(),
@@ -5595,6 +5767,7 @@ mod tests {
             },
             clock: clock.clone(),
             coordination: CoordinationRegistry::new(clock),
+            deployment: test_deployment(),
             next_client_id: Arc::new(AtomicU64::new(1)),
             next_session_id: Arc::new(AtomicU64::new(1)),
             started_at: Instant::now(),

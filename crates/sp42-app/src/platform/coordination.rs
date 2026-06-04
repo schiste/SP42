@@ -4,10 +4,10 @@ use serde_json::Value;
 use sp42_core::{CoordinationRoomSummary, CoordinationSnapshot, CoordinationStateSummary};
 
 #[cfg(target_arch = "wasm32")]
-use super::http::get_bytes;
+use super::{config::api_url, http::get_bytes};
 
-const COORDINATION_ROOMS_URL: &str = "http://127.0.0.1:8788/coordination/rooms";
-const COORDINATION_INSPECTIONS_URL: &str = "http://127.0.0.1:8788/coordination/inspections";
+const COORDINATION_ROOMS_PATH: &str = "/coordination/rooms";
+const COORDINATION_INSPECTIONS_PATH: &str = "/coordination/inspections";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RoomInspectionReport {
@@ -251,7 +251,11 @@ pub fn coordination_room_narrative_lines(report: &RoomInspectionReport) -> Vec<S
 
 #[cfg(target_arch = "wasm32")]
 pub async fn fetch_coordination_snapshot() -> Result<CoordinationSnapshot, String> {
-    let bytes = get_bytes(COORDINATION_ROOMS_URL, "fetch coordination snapshot").await?;
+    let bytes = get_bytes(
+        &api_url(COORDINATION_ROOMS_PATH),
+        "fetch coordination snapshot",
+    )
+    .await?;
     serde_json::from_slice(&bytes).map_err(|error| error.to_string())
 }
 
@@ -260,7 +264,7 @@ pub async fn fetch_coordination_room_state(
     wiki_id: &str,
 ) -> Result<CoordinationStateSummary, String> {
     let bytes = get_bytes(
-        &format!("{COORDINATION_ROOMS_URL}/{wiki_id}"),
+        &api_url(&format!("{COORDINATION_ROOMS_PATH}/{wiki_id}")),
         "fetch coordination room state",
     )
     .await?;
@@ -270,7 +274,7 @@ pub async fn fetch_coordination_room_state(
 #[cfg(target_arch = "wasm32")]
 pub async fn fetch_coordination_inspections() -> Result<RoomInspectionCollection, String> {
     let bytes = get_bytes(
-        COORDINATION_INSPECTIONS_URL,
+        &api_url(COORDINATION_INSPECTIONS_PATH),
         "fetch coordination inspections",
     )
     .await?;
@@ -282,7 +286,7 @@ pub async fn fetch_coordination_room_inspection(
     wiki_id: &str,
 ) -> Result<RoomInspectionReport, String> {
     let bytes = get_bytes(
-        &format!("{COORDINATION_ROOMS_URL}/{wiki_id}/inspection"),
+        &api_url(&format!("{COORDINATION_ROOMS_PATH}/{wiki_id}/inspection")),
         "fetch coordination room inspection",
     )
     .await?;

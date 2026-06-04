@@ -3,7 +3,7 @@ use serde::Serialize;
 use sp42_core::branding::{CONFIG_PAGE_PREFIX, PROJECT_NAME, PROJECT_SLUG, USER_AGENT};
 
 pub const APP_IDENTIFIER: &str = "org.sp42.desktop";
-pub const FRONTEND_DIST: &str = "../../sp42-app/dist";
+pub const FRONTEND_DIST: &str = "../../../target/dist/sp42-app";
 pub const WINDOW_TITLE: &str = PROJECT_NAME;
 pub const SHELL_MODE: &str = "local-native-shell";
 
@@ -52,11 +52,6 @@ pub fn native_shell_contract() -> NativeShellContract {
 }
 
 #[must_use]
-pub fn render_shell_bootstrap() -> String {
-    render_shell_bootstrap_with_format(ShellFormat::Text)
-}
-
-#[must_use]
 pub fn render_shell_bootstrap_with_format(format: ShellFormat) -> String {
     let contract = native_shell_contract();
 
@@ -67,12 +62,25 @@ pub fn render_shell_bootstrap_with_format(format: ShellFormat) -> String {
     }
 }
 
+pub fn render_shell_bootstrap_from_args(
+    args: impl IntoIterator<Item = String>,
+) -> Result<String, String> {
+    parse_shell_format(args).map(render_shell_bootstrap_with_format)
+}
+
+#[must_use]
+pub fn is_contract_invocation(args: &[String]) -> bool {
+    args.iter()
+        .any(|arg| matches!(arg.as_str(), "--contract" | "--format" | "--help" | "-h"))
+}
+
 pub fn parse_shell_format(args: impl IntoIterator<Item = String>) -> Result<ShellFormat, String> {
     let mut args = args.into_iter();
     let mut format = ShellFormat::Text;
 
     while let Some(arg) = args.next() {
         match arg.as_str() {
+            "--contract" => {}
             "--format" => {
                 let value = args
                     .next()
@@ -150,17 +158,16 @@ fn render_shell_bootstrap_markdown(contract: &NativeShellContract) -> String {
 
 fn render_shell_bootstrap_json(contract: &NativeShellContract) -> String {
     serde_json::to_string_pretty(contract).unwrap_or_else(|error| {
-        format!(
-            "{{\"error\":\"failed to serialize native shell contract: {error}\"}}"
-        )
+        format!("{{\"error\":\"failed to serialize native shell contract: {error}\"}}")
     })
 }
 
 fn render_shell_help() -> String {
     [
         "SP42 native shell bootstrap".to_string(),
-        "Usage: sp42-desktop-tauri [--format text|markdown|json]".to_string(),
-        "The native shell is local-first and mirrors the shared desktop operator story.".to_string(),
+        "Usage: sp42-desktop-tauri --contract [--format text|markdown|json]".to_string(),
+        "The native shell is local-first and mirrors the shared desktop operator story."
+            .to_string(),
     ]
     .join("\n")
 }
@@ -170,8 +177,8 @@ mod tests {
     use serde_json::Value;
 
     use super::{
-        APP_IDENTIFIER, FRONTEND_DIST, ShellFormat, native_shell_contract, parse_shell_format,
-        render_shell_bootstrap_with_format,
+        APP_IDENTIFIER, FRONTEND_DIST, ShellFormat, is_contract_invocation, native_shell_contract,
+        parse_shell_format, render_shell_bootstrap_with_format,
     };
 
     #[test]
@@ -216,11 +223,22 @@ mod tests {
     #[test]
     fn parses_shell_format_flag() {
         let format = parse_shell_format([
+            "--contract".to_string(),
             "--format".to_string(),
             "markdown".to_string(),
         ])
         .expect("format should parse");
 
         assert!(matches!(format, ShellFormat::Markdown));
+    }
+
+    #[test]
+    fn detects_contract_invocations() {
+        assert!(is_contract_invocation(&["--contract".to_string()]));
+        assert!(is_contract_invocation(&[
+            "--format".to_string(),
+            "json".to_string()
+        ]));
+        assert!(!is_contract_invocation(&[]));
     }
 }

@@ -19,6 +19,7 @@ use crate::{
     SessionActionExecutionResponse, SessionActionKind, SessionSnapshot,
     capability_report_for_session, config_for_state_wiki, current_session_snapshot,
     execute_fetch_token, forbidden_error, invalid_payload, storage_routes, unauthorized_error,
+    validate_csrf_header,
 };
 
 pub(crate) async fn get_action_status(
@@ -46,6 +47,7 @@ pub(crate) async fn post_execute_action(
             "No authenticated bridge session is active.",
         ));
     };
+    validate_csrf_header(&headers, &session)?;
 
     let capabilities =
         capability_report_for_session(&state, &session, &payload.wiki_id, false).await;

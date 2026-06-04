@@ -41,6 +41,8 @@ pub struct DevAuthSessionStatus {
     pub token_present: bool,
     pub bridge_mode: String,
     #[serde(default)]
+    pub csrf_token: Option<String>,
+    #[serde(default)]
     pub local_token_available: bool,
 }
 
@@ -337,6 +339,7 @@ mod tests {
                 expires_at_ms: Some(42),
                 token_present: true,
                 bridge_mode: "local-env-token".to_string(),
+                csrf_token: None,
                 local_token_available: true,
             }
         );

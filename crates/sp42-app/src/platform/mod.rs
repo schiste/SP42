@@ -1,6 +1,7 @@
 pub mod article;
 pub mod auth;
 pub mod bootstrap;
+pub mod config;
 pub mod console;
 pub mod coordination;
 pub mod debug;

@@ -8,7 +8,12 @@ SP42 is currently an alpha project under active development. The repository is p
 
 Please do not open a public issue for sensitive security problems.
 
-Instead, report security concerns privately to the project maintainer through an agreed private channel. If no dedicated channel exists yet, contact the maintainer directly before disclosing details publicly.
+Use GitHub private vulnerability reporting for this repository:
+
+https://github.com/schiste/SP42/security/advisories/new
+
+If that channel is unavailable, contact a project maintainer privately before
+disclosing details publicly.
 
 ## Sensitive Material
 
@@ -22,3 +27,7 @@ Never publish:
 ## Scope Notes
 
 The local single-user auth bridge is intended for development use only. It should not be treated as a production authentication system.
+
+Production deployments, release signing, and Wikimedia Cloud VPS access are
+maintainer-controlled. Do not request or share secrets in public issues or pull
+requests.

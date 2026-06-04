@@ -173,7 +173,7 @@ where
     }
 
     Ok(DesktopOptions {
-        build: parse_build_options(build_args, BuildMode::Dev, false)?,
+        build: parse_build_options(build_args, BuildMode::Release, true)?,
         platform,
     })
 }
@@ -279,6 +279,7 @@ fn package_vps(root: &Path, mut options: BuildOptions) -> Result<(), String> {
     copy_dir_recursive(&root.join("configs"), &package_root.join("configs"))?;
     copy_dir_recursive(&root.join("schemas"), &package_root.join("schemas"))?;
     write_vps_templates(&package_root)?;
+    validate_vps_package(&package_root)?;
 
     println!("SP42 VPS package written to {}", package_root.display());
     Ok(())
@@ -300,19 +301,45 @@ fn build_desktop(root: &Path, options: DesktopOptions) -> Result<(), String> {
     append_repro_flags(&mut desktop_args, &options.build);
     run_command(&cargo, &desktop_args, root, &env)?;
 
-    let mut tauri_contract_args = vec![
-        "build".to_string(),
-        "--manifest-path".to_string(),
-        root.join("crates")
-            .join("sp42-desktop")
-            .join("src-tauri")
-            .join("Cargo.toml")
-            .display()
-            .to_string(),
-    ];
-    append_cargo_profile_flags(&mut tauri_contract_args, options.build.mode, false);
-    append_repro_flags(&mut tauri_contract_args, &options.build);
-    run_command(&cargo, &tauri_contract_args, root, &env)
+    let prepare_script = root
+        .join("crates")
+        .join("sp42-desktop")
+        .join("scripts")
+        .join("prepare-tauri-build.sh");
+    let prepare_args = desktop_prepare_args(&options.build);
+    run_command(&prepare_script, &prepare_args, root, &env)?;
+
+    let mut tauri_args = vec!["tauri".to_string(), "build".to_string(), "--ci".to_string()];
+    match options.build.mode {
+        BuildMode::Dev => {
+            tauri_args.push("--debug".to_string());
+            tauri_args.push("--no-bundle".to_string());
+        }
+        BuildMode::Ci | BuildMode::Release => {
+            tauri_args.push("--bundles".to_string());
+            tauri_args.push(desktop_bundle_targets_for_host().to_string());
+            tauri_args.push("--no-sign".to_string());
+        }
+    }
+    append_tauri_runner_repro_flags(&mut tauri_args, &options.build);
+
+    let mut tauri_env = env.clone();
+    if env::var_os("CARGO_BUILD_BUILD_DIR").is_none() {
+        tauri_env.vars.push((
+            OsString::from("CARGO_BUILD_BUILD_DIR"),
+            root.join("target")
+                .join(".build")
+                .join("tauri-desktop")
+                .into_os_string(),
+        ));
+    }
+
+    run_command(
+        &cargo,
+        &tauri_args,
+        &root.join("crates").join("sp42-desktop").join("src-tauri"),
+        &tauri_env,
+    )
 }
 
 fn ci_all(root: &Path, options: BuildOptions) -> Result<(), String> {
@@ -498,6 +525,40 @@ fn append_repro_flags(args: &mut Vec<String>, options: &BuildOptions) {
     }
 }
 
+fn desktop_prepare_args(options: &BuildOptions) -> Vec<String> {
+    let mut args = match options.mode {
+        BuildMode::Dev => vec!["--dev".to_string()],
+        BuildMode::Ci | BuildMode::Release => vec!["--release".to_string()],
+    };
+    append_prepare_repro_flags(&mut args, options);
+    args
+}
+
+fn append_prepare_repro_flags(args: &mut Vec<String>, options: &BuildOptions) {
+    if options.locked {
+        args.push("--locked".to_string());
+    } else {
+        args.push("--unlocked".to_string());
+    }
+    if options.frozen {
+        args.push("--frozen".to_string());
+    }
+    if options.offline {
+        args.push("--offline".to_string());
+    }
+}
+
+fn append_tauri_runner_repro_flags(args: &mut Vec<String>, options: &BuildOptions) {
+    let mut runner_args = Vec::new();
+    append_repro_flags(&mut runner_args, options);
+    if runner_args.is_empty() {
+        return;
+    }
+
+    args.push("--".to_string());
+    args.extend(runner_args);
+}
+
 fn trunk_build(root: &Path, options: BuildOptions, envs: &ChildEnv) -> Result<(), String> {
     let trunk = find_executable("trunk").ok_or_else(|| {
         "trunk is required for frontend builds. Install it with: cargo install trunk".to_string()
@@ -660,12 +721,23 @@ fn validate_desktop_platform(platform: DesktopPlatform) -> Result<(), String> {
     ))
 }
 
+fn desktop_bundle_targets_for_host() -> &'static str {
+    if cfg!(target_os = "macos") {
+        "app,dmg"
+    } else if cfg!(target_os = "windows") {
+        "msi,nsis"
+    } else {
+        "deb,appimage"
+    }
+}
+
 fn write_vps_templates(package_root: &Path) -> Result<(), String> {
     fs::write(
         package_root.join("deploy").join("sp42.env.example"),
         "\
 SP42_BIND_ADDR=127.0.0.1:8788
-SP42_PUBLIC_BASE_URL=https://sp42.example.wmcloud.org
+SP42_PUBLIC_BASE_URL=https://sp42.<project>.wmcloud.org
+SP42_ALLOWED_ORIGINS=
 SP42_APP_DIST_DIR=/opt/sp42/dist/sp42-app
 SP42_RUNTIME_DIR=/var/lib/sp42
 SP42_DEPLOYMENT_MODE=vps
@@ -691,7 +763,10 @@ EnvironmentFile=/etc/sp42/sp42.env
 ExecStart=/opt/sp42/bin/sp42-server
 Restart=on-failure
 RestartSec=5
+StateDirectory=sp42
 WorkingDirectory=/opt/sp42
+NoNewPrivileges=true
+PrivateTmp=true
 
 [Install]
 WantedBy=multi-user.target
@@ -699,20 +774,105 @@ WantedBy=multi-user.target
     )
     .map_err(|error| format!("failed to write systemd template: {error}"))?;
 
-    fs::write(
-        package_root.join("README.md"),
-        "\
-# SP42 VPS Package
+    fs::write(package_root.join("README.md"), vps_package_readme())
+        .map_err(|error| format!("failed to write VPS package README: {error}"))
+}
 
-This package contains the host-built `sp42-server` binary, the Trunk browser
-bundle, configs, schemas, and starter systemd/environment templates.
+fn vps_package_readme() -> &'static str {
+    "\
+# SP42 Wikimedia Cloud VPS Package
 
-Build this package on the same operating system and CPU architecture as the
-target Wikimedia Cloud VPS instance unless a dedicated cross-compilation path
-has been added.
-",
-    )
-    .map_err(|error| format!("failed to write VPS package README: {error}"))
+This directory is generated by `./scripts/package-vps.sh`.
+
+## Contents
+
+- `bin/sp42-server`: release `sp42-server` binary built for the host platform
+- `dist/sp42-app/`: Trunk browser bundle served by `sp42-server`
+- `configs/`: wiki runtime configuration
+- `schemas/`: configuration schemas
+- `deploy/sp42.env.example`: example environment file
+- `deploy/sp42.service`: starter systemd unit
+
+Build this package on the same Debian architecture as the target Wikimedia
+Cloud VPS instance unless a dedicated cross-compilation path has been added.
+
+## Install Layout
+
+Copy the package contents into `/opt/sp42` and install the deployment files:
+
+```sh
+sudo useradd --system --home-dir /opt/sp42 --shell /usr/sbin/nologin sp42
+sudo install -d -o sp42 -g sp42 /opt/sp42 /var/lib/sp42 /etc/sp42
+sudo cp -a bin dist configs schemas /opt/sp42/
+sudo install -m 0640 -o root -g sp42 deploy/sp42.env.example /etc/sp42/sp42.env
+sudo install -m 0644 deploy/sp42.service /etc/systemd/system/sp42.service
+```
+
+Edit `/etc/sp42/sp42.env` before starting the service:
+
+```env
+SP42_BIND_ADDR=127.0.0.1:8788
+SP42_PUBLIC_BASE_URL=https://sp42.<project>.wmcloud.org
+SP42_APP_DIST_DIR=/opt/sp42/dist/sp42-app
+SP42_RUNTIME_DIR=/var/lib/sp42
+SP42_DEPLOYMENT_MODE=vps
+```
+
+Then enable the service:
+
+```sh
+sudo systemctl daemon-reload
+sudo systemctl enable --now sp42.service
+sudo systemctl status sp42.service
+```
+
+## Wikimedia Cloud VPS Web Proxy
+
+Create a Cloud VPS web proxy for `sp42.<project>.wmcloud.org` that forwards to
+the backend port used by `SP42_BIND_ADDR` (`8788` in the template). The Wikitech
+web proxy guide also calls out security group rules for the proxy CIDR ranges;
+configure those in Horizon if the proxy connects directly to the SP42 process.
+
+The template binds SP42 to `127.0.0.1:8788`. If the Cloud VPS web proxy cannot
+reach a loopback-only service in your project, keep SP42 private by putting a
+small local reverse proxy on the instance-facing interface and forwarding to
+`127.0.0.1:8788`, or change `SP42_BIND_ADDR` to the instance private interface
+and restrict ingress to the documented web-proxy CIDR ranges.
+
+References:
+
+- https://wikitech.wikimedia.org/wiki/Help:Cloud_VPS
+- https://wikitech.wikimedia.org/wiki/Help:Using_a_web_proxy_to_reach_Cloud_VPS_servers_from_the_internet
+"
+}
+
+fn validate_vps_package(package_root: &Path) -> Result<(), String> {
+    for relative in ["bin", "dist/sp42-app", "configs", "schemas", "deploy"] {
+        let path = package_root.join(relative);
+        if !path.is_dir() {
+            return Err(format!(
+                "VPS package is missing required directory {}",
+                path.display()
+            ));
+        }
+    }
+
+    for relative in [
+        PathBuf::from("bin").join(server_binary_name()),
+        PathBuf::from("deploy").join("sp42.env.example"),
+        PathBuf::from("deploy").join("sp42.service"),
+        PathBuf::from("README.md"),
+    ] {
+        let path = package_root.join(relative);
+        if !path.is_file() {
+            return Err(format!(
+                "VPS package is missing required file {}",
+                path.display()
+            ));
+        }
+    }
+
+    Ok(())
 }
 
 fn copy_file(from: &Path, to: &Path) -> Result<(), String> {
@@ -894,5 +1054,52 @@ fn append_flag(current: Option<OsString>, new_flag: &str) -> OsString {
         OsString::from(new_flag)
     } else {
         OsString::from(format!("{current_string} {new_flag}"))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{BuildMode, BuildOptions, append_tauri_runner_repro_flags, desktop_prepare_args};
+
+    fn options(mode: BuildMode, locked: bool, frozen: bool, offline: bool) -> BuildOptions {
+        BuildOptions {
+            mode,
+            clean: false,
+            locked,
+            frozen,
+            offline,
+        }
+    }
+
+    #[test]
+    fn desktop_prepare_args_preserve_release_repro_flags() {
+        assert_eq!(
+            desktop_prepare_args(&options(BuildMode::Release, true, true, true)),
+            ["--release", "--locked", "--frozen", "--offline"]
+        );
+    }
+
+    #[test]
+    fn desktop_prepare_args_make_unlocked_dev_explicit() {
+        assert_eq!(
+            desktop_prepare_args(&options(BuildMode::Dev, false, false, false)),
+            ["--dev", "--unlocked"]
+        );
+    }
+
+    #[test]
+    fn tauri_runner_repro_flags_are_passed_after_delimiter() {
+        let mut args = vec!["tauri".to_string(), "build".to_string()];
+        append_tauri_runner_repro_flags(&mut args, &options(BuildMode::Release, true, false, true));
+
+        assert_eq!(args, ["tauri", "build", "--", "--locked", "--offline"]);
+    }
+
+    #[test]
+    fn tauri_runner_has_no_delimiter_without_repro_flags() {
+        let mut args = vec!["tauri".to_string(), "build".to_string()];
+        append_tauri_runner_repro_flags(&mut args, &options(BuildMode::Dev, false, false, false));
+
+        assert_eq!(args, ["tauri", "build"]);
     }
 }

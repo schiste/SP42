@@ -505,10 +505,15 @@ async fn auth_logout_clears_bootstrapped_session_state() {
         session_json["bridge_mode"],
         serde_json::json!("local-env-token")
     );
+    let csrf_token = session_json["csrf_token"]
+        .as_str()
+        .expect("auth session should include csrf token")
+        .to_string();
 
     let logout = client
         .post(format!("{base_url}/auth/logout"))
         .header(reqwest::header::COOKIE, &session_cookie)
+        .header("x-sp42-csrf-token", csrf_token)
         .send()
         .await
         .expect("logout request should succeed");

@@ -1134,7 +1134,11 @@ fn collect_rendered_highlight_phrases(
     let mut phrases = Vec::new();
     let mut seen = HashSet::new();
 
-    for segment in hunk.segments.iter().filter(|segment| segment.kind == target_kind) {
+    for segment in hunk
+        .segments
+        .iter()
+        .filter(|segment| segment.kind == target_kind)
+    {
         if !segment.inline_highlights.is_empty() {
             for span in segment
                 .inline_highlights
@@ -1251,9 +1255,7 @@ fn extract_rendered_word_tokens(text: &str) -> Vec<String> {
     for ch in text.chars() {
         if ch.is_alphanumeric() {
             current.push(ch);
-        } else if (ch == '\'' || ch == '’' || ch == '-' || ch == '_')
-            && !current.is_empty()
-        {
+        } else if (ch == '\'' || ch == '’' || ch == '-' || ch == '_') && !current.is_empty() {
             current.push(ch);
         } else if !current.is_empty() {
             trim_token_suffix(&mut current);
@@ -1276,11 +1278,7 @@ fn extract_rendered_word_tokens(text: &str) -> Vec<String> {
 }
 
 fn trim_token_suffix(token: &mut String) {
-    while token
-        .chars()
-        .last()
-        .is_some_and(|ch| !ch.is_alphanumeric())
-    {
+    while token.chars().last().is_some_and(|ch| !ch.is_alphanumeric()) {
         token.pop();
     }
 }
@@ -1371,14 +1369,8 @@ fn find_rendered_highlight_matches(
     while cursor < text.len() {
         let candidate = phrases
             .iter()
-            .filter_map(|phrase| {
-                find_rendered_phrase_match(text, cursor, phrase)
-            })
-            .min_by(|left, right| {
-                left.0
-                    .cmp(&right.0)
-                    .then_with(|| right.1.cmp(&left.1))
-            });
+            .filter_map(|phrase| find_rendered_phrase_match(text, cursor, phrase))
+            .min_by(|left, right| left.0.cmp(&right.0).then_with(|| right.1.cmp(&left.1)));
 
         let Some((start, len)) = candidate else {
             break;
@@ -1623,9 +1615,10 @@ mod tests {
     use sp42_core::{DiffLineSpan, DiffMode, DiffSegment, DiffSegmentKind};
 
     use super::{
-        RenderedHighlightPhrase, SegmentData, SegmentVisibility, build_rendered_highlight_candidates,
-        build_side_by_side_rows, compute_visibility, extract_rendered_word_tokens,
-        find_rendered_highlight_matches, format_line_label, normalize_rendered_highlight_phrase,
+        RenderedHighlightPhrase, SegmentData, SegmentVisibility,
+        build_rendered_highlight_candidates, build_side_by_side_rows, compute_visibility,
+        extract_rendered_word_tokens, find_rendered_highlight_matches, format_line_label,
+        normalize_rendered_highlight_phrase,
     };
 
     fn segment(kind: DiffSegmentKind) -> DiffSegment {
@@ -1802,7 +1795,10 @@ mod tests {
             Some("Added text here".to_string())
         );
         assert_eq!(normalize_rendered_highlight_phrase("{{Infobox}}"), None);
-        assert_eq!(normalize_rendered_highlight_phrase("[[File:Example.jpg]]"), None);
+        assert_eq!(
+            normalize_rendered_highlight_phrase("[[File:Example.jpg]]"),
+            None
+        );
         assert_eq!(normalize_rendered_highlight_phrase("  "), None);
     }
 
@@ -1861,7 +1857,9 @@ mod tests {
             .map(|candidate| candidate.text)
             .collect::<Vec<_>>();
 
-        assert!(!texts.contains(&"This is a long changed sentence with many words in it".to_string()));
+        assert!(
+            !texts.contains(&"This is a long changed sentence with many words in it".to_string())
+        );
         assert!(texts.contains(&"long".to_string()));
         assert!(texts.contains(&"changed".to_string()));
         assert!(texts.contains(&"sentence".to_string()));

@@ -2,18 +2,20 @@ use serde_json::Value;
 use sp42_core::traits::Rng;
 use sp42_core::{
     ActionExecutionHistoryReport, ActionExecutionStatusReport, DEV_AUTH_ACTION_HISTORY_PATH,
-    DEV_AUTH_ACTION_STATUS_PATH, DEV_AUTH_BOOTSTRAP_SESSION_PATH, DEV_AUTH_DEFAULT_BASE_URL,
-    DEV_AUTH_SESSION_PATH, DevAuthBootstrapRequest, DevAuthSessionStatus, OAuthCallback,
-    OAuthClientConfig, SessionActionExecutionRequest, SessionActionExecutionResponse,
-    parse_action_execution_history, parse_action_execution_status, parse_callback_query,
-    parse_dev_auth_status, prepare_oauth_launch,
+    DEV_AUTH_ACTION_STATUS_PATH, DEV_AUTH_BOOTSTRAP_SESSION_PATH, DEV_AUTH_SESSION_PATH,
+    DevAuthBootstrapRequest, DevAuthSessionStatus, OAuthCallback, OAuthClientConfig,
+    SessionActionExecutionRequest, SessionActionExecutionResponse, parse_action_execution_history,
+    parse_action_execution_status, parse_callback_query, parse_dev_auth_status,
+    prepare_oauth_launch,
 };
 use url::Url;
+
+use super::config::api_url;
 
 #[cfg(target_arch = "wasm32")]
 use super::{
     globals,
-    http::{delete_bytes, get_bytes, post_json_bytes},
+    http::{delete_bytes, forget_csrf_token, get_bytes, post_json_bytes, remember_csrf_token},
 };
 
 const DEV_AUTH_BOOTSTRAP_STATUS_PATH: &str = "/dev/auth/bootstrap/status";
@@ -52,7 +54,7 @@ pub fn preview_browser_auth() -> BrowserAuthPreview {
     BrowserAuthPreview {
         redirect_uri: config.redirect_uri.to_string(),
         authorization_url,
-        dev_bridge_url: format!("{DEV_AUTH_DEFAULT_BASE_URL}{DEV_AUTH_BOOTSTRAP_SESSION_PATH}"),
+        dev_bridge_url: api_url(DEV_AUTH_BOOTSTRAP_SESSION_PATH),
         callback_preview: current_callback_preview(),
         launch_state_preview: launch
             .map(|launch| {
@@ -89,6 +91,7 @@ pub fn preview_dev_auth_session_status() -> DevAuthSessionStatus {
         expires_at_ms: None,
         token_present: false,
         bridge_mode: "browser-preview".to_string(),
+        csrf_token: None,
         local_token_available: false,
     }
 }
@@ -133,21 +136,25 @@ fn configured_redirect_uri() -> String {
 #[cfg(target_arch = "wasm32")]
 pub async fn fetch_dev_auth_session_status() -> Result<DevAuthSessionStatus, String> {
     let bytes = get_bytes(
-        &format!("{DEV_AUTH_DEFAULT_BASE_URL}{DEV_AUTH_SESSION_PATH}"),
+        &api_url(DEV_AUTH_SESSION_PATH),
         "fetch dev auth session status",
     )
     .await?;
-    parse_dev_auth_status(&bytes).map_err(|error| error.to_string())
+    let status = parse_dev_auth_status(&bytes).map_err(|error| error.to_string())?;
+    remember_csrf_token(status.csrf_token.as_deref());
+    Ok(status)
 }
 
 #[cfg(target_arch = "wasm32")]
 pub async fn fetch_dev_auth_bootstrap_status() -> Result<DevAuthBootstrapStatus, String> {
     let bytes = get_bytes(
-        &format!("{DEV_AUTH_DEFAULT_BASE_URL}{DEV_AUTH_BOOTSTRAP_STATUS_PATH}"),
+        &api_url(DEV_AUTH_BOOTSTRAP_STATUS_PATH),
         "fetch dev auth bootstrap status",
     )
     .await?;
-    parse_bootstrap_status(&bytes)
+    let status = parse_bootstrap_status(&bytes)?;
+    remember_csrf_token(status.session.csrf_token.as_deref());
+    Ok(status)
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -156,12 +163,14 @@ pub async fn bootstrap_dev_auth_session(
 ) -> Result<DevAuthSessionStatus, String> {
     let body = serde_json::to_string(request).map_err(|error| error.to_string())?;
     let bytes = post_json_bytes(
-        &format!("{DEV_AUTH_DEFAULT_BASE_URL}{DEV_AUTH_BOOTSTRAP_SESSION_PATH}"),
+        &api_url(DEV_AUTH_BOOTSTRAP_SESSION_PATH),
         body,
         "bootstrap dev auth session",
     )
     .await?;
-    parse_dev_auth_status(&bytes).map_err(|error| error.to_string())
+    let status = parse_dev_auth_status(&bytes).map_err(|error| error.to_string())?;
+    remember_csrf_token(status.csrf_token.as_deref());
+    Ok(status)
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -170,7 +179,7 @@ pub async fn execute_dev_auth_action(
 ) -> Result<SessionActionExecutionResponse, String> {
     let body = serde_json::to_string(request).map_err(|error| error.to_string())?;
     let bytes = post_json_bytes(
-        &format!("{DEV_AUTH_DEFAULT_BASE_URL}/dev/actions/execute"),
+        &api_url("/dev/actions/execute"),
         body,
         "execute dev auth action",
     )
@@ -181,7 +190,7 @@ pub async fn execute_dev_auth_action(
 #[cfg(target_arch = "wasm32")]
 pub async fn fetch_dev_auth_action_status() -> Result<ActionExecutionStatusReport, String> {
     let bytes = get_bytes(
-        &format!("{DEV_AUTH_DEFAULT_BASE_URL}{DEV_AUTH_ACTION_STATUS_PATH}"),
+        &api_url(DEV_AUTH_ACTION_STATUS_PATH),
         "fetch dev auth action status",
     )
     .await?;
@@ -193,10 +202,10 @@ pub async fn fetch_dev_auth_action_history(
     limit: usize,
 ) -> Result<ActionExecutionHistoryReport, String> {
     let bytes = get_bytes(
-        &format!(
-            "{DEV_AUTH_DEFAULT_BASE_URL}{DEV_AUTH_ACTION_HISTORY_PATH}?limit={}",
+        &api_url(&format!(
+            "{DEV_AUTH_ACTION_HISTORY_PATH}?limit={}",
             limit.max(1)
-        ),
+        )),
         "fetch dev auth action history",
     )
     .await?;
@@ -205,12 +214,10 @@ pub async fn fetch_dev_auth_action_history(
 
 #[cfg(target_arch = "wasm32")]
 pub async fn clear_dev_auth_session() -> Result<DevAuthSessionStatus, String> {
-    let bytes = delete_bytes(
-        &format!("{DEV_AUTH_DEFAULT_BASE_URL}{DEV_AUTH_SESSION_PATH}"),
-        "clear dev auth session",
-    )
-    .await?;
-    parse_dev_auth_status(&bytes).map_err(|error| error.to_string())
+    let bytes = delete_bytes(&api_url(DEV_AUTH_SESSION_PATH), "clear dev auth session").await?;
+    let status = parse_dev_auth_status(&bytes).map_err(|error| error.to_string())?;
+    forget_csrf_token();
+    Ok(status)
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -362,10 +369,7 @@ mod tests {
 
         assert_eq!(preview.redirect_uri, configured_redirect_uri());
         assert!(preview.authorization_url.is_some());
-        assert_eq!(
-            preview.dev_bridge_url,
-            "http://127.0.0.1:8788/dev/auth/session/bootstrap"
-        );
+        assert_eq!(preview.dev_bridge_url, "/dev/auth/session/bootstrap");
         assert!(!preview.callback_preview.is_empty());
         assert!(preview.launch_state_preview.contains("verifier_len="));
         assert_eq!(preview.notes.len(), 3);
@@ -395,6 +399,7 @@ mod tests {
                 expires_at_ms: None,
                 token_present: true,
                 bridge_mode: "local".to_string(),
+                csrf_token: None,
                 local_token_available: true,
             },
             source_path: Some(".env.wikimedia.local".to_string()),

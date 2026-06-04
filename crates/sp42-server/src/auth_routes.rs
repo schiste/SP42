@@ -13,17 +13,19 @@ use crate::oauth_runtime::{
     oauth_client_config_for_request, oauth_client_config_from_pending, redirect_with_status,
     sanitize_redirect_target, validate_bootstrap_payload,
 };
+use crate::session_runtime::{
+    auth_session_view, auth_session_view_without_session, bootstrap_status, current_status,
+    effective_session_scopes, expired_session_cookie_header, install_session, next_session_id,
+    prune_expired_sessions, session_cookie_header, session_cookie_value, store_pending_oauth_login,
+    take_pending_oauth_login, to_status,
+};
 use crate::{
     AppState, AuthLoginQuery, CachedCapabilityReport, DevAuthBootstrapRequest,
     DevAuthBootstrapStatus, DevAuthCapabilityReport, OAuthCallback, OAuthSessionView,
     PENDING_OAUTH_TTL_MS, PendingOAuthLogin, SESSION_IDLE_TIMEOUT_MS, ServerRng, StoredSession,
-    auth_session_view, auth_session_view_without_session, bootstrap_status,
     build_authorization_url, capability_report_for_local_token, capability_report_for_request,
-    current_status, effective_session_scopes, expired_session_cookie_header, generate_oauth_state,
-    generate_pkce_verifier, install_session, invalid_payload, next_session_id,
-    parse_callback_query, probe_with_targets, prune_expired_sessions, require_session_csrf,
-    resolved_wiki_config, session_cookie_header, session_cookie_value, split_scope_string,
-    store_pending_oauth_login, take_pending_oauth_login, to_status,
+    generate_oauth_state, generate_pkce_verifier, invalid_payload, parse_callback_query,
+    probe_with_targets, require_session_csrf, resolved_wiki_config, split_scope_string,
 };
 
 pub(crate) async fn get_auth_login(

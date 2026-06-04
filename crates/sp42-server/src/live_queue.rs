@@ -13,10 +13,11 @@ use sp42_core::{
     execute_recent_changes, score_edit_with_context,
 };
 
+use crate::session_runtime::current_status;
 use crate::{
     AppState, BearerHttpClient, PublicStorageDocumentQuery, PublicStorageDocumentRouteKind,
     ResolvedPublicStorageDocument, ServerHealthStatus, action_history_report, action_status_report,
-    capability_report_for_request, current_status, fetch_revision_diff, fetch_revision_media_diff,
+    capability_report_for_request, fetch_revision_diff, fetch_revision_media_diff,
     live_operator_backend_status, resolved_wiki_config, runtime_storage_for, server_readiness,
 };
 use crate::{ingestion_supervisor, persisted_stream_status};

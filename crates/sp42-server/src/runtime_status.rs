@@ -16,10 +16,10 @@ use crate::coordination::{
     CoordinationRegistry, CoordinationRoomInspection, CoordinationRoomMetrics,
 };
 use crate::endpoint_manifest::{OperatorEndpointDescriptor, operator_endpoint_manifest};
+use crate::session_runtime::{bootstrap_status, current_status, prune_expired_sessions};
 use crate::{
-    AppState, OPERATOR_REPORT_PATH, bootstrap_status, cache_is_fresh,
-    capability_report_for_request, current_status, prune_expired_sessions, resolved_wiki_config,
-    supervisor_snapshot_for_wiki,
+    AppState, OPERATOR_REPORT_PATH, cache_is_fresh, capability_report_for_request,
+    resolved_wiki_config, supervisor_snapshot_for_wiki,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]

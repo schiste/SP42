@@ -32,7 +32,7 @@ use axum::extract::Path;
 use axum::extract::Query;
 use axum::extract::State;
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
-use axum::http::{HeaderMap, HeaderValue, StatusCode};
+use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Redirect, Response};
 use futures::{SinkExt, StreamExt};
 use rand::Rng as _;
@@ -89,6 +89,11 @@ pub(crate) use crate::runtime_status::{
     get_operator_runtime, get_runtime_debug, persisted_stream_status, room_inspection,
     runtime_storage_for, server_readiness,
 };
+use crate::session_runtime::{
+    current_session_snapshot, prune_expired_sessions, session_expires_at_ms,
+};
+#[cfg(test)]
+pub(crate) use crate::session_runtime::{install_session, session_cookie_header, to_status};
 use crate::state::{
     AppState, CachedCapabilityReport, PendingOAuthLogin, SessionSnapshot, StoredSession,
 };
@@ -1383,56 +1388,12 @@ fn invalid_payload(message: &str) -> (StatusCode, Json<serde_json::Value>) {
     )
 }
 
-fn effective_session_scopes(report: &DevAuthCapabilityReport) -> Vec<String> {
-    session_runtime::effective_session_scopes(report)
-}
-
 fn split_scope_string(value: &str) -> Vec<String> {
     value
         .split_whitespace()
         .filter(|scope| !scope.is_empty())
         .map(ToString::to_string)
         .collect()
-}
-
-fn auth_session_view_without_session(state: &AppState) -> OAuthSessionView {
-    session_runtime::auth_session_view_without_session(state)
-}
-
-async fn auth_session_view(state: &AppState, headers: &HeaderMap, touch: bool) -> OAuthSessionView {
-    session_runtime::auth_session_view(state, headers, touch).await
-}
-
-async fn store_pending_oauth_login(state: &AppState, pending: PendingOAuthLogin) {
-    session_runtime::store_pending_oauth_login(state, pending).await;
-}
-
-async fn take_pending_oauth_login(
-    state: &AppState,
-    state_token: &str,
-) -> Option<PendingOAuthLogin> {
-    session_runtime::take_pending_oauth_login(state, state_token).await
-}
-
-async fn install_session(
-    state: &AppState,
-    prior_session_id: Option<String>,
-    stored: StoredSession,
-    current_ms: i64,
-) -> String {
-    session_runtime::install_session(state, prior_session_id, stored, current_ms).await
-}
-
-fn to_status(
-    session: Option<&StoredSession>,
-    local_oauth: &LocalOAuthConfig,
-    now_ms: i64,
-) -> DevAuthSessionStatus {
-    session_runtime::to_status(session, local_oauth, now_ms)
-}
-
-fn bootstrap_status(state: &AppState, auth: &DevAuthSessionStatus) -> DevAuthBootstrapStatus {
-    session_runtime::bootstrap_status(state, auth)
 }
 
 fn live_operator_backend_status(
@@ -1456,46 +1417,6 @@ fn live_operator_backend_status(
 #[cfg(test)]
 fn now_ms() -> i64 {
     SystemClock.now_ms()
-}
-
-fn session_cookie_value(headers: &HeaderMap) -> Option<String> {
-    session_runtime::session_cookie_value(headers)
-}
-
-fn next_session_id(state: &AppState, current_ms: i64) -> String {
-    session_runtime::next_session_id(state, current_ms)
-}
-
-fn session_cookie_header(state: &AppState, session_id: &str) -> Option<HeaderValue> {
-    session_runtime::session_cookie_header(state, session_id)
-}
-
-fn expired_session_cookie_header(state: &AppState) -> HeaderValue {
-    session_runtime::expired_session_cookie_header(state)
-}
-
-fn session_expires_at_ms(session: &StoredSession, current_time_ms: i64) -> i64 {
-    session_runtime::session_expires_at_ms(session, current_time_ms)
-}
-
-fn prune_expired_sessions(sessions: &mut HashMap<String, StoredSession>, current_time_ms: i64) {
-    session_runtime::prune_expired_sessions(sessions, current_time_ms);
-}
-
-async fn current_session_snapshot(
-    state: &AppState,
-    headers: &HeaderMap,
-    touch: bool,
-) -> Option<SessionSnapshot> {
-    session_runtime::current_session_snapshot(state, headers, touch).await
-}
-
-async fn current_status(
-    state: &AppState,
-    headers: &HeaderMap,
-    touch: bool,
-) -> DevAuthSessionStatus {
-    session_runtime::current_status(state, headers, touch).await
 }
 
 async fn cached_capabilities_for_session(

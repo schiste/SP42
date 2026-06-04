@@ -12,14 +12,14 @@ use sp42_core::{
     execute_wiki_page_save, parse_action_response_summary,
 };
 
+use crate::session_runtime::{current_session_snapshot, prune_expired_sessions};
 use crate::{
     ACTION_HISTORY_LIMIT, ActionExecutionHistoryReport, ActionExecutionLogEntry,
     ActionExecutionStatusReport, ActionHistoryQuery, AppState, BearerHttpClient,
     DevAuthCapabilityReport, RESPONSE_BODY_PREVIEW_LIMIT, SessionActionExecutionRequest,
     SessionActionExecutionResponse, SessionActionKind, SessionSnapshot,
-    capability_report_for_session, config_for_state_wiki, current_session_snapshot,
-    execute_fetch_token, forbidden_error, invalid_payload, storage_routes, unauthorized_error,
-    validate_csrf_header,
+    capability_report_for_session, config_for_state_wiki, execute_fetch_token, forbidden_error,
+    invalid_payload, storage_routes, unauthorized_error, validate_csrf_header,
 };
 
 pub(crate) async fn get_action_status(
@@ -551,7 +551,7 @@ async fn record_action_execution(
     entry: ActionExecutionLogEntry,
 ) {
     let mut sessions = state.sessions.write().await;
-    crate::prune_expired_sessions(&mut sessions, state.clock.now_ms());
+    prune_expired_sessions(&mut sessions, state.clock.now_ms());
     if let Some(session) = sessions.get_mut(session_id) {
         session.action_history.push(entry);
         if session.action_history.len() > ACTION_HISTORY_LIMIT {

@@ -8,6 +8,7 @@ mod oauth_runtime;
 mod operator_live;
 mod session_runtime;
 mod storage_routes;
+mod wiki_registry;
 mod wikimedia_capabilities;
 
 use std::collections::HashMap;
@@ -72,7 +73,8 @@ use crate::coordination::{
 };
 use crate::deployment::DeploymentConfig;
 use crate::local_env::LocalOAuthConfig;
-use crate::wikimedia_capabilities::{CapabilityProbeTargets, config_for_wiki, probe_with_targets};
+use crate::wiki_registry::WikiRegistry;
+use crate::wikimedia_capabilities::{CapabilityProbeTargets, probe_with_targets};
 
 type SharedSessions = Arc<RwLock<HashMap<String, StoredSession>>>;
 type SharedCapabilityCache = Arc<RwLock<Option<CachedCapabilityReport>>>;
@@ -119,9 +121,16 @@ struct AppState {
     clock: Arc<dyn Clock>,
     coordination: CoordinationRegistry,
     deployment: DeploymentConfig,
+    wiki_registry: WikiRegistry,
     next_client_id: Arc<AtomicU64>,
     next_session_id: Arc<AtomicU64>,
     started_at: Instant,
+}
+
+impl AppState {
+    pub(crate) fn default_wiki_id(&self) -> &str {
+        self.wiki_registry.default_wiki_id()
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -557,11 +566,18 @@ async fn main() -> Result<(), std::io::Error> {
     );
     let clock: Arc<dyn Clock> = Arc::new(SystemClock);
     let deployment = DeploymentConfig::load().map_err(io::Error::other)?;
+    let wiki_registry = WikiRegistry::load().map_err(io::Error::other)?;
     info!(
         deployment_mode = deployment.mode.as_str(),
         public_base_url = deployment.public_base_url.as_deref().unwrap_or(""),
         allowed_origin_count = deployment.allowed_origins.len(),
         "loaded runtime deployment configuration"
+    );
+    info!(
+        default_wiki_id = wiki_registry.default_wiki_id(),
+        wiki_count = wiki_registry.wiki_count(),
+        source = wiki_registry.source(),
+        "loaded wiki registry"
     );
     let state = AppState {
         capability_cache: Arc::new(RwLock::new(None)),
@@ -577,6 +593,7 @@ async fn main() -> Result<(), std::io::Error> {
         clock: clock.clone(),
         coordination: CoordinationRegistry::new(clock),
         deployment,
+        wiki_registry,
         next_client_id: Arc::new(AtomicU64::new(1)),
         next_session_id: Arc::new(AtomicU64::new(1)),
         started_at: Instant::now(),
@@ -1349,9 +1366,10 @@ async fn put_public_storage_document(
 }
 
 async fn server_debug_summary(state: &AppState, headers: &HeaderMap) -> ServerDebugSummary {
+    let default_wiki_id = state.default_wiki_id();
     let auth = current_status(state, headers, true).await;
     let oauth = state.local_oauth.status();
-    let capabilities = capability_report_for_request(state, headers, "frwiki", false).await;
+    let capabilities = capability_report_for_request(state, headers, default_wiki_id, false).await;
     ServerDebugSummary {
         project: sp42_core::branding::PROJECT_NAME.to_string(),
         auth,
@@ -1362,14 +1380,15 @@ async fn server_debug_summary(state: &AppState, headers: &HeaderMap) -> ServerDe
 }
 
 async fn server_readiness(state: &AppState, headers: &HeaderMap) -> ServerHealthStatus {
+    let default_wiki_id = state.default_wiki_id();
     let auth = current_status(state, headers, false).await;
     let bootstrap = bootstrap_status(state, &auth);
     let capability_probe = CapabilityProbeHint {
-        wiki_id: "frwiki".to_string(),
-        endpoint: "/dev/auth/capabilities/frwiki".to_string(),
+        wiki_id: default_wiki_id.to_string(),
+        endpoint: format!("/dev/auth/capabilities/{default_wiki_id}"),
         available: state.local_oauth.access_token().is_some(),
     };
-    let capability_cache = capability_cache_status(state, "frwiki").await;
+    let capability_cache = capability_cache_status(state, default_wiki_id).await;
     let session_count = session_count(state).await;
     let coordination_snapshot = state.coordination.snapshot().await;
     let coordination_room_count = coordination_snapshot.rooms.len();
@@ -1406,10 +1425,11 @@ async fn server_readiness(state: &AppState, headers: &HeaderMap) -> ServerHealth
 }
 
 async fn runtime_debug(state: &AppState, headers: &HeaderMap) -> RuntimeDebugStatus {
+    let default_wiki_id = state.default_wiki_id();
     let auth = current_status(state, headers, true).await;
     let bootstrap = bootstrap_status(state, &auth);
-    let capabilities = capability_report_for_request(state, headers, "frwiki", false).await;
-    let capability_cache = capability_cache_status(state, "frwiki").await;
+    let capabilities = capability_report_for_request(state, headers, default_wiki_id, false).await;
+    let capability_cache = capability_cache_status(state, default_wiki_id).await;
     let coordination = state.coordination.snapshot().await;
 
     RuntimeDebugStatus {
@@ -1640,7 +1660,7 @@ async fn operator_report(state: &AppState, headers: &HeaderMap) -> OperatorRepor
         runtime,
         bootstrap,
         debug_summary,
-        endpoints: operator_endpoint_manifest(),
+        endpoints: operator_endpoint_manifest(state.default_wiki_id()),
     }
 }
 
@@ -3264,10 +3284,10 @@ pub(crate) async fn fetch_page_wikitext(
         })
 }
 
-fn operator_endpoint_manifest() -> Vec<OperatorEndpointDescriptor> {
+fn operator_endpoint_manifest(default_wiki_id: &str) -> Vec<OperatorEndpointDescriptor> {
     let mut endpoints = operator_core_endpoints();
     endpoints.extend(operator_storage_endpoints());
-    endpoints.extend(operator_dev_endpoints());
+    endpoints.extend(operator_dev_endpoints(default_wiki_id));
     endpoints
 }
 
@@ -3367,7 +3387,7 @@ fn operator_storage_endpoints() -> Vec<OperatorEndpointDescriptor> {
     ]
 }
 
-fn operator_dev_endpoints() -> Vec<OperatorEndpointDescriptor> {
+fn operator_dev_endpoints(default_wiki_id: &str) -> Vec<OperatorEndpointDescriptor> {
     vec![
         OperatorEndpointDescriptor {
             method: "GET".to_string(),
@@ -3377,8 +3397,8 @@ fn operator_dev_endpoints() -> Vec<OperatorEndpointDescriptor> {
         },
         OperatorEndpointDescriptor {
             method: "GET".to_string(),
-            path: "/dev/auth/capabilities/frwiki".to_string(),
-            purpose: "Capability probe for the default wiki.".to_string(),
+            path: format!("/dev/auth/capabilities/{default_wiki_id}"),
+            purpose: "Capability probe for the configured default wiki.".to_string(),
             available: true,
         },
         OperatorEndpointDescriptor {
@@ -3569,12 +3589,23 @@ async fn capability_report_for_subject(
     }
 
     debug_assert!(!wiki_id.is_empty());
+    let config = match resolved_wiki_config(state, wiki_id) {
+        Ok(config) => config,
+        Err(error) => {
+            return DevAuthCapabilityReport {
+                checked: true,
+                wiki_id: wiki_id.to_string(),
+                error: Some(error),
+                ..DevAuthCapabilityReport::default()
+            };
+        }
+    };
     let oauth = state.local_oauth.status();
     let report = probe_with_targets(
         &state.http_client,
         capability_probe_token(state, &subject),
         &oauth,
-        wiki_id,
+        &config,
         &state.capability_targets,
     )
     .await;
@@ -3934,7 +3965,7 @@ fn config_for_state_wiki(
 }
 
 fn resolved_wiki_config(state: &AppState, wiki_id: &str) -> Result<sp42_core::WikiConfig, String> {
-    let mut config = config_for_wiki(wiki_id)?;
+    let mut config = state.wiki_registry.config(wiki_id)?;
     if let Some(api_url) = &state.capability_targets.api_url {
         config.api_url = reqwest::Url::parse(api_url)
             .map_err(|error| format!("api_url override was invalid: {error}"))?;
@@ -4075,7 +4106,7 @@ fn uptime_ms(started_at: &Instant) -> u64 {
 mod tests {
     use std::collections::HashMap;
     use std::sync::Arc;
-    use std::sync::atomic::AtomicU64;
+    use std::sync::atomic::{AtomicU64, Ordering};
     use std::time::Duration;
     use std::time::Instant;
 
@@ -4098,6 +4129,7 @@ mod tests {
     use crate::coordination::CoordinationRegistry;
     use crate::deployment::{DeploymentConfig, DeploymentMode};
     use crate::local_env::LocalOAuthConfig;
+    use crate::wiki_registry::WikiRegistry;
     use crate::wikimedia_capabilities::CapabilityProbeTargets;
     use futures::{SinkExt, StreamExt};
     use tokio::net::TcpListener;
@@ -4110,6 +4142,16 @@ mod tests {
         tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
     >;
 
+    static TEST_TEMP_COUNTER: AtomicU64 = AtomicU64::new(1);
+
+    fn unique_test_temp_path(prefix: &str) -> std::path::PathBuf {
+        std::env::temp_dir().join(format!(
+            "{prefix}-{}-{}",
+            std::process::id(),
+            TEST_TEMP_COUNTER.fetch_add(1, Ordering::Relaxed)
+        ))
+    }
+
     fn test_deployment_for_mode(mode: DeploymentMode) -> DeploymentConfig {
         DeploymentConfig {
             mode,
@@ -4120,6 +4162,10 @@ mod tests {
 
     fn test_deployment() -> DeploymentConfig {
         test_deployment_for_mode(DeploymentMode::Local)
+    }
+
+    fn test_wiki_registry() -> WikiRegistry {
+        WikiRegistry::embedded_default().expect("embedded wiki registry should load")
     }
 
     fn test_state() -> AppState {
@@ -4136,13 +4182,13 @@ mod tests {
                 .build()
                 .expect("reqwest client should build"),
             local_oauth: LocalOAuthConfig::default(),
-            runtime_storage_root: std::env::temp_dir()
-                .join(format!("sp42-server-runtime-{}", std::process::id())),
+            runtime_storage_root: unique_test_temp_path("sp42-server-runtime"),
             ingestion_supervisor: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
             capability_targets: CapabilityProbeTargets::default(),
             clock: clock.clone(),
             coordination: CoordinationRegistry::new(clock),
             deployment: test_deployment(),
+            wiki_registry: test_wiki_registry(),
             next_client_id: Arc::new(AtomicU64::new(1)),
             next_session_id: Arc::new(AtomicU64::new(1)),
             started_at: Instant::now(),
@@ -4150,11 +4196,7 @@ mod tests {
     }
 
     fn temp_local_env_file(contents: &str) -> std::path::PathBuf {
-        let temp_dir = std::env::temp_dir().join(format!(
-            "sp42-server-test-{}-{}",
-            std::process::id(),
-            SystemClock.now_ms()
-        ));
+        let temp_dir = unique_test_temp_path("sp42-server-test");
         std::fs::create_dir_all(&temp_dir).expect("temp dir should create");
         let path = temp_dir.join(".env.wikimedia.local");
         std::fs::write(&path, contents).expect("temp env file should write");
@@ -4768,7 +4810,7 @@ mod tests {
                 .build()
                 .expect("reqwest client should build"),
             local_oauth: LocalOAuthConfig::load_from_candidates([local_env_path.clone()]),
-            runtime_storage_root: std::env::temp_dir().join("sp42-server-runtime-healthz"),
+            runtime_storage_root: unique_test_temp_path("sp42-server-runtime-healthz"),
             ingestion_supervisor: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
             capability_targets: CapabilityProbeTargets {
                 profile_url: format!("{profile_base}/oauth2/resource/profile"),
@@ -4777,6 +4819,7 @@ mod tests {
             clock: clock.clone(),
             coordination: CoordinationRegistry::new(clock),
             deployment: test_deployment(),
+            wiki_registry: test_wiki_registry(),
             next_client_id: Arc::new(AtomicU64::new(1)),
             next_session_id: Arc::new(AtomicU64::new(1)),
             started_at: Instant::now(),
@@ -5000,7 +5043,10 @@ mod tests {
             serde_json::from_slice(&body).expect("operator report should parse");
 
         assert_eq!(report.project, sp42_core::branding::PROJECT_NAME);
-        assert_eq!(report.endpoints.len(), operator_endpoint_manifest().len());
+        assert_eq!(
+            report.endpoints.len(),
+            operator_endpoint_manifest(test_state().default_wiki_id()).len()
+        );
         assert_eq!(report.readiness.operator_report_path, OPERATOR_REPORT_PATH);
         assert_eq!(report.runtime.operator_report_path, OPERATOR_REPORT_PATH);
         assert_eq!(
@@ -5011,7 +5057,7 @@ mod tests {
 
     #[test]
     fn operator_endpoint_manifest_contains_core_endpoints() {
-        let endpoints = operator_endpoint_manifest();
+        let endpoints = operator_endpoint_manifest(test_state().default_wiki_id());
         assert!(
             endpoints
                 .iter()
@@ -5249,7 +5295,7 @@ mod tests {
                 .build()
                 .expect("reqwest client should build"),
             local_oauth: LocalOAuthConfig::load_from_candidates([local_env_path.clone()]),
-            runtime_storage_root: std::env::temp_dir().join("sp42-server-runtime-capability"),
+            runtime_storage_root: unique_test_temp_path("sp42-server-runtime-capability"),
             ingestion_supervisor: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
             capability_targets: CapabilityProbeTargets {
                 profile_url: format!("{profile_base}/oauth2/resource/profile"),
@@ -5258,6 +5304,7 @@ mod tests {
             clock: clock.clone(),
             coordination: CoordinationRegistry::new(clock),
             deployment: test_deployment(),
+            wiki_registry: test_wiki_registry(),
             next_client_id: Arc::new(AtomicU64::new(1)),
             next_session_id: Arc::new(AtomicU64::new(1)),
             started_at: Instant::now(),
@@ -5303,10 +5350,7 @@ mod tests {
             "WIKIMEDIA_CLIENT_APPLICATION_KEY=client-key\nWIKIMEDIA_CLIENT_APPLICATION_SECRET=client-secret\nWIKIMEDIA_ACCESS_TOKEN=token-value\n",
         );
         let (profile_base, server) = mock_capability_server().await;
-        let runtime_root = std::env::temp_dir().join(format!(
-            "sp42-live-operator-runtime-{}",
-            SystemClock.now_ms()
-        ));
+        let runtime_root = unique_test_temp_path("sp42-live-operator-runtime");
         let clock: Arc<dyn Clock> = Arc::new(SystemClock);
         let state = AppState {
             capability_cache: Arc::new(tokio::sync::RwLock::new(None)),
@@ -5328,6 +5372,7 @@ mod tests {
             clock: clock.clone(),
             coordination: CoordinationRegistry::new(clock),
             deployment: test_deployment(),
+            wiki_registry: test_wiki_registry(),
             next_client_id: Arc::new(AtomicU64::new(1)),
             next_session_id: Arc::new(AtomicU64::new(1)),
             started_at: Instant::now(),
@@ -5396,10 +5441,7 @@ mod tests {
             "WIKIMEDIA_CLIENT_APPLICATION_KEY=client-key\nWIKIMEDIA_CLIENT_APPLICATION_SECRET=client-secret\nWIKIMEDIA_ACCESS_TOKEN=token-value\n",
         );
         let (profile_base, server) = mock_capability_server().await;
-        let runtime_root = std::env::temp_dir().join(format!(
-            "sp42-live-operator-runtime-persist-{}",
-            SystemClock.now_ms()
-        ));
+        let runtime_root = unique_test_temp_path("sp42-live-operator-runtime-persist");
         let clock: Arc<dyn Clock> = Arc::new(SystemClock);
         let state = AppState {
             capability_cache: Arc::new(tokio::sync::RwLock::new(None)),
@@ -5421,6 +5463,7 @@ mod tests {
             clock: clock.clone(),
             coordination: CoordinationRegistry::new(clock),
             deployment: test_deployment(),
+            wiki_registry: test_wiki_registry(),
             next_client_id: Arc::new(AtomicU64::new(1)),
             next_session_id: Arc::new(AtomicU64::new(1)),
             started_at: Instant::now(),
@@ -5587,8 +5630,9 @@ mod tests {
                 .build()
                 .expect("reqwest client should build"),
             local_oauth: LocalOAuthConfig::default(),
-            runtime_storage_root: std::env::temp_dir()
-                .join("sp42-server-runtime-logical-storage-route"),
+            runtime_storage_root: unique_test_temp_path(
+                "sp42-server-runtime-logical-storage-route",
+            ),
             ingestion_supervisor: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
             capability_targets: CapabilityProbeTargets {
                 api_url: Some(format!("{profile_base}/w/api.php")),
@@ -5597,6 +5641,7 @@ mod tests {
             clock: clock.clone(),
             coordination: CoordinationRegistry::new(clock),
             deployment: test_deployment(),
+            wiki_registry: test_wiki_registry(),
             next_client_id: Arc::new(AtomicU64::new(1)),
             next_session_id: Arc::new(AtomicU64::new(1)),
             started_at: Instant::now(),
@@ -5670,8 +5715,7 @@ mod tests {
                 .build()
                 .expect("reqwest client should build"),
             local_oauth: LocalOAuthConfig::default(),
-            runtime_storage_root: std::env::temp_dir()
-                .join("sp42-server-runtime-public-storage-route"),
+            runtime_storage_root: unique_test_temp_path("sp42-server-runtime-public-storage-route"),
             ingestion_supervisor: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
             capability_targets: CapabilityProbeTargets {
                 api_url: Some(format!("{profile_base}/w/api.php")),
@@ -5680,6 +5724,7 @@ mod tests {
             clock: clock.clone(),
             coordination: CoordinationRegistry::new(clock),
             deployment: test_deployment(),
+            wiki_registry: test_wiki_registry(),
             next_client_id: Arc::new(AtomicU64::new(1)),
             next_session_id: Arc::new(AtomicU64::new(1)),
             started_at: Instant::now(),
@@ -5759,7 +5804,7 @@ mod tests {
                 .build()
                 .expect("reqwest client should build"),
             local_oauth: LocalOAuthConfig::load_from_candidates([local_env_path]),
-            runtime_storage_root: std::env::temp_dir().join("sp42-server-runtime-bootstrap"),
+            runtime_storage_root: unique_test_temp_path("sp42-server-runtime-bootstrap"),
             ingestion_supervisor: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
             capability_targets: CapabilityProbeTargets {
                 profile_url: format!("{profile_base}/oauth2/resource/profile"),
@@ -5768,6 +5813,7 @@ mod tests {
             clock: clock.clone(),
             coordination: CoordinationRegistry::new(clock),
             deployment: test_deployment(),
+            wiki_registry: test_wiki_registry(),
             next_client_id: Arc::new(AtomicU64::new(1)),
             next_session_id: Arc::new(AtomicU64::new(1)),
             started_at: Instant::now(),

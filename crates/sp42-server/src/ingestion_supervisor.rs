@@ -18,11 +18,11 @@ pub(crate) fn supervisor_poll_interval_ms() -> u64 {
         .unwrap_or(15_000)
 }
 
-pub(crate) fn supervisor_wiki_ids() -> Vec<String> {
+pub(crate) fn supervisor_wiki_ids(default_wiki_id: &str) -> Vec<String> {
     let configured = std::env::var("SP42_SUPERVISOR_WIKIS")
         .ok()
         .filter(|value| !value.trim().is_empty())
-        .unwrap_or_else(|| "frwiki".to_string());
+        .unwrap_or_else(|| default_wiki_id.to_string());
 
     configured
         .split(',')
@@ -34,7 +34,7 @@ pub(crate) fn supervisor_wiki_ids() -> Vec<String> {
 
 pub(crate) fn spawn_ingestion_supervisors(state: &AppState) {
     let poll_interval_ms = supervisor_poll_interval_ms();
-    for wiki_id in supervisor_wiki_ids() {
+    for wiki_id in supervisor_wiki_ids(state.default_wiki_id()) {
         let state_clone = state.clone();
         tokio::spawn(async move {
             run_ingestion_supervisor_for_wiki(state_clone, wiki_id, poll_interval_ms).await;

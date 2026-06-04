@@ -10,10 +10,9 @@ use tracing::{debug, warn};
 use sp42_core::{
     DevAuthActionTokenAvailability, DevAuthCapabilityReadiness, DevAuthCapabilityReport,
     DevAuthDerivedCapabilities, DevAuthEditCapabilities, DevAuthModerationCapabilities,
-    DevAuthProbeAcceptance, LocalOAuthConfigStatus, WikiConfig, parse_wiki_config,
+    DevAuthProbeAcceptance, LocalOAuthConfigStatus, WikiConfig,
 };
 
-const FRWIKI_CONFIG: &str = include_str!("../../../configs/frwiki.yaml");
 const PROFILE_URL: &str = "https://meta.wikimedia.org/w/rest.php/oauth2/resource/profile";
 const ERROR_BODY_PREVIEW_LIMIT: usize = 240;
 
@@ -136,11 +135,11 @@ pub async fn probe_with_targets(
     client: &Client,
     token: Option<&str>,
     oauth_status: &LocalOAuthConfigStatus,
-    wiki_id: &str,
+    config: &WikiConfig,
     targets: &CapabilityProbeTargets,
 ) -> DevAuthCapabilityReport {
     let mut report = DevAuthCapabilityReport {
-        wiki_id: wiki_id.to_string(),
+        wiki_id: config.wiki_id.clone(),
         ..DevAuthCapabilityReport::default()
     };
 
@@ -153,16 +152,7 @@ pub async fn probe_with_targets(
         return report;
     };
 
-    let config = match config_for_wiki(wiki_id) {
-        Ok(config) => config,
-        Err(error) => {
-            report.checked = true;
-            report.error = Some(error);
-            return report;
-        }
-    };
-
-    match fetch_report(client, token, &config, targets).await {
+    match fetch_report(client, token, config, targets).await {
         Ok(mut fetched) => {
             fetched.notes.extend(base_notes(oauth_status));
             fetched
@@ -443,17 +433,6 @@ fn preview_body(body: &str) -> String {
     }
 }
 
-pub(crate) fn config_for_wiki(wiki_id: &str) -> Result<WikiConfig, String> {
-    let config = parse_wiki_config(FRWIKI_CONFIG)
-        .map_err(|error| format!("wiki config was invalid: {error}"))?;
-
-    if config.wiki_id == wiki_id {
-        Ok(config)
-    } else {
-        Err(format!("unsupported local capability wiki_id: {wiki_id}"))
-    }
-}
-
 fn base_notes(oauth_status: &LocalOAuthConfigStatus) -> Vec<String> {
     let mut notes = Vec::new();
 
@@ -604,6 +583,8 @@ mod tests {
                 .expect("mock capability server should run");
         });
 
+        let config = parse_wiki_config(include_str!("../../../configs/frwiki.yaml"))
+            .expect("fixture should parse");
         let report = probe_with_targets(
             &Client::new(),
             Some("token"),
@@ -612,7 +593,7 @@ mod tests {
                 client_secret_present: true,
                 access_token_present: true,
             },
-            "frwiki",
+            &config,
             &CapabilityProbeTargets {
                 profile_url: format!("http://{addr}/oauth2/resource/profile"),
                 api_url: Some(format!("http://{addr}/w/api.php")),

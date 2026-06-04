@@ -22,9 +22,9 @@ use crate::{
     capability_report_for_request, current_status, effective_session_scopes,
     expired_session_cookie_header, generate_oauth_state, generate_pkce_verifier, install_session,
     invalid_payload, next_session_id, parse_callback_query, probe_with_targets,
-    prune_expired_sessions, require_session_csrf, runtime_debug, session_cookie_header,
-    session_cookie_value, split_scope_string, store_pending_oauth_login, take_pending_oauth_login,
-    to_status,
+    prune_expired_sessions, require_session_csrf, resolved_wiki_config, runtime_debug,
+    session_cookie_header, session_cookie_value, split_scope_string, store_pending_oauth_login,
+    take_pending_oauth_login, to_status,
 };
 
 pub(crate) async fn get_runtime_debug(
@@ -48,7 +48,10 @@ pub(crate) async fn get_auth_login(
         ));
     }
 
-    let wiki_id = query.wiki_id.as_deref().unwrap_or("frwiki");
+    let wiki_id = query
+        .wiki_id
+        .as_deref()
+        .unwrap_or_else(|| state.default_wiki_id());
     let oauth_config = oauth_client_config_for_request(&state, &headers, wiki_id)?;
     let redirect_after_login = sanitize_redirect_target(query.next.as_deref());
     let mut rng = ServerRng;
@@ -114,11 +117,17 @@ pub(crate) async fn complete_auth_callback(
     )
     .await
     .map_err(|message| invalid_payload(&message))?;
+    let config = resolved_wiki_config(state, &pending.wiki_id).map_err(|message| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({ "error": message })),
+        )
+    })?;
     let capability_report = probe_with_targets(
         &state.http_client,
         Some(&token_response.access_token),
         &state.local_oauth.status(),
-        &pending.wiki_id,
+        &config,
         &state.capability_targets,
     )
     .await;
@@ -278,7 +287,8 @@ pub(crate) async fn post_bootstrap_session(
         ));
     };
 
-    let capabilities = capability_report_for_local_token(&state, "frwiki", true).await;
+    let default_wiki_id = state.default_wiki_id().to_string();
+    let capabilities = capability_report_for_local_token(&state, &default_wiki_id, true).await;
     let Some(username) = capabilities.username.clone() else {
         let message = capabilities
             .error
@@ -303,7 +313,7 @@ pub(crate) async fn post_bootstrap_session(
         created_at_ms: current_ms,
         last_seen_at_ms: current_ms,
         capability_cache: HashMap::from([(
-            "frwiki".to_string(),
+            default_wiki_id,
             CachedCapabilityReport {
                 fetched_at_ms: current_ms,
                 report: capabilities,

@@ -213,7 +213,6 @@ Optional shared compiler cache:
 - [CONTRIBUTING.md](CONTRIBUTING.md): contributor workflow and local checks
 - [GOVERNANCE.md](GOVERNANCE.md): maintainer model, protected areas, and release authority
 - [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md): participation expectations
-- [docs/REPO_CLEANUP_PLAN.md](docs/REPO_CLEANUP_PLAN.md): cleanup plan for contributor readiness
 - [docs/scoring/SCORING_CONSTITUTION.md](docs/scoring/SCORING_CONSTITUTION.md): scoring system principles and technical rules
 - [docs/scoring/POLICY_LAYOUT.md](docs/scoring/POLICY_LAYOUT.md): scoring policy and evaluation directory layout
 - [docs/FRONTEND_DESIGN_CONTRACT.md](docs/FRONTEND_DESIGN_CONTRACT.md): frontend contract

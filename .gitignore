@@ -16,6 +16,7 @@
 **/coverage/
 /crates/sp42-desktop/src-tauri/gen/
 /crates/sp42-desktop/src-tauri/binaries/sp42-server-*
+/docs/REPO_CLEANUP_PLAN.md
 *.tmp
 *.swp
 *.swo

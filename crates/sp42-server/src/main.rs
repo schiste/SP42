@@ -7,8 +7,10 @@ mod ingestion_supervisor;
 mod local_env;
 mod oauth_runtime;
 mod operator_live;
+mod revision_artifacts;
 mod routes;
 mod session_runtime;
+mod state;
 mod storage_routes;
 mod wiki_registry;
 mod wikimedia_capabilities;
@@ -52,7 +54,7 @@ use sp42_core::{
     PublicStorageDocumentData, QueueHeuristicPolicy, QueuedEdit, RecentChangesQuery,
     RenderedHunkPreview, RenderedHunkSide, ServerDebugSummary, SessionActionExecutionRequest,
     SessionActionExecutionResponse, SessionActionKind, ShellStateInputs, Storage,
-    StreamRuntimeStatus, StructuredDiff, SystemClock, TokenKind, WikiConfig, WikiStorageConfig,
+    StreamRuntimeStatus, SystemClock, TokenKind, WikiConfig, WikiStorageConfig,
     WikiStorageDocument, WikiStorageDocumentKind, WikiStorageLoadedDocument, WikiStoragePlan,
     WikiStoragePlanInput, WikiStorageWriteOutcome, WikiStorageWriteRequest,
     build_article_inventory, build_authorization_url, build_debug_snapshot,
@@ -72,16 +74,15 @@ use crate::coordination::{
 use crate::deployment::DeploymentConfig;
 use crate::endpoint_manifest::{OperatorEndpointDescriptor, operator_endpoint_manifest};
 use crate::local_env::LocalOAuthConfig;
+use crate::revision_artifacts::{
+    CachedRenderedHunkPreview, CachedRevisionArtifacts, RevisionArtifacts,
+};
 use crate::routes::build_router;
+use crate::state::{
+    AppState, CachedCapabilityReport, PendingOAuthLogin, SessionSnapshot, StoredSession,
+};
 use crate::wiki_registry::WikiRegistry;
 use crate::wikimedia_capabilities::{CapabilityProbeTargets, probe_with_targets};
-
-type SharedSessions = Arc<RwLock<HashMap<String, StoredSession>>>;
-type SharedCapabilityCache = Arc<RwLock<Option<CachedCapabilityReport>>>;
-type SharedPendingOAuthLogins = Arc<RwLock<HashMap<String, PendingOAuthLogin>>>;
-type SharedIngestionSupervisor = Arc<RwLock<HashMap<String, IngestionSupervisorSnapshot>>>;
-type SharedRevisionArtifactCache = Arc<RwLock<HashMap<String, CachedRevisionArtifacts>>>;
-type SharedRenderedHunkCache = Arc<RwLock<HashMap<String, CachedRenderedHunkPreview>>>;
 
 const SESSION_COOKIE_NAME: &str = "sp42_dev_session";
 const CSRF_HEADER_NAME: &str = "x-sp42-csrf-token";
@@ -105,94 +106,6 @@ const REVISION_ARTIFACT_CACHE_TTL_MS: i64 = 5 * 60 * 1000;
 const RENDERED_HUNK_CACHE_TTL_MS: i64 = 5 * 60 * 1000;
 const WIKIMEDIA_API_RETRY_ATTEMPTS: usize = 3;
 const WIKIMEDIA_API_RETRY_DELAY_MS: u64 = 150;
-
-#[derive(Clone)]
-struct AppState {
-    capability_cache: SharedCapabilityCache,
-    sessions: SharedSessions,
-    pending_oauth_logins: SharedPendingOAuthLogins,
-    revision_artifacts: SharedRevisionArtifactCache,
-    rendered_hunks: SharedRenderedHunkCache,
-    http_client: reqwest::Client,
-    local_oauth: LocalOAuthConfig,
-    runtime_storage_root: PathBuf,
-    ingestion_supervisor: SharedIngestionSupervisor,
-    capability_targets: CapabilityProbeTargets,
-    clock: Arc<dyn Clock>,
-    coordination: CoordinationRegistry,
-    deployment: DeploymentConfig,
-    wiki_registry: WikiRegistry,
-    next_client_id: Arc<AtomicU64>,
-    next_session_id: Arc<AtomicU64>,
-    started_at: Instant,
-}
-
-impl AppState {
-    pub(crate) fn default_wiki_id(&self) -> &str {
-        self.wiki_registry.default_wiki_id()
-    }
-}
-
-#[derive(Debug, Clone)]
-struct CachedCapabilityReport {
-    fetched_at_ms: i64,
-    report: DevAuthCapabilityReport,
-}
-
-#[derive(Debug, Clone)]
-struct RevisionArtifacts {
-    diff: StructuredDiff,
-    media_diff: Option<sp42_core::MediaDiffReport>,
-}
-
-#[derive(Debug, Clone)]
-struct CachedRevisionArtifacts {
-    fetched_at_ms: i64,
-    artifacts: RevisionArtifacts,
-}
-
-#[derive(Debug, Clone)]
-struct CachedRenderedHunkPreview {
-    fetched_at_ms: i64,
-    preview: RenderedHunkPreview,
-}
-
-#[derive(Debug, Clone)]
-struct StoredSession {
-    username: String,
-    scopes: Vec<String>,
-    expires_at_ms: Option<i64>,
-    access_token: String,
-    refresh_token: Option<String>,
-    upstream_access_expires_at_ms: Option<i64>,
-    bridge_mode: String,
-    csrf_token: String,
-    created_at_ms: i64,
-    last_seen_at_ms: i64,
-    capability_cache: HashMap<String, CachedCapabilityReport>,
-    action_history: Vec<ActionExecutionLogEntry>,
-}
-
-#[derive(Debug, Clone)]
-struct PendingOAuthLogin {
-    wiki_id: String,
-    state: String,
-    verifier: String,
-    redirect_uri: String,
-    redirect_after_login: String,
-    expires_at_ms: i64,
-}
-
-#[derive(Debug, Clone)]
-struct SessionSnapshot {
-    session_id: String,
-    username: String,
-    scopes: Vec<String>,
-    expires_at_ms: Option<i64>,
-    access_token: String,
-    bridge_mode: String,
-    csrf_token: String,
-}
 
 #[derive(Clone)]
 struct AuthenticatedWikiContext {

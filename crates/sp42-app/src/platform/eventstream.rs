@@ -77,12 +77,30 @@ pub fn parse_stream_event(json: &str) -> Option<StreamEvent> {
 /// Start a browser EventSource connection to Wikimedia EventStreams.
 /// Calls `on_event` for each matching edit on the target wiki.
 #[cfg(target_arch = "wasm32")]
-pub fn start_eventstream(wiki_id: &str, on_event: impl Fn(StreamEvent) + 'static) {
+pub struct EventStreamHandle {
+    source: web_sys::EventSource,
+    _message_callback: wasm_bindgen::closure::Closure<dyn FnMut(web_sys::MessageEvent)>,
+    _error_callback: wasm_bindgen::closure::Closure<dyn FnMut(web_sys::Event)>,
+}
+
+#[cfg(target_arch = "wasm32")]
+impl Drop for EventStreamHandle {
+    fn drop(&mut self) {
+        self.source.close();
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+pub fn start_eventstream(
+    wiki_id: &str,
+    on_event: impl Fn(StreamEvent) + 'static,
+) -> Result<EventStreamHandle, String> {
     use wasm_bindgen::closure::Closure;
     use web_sys::EventSource;
+    use web_sys::console;
 
     let url = "https://stream.wikimedia.org/v2/stream/recentchange";
-    let es = EventSource::new(url).expect("EventSource should construct");
+    let source = EventSource::new(url).map_err(crate::platform::js_error_message)?;
     let wiki = wiki_id.to_string();
 
     let callback = Closure::wrap(Box::new(move |event: web_sys::MessageEvent| {
@@ -92,15 +110,35 @@ pub fn start_eventstream(wiki_id: &str, on_event: impl Fn(StreamEvent) + 'static
                 on_event(parsed);
             }
         }
-    }) as Box<dyn Fn(web_sys::MessageEvent)>);
+    }) as Box<dyn FnMut(web_sys::MessageEvent)>);
 
-    es.set_onmessage(Some(callback.as_ref().unchecked_ref()));
-    callback.forget(); // Leak the closure so it lives as long as the EventSource
-    std::mem::forget(es); // Keep the EventSource alive
+    let error_callback = Closure::wrap(Box::new(move |_event: web_sys::Event| {
+        console::warn_1(
+            &"[SP42] Wikimedia EventStreams connection interrupted; browser EventSource will retry."
+                .into(),
+        );
+    }) as Box<dyn FnMut(web_sys::Event)>);
+
+    source.set_onmessage(Some(callback.as_ref().unchecked_ref()));
+    source.set_onerror(Some(error_callback.as_ref().unchecked_ref()));
+
+    Ok(EventStreamHandle {
+        source,
+        _message_callback: callback,
+        _error_callback: error_callback,
+    })
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-pub fn start_eventstream(_wiki_id: &str, _on_event: impl Fn(StreamEvent) + 'static) {}
+pub struct EventStreamHandle;
+
+#[cfg(not(target_arch = "wasm32"))]
+pub fn start_eventstream(
+    _wiki_id: &str,
+    _on_event: impl Fn(StreamEvent) + 'static,
+) -> Result<EventStreamHandle, String> {
+    Ok(EventStreamHandle)
+}
 
 #[cfg(test)]
 mod tests {

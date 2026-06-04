@@ -1,6 +1,10 @@
-use std::collections::HashMap;
+use std::{
+    collections::HashMap,
+    sync::{Arc, Mutex},
+};
 
 use leptos::prelude::*;
+use send_wrapper::SendWrapper;
 use sp42_core::{
     LiveOperatorView, MediaDiffReport, SessionActionExecutionRequest, SessionActionKind,
     StructuredDiff,
@@ -15,7 +19,7 @@ use crate::components::queue_column::QueueColumn;
 use crate::components::{PatrolScenarioPanel, PatrolSessionDigestPanel, ShellStatePanel};
 use crate::platform::auth::{bootstrap_dev_auth_session, execute_dev_auth_action};
 use crate::platform::console;
-use crate::platform::eventstream::{StreamEvent, start_eventstream};
+use crate::platform::eventstream::{EventStreamHandle, StreamEvent, start_eventstream};
 use crate::platform::live::{fetch_diff, fetch_live_operator_view, fetch_media_diff};
 
 /// Read `rev=N` from the URL hash fragment.
@@ -191,6 +195,13 @@ pub fn PatrolSurface() -> impl IntoView {
     let (selection_only_refetch, set_selection_only_refetch) = signal(false);
     let (bootstrap_attempted, set_bootstrap_attempted) = signal(false);
     let (bootstrap_error, set_bootstrap_error) = signal(None::<String>);
+    let eventstream_handle = Arc::new(Mutex::new(SendWrapper::new(None::<EventStreamHandle>)));
+    let cleanup_eventstream_handle = Arc::clone(&eventstream_handle);
+    on_cleanup(move || {
+        if let Ok(mut handle) = cleanup_eventstream_handle.lock() {
+            let _ = (**handle).take();
+        }
+    });
 
     // If the response shows no auth and we haven't tried yet, auto-bootstrap.
     let load_action = Action::new_local(move |_: &()| {
@@ -743,7 +754,7 @@ pub fn PatrolSurface() -> impl IntoView {
     // Start live EventStreams SSE only once; the queue_signal Memo applies filters reactively.
     Effect::new(move |started: Option<bool>| {
         if started.is_none() {
-            start_eventstream(DEFAULT_WIKI_ID, move |event: StreamEvent| {
+            match start_eventstream(DEFAULT_WIKI_ID, move |event: StreamEvent| {
                 let queued = stream_event_to_queued_edit(&event);
                 let mut edits = all_edits.get_untracked();
                 if edits.iter().any(|e| e.event.rev_id == queued.event.rev_id) {
@@ -758,7 +769,16 @@ pub fn PatrolSurface() -> impl IntoView {
                     edits.truncate(200);
                 }
                 set_all_edits.set(edits);
-            });
+            }) {
+                Ok(handle) => {
+                    if let Ok(mut eventstream_handle) = eventstream_handle.lock() {
+                        **eventstream_handle = Some(handle);
+                    }
+                }
+                Err(error) => {
+                    console::warn(&format!("[SP42] EventStreams unavailable: {error}"));
+                }
+            }
         }
         true
     });

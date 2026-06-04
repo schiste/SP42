@@ -19,6 +19,7 @@ gloo-net.workspace = true
 js-sys.workspace = true
 leptos.workspace = true
 serde_json.workspace = true
+send_wrapper.workspace = true
 sp42-core = { path = "../sp42-core" }
 url.workspace = true
 wasm-bindgen = "0.2.105"

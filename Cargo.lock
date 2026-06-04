@@ -2108,6 +2108,7 @@ dependencies = [
  "gloo-net",
  "js-sys",
  "leptos",
+ "send_wrapper",
  "serde_json",
  "sp42-core",
  "url",

@@ -7,21 +7,24 @@ use axum::routing::get;
 use tower_http::cors::{AllowOrigin, CorsLayer};
 use tower_http::services::{ServeDir, ServeFile};
 
+use crate::static_assets::{
+    browser_app_dist_dir, browser_shell_unavailable, disable_response_caching, get_favicon,
+    get_manifest_json, get_offline_html, get_runtime_config_js, get_service_worker,
+    get_static_icon,
+};
 use crate::{
     ACTION_HISTORY_PATH, ACTION_STATUS_PATH, AUTH_CALLBACK_PATH, AUTH_LOGIN_PATH, AUTH_LOGOUT_PATH,
     AUTH_SESSION_PATH, AppState, CSRF_HEADER_NAME, OPERATOR_READINESS_PATH, OPERATOR_REPORT_PATH,
-    browser_app_dist_dir, browser_shell_unavailable, coordination_socket, delete_session,
-    disable_response_caching, get_action_history, get_action_status, get_article_inventory,
-    get_auth_callback, get_auth_login, get_auth_session, get_bootstrap_status, get_capabilities,
-    get_coordination_inspections, get_coordination_room_inspection, get_coordination_room_state,
-    get_coordination_snapshot, get_debug_summary, get_favicon, get_healthz, get_live_operator_view,
-    get_logical_storage_document, get_manifest_json, get_offline_html, get_operator_readiness,
-    get_operator_report, get_operator_runtime, get_operator_storage_layout,
+    coordination_socket, delete_session, get_action_history, get_action_status,
+    get_article_inventory, get_auth_callback, get_auth_login, get_auth_session,
+    get_bootstrap_status, get_capabilities, get_coordination_inspections,
+    get_coordination_room_inspection, get_coordination_room_state, get_coordination_snapshot,
+    get_debug_summary, get_healthz, get_live_operator_view, get_logical_storage_document,
+    get_operator_readiness, get_operator_report, get_operator_runtime, get_operator_storage_layout,
     get_public_storage_document, get_rendered_hunk_preview, get_revision_diff,
-    get_revision_media_diff, get_runtime_config_js, get_runtime_debug, get_service_worker,
-    get_session, get_static_icon, get_storage_document, post_auth_logout, post_bootstrap_session,
-    post_execute_action, put_logical_storage_document, put_public_storage_document,
-    put_storage_document,
+    get_revision_media_diff, get_runtime_debug, get_session, get_storage_document,
+    post_auth_logout, post_bootstrap_session, post_execute_action, put_logical_storage_document,
+    put_public_storage_document, put_storage_document,
 };
 
 pub(crate) fn build_router(state: AppState) -> Router {

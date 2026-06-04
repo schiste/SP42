@@ -26,9 +26,15 @@ Leptos 0.7+ is the reactive UI framework. It compiles to Wasm, uses fine-grained
 
 **Alternatives considered:** Yew (older, virtual DOM — less performant), Dioxus (newer, less ecosystem), Sycamore (smaller community). Leptos chosen for: maturity, performance, active development, community size.
 
-### 3. Apache 2.0 license
+### 3. GPL-3.0-only license
 
-**Rationale:** Broad compatibility with the Rust ecosystem (most crates are Apache 2.0 / MIT dual-licensed). Permissive enough for wide adoption. WMF's own code is GPL v2+ but external tools commonly use Apache/MIT.
+**Status:** Supersedes the original Apache 2.0 decision.
+
+**Rationale:** SP42 is now licensed under the GNU General Public License
+version 3 only (`GPL-3.0-only`) to keep improvements to this multiwiki
+patrolling tool available under the same copyleft terms. This aligns the
+project with Wikimedia-adjacent GPL expectations while preserving compatibility
+with the permissive Rust dependencies already in use.
 
 ### 4. French Wikipedia as first target
 

@@ -169,4 +169,5 @@ Optional shared compiler cache:
 
 ## License
 
-SP42 is licensed under the Apache License, Version 2.0. See [LICENSE](LICENSE).
+SP42 is licensed under the GNU General Public License version 3 only
+(`GPL-3.0-only`). See [LICENSE](LICENSE).

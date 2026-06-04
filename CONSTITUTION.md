@@ -76,7 +76,7 @@
 | Tests | `cargo test` + `wasm-pack test` | All pass. No `#[ignore]` without issue link. |
 | Coverage | `cargo-tarpaulin` or `llvm-cov` | sp42-core: ≥90%. No merge that decreases coverage without exemption. |
 | Dependency audit | `cargo audit` | Zero known vulnerabilities. Blocks pipeline. |
-| License check | `cargo-deny` | All deps compatible with Apache 2.0. |
+| License check | `cargo-deny` | All deps compatible with GPL-3.0-only. |
 | Doc tests | `cargo test` (doc-tests) | All examples compile and run. |
 | Wasm size | Custom check | <800KB uncompressed, <400KB gzipped. Regression blocks. |
 | E2E | Playwright | Core workflows pass. On merge to main only. |

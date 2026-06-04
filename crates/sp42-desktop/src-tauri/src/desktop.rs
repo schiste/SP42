@@ -48,6 +48,7 @@ impl DesktopBackendMode {
 struct DesktopBackendConfig {
     mode: DesktopBackendMode,
     api_base_url: String,
+    default_wiki_id: String,
     sidecar_bind_addr: String,
     runtime_dir: PathBuf,
 }
@@ -73,10 +74,16 @@ impl DesktopBackendConfig {
                     )
                 })?,
         };
+        let default_wiki_id = env::var("SP42_DEFAULT_WIKI_ID")
+            .ok()
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty())
+            .unwrap_or_else(|| "frwiki".to_string());
 
         Ok(Self {
             mode,
             api_base_url: normalize_base_url(&api_base_url),
+            default_wiki_id,
             sidecar_bind_addr,
             runtime_dir,
         })
@@ -181,6 +188,7 @@ fn create_main_window(app: &App, config: &DesktopBackendConfig) -> SetupResult<(
 
 fn runtime_config_script(config: &DesktopBackendConfig) -> SetupResult<String> {
     let api_base_url = serde_json::to_string(&config.api_base_url)?;
+    let default_wiki_id = serde_json::to_string(&config.default_wiki_id)?;
     let backend_mode = serde_json::to_string(config.mode.as_str())?;
     Ok(format!(
         r#"
@@ -189,6 +197,7 @@ fn runtime_config_script(config: &DesktopBackendConfig) -> SetupResult<String> {
   window.__SP42_RUNTIME_CONFIG__ = {{
     ...current,
     apiBaseUrl: {api_base_url},
+    defaultWikiId: {default_wiki_id},
     deploymentMode: "desktop",
     desktopBackendMode: {backend_mode}
   }};

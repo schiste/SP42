@@ -26,6 +26,10 @@ backend = "http://127.0.0.1:8788/healthz"
 rewrite = "/healthz"
 
 [[proxies]]
+backend = "http://127.0.0.1:8788/runtime-config.js"
+rewrite = "/runtime-config.js"
+
+[[proxies]]
 backend = "http://127.0.0.1:8788/coordination"
 rewrite = "/coordination"
 

@@ -18,6 +18,7 @@ use crate::components::media_diff_gallery::MediaDiffGallery;
 use crate::components::queue_column::QueueColumn;
 use crate::components::{PatrolScenarioPanel, PatrolSessionDigestPanel, ShellStatePanel};
 use crate::platform::auth::{bootstrap_dev_auth_session, execute_dev_auth_action};
+use crate::platform::config::configured_default_wiki_id;
 use crate::platform::console;
 use crate::platform::eventstream::{EventStreamHandle, StreamEvent, start_eventstream};
 use crate::platform::live::{fetch_diff, fetch_live_operator_view, fetch_media_diff};
@@ -55,10 +56,9 @@ fn set_hash_rev(rev_id: u64) {
     }
 }
 
-const DEFAULT_WIKI_ID: &str = "frwiki";
-
 #[component]
 pub fn PatrolSurface() -> impl IntoView {
+    let active_wiki_id = configured_default_wiki_id();
     let (view_data, set_view_data) = signal(None::<LiveOperatorView>);
     let (load_error, set_load_error) = signal(None::<String>);
     let (selected_rev_id, set_selected_rev_id) = signal(None::<u64>);
@@ -204,14 +204,16 @@ pub fn PatrolSurface() -> impl IntoView {
     });
 
     // If the response shows no auth and we haven't tried yet, auto-bootstrap.
+    let load_wiki_id = active_wiki_id.clone();
     let load_action = Action::new_local(move |_: &()| {
+        let wiki_id = load_wiki_id.clone();
         let set_view_data = set_view_data;
         let set_load_error = set_load_error;
         let set_next_continue = set_next_continue;
         async move {
             let mut current_filters = filters.get();
             current_filters.selected_index = Some(selected_index.get_untracked());
-            match fetch_live_operator_view(DEFAULT_WIKI_ID, &current_filters).await {
+            match fetch_live_operator_view(&wiki_id, &current_filters).await {
                 Ok(view) => {
                     if view.auth.username.is_none() && !bootstrap_attempted.get_untracked() {
                         // Auto-bootstrap: try the local token bridge
@@ -225,9 +227,7 @@ pub fn PatrolSurface() -> impl IntoView {
                             Ok(status) if status.authenticated => {
                                 set_bootstrap_error.set(None);
                                 // Re-fetch now that we have a session
-                                match fetch_live_operator_view(DEFAULT_WIKI_ID, &current_filters)
-                                    .await
-                                {
+                                match fetch_live_operator_view(&wiki_id, &current_filters).await {
                                     Ok(view2) => {
                                         set_load_error.set(None);
                                         set_next_continue.set(view2.next_continue.clone());
@@ -752,9 +752,10 @@ pub fn PatrolSurface() -> impl IntoView {
     });
 
     // Start live EventStreams SSE only once; the queue_signal Memo applies filters reactively.
+    let stream_wiki_id = active_wiki_id.clone();
     Effect::new(move |started: Option<bool>| {
         if started.is_none() {
-            match start_eventstream(DEFAULT_WIKI_ID, move |event: StreamEvent| {
+            match start_eventstream(&stream_wiki_id, move |event: StreamEvent| {
                 let queued = stream_event_to_queued_edit(&event);
                 let mut edits = all_edits.get_untracked();
                 if edits.iter().any(|e| e.event.rev_id == queued.event.rev_id) {

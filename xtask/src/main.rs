@@ -741,6 +741,8 @@ SP42_ALLOWED_ORIGINS=
 SP42_APP_DIST_DIR=/opt/sp42/dist/sp42-app
 SP42_RUNTIME_DIR=/var/lib/sp42
 SP42_DEPLOYMENT_MODE=vps
+SP42_WIKI_CONFIG_DIR=/opt/sp42/configs
+SP42_DEFAULT_WIKI_ID=frwiki
 SP42_SUPERVISOR_WIKIS=frwiki
 SP42_INGESTION_POLL_MS=15000
 ",
@@ -816,6 +818,9 @@ SP42_PUBLIC_BASE_URL=https://sp42.<project>.wmcloud.org
 SP42_APP_DIST_DIR=/opt/sp42/dist/sp42-app
 SP42_RUNTIME_DIR=/var/lib/sp42
 SP42_DEPLOYMENT_MODE=vps
+SP42_WIKI_CONFIG_DIR=/opt/sp42/configs
+SP42_DEFAULT_WIKI_ID=frwiki
+SP42_SUPERVISOR_WIKIS=frwiki
 ```
 
 Then enable the service:

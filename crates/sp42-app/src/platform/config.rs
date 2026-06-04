@@ -1,6 +1,15 @@
+const FALLBACK_DEFAULT_WIKI_ID: &str = "frwiki";
+
 #[must_use]
 pub fn api_url(path: &str) -> String {
     join_base_and_path(&configured_api_base_url(), path)
+}
+
+#[must_use]
+pub fn configured_default_wiki_id() -> String {
+    runtime_default_wiki_id()
+        .or_else(build_default_wiki_id)
+        .unwrap_or_else(|| FALLBACK_DEFAULT_WIKI_ID.to_string())
 }
 
 #[must_use]
@@ -33,10 +42,16 @@ pub fn normalize_base_url(value: &str) -> String {
 }
 
 fn build_api_base_url() -> Option<String> {
-    option_env!("SP42_API_BASE_URL")
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(ToString::to_string)
+    option_env!("SP42_API_BASE_URL").and_then(non_empty_string)
+}
+
+fn build_default_wiki_id() -> Option<String> {
+    option_env!("SP42_DEFAULT_WIKI_ID").and_then(non_empty_string)
+}
+
+fn non_empty_string(value: &str) -> Option<String> {
+    let trimmed = value.trim();
+    (!trimmed.is_empty()).then(|| trimmed.to_string())
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -50,7 +65,22 @@ fn runtime_api_base_url() -> Option<String> {
 }
 
 #[cfg(target_arch = "wasm32")]
+fn runtime_default_wiki_id() -> Option<String> {
+    runtime_config_string("defaultWikiId").or_else(|| runtime_meta_content("sp42-default-wiki-id"))
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn runtime_default_wiki_id() -> Option<String> {
+    None
+}
+
+#[cfg(target_arch = "wasm32")]
 fn runtime_api_base_url_from_window() -> Option<String> {
+    runtime_config_string("apiBaseUrl")
+}
+
+#[cfg(target_arch = "wasm32")]
+fn runtime_config_string(field: &str) -> Option<String> {
     use wasm_bindgen::JsValue;
 
     let window = web_sys::window()?;
@@ -60,28 +90,30 @@ fn runtime_api_base_url_from_window() -> Option<String> {
         return None;
     }
 
-    js_sys::Reflect::get(&config, &JsValue::from_str("apiBaseUrl"))
+    js_sys::Reflect::get(&config, &JsValue::from_str(field))
         .ok()
         .and_then(|value| value.as_string())
-        .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty())
+        .and_then(|value| non_empty_string(&value))
 }
 
 #[cfg(target_arch = "wasm32")]
 fn runtime_api_base_url_from_meta() -> Option<String> {
+    runtime_meta_content("sp42-api-base-url")
+}
+
+#[cfg(target_arch = "wasm32")]
+fn runtime_meta_content(name: &str) -> Option<String> {
     let document = web_sys::window()?.document()?;
-    let element = document
-        .query_selector("meta[name=\"sp42-api-base-url\"]")
-        .ok()??;
+    let selector = format!("meta[name=\"{name}\"]");
+    let element = document.query_selector(&selector).ok()??;
     element
         .get_attribute("content")
-        .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty())
+        .and_then(|value| non_empty_string(&value))
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{join_base_and_path, normalize_base_url};
+    use super::{configured_default_wiki_id, join_base_and_path, normalize_base_url};
 
     #[test]
     fn joins_same_origin_paths() {
@@ -109,5 +141,10 @@ mod tests {
             normalize_base_url(" https://sp42.example.org/// "),
             "https://sp42.example.org"
         );
+    }
+
+    #[test]
+    fn defaults_to_frwiki_when_no_runtime_or_build_value_is_available() {
+        assert_eq!(configured_default_wiki_id(), "frwiki");
     }
 }

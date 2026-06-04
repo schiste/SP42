@@ -18,6 +18,14 @@ The server reads these environment variables:
   directory.
 - `SP42_ALLOWED_ORIGINS` is a comma-separated list of extra credentialed CORS
   origins.
+- `SP42_WIKI_CONFIG_DIR` points at a directory containing top-level `*.yaml`
+  wiki configs. It defaults to `configs/`, with an embedded `frwiki` fallback
+  for local development and tests.
+- `SP42_DEFAULT_WIKI_ID` selects the default active wiki from the loaded wiki
+  registry. It defaults to the first loaded wiki config.
+- `SP42_SUPERVISOR_WIKIS` optionally overrides the comma-separated wiki list
+  watched by ingestion supervisors. If unset, the configured default wiki is
+  watched.
 
 In `vps` mode, local dev-token bootstrap is disabled and session cookies are
 marked `Secure`. Across modes, cookie-auth state-changing routes require an
@@ -29,8 +37,14 @@ The browser app uses same-origin API paths by default. For split frontend/API
 deployments, set one of:
 
 - `window.__SP42_RUNTIME_CONFIG__.apiBaseUrl`
+- `window.__SP42_RUNTIME_CONFIG__.defaultWikiId`
 - `<meta name="sp42-api-base-url" content="...">`
+- `<meta name="sp42-default-wiki-id" content="...">`
 - `SP42_API_BASE_URL` at frontend build time
+- `SP42_DEFAULT_WIKI_ID` at frontend build time
+
+When the browser bundle is served by `sp42-server`, `/runtime-config.js` sets
+`window.__SP42_RUNTIME_CONFIG__.defaultWikiId` before the Wasm app starts.
 
 ## Local Wikimedia Development Auth
 

@@ -732,6 +732,7 @@ fn operator_routes(router: Router<AppState>) -> Router<AppState> {
         .route("/dev/auth/bootstrap/status", get(get_bootstrap_status))
         .route("/healthz", get(get_healthz))
         .route("/manifest.json", get(get_manifest_json))
+        .route("/runtime-config.js", get(get_runtime_config_js))
         .route("/sw.js", get(get_service_worker))
         .route("/offline.html", get(get_offline_html))
         .route("/icons/{icon_name}", get(get_static_icon))
@@ -932,6 +933,23 @@ async fn get_manifest_json() -> impl IntoResponse {
         "application/manifest+json",
     )
     .await
+}
+
+async fn get_runtime_config_js(State(state): State<AppState>) -> impl IntoResponse {
+    let payload = serde_json::json!({
+        "defaultWikiId": state.default_wiki_id(),
+        "deploymentMode": state.deployment.mode.as_str(),
+    });
+    let serialized = serde_json::to_string(&payload).expect("runtime config should serialize");
+    (
+        [(
+            CONTENT_TYPE,
+            HeaderValue::from_static("application/javascript"),
+        )],
+        format!(
+            "window.__SP42_RUNTIME_CONFIG__ = {{ ...(window.__SP42_RUNTIME_CONFIG__ || {{}}), ...{serialized} }};\n"
+        ),
+    )
 }
 
 async fn get_service_worker() -> impl IntoResponse {
@@ -4885,6 +4903,31 @@ mod tests {
         assert!(status.source_path.is_none());
         assert!(!status.source_report.loaded_from_source);
         assert_eq!(status.source_report.file_name, ".env.wikimedia.local");
+    }
+
+    #[tokio::test]
+    async fn runtime_config_js_exposes_default_wiki() {
+        let router = build_router(test_state());
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .method(Method::GET)
+                    .uri("/runtime-config.js")
+                    .body(Body::empty())
+                    .expect("request should build"),
+            )
+            .await
+            .expect("runtime config request should succeed");
+
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let body = to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("response body should read");
+        let script = String::from_utf8(body.to_vec()).expect("runtime config should be utf8");
+
+        assert!(script.contains("window.__SP42_RUNTIME_CONFIG__"));
+        assert!(script.contains("\"defaultWikiId\":\"frwiki\""));
     }
 
     #[test]

@@ -36,6 +36,8 @@ and consequences.
 - External contributors work through forks or branches and open pull requests.
 - `main` should remain releasable.
 - Pull requests should be small, focused, and reviewable.
+- Pull request descriptions must include validation notes, even when the only
+  validation is a documented reason why a check was not run.
 - Maintainers may ask for tests, docs, or a narrower scope before review.
 - Self-merge is not allowed for protected files or release/deployment changes.
 
@@ -51,8 +53,14 @@ The following areas need maintainer review before merge:
 - deployment scripts and VPS packaging
 - schemas, configs, and ADRs
 
-The repository uses `.github/CODEOWNERS` to make those review boundaries visible
-to GitHub.
+Maintainers enforce these review boundaries through branch protection, review
+policy, and release/deployment access controls.
+
+## Contributor Issue Labels
+
+Use `good first issue` only for work that can be completed without deployment
+credentials, architectural authority, signing certificates, Wikimedia Cloud VPS
+access, or private maintainer context.
 
 ## Access And Secrets
 

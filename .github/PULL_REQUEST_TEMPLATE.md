@@ -11,9 +11,10 @@ Describe the change and the problem it solves.
 - [ ] Build, CI, or release
 - [ ] Security-sensitive change
 
-## Validation
+## Validation Required
 
-List the checks you ran:
+List the checks you ran. PRs without validation notes may be returned before
+review.
 
 ```sh
 ./scripts/check-focused.sh

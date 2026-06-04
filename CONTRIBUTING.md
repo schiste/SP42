@@ -81,7 +81,7 @@ A good PR should include:
 
 - a clear problem statement
 - the smallest reasonable implementation
-- tests or validation notes
+- validation notes listing the checks run, or a clear reason a check was not run
 - any documentation updates required by the change
 - an ADR link when the change affects architecture or protected behavior
 
@@ -94,4 +94,3 @@ Those remain maintainer-only.
 Good first issues should be self-contained and should not require production
 credentials, Wikimedia Cloud VPS access, signing certificates, or architectural
 authority. Ask in the issue before starting larger work.
-

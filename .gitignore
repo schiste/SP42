@@ -8,8 +8,11 @@
 /.env.local
 /.env.*.local
 /.claude
+/.chau7
 /.tmp
+**/.tmp/
 /.sp42-runtime
+**/.sp42-runtime/
 /dist
 **/dist/
 /coverage

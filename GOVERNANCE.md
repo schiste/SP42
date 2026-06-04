@@ -74,6 +74,16 @@ Releases are cut by maintainers. Unsigned artifacts may be produced by CI first;
 signed desktop artifacts and VPS deployments require explicit maintainer
 approval.
 
+Before any release commit or tag, maintainers run:
+
+```sh
+./scripts/audit-release-tree.sh
+```
+
+The audit fails if generated build output is tracked, Tauri sidecar binaries are
+not ignored, local runtime directories are not ignored, or non-ignored untracked
+files are present.
+
 ## Amendments
 
 Governance changes should be proposed through pull requests. Changes that alter

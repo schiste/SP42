@@ -2968,7 +2968,8 @@ async fn fetch_revision_sections(
             let index = index
                 .as_u64()
                 .or_else(|| index.as_str().and_then(|text| text.parse::<u64>().ok()))?;
-            Some((label.to_string(), index as u32))
+            let index = u32::try_from(index).ok()?;
+            Some((label.to_string(), index))
         })
         .collect())
 }
@@ -3013,10 +3014,10 @@ fn extract_parse_html(value: &serde_json::Value) -> Result<String, String> {
         return Ok(html.to_string());
     }
 
-    if let Some(object) = text.as_object() {
-        if let Some(html) = object.get("*").and_then(serde_json::Value::as_str) {
-            return Ok(html.to_string());
-        }
+    if let Some(object) = text.as_object()
+        && let Some(html) = object.get("*").and_then(serde_json::Value::as_str)
+    {
+        return Ok(html.to_string());
     }
 
     Err("rendered section payload does not expose HTML text".to_string())
@@ -3182,8 +3183,7 @@ async fn fetch_wikimedia_api_bytes(
             }
             Err(error) => {
                 let message = format!(
-                    "{label} transport failed on attempt {attempt}/{}: {error}",
-                    WIKIMEDIA_API_RETRY_ATTEMPTS
+                    "{label} transport failed on attempt {attempt}/{WIKIMEDIA_API_RETRY_ATTEMPTS}: {error}"
                 );
                 if attempt < WIKIMEDIA_API_RETRY_ATTEMPTS {
                     warn!(label, attempt, error = %error, "retrying wikimedia api transport failure");

@@ -84,6 +84,16 @@ The audit fails if generated build output is tracked, Tauri sidecar binaries are
 not ignored, local runtime directories are not ignored, or non-ignored untracked
 files are present.
 
+Maintainers should install the repository hooks with:
+
+```sh
+./scripts/install-git-hooks.sh
+```
+
+The repository uses local Husky-compatible hooks under `.husky/`, not GitHub
+Actions, for this pre-commit/pre-push enforcement. The `pre-push` hook runs
+`./scripts/ci-all.sh`, so pushes are intentionally slower than normal commits.
+
 ## Amendments
 
 Governance changes should be proposed through pull requests. Changes that alter

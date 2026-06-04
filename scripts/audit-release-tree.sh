@@ -31,7 +31,6 @@ is_generated_path() {
 }
 
 required_ignored_paths=(
-  ".chau7/sp42-release-audit"
   ".tmp/sp42-release-audit"
   "crates/sp42-server/.tmp/sp42-release-audit"
   ".sp42-runtime/sp42-release-audit"
@@ -65,6 +64,9 @@ fi
 
 untracked=()
 while IFS= read -r path; do
+  case "$path" in
+    .chau7|.chau7/*) continue ;;
+  esac
   untracked+=("$path")
 done < <(git ls-files --others --exclude-standard)
 

@@ -1,0 +1,30 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(git rev-parse --show-toplevel)"
+cd "$repo_root"
+
+if [[ "${SP42_SKIP_GIT_HOOKS:-0}" == "1" ]]; then
+  printf 'SP42 pre-commit hook skipped because SP42_SKIP_GIT_HOOKS=1.\n'
+  exit 0
+fi
+
+printf '\n== SP42 pre-commit: staged whitespace ==\n'
+git diff --cached --check
+
+printf '\n== SP42 pre-commit: working-tree whitespace ==\n'
+git diff --check
+
+printf '\n== SP42 pre-commit: rustfmt ==\n'
+cargo fmt --all -- --check
+
+printf '\n== SP42 pre-commit: docs consistency ==\n'
+bash scripts/check-doc-consistency.sh
+
+printf '\n== SP42 pre-commit: release tree audit ==\n'
+./scripts/audit-release-tree.sh
+
+printf '\n== SP42 pre-commit: focused checks ==\n'
+./scripts/check-focused.sh
+
+printf '\nSP42 pre-commit checks passed.\n'

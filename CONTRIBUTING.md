@@ -26,6 +26,21 @@ constraints.
 
 ## Local Checks
 
+Install the project Git hooks once per clone:
+
+```sh
+./scripts/install-git-hooks.sh
+```
+
+The repo uses a Husky-compatible local hook layout in `.husky/`. The installer
+sets `core.hooksPath=.husky`, so the hooks run automatically:
+
+- `pre-commit`: staged/working-tree whitespace checks, `cargo fmt --all -- --check`,
+  docs consistency, release-tree audit, and `./scripts/check-focused.sh`.
+- `pre-push`: release-tree audit and `./scripts/ci-all.sh`.
+
+For an emergency one-off bypass, set `SP42_SKIP_GIT_HOOKS=1`.
+
 Run the focused local check before opening a pull request:
 
 ```sh

@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(git rev-parse --show-toplevel)"
+cd "$repo_root"
+
+if [[ "${SP42_SKIP_GIT_HOOKS:-0}" == "1" ]]; then
+  printf 'SP42 pre-push hook skipped because SP42_SKIP_GIT_HOOKS=1.\n'
+  exit 0
+fi
+
+printf '\n== SP42 pre-push: release tree audit ==\n'
+./scripts/audit-release-tree.sh
+
+printf '\n== SP42 pre-push: full CI-shaped checks ==\n'
+./scripts/ci-all.sh
+
+printf '\nSP42 pre-push checks passed.\n'

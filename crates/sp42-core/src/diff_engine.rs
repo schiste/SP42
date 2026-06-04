@@ -364,6 +364,8 @@ struct InlineAnchorToken {
 
 type InlineNgramHit = (usize, usize, usize);
 type InlineAnchorCandidate = (usize, usize, usize, usize, usize, usize, usize, usize);
+type InlineRange = (usize, usize);
+type InlineRangePair = (Vec<InlineRange>, Vec<InlineRange>);
 
 fn tokenize_inline_anchors(text: &str) -> Vec<InlineAnchorToken> {
     let mut tokens = Vec::new();
@@ -481,7 +483,7 @@ fn collect_equal_anchor_ranges(
     before_tokens: &[InlineAnchorToken],
     after_text: &str,
     after_tokens: &[InlineAnchorToken],
-) -> (Vec<(usize, usize)>, Vec<(usize, usize)>) {
+) -> InlineRangePair {
     let mut before_occurrences: HashMap<String, Vec<InlineNgramHit>> = HashMap::new();
     let mut after_occurrences: HashMap<String, Vec<InlineNgramHit>> = HashMap::new();
     let max_ngram = before_tokens.len().min(after_tokens.len()).min(8);
@@ -567,10 +569,10 @@ fn collect_equal_anchor_ranges(
     )
 }
 
-fn collect_inline_ngrams<'a>(
-    tokens: &'a [InlineAnchorToken],
+fn collect_inline_ngrams(
+    tokens: &[InlineAnchorToken],
     n: usize,
-) -> impl Iterator<Item = (usize, (String, usize, usize))> + 'a {
+) -> impl Iterator<Item = (usize, (String, usize, usize))> + '_ {
     tokens.windows(n).enumerate().map(move |(index, window)| {
         let start = window.first().expect("window start").start;
         let end = window.last().expect("window end").end;

@@ -361,7 +361,7 @@ mod tests {
         let inventory = build_article_inventory(
             "frwiki",
             "Exemple",
-            r#"Text<ref name=a /> and <ref name='b'>https://example.test/source</ref>"#,
+            r"Text<ref name=a /> and <ref name='b'>https://example.test/source</ref>",
         );
 
         assert_eq!(inventory.reference_count(), 2);

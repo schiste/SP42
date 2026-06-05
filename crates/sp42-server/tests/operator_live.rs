@@ -323,7 +323,9 @@ fn dump_runtime_root(runtime_root: &Path) {
 
 async fn fetch_live(client: &Client, base_url: &str, runtime_root: &Path) -> LiveOperatorView {
     let response = client
-        .get(format!("{base_url}/operator/live/frwiki?limit=1"))
+        .get(format!(
+            "{base_url}/operator/live/frwiki?limit=1&include_registered=true&unpatrolled_only=false"
+        ))
         .send()
         .await
         .expect("live operator request should succeed");

@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use leptos::prelude::*;
-use sp42_core::{EditorIdentity, QueuedEdit};
+use sp42_core::{EditorIdentity, QueuedEdit, live_operator_query_matches};
 
 use crate::components::filter_bar::PatrolFilterParams;
 use crate::platform::console;
@@ -32,7 +32,7 @@ pub(super) fn create_patrol_queue_controller(
             set_group_rev_ids.set(HashMap::new());
             return filtered
                 .into_iter()
-                .take(current_filters.limit as usize)
+                .take(current_filters.query.limit as usize)
                 .collect();
         }
 
@@ -40,7 +40,7 @@ pub(super) fn create_patrol_queue_controller(
         set_group_rev_ids.set(rev_map);
         grouped
             .into_iter()
-            .take(current_filters.limit as usize)
+            .take(current_filters.query.limit as usize)
             .collect()
     });
 
@@ -91,48 +91,7 @@ pub(super) fn install_filter_selection_reset(
 fn filter_edits(edits: Vec<QueuedEdit>, filters: &PatrolFilterParams) -> Vec<QueuedEdit> {
     edits
         .into_iter()
-        .filter(|item| {
-            if filters.unpatrolled_only && item.event.is_patrolled.is_enabled() {
-                return false;
-            }
-            if !filters.include_bots && item.event.is_bot.is_enabled() {
-                return false;
-            }
-            if !filters.include_minor && item.event.is_minor.is_enabled() {
-                return false;
-            }
-            if !filters.include_new_pages && item.event.is_new_page.is_enabled() {
-                return false;
-            }
-            match &item.event.performer {
-                EditorIdentity::Anonymous { .. } => {
-                    if !filters.include_anonymous {
-                        return false;
-                    }
-                }
-                EditorIdentity::Temporary { .. } => {
-                    if !filters.include_temporary {
-                        return false;
-                    }
-                }
-                EditorIdentity::Registered { .. } => {
-                    if !filters.include_registered {
-                        return false;
-                    }
-                }
-            }
-            if let Some(ref tag) = filters.tag_filter {
-                if !tag.trim().is_empty() && !item.event.tags.iter().any(|t| t == tag.trim()) {
-                    return false;
-                }
-            }
-            if let Some(min) = filters.min_score {
-                if item.score.total < min {
-                    return false;
-                }
-            }
-            true
-        })
+        .filter(|item| live_operator_query_matches(item, &filters.query))
         .collect()
 }
 

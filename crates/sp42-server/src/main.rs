@@ -68,7 +68,7 @@ use crate::endpoint_manifest::operator_endpoint_manifest;
 pub(crate) use crate::live_queue::{
     IngestionSupervisorSnapshot, LiveOperatorAssembly, LiveOperatorFinalization,
     LiveOperatorProductContext, LiveOperatorPublicContextState, LivePublicDocumentLoadSpec,
-    LiveViewFilterParams, build_live_operator_notes, build_live_operator_products, default_limit,
+    LiveViewFilterParams, build_live_operator_notes, build_live_operator_products,
     finalize_live_operator_view, load_live_operator_bootstrap, load_live_queue_state,
     load_selected_review_state, supervisor_snapshot_for_wiki,
 };

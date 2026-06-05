@@ -112,10 +112,12 @@ pub use liftwing::{
     parse_liftwing_score_response,
 };
 pub use live_operator::{
-    LiveIngestionSupervisorStatus, LiveOperatorActionPreflight, LiveOperatorActionRecommendation,
-    LiveOperatorBackendStatus, LiveOperatorHeuristicProvenance, LiveOperatorPhaseTiming,
-    LiveOperatorPublicDocuments, LiveOperatorQuery, LiveOperatorRetryClass, LiveOperatorTelemetry,
-    LiveOperatorView, build_live_operator_action_preflight, classify_retry,
+    DEFAULT_LIVE_OPERATOR_LIMIT, LiveIngestionSupervisorStatus, LiveOperatorActionPreflight,
+    LiveOperatorActionRecommendation, LiveOperatorBackendStatus, LiveOperatorHeuristicProvenance,
+    LiveOperatorPhaseTiming, LiveOperatorPublicDocuments, LiveOperatorQuery,
+    LiveOperatorRetryClass, LiveOperatorTelemetry, LiveOperatorView, MAX_LIVE_OPERATOR_LIMIT,
+    build_live_operator_action_preflight, classify_retry, filter_live_operator_queue,
+    live_operator_query_matches,
 };
 pub use media_diff::{
     MediaDiffEntry, MediaDiffKind, MediaDiffReport, MediaReference, build_media_diff,

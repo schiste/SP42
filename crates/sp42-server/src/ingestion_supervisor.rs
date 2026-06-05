@@ -1,13 +1,13 @@
 use std::time::Duration;
 
 use sp42_core::{
-    BacklogRuntime, BacklogRuntimeConfig, QueuedEdit, StreamRuntimeStatus, WikiConfig,
-    build_ranked_queue,
+    BacklogRuntime, BacklogRuntimeConfig, DEFAULT_LIVE_OPERATOR_LIMIT, QueuedEdit,
+    StreamRuntimeStatus, WikiConfig, build_ranked_queue,
 };
 
 use crate::{
-    AppState, BearerHttpClient, IngestionSupervisorSnapshot, default_limit,
-    persisted_stream_status, resolved_wiki_config, runtime_storage_for,
+    AppState, BearerHttpClient, IngestionSupervisorSnapshot, persisted_stream_status,
+    resolved_wiki_config, runtime_storage_for,
 };
 
 pub(crate) fn supervisor_poll_interval_ms() -> u64 {
@@ -196,7 +196,7 @@ pub(crate) async fn perform_supervisor_poll(
         config.clone(),
         storage,
         BacklogRuntimeConfig {
-            limit: default_limit(),
+            limit: DEFAULT_LIVE_OPERATOR_LIMIT,
             include_bots: false,
         },
         format!("recentchanges.rccontinue.{wiki_id}"),

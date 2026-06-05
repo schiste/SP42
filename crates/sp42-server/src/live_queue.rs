@@ -1,8 +1,10 @@
+use std::collections::BTreeMap;
+
 use axum::http::HeaderMap;
 use sp42_core::{
     ActionExecutionHistoryReport, ActionExecutionStatusReport, BacklogRuntime,
-    BacklogRuntimeConfig, ContextInputs, CoordinationRoomSummary, DebugSnapshotInputs,
-    DevAuthCapabilityReport, DevAuthSessionStatus, EditorIdentity, FlagState, LiftWingRequest,
+    BacklogRuntimeConfig, ContextInputs, CoordinationRoomSummary, DEFAULT_LIVE_OPERATOR_LIMIT,
+    DebugSnapshotInputs, DevAuthCapabilityReport, DevAuthSessionStatus, FlagState, LiftWingRequest,
     LiveOperatorBackendStatus, LiveOperatorHeuristicProvenance, LiveOperatorPhaseTiming,
     LiveOperatorPublicDocuments, LiveOperatorQuery, LiveOperatorTelemetry, LiveOperatorView,
     PatrolScenarioReportInputs, PatrolSessionDigestInputs, PublicStorageDocumentData,
@@ -10,7 +12,7 @@ use sp42_core::{
     WikiConfig, build_debug_snapshot, build_live_operator_action_preflight,
     build_patrol_scenario_report, build_patrol_session_digest, build_ranked_queue_with_policy,
     build_review_workbench, build_scoring_context, build_shell_state_model, execute_liftwing_score,
-    execute_recent_changes, score_edit_with_context,
+    execute_recent_changes, filter_live_operator_queue, score_edit_with_context,
 };
 
 use crate::session_runtime::current_status;
@@ -39,34 +41,22 @@ pub(crate) struct LivePublicDocumentLoadSpec {
     pub(crate) plan_label: &'static str,
 }
 
-#[derive(Debug, serde::Deserialize)]
+#[derive(Debug, Default, serde::Deserialize)]
 pub(crate) struct LiveViewFilterParams {
-    #[serde(default = "default_limit")]
-    pub(crate) limit: u16,
-    #[serde(default)]
-    pub(crate) include_bots: FlagState,
-    #[serde(default)]
-    pub(crate) unpatrolled_only: FlagState,
-    #[serde(default = "default_true")]
-    pub(crate) include_minor: FlagState,
-    #[serde(default = "default_true")]
-    pub(crate) include_registered: FlagState,
-    #[serde(default = "default_true")]
-    pub(crate) include_anonymous: FlagState,
-    #[serde(default = "default_true")]
-    pub(crate) include_temporary: FlagState,
-    #[serde(default = "default_true")]
-    pub(crate) include_new_pages: FlagState,
-    #[serde(default)]
-    pub(crate) namespaces: Option<String>,
-    #[serde(default)]
-    pub(crate) min_score: Option<i32>,
-    #[serde(default)]
-    pub(crate) tag_filter: Option<String>,
-    #[serde(default)]
-    pub(crate) rccontinue: Option<String>,
     #[serde(default)]
     pub(crate) selected_index: Option<usize>,
+    #[serde(flatten)]
+    query_pairs: BTreeMap<String, String>,
+}
+
+impl LiveViewFilterParams {
+    pub(crate) fn query(&self) -> LiveOperatorQuery {
+        LiveOperatorQuery::from_query_pairs(
+            self.query_pairs
+                .iter()
+                .map(|(key, value)| (key.as_str(), value.as_str())),
+        )
+    }
 }
 
 pub(crate) struct LiveOperatorBootstrap {
@@ -142,14 +132,6 @@ pub(crate) struct LiveOperatorAssembly {
     pub(crate) telemetry_phase_timings: Vec<LiveOperatorPhaseTiming>,
 }
 
-pub(crate) const fn default_limit() -> u16 {
-    15
-}
-
-pub(crate) const fn default_true() -> FlagState {
-    FlagState::Enabled
-}
-
 pub(crate) async fn load_live_operator_bootstrap(
     state: &AppState,
     headers: &HeaderMap,
@@ -165,51 +147,11 @@ pub(crate) async fn load_live_operator_bootstrap(
     })
 }
 
-fn parsed_namespaces(namespaces: Option<&String>) -> Vec<i32> {
-    namespaces.map_or_else(Vec::new, |value| {
-        value
-            .split(',')
-            .filter_map(|entry| entry.trim().parse::<i32>().ok())
-            .collect()
-    })
-}
-
-fn uses_default_live_filters(query: &LiveOperatorQuery) -> bool {
-    query.rccontinue.is_none()
-        && !query.include_bots.is_enabled()
-        && !query.unpatrolled_only.is_enabled()
-        && query.include_minor.is_enabled()
-        && query.include_anonymous.is_enabled()
-        && query.include_registered.is_enabled()
-        && query.include_temporary.is_enabled()
-        && query.include_new_pages.is_enabled()
-        && query.tag_filter.is_none()
-        && query.namespaces.is_empty()
-        && query.min_score.is_none()
-}
-
 pub(crate) async fn supervisor_snapshot_for_wiki(
     state: &AppState,
     wiki_id: &str,
 ) -> Option<IngestionSupervisorSnapshot> {
     ingestion_supervisor::supervisor_snapshot_for_wiki(state, wiki_id).await
-}
-
-fn live_operator_query_from_filters(filters: &LiveViewFilterParams) -> LiveOperatorQuery {
-    LiveOperatorQuery {
-        limit: filters.limit.clamp(1, 500),
-        include_bots: filters.include_bots,
-        unpatrolled_only: filters.unpatrolled_only,
-        include_minor: filters.include_minor,
-        include_registered: filters.include_registered,
-        include_anonymous: filters.include_anonymous,
-        include_temporary: filters.include_temporary,
-        include_new_pages: filters.include_new_pages,
-        namespaces: parsed_namespaces(filters.namespaces.as_ref()),
-        min_score: filters.min_score,
-        tag_filter: filters.tag_filter.clone(),
-        rccontinue: filters.rccontinue.clone(),
-    }
 }
 
 fn apply_public_defaults_to_live_query(
@@ -225,8 +167,8 @@ fn apply_public_defaults_to_live_query(
                 _ => None,
             })
     {
-        if query.limit == default_limit() {
-            query.limit = preferences.queue_limit.clamp(1, 500);
+        if query.limit == DEFAULT_LIVE_OPERATOR_LIMIT {
+            query.limit = preferences.queue_limit;
         }
         if !preferences.hide_bots {
             query.include_bots = FlagState::Enabled;
@@ -285,7 +227,7 @@ fn apply_public_defaults_to_live_query(
         }
     }
 
-    query
+    query.normalized()
 }
 
 fn live_queue_policy_from_public_context(
@@ -327,41 +269,6 @@ fn live_queue_policy_from_public_context(
     }
 }
 
-fn filter_ranked_queue(mut queue: Vec<QueuedEdit>, query: &LiveOperatorQuery) -> Vec<QueuedEdit> {
-    if let Some(min_score) = query.min_score {
-        queue.retain(|item| item.score.total >= min_score);
-    }
-    if !query.include_registered.is_enabled() {
-        queue.retain(|item| !matches!(item.event.performer, EditorIdentity::Registered { .. }));
-    }
-    if !query.include_temporary.is_enabled() {
-        queue.retain(|item| !matches!(item.event.performer, EditorIdentity::Temporary { .. }));
-    }
-    if !query.include_anonymous.is_enabled() {
-        queue.retain(|item| !matches!(item.event.performer, EditorIdentity::Anonymous { .. }));
-    }
-    if !query.include_bots.is_enabled() {
-        queue.retain(|item| !item.event.is_bot.is_enabled());
-    }
-    if !query.include_minor.is_enabled() {
-        queue.retain(|item| !item.event.is_minor.is_enabled());
-    }
-    if !query.include_new_pages.is_enabled() {
-        queue.retain(|item| !item.event.is_new_page.is_enabled());
-    }
-    if query.unpatrolled_only.is_enabled() {
-        queue.retain(|item| !item.event.is_patrolled.is_enabled());
-    }
-    if !query.namespaces.is_empty() {
-        queue.retain(|item| query.namespaces.contains(&item.event.namespace));
-    }
-    if let Some(tag_filter) = query.tag_filter.as_ref() {
-        queue.retain(|item| item.event.tags.iter().any(|tag| tag == tag_filter));
-    }
-    queue.truncate(usize::from(query.limit));
-    queue
-}
-
 fn queue_state_from_supervisor(
     wiki_id: &str,
     query: LiveOperatorQuery,
@@ -377,7 +284,7 @@ fn queue_state_from_supervisor(
     let policy = live_queue_policy_from_public_context(public_context);
     let rebuilt_queue =
         build_ranked_queue_with_policy(events, scoring_config, &policy).unwrap_or_default();
-    let queue = filter_ranked_queue(rebuilt_queue, &query);
+    let queue = filter_live_operator_queue(rebuilt_queue, &query);
     LiveQueueState {
         query,
         batch: sp42_core::RecentChangesBatch {
@@ -460,7 +367,7 @@ async fn queue_state_from_recentchanges(
             .map_err(|error| format!("recentchanges fetch failed: {error}"))?
     };
     let backlog_status = backlog_runtime.status();
-    let queue = filter_ranked_queue(
+    let queue = filter_live_operator_queue(
         build_ranked_queue_with_policy(
             batch.events.clone(),
             &config.scoring,
@@ -487,11 +394,8 @@ pub(crate) async fn load_live_queue_state(
     client: &BearerHttpClient,
     public_context: &LiveOperatorPublicContextState,
 ) -> Result<LiveQueueState, String> {
-    let query = apply_public_defaults_to_live_query(
-        live_operator_query_from_filters(filters),
-        public_context,
-    );
-    if uses_default_live_filters(&query)
+    let query = apply_public_defaults_to_live_query(filters.query(), public_context);
+    if query.can_use_supervisor_snapshot()
         && let Some(snapshot) = supervisor_snapshot_for_wiki(state, wiki_id).await
         && snapshot.status.active
     {

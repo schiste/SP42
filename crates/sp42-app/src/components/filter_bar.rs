@@ -1,20 +1,10 @@
 use leptos::prelude::*;
+use sp42_core::{FlagState, LiveOperatorQuery};
 
 /// Filter parameters sent as query string to `/operator/live/{wiki_id}`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PatrolFilterParams {
-    pub limit: u16,
-    pub include_bots: bool,
-    pub unpatrolled_only: bool,
-    pub include_minor: bool,
-    pub include_registered: bool,
-    pub include_anonymous: bool,
-    pub include_temporary: bool,
-    pub include_new_pages: bool,
-    pub namespaces: Option<Vec<i32>>,
-    pub min_score: Option<i32>,
-    pub tag_filter: Option<String>,
-    pub rccontinue: Option<String>,
+    pub query: LiveOperatorQuery,
     pub selected_index: Option<usize>,
     pub group_edits: bool,
 }
@@ -22,18 +12,7 @@ pub struct PatrolFilterParams {
 impl Default for PatrolFilterParams {
     fn default() -> Self {
         Self {
-            limit: 15,
-            include_bots: false,
-            unpatrolled_only: true,
-            include_minor: true,
-            include_registered: false,
-            include_anonymous: true,
-            include_temporary: true,
-            include_new_pages: true,
-            namespaces: None,
-            min_score: None,
-            tag_filter: None,
-            rccontinue: None,
+            query: LiveOperatorQuery::default(),
             selected_index: None,
             group_edits: false,
         }
@@ -43,42 +22,12 @@ impl Default for PatrolFilterParams {
 impl PatrolFilterParams {
     #[must_use]
     pub fn to_query_string(&self) -> String {
-        let mut pairs = Vec::new();
-        pairs.push(format!("limit={}", self.limit));
-        if self.include_bots {
-            pairs.push("include_bots=true".to_string());
-        }
-        if self.unpatrolled_only {
-            pairs.push("unpatrolled_only=true".to_string());
-        }
-        if !self.include_minor {
-            pairs.push("include_minor=false".to_string());
-        }
-        if !self.include_registered {
-            pairs.push("include_registered=false".to_string());
-        }
-        if !self.include_anonymous {
-            pairs.push("include_anonymous=false".to_string());
-        }
-        if !self.include_temporary {
-            pairs.push("include_temporary=false".to_string());
-        }
-        if !self.include_new_pages {
-            pairs.push("include_new_pages=false".to_string());
-        }
-        if let Some(ref ns) = self.namespaces {
-            let ns_str: Vec<String> = ns.iter().map(ToString::to_string).collect();
-            pairs.push(format!("namespaces={}", ns_str.join(",")));
-        }
-        if let Some(score) = self.min_score {
-            pairs.push(format!("min_score={score}"));
-        }
-        if let Some(ref tag) = self.tag_filter {
-            pairs.push(format!("tag_filter={tag}"));
-        }
-        if let Some(ref token) = self.rccontinue {
-            pairs.push(format!("rccontinue={token}"));
-        }
+        let mut pairs = self
+            .query
+            .to_query_pairs()
+            .into_iter()
+            .map(|(key, value)| format!("{key}={value}"))
+            .collect::<Vec<_>>();
         if let Some(idx) = self.selected_index {
             pairs.push(format!("selected_index={idx}"));
         }
@@ -109,7 +58,7 @@ pub fn FilterBar(
         ($body:expr) => {{
             let updater: Box<dyn Fn(&mut PatrolFilterParams)> = Box::new($body);
             let mut current = filters.get();
-            current.rccontinue = None;
+            current.query.rccontinue = None;
             updater(&mut current);
             set_filters.set(current);
         }};
@@ -118,7 +67,7 @@ pub fn FilterBar(
     let load_older = move |_| {
         if let Some(token) = next_continue.get() {
             let mut current = filters.get();
-            current.rccontinue = Some(token);
+            current.query.rccontinue = Some(token);
             set_filters.set(current);
         }
     };
@@ -129,17 +78,17 @@ pub fn FilterBar(
 
     let summary_text = move || {
         let f = filters.get();
-        let mut parts = vec![format!("{} edits", f.limit)];
-        if f.unpatrolled_only {
+        let mut parts = vec![format!("{} edits", f.query.limit)];
+        if f.query.unpatrolled_only.is_enabled() {
             parts.push("unpatrolled".to_string());
         }
-        if !f.include_minor {
+        if !f.query.include_minor.is_enabled() {
             parts.push("no minor".to_string());
         }
-        if f.include_bots {
+        if f.query.include_bots.is_enabled() {
             parts.push("+ bots".to_string());
         }
-        if let Some(ref tag) = f.tag_filter {
+        if let Some(ref tag) = f.query.tag_filter {
             parts.push(format!("tag:{tag}"));
         }
         parts.join(", ")
@@ -158,12 +107,12 @@ pub fn FilterBar(
                     class=select_class
                     on:change=move |ev| {
                         let value: u16 = event_target_value(&ev).parse().unwrap_or(15);
-                        update_filter!(move |f| f.limit = value);
+                        update_filter!(move |f| f.query.limit = value);
                     }
                 >
-                    <option value="15" selected=move || filters.get().limit == 15>"15"</option>
-                    <option value="25" selected=move || filters.get().limit == 25>"25"</option>
-                    <option value="50" selected=move || filters.get().limit == 50>"50"</option>
+                    <option value="15" selected=move || filters.get().query.limit == 15>"15"</option>
+                    <option value="25" selected=move || filters.get().query.limit == 25>"25"</option>
+                    <option value="50" selected=move || filters.get().query.limit == 50>"50"</option>
                 </select>
             </label>
 
@@ -173,10 +122,10 @@ pub fn FilterBar(
                 <input
                     type="checkbox"
                     class=checkbox_class
-                    prop:checked=move || filters.get().unpatrolled_only
+                    prop:checked=move || filters.get().query.unpatrolled_only.is_enabled()
                     on:change=move |ev| {
                         let checked = event_target_checked(&ev);
-                        update_filter!(move |f| f.unpatrolled_only = checked);
+                        update_filter!(move |f| f.query.unpatrolled_only = FlagState::from(checked));
                     }
                 />
                 "Unpatrolled only"
@@ -186,10 +135,10 @@ pub fn FilterBar(
                 <input
                     type="checkbox"
                     class=checkbox_class
-                    prop:checked=move || !filters.get().include_minor
+                    prop:checked=move || !filters.get().query.include_minor.is_enabled()
                     on:change=move |ev| {
                         let checked = event_target_checked(&ev);
-                        update_filter!(move |f| f.include_minor = !checked);
+                        update_filter!(move |f| f.query.include_minor = FlagState::from(!checked));
                     }
                 />
                 "Hide minor"
@@ -199,10 +148,10 @@ pub fn FilterBar(
                 <input
                     type="checkbox"
                     class=checkbox_class
-                    prop:checked=move || filters.get().include_bots
+                    prop:checked=move || filters.get().query.include_bots.is_enabled()
                     on:change=move |ev| {
                         let checked = event_target_checked(&ev);
-                        update_filter!(move |f| f.include_bots = checked);
+                        update_filter!(move |f| f.query.include_bots = FlagState::from(checked));
                     }
                 />
                 "Bots"
@@ -214,10 +163,10 @@ pub fn FilterBar(
                 <input
                     type="checkbox"
                     class=checkbox_class
-                    prop:checked=move || filters.get().include_registered
+                    prop:checked=move || filters.get().query.include_registered.is_enabled()
                     on:change=move |ev| {
                         let checked = event_target_checked(&ev);
-                        update_filter!(move |f| f.include_registered = checked);
+                        update_filter!(move |f| f.query.include_registered = FlagState::from(checked));
                     }
                 />
                 "Registered"
@@ -227,10 +176,10 @@ pub fn FilterBar(
                 <input
                     type="checkbox"
                     class=checkbox_class
-                    prop:checked=move || filters.get().include_anonymous
+                    prop:checked=move || filters.get().query.include_anonymous.is_enabled()
                     on:change=move |ev| {
                         let checked = event_target_checked(&ev);
-                        update_filter!(move |f| f.include_anonymous = checked);
+                        update_filter!(move |f| f.query.include_anonymous = FlagState::from(checked));
                     }
                 />
                 "Anonymous"
@@ -240,10 +189,10 @@ pub fn FilterBar(
                 <input
                     type="checkbox"
                     class=checkbox_class
-                    prop:checked=move || filters.get().include_temporary
+                    prop:checked=move || filters.get().query.include_temporary.is_enabled()
                     on:change=move |ev| {
                         let checked = event_target_checked(&ev);
-                        update_filter!(move |f| f.include_temporary = checked);
+                        update_filter!(move |f| f.query.include_temporary = FlagState::from(checked));
                     }
                 />
                 "Temporary"
@@ -253,10 +202,10 @@ pub fn FilterBar(
                 <input
                     type="checkbox"
                     class=checkbox_class
-                    prop:checked=move || !filters.get().include_new_pages
+                    prop:checked=move || !filters.get().query.include_new_pages.is_enabled()
                     on:change=move |ev| {
                         let checked = event_target_checked(&ev);
-                        update_filter!(move |f| f.include_new_pages = !checked);
+                        update_filter!(move |f| f.query.include_new_pages = FlagState::from(!checked));
                     }
                 />
                 "Hide new pages"
@@ -283,15 +232,15 @@ pub fn FilterBar(
                     class=select_class
                     on:change=move |ev| {
                         let value: i32 = event_target_value(&ev).parse().unwrap_or(0);
-                        update_filter!(move |f| f.min_score = if value == 0 { None } else { Some(value) });
+                        update_filter!(move |f| f.query.min_score = if value == 0 { None } else { Some(value) });
                     }
                 >
-                    <option value="0" selected=move || filters.get().min_score.is_none()>"0"</option>
-                    <option value="10" selected=move || filters.get().min_score == Some(10)>"10"</option>
-                    <option value="20" selected=move || filters.get().min_score == Some(20)>"20"</option>
-                    <option value="30" selected=move || filters.get().min_score == Some(30)>"30"</option>
-                    <option value="50" selected=move || filters.get().min_score == Some(50)>"50"</option>
-                    <option value="70" selected=move || filters.get().min_score == Some(70)>"70"</option>
+                    <option value="0" selected=move || filters.get().query.min_score.is_none()>"0"</option>
+                    <option value="10" selected=move || filters.get().query.min_score == Some(10)>"10"</option>
+                    <option value="20" selected=move || filters.get().query.min_score == Some(20)>"20"</option>
+                    <option value="30" selected=move || filters.get().query.min_score == Some(30)>"30"</option>
+                    <option value="50" selected=move || filters.get().query.min_score == Some(50)>"50"</option>
+                    <option value="70" selected=move || filters.get().query.min_score == Some(70)>"70"</option>
                 </select>
             </label>
 
@@ -302,11 +251,11 @@ pub fn FilterBar(
                     class=select_class
                     style="width:100px;"
                     placeholder="e.g. mw-reverted"
-                    prop:value=move || filters.get().tag_filter.unwrap_or_default()
+                    prop:value=move || filters.get().query.tag_filter.unwrap_or_default()
                     on:change=move |ev| {
                         let value = event_target_input_value(&ev);
                         update_filter!(move |f| {
-                            f.tag_filter = if value.trim().is_empty() {
+                            f.query.tag_filter = if value.trim().is_empty() {
                                 None
                             } else {
                                 Some(value.trim().to_string())
@@ -322,11 +271,12 @@ pub fn FilterBar(
                 .iter()
                 .map(|&(ns, name)| {
                     let is_active = move || {
-                        filters
-                            .get()
-                            .namespaces
-                            .as_ref()
-                            .map_or(DEFAULT_NAMESPACES.contains(&ns), |list| list.contains(&ns))
+                        let namespaces = filters.get().query.namespaces;
+                        if namespaces.is_empty() {
+                            DEFAULT_NAMESPACES.contains(&ns)
+                        } else {
+                            namespaces.contains(&ns)
+                        }
                     };
                     view! {
                         <label class=label_class style="font-size:11px;">
@@ -337,9 +287,10 @@ pub fn FilterBar(
                                 on:change=move |ev| {
                                     let checked = event_target_checked(&ev);
                                     update_filter!(move |f| {
-                                        let list = f
-                                            .namespaces
-                                            .get_or_insert_with(|| DEFAULT_NAMESPACES.to_vec());
+                                        if f.query.namespaces.is_empty() {
+                                            f.query.namespaces = DEFAULT_NAMESPACES.to_vec();
+                                        }
+                                        let list = &mut f.query.namespaces;
                                         if checked && !list.contains(&ns) {
                                             list.push(ns);
                                             list.sort_unstable();
@@ -414,6 +365,7 @@ fn event_target_input_value(_ev: &leptos::ev::Event) -> String {
 #[cfg(test)]
 mod tests {
     use super::PatrolFilterParams;
+    use sp42_core::{FlagState, LiveOperatorQuery};
 
     #[test]
     fn default_query_string_contains_limit() {
@@ -434,18 +386,20 @@ mod tests {
     #[test]
     fn query_string_includes_all_set_params() {
         let params = PatrolFilterParams {
-            limit: 50,
-            include_bots: true,
-            unpatrolled_only: true,
-            include_minor: false,
-            include_registered: false,
-            include_anonymous: false,
-            include_temporary: false,
-            include_new_pages: false,
-            namespaces: Some(vec![0, 2]),
-            min_score: Some(30),
-            tag_filter: Some("mw-reverted".to_string()),
-            rccontinue: Some("20260325|abc".to_string()),
+            query: LiveOperatorQuery {
+                limit: 50,
+                include_bots: FlagState::Enabled,
+                include_minor: FlagState::Disabled,
+                include_registered: FlagState::Disabled,
+                include_anonymous: FlagState::Disabled,
+                include_temporary: FlagState::Disabled,
+                include_new_pages: FlagState::Disabled,
+                namespaces: vec![0, 2],
+                min_score: Some(30),
+                tag_filter: Some("mw-reverted".to_string()),
+                rccontinue: Some("20260325|abc".to_string()),
+                ..LiveOperatorQuery::default()
+            },
             selected_index: Some(3),
             group_edits: false,
         };

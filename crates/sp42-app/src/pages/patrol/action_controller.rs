@@ -1,4 +1,4 @@
-use std::{collections::HashMap, rc::Rc};
+use std::collections::HashMap;
 
 use leptos::prelude::*;
 use sp42_core::{
@@ -28,7 +28,7 @@ pub(super) struct PatrolActionControllerInput {
     pub(super) selected_index: Memo<usize>,
     pub(super) set_selected_rev_id: WriteSignal<Option<u64>>,
     pub(super) set_selection_only_refetch: WriteSignal<bool>,
-    pub(super) reload_after_action: Rc<dyn Fn()>,
+    pub(super) reload_after_action: Action<(), ()>,
 }
 
 pub(super) fn create_patrol_action_controller(
@@ -50,7 +50,7 @@ pub(super) fn create_patrol_action_controller(
         input.set_all_edits,
         input.set_selected_rev_id,
         input.set_selection_only_refetch,
-        Rc::clone(&input.reload_after_action),
+        input.reload_after_action,
         action_trigger,
         set_action_trigger,
         set_action_pending,
@@ -85,7 +85,7 @@ fn install_action_effect(
     set_all_edits: WriteSignal<Vec<QueuedEdit>>,
     set_selected_rev_id: WriteSignal<Option<u64>>,
     set_selection_only_refetch: WriteSignal<bool>,
-    reload_after_action: Rc<dyn Fn()>,
+    reload_after_action: Action<(), ()>,
     action_trigger: ReadSignal<Option<SessionActionKind>>,
     set_action_trigger: WriteSignal<Option<SessionActionKind>>,
     set_action_pending: WriteSignal<bool>,
@@ -93,7 +93,6 @@ fn install_action_effect(
 ) {
     let execute_action = Action::new_local(move |kind: &SessionActionKind| {
         let kind = *kind;
-        let reload_after_action = Rc::clone(&reload_after_action);
         async move {
             set_action_pending.set(true);
 
@@ -128,7 +127,7 @@ fn install_action_effect(
                     );
                     set_review_note.set(String::new());
                     set_selection_only_refetch.set(true);
-                    (reload_after_action)();
+                    reload_after_action.dispatch_local(());
                 }
                 Ok(response) => {
                     set_action_status.set(format!(

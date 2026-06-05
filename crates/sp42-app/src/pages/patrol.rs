@@ -2,7 +2,7 @@ use std::sync::{Arc, Mutex};
 
 use leptos::prelude::*;
 use send_wrapper::SendWrapper;
-use sp42_core::{LiveOperatorView, MediaDiffReport, SessionActionKind};
+use sp42_core::{MediaDiffReport, SessionActionKind};
 
 use crate::components::action_bar::ActionBar;
 use crate::components::context_header::ContextHeader;
@@ -11,36 +11,32 @@ use crate::components::filter_bar::{FilterBar, PatrolFilterParams};
 use crate::components::media_diff_gallery::MediaDiffGallery;
 use crate::components::queue_column::QueueColumn;
 use crate::components::{PatrolScenarioPanel, PatrolSessionDigestPanel, ShellStatePanel};
-use crate::platform::auth::bootstrap_dev_auth_session;
 use crate::platform::config::configured_default_wiki_id;
 use crate::platform::console;
 use crate::platform::eventstream::{EventStreamHandle, StreamEvent, start_eventstream};
-use crate::platform::live::fetch_live_operator_view;
 
 mod action_controller;
+mod load_controller;
 mod queue_controller;
 mod revision_artifacts;
 
 use action_controller::{PatrolActionControllerInput, create_patrol_action_controller};
+use load_controller::{PatrolLoadControllerInput, create_patrol_load_controller};
 use queue_controller::create_patrol_queue_controller;
 use revision_artifacts::{
-    RevisionArtifactEffectsInput, cache_initial_artifacts, create_revision_artifact_controller,
-    install_revision_artifact_effects, prefetch_queue_diffs, rev_id_from_hash,
+    RevisionArtifactEffectsInput, create_revision_artifact_controller,
+    install_revision_artifact_effects,
 };
 
 #[component]
 pub fn PatrolSurface() -> impl IntoView {
     let active_wiki_id = configured_default_wiki_id();
-    let (view_data, set_view_data) = signal(None::<LiveOperatorView>);
-    let (load_error, set_load_error) = signal(None::<String>);
     let (selected_rev_id, set_selected_rev_id) = signal(None::<u64>);
-    let (next_continue, set_next_continue) = signal(None::<String>);
     let (review_note, set_review_note) = signal(String::new());
     let (show_help, set_show_help) = signal(false);
     let (show_backoffice, set_show_backoffice) = signal(false);
     let revision_artifacts = create_revision_artifact_controller();
     let diff_loading = revision_artifacts.diff_loading;
-    let set_diff_loading = revision_artifacts.set_diff_loading;
     let current_diff = revision_artifacts.current_diff;
     let media_diff_loading = revision_artifacts.media_diff_loading;
     let current_media_diff = revision_artifacts.current_media_diff;
@@ -59,9 +55,6 @@ pub fn PatrolSurface() -> impl IntoView {
     // Only updated by explicit human actions — never by EventStream inserts.
     let (selected_edit, set_selected_edit) = signal(None::<sp42_core::QueuedEdit>);
 
-    let (selection_only_refetch, set_selection_only_refetch) = signal(false);
-    let (bootstrap_attempted, set_bootstrap_attempted) = signal(false);
-    let (bootstrap_error, set_bootstrap_error) = signal(None::<String>);
     let eventstream_handle = Arc::new(Mutex::new(SendWrapper::new(None::<EventStreamHandle>)));
     let cleanup_eventstream_handle = Arc::clone(&eventstream_handle);
     on_cleanup(move || {
@@ -70,89 +63,23 @@ pub fn PatrolSurface() -> impl IntoView {
         }
     });
 
-    // If the response shows no auth and we haven't tried yet, auto-bootstrap.
-    let load_wiki_id = active_wiki_id.clone();
-    let load_action = Action::new_local(move |_: &()| {
-        let wiki_id = load_wiki_id.clone();
-        let set_view_data = set_view_data;
-        let set_load_error = set_load_error;
-        let set_next_continue = set_next_continue;
-        async move {
-            let mut current_filters = filters.get();
-            current_filters.selected_index = Some(selected_index.get_untracked());
-            match fetch_live_operator_view(&wiki_id, &current_filters).await {
-                Ok(view) => {
-                    if view.auth.username.is_none() && !bootstrap_attempted.get_untracked() {
-                        // Auto-bootstrap: try the local token bridge
-                        set_bootstrap_attempted.set(true);
-                        let request = sp42_core::DevAuthBootstrapRequest {
-                            username: String::new(),
-                            scopes: Vec::new(),
-                            expires_at_ms: None,
-                        };
-                        match bootstrap_dev_auth_session(&request).await {
-                            Ok(status) if status.authenticated => {
-                                set_bootstrap_error.set(None);
-                                // Re-fetch now that we have a session
-                                match fetch_live_operator_view(&wiki_id, &current_filters).await {
-                                    Ok(view2) => {
-                                        set_load_error.set(None);
-                                        set_next_continue.set(view2.next_continue.clone());
-                                        set_view_data.set(Some(view2));
-                                    }
-                                    Err(error) => set_load_error.set(Some(error)),
-                                }
-                                return;
-                            }
-                            Ok(_) => {
-                                set_bootstrap_error.set(Some(
-                                    "Bootstrap succeeded but session not authenticated. Check .env.wikimedia.local token.".to_string(),
-                                ));
-                            }
-                            Err(error) => {
-                                set_bootstrap_error.set(Some(format!("Bootstrap failed: {error}")));
-                            }
-                        }
-                    }
-                    set_load_error.set(None);
-                    set_next_continue.set(view.next_continue.clone());
-                    cache_initial_artifacts(&view, revision_artifacts);
-                    if !selection_only_refetch.get_untracked() {
-                        console::info(&format!(
-                            "[SP42] server load: {} edits, diff={}",
-                            view.queue.len(),
-                            view.diff.is_some()
-                        ));
-                        if let Some(target_rev) = rev_id_from_hash() {
-                            console::debug(&format!(
-                                "[SP42] selecting rev from hash: {target_rev}"
-                            ));
-                            set_selected_rev_id.set(Some(target_rev));
-                        } else if let Some(first) = view.queue.first() {
-                            console::debug(&format!(
-                                "[SP42] selecting first: rev {}",
-                                first.event.rev_id
-                            ));
-                            set_selected_rev_id.set(Some(first.event.rev_id));
-                        }
-                        set_all_edits.set(view.queue.clone());
-                    }
-                    set_selection_only_refetch.set(false);
-                    prefetch_queue_diffs(&view, revision_artifacts);
-                    set_view_data.set(Some(view));
-                    set_diff_loading.set(false);
-                }
-                Err(error) => {
-                    set_load_error.set(Some(error));
-                    set_diff_loading.set(false);
-                }
-            }
-        }
+    let load_controller = create_patrol_load_controller(PatrolLoadControllerInput {
+        active_wiki_id: active_wiki_id.clone(),
+        filters,
+        selected_index,
+        set_selected_rev_id,
+        set_all_edits,
+        artifacts: revision_artifacts,
     });
+    let view_data = load_controller.view_data;
+    let load_error = load_controller.load_error;
+    let next_continue = load_controller.next_continue;
+    let bootstrap_attempted = load_controller.bootstrap_attempted;
+    let bootstrap_error = load_controller.bootstrap_error;
+    let set_bootstrap_attempted = load_controller.set_bootstrap_attempted;
+    let set_selection_only_refetch = load_controller.set_selection_only_refetch;
+    let load_action = load_controller.load_action;
 
-    let reload_after_action = std::rc::Rc::new(move || {
-        load_action.dispatch_local(());
-    });
     let action_controller = create_patrol_action_controller(PatrolActionControllerInput {
         view_data,
         selected_edit,
@@ -165,7 +92,7 @@ pub fn PatrolSurface() -> impl IntoView {
         selected_index,
         set_selected_rev_id,
         set_selection_only_refetch,
-        reload_after_action,
+        reload_after_action: load_action,
     });
     let set_action_trigger = action_controller.set_action_trigger;
     let set_skip_trigger = action_controller.set_skip_trigger;
@@ -175,14 +102,6 @@ pub fn PatrolSurface() -> impl IntoView {
 
     let queue_len = Memo::new(move |_| queue_signal.get().len());
     let has_selection = Memo::new(move |_| selected_index.get() < queue_len.get());
-
-    // Initial fetch on mount
-    Effect::new(move |ran: Option<bool>| {
-        if ran.is_none() {
-            load_action.dispatch_local(());
-        }
-        true
-    });
 
     // Filter changes reset selection to the first visible item.
     // Uses get_untracked for the queue so EventStream inserts don't
@@ -306,12 +225,6 @@ pub fn PatrolSurface() -> impl IntoView {
             // auth bootstrap prompt instead of the patrol layout.
             if let Some(ref view) = view_data.get() {
                 if view.auth.username.is_none() {
-                    let bootstrap_btn_action = Action::new_local(move |_: &()| {
-                        async move {
-                            set_bootstrap_attempted.set(false); // Allow re-attempt
-                            load_action.dispatch_local(());
-                        }
-                    });
                     let bridge_mode = view.auth.bridge_mode.clone();
                     let has_token = view.auth.local_token_available;
                     return view! {
@@ -351,7 +264,10 @@ pub fn PatrolSurface() -> impl IntoView {
                                     <button
                                         class="btn"
                                         style="border-color:rgba(59,130,246,.5);background:rgba(59,130,246,.15);"
-                                        on:click=move |_| { bootstrap_btn_action.dispatch_local(()); }
+                                        on:click=move |_| {
+                                            set_bootstrap_attempted.set(false);
+                                            load_action.dispatch_local(());
+                                        }
                                     >
                                         "Bootstrap session"
                                     </button>

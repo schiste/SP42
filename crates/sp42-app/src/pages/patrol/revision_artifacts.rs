@@ -12,23 +12,23 @@ use crate::platform::console;
 use crate::platform::live::{fetch_diff, fetch_media_diff};
 
 #[derive(Clone, Copy)]
-pub(super) struct RevisionArtifactController {
-    pub(super) diff_loading: ReadSignal<bool>,
-    pub(super) set_diff_loading: WriteSignal<bool>,
-    pub(super) current_diff: ReadSignal<Option<StructuredDiff>>,
+pub(in crate::pages::patrol) struct RevisionArtifactController {
+    pub(in crate::pages::patrol) diff_loading: ReadSignal<bool>,
+    pub(in crate::pages::patrol) set_diff_loading: WriteSignal<bool>,
+    pub(in crate::pages::patrol) current_diff: ReadSignal<Option<StructuredDiff>>,
     set_current_diff: WriteSignal<Option<StructuredDiff>>,
     diff_cache: ReadSignal<HashMap<u64, StructuredDiff>>,
     set_diff_cache: WriteSignal<HashMap<u64, StructuredDiff>>,
-    pub(super) media_diff_loading: ReadSignal<bool>,
+    pub(in crate::pages::patrol) media_diff_loading: ReadSignal<bool>,
     set_media_diff_loading: WriteSignal<bool>,
-    pub(super) current_media_diff: ReadSignal<Option<MediaDiffReport>>,
+    pub(in crate::pages::patrol) current_media_diff: ReadSignal<Option<MediaDiffReport>>,
     set_current_media_diff: WriteSignal<Option<MediaDiffReport>>,
     media_diff_cache: ReadSignal<HashMap<u64, MediaDiffReport>>,
     set_media_diff_cache: WriteSignal<HashMap<u64, MediaDiffReport>>,
     edit_action: ReadSignal<Option<EditAction>>,
-    pub(super) set_edit_action: WriteSignal<Option<EditAction>>,
+    pub(in crate::pages::patrol) set_edit_action: WriteSignal<Option<EditAction>>,
     tag_action: ReadSignal<Option<TagAction>>,
-    pub(super) set_tag_action: WriteSignal<Option<TagAction>>,
+    pub(in crate::pages::patrol) set_tag_action: WriteSignal<Option<TagAction>>,
 }
 
 pub(super) struct RevisionArtifactEffectsInput {
@@ -72,7 +72,7 @@ pub(super) fn create_revision_artifact_controller() -> RevisionArtifactControlle
     }
 }
 
-pub(super) fn cache_initial_artifacts(
+pub(in crate::pages::patrol) fn cache_initial_artifacts(
     view: &LiveOperatorView,
     artifacts: RevisionArtifactController,
 ) {
@@ -100,7 +100,10 @@ pub(super) fn cache_initial_artifacts(
         .set(view.media_diff.clone());
 }
 
-pub(super) fn prefetch_queue_diffs(view: &LiveOperatorView, artifacts: RevisionArtifactController) {
+pub(in crate::pages::patrol) fn prefetch_queue_diffs(
+    view: &LiveOperatorView,
+    artifacts: RevisionArtifactController,
+) {
     let prefetch_queue = view.queue.clone();
     let prefetch_wiki = view.wiki_id.clone();
     wasm_bindgen_futures::spawn_local(async move {
@@ -153,7 +156,7 @@ pub(super) fn install_revision_artifact_effects(input: RevisionArtifactEffectsIn
 }
 
 /// Read `rev=N` from the URL hash fragment.
-pub(super) fn rev_id_from_hash() -> Option<u64> {
+pub(in crate::pages::patrol) fn rev_id_from_hash() -> Option<u64> {
     #[cfg(target_arch = "wasm32")]
     {
         let hash = web_sys::window()?.location().hash().ok()?;

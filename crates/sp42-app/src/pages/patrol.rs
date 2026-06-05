@@ -2,9 +2,7 @@ use std::sync::{Arc, Mutex};
 
 use leptos::prelude::*;
 use send_wrapper::SendWrapper;
-use sp42_core::{
-    LiveOperatorView, MediaDiffReport, SessionActionExecutionRequest, SessionActionKind,
-};
+use sp42_core::{LiveOperatorView, MediaDiffReport, SessionActionKind};
 
 use crate::components::action_bar::ActionBar;
 use crate::components::context_header::ContextHeader;
@@ -13,15 +11,17 @@ use crate::components::filter_bar::{FilterBar, PatrolFilterParams};
 use crate::components::media_diff_gallery::MediaDiffGallery;
 use crate::components::queue_column::QueueColumn;
 use crate::components::{PatrolScenarioPanel, PatrolSessionDigestPanel, ShellStatePanel};
-use crate::platform::auth::{bootstrap_dev_auth_session, execute_dev_auth_action};
+use crate::platform::auth::bootstrap_dev_auth_session;
 use crate::platform::config::configured_default_wiki_id;
 use crate::platform::console;
 use crate::platform::eventstream::{EventStreamHandle, StreamEvent, start_eventstream};
 use crate::platform::live::fetch_live_operator_view;
 
+mod action_controller;
 mod queue_controller;
 mod revision_artifacts;
 
+use action_controller::{PatrolActionControllerInput, create_patrol_action_controller};
 use queue_controller::create_patrol_queue_controller;
 use revision_artifacts::{
     RevisionArtifactEffectsInput, cache_initial_artifacts, create_revision_artifact_controller,
@@ -34,10 +34,6 @@ pub fn PatrolSurface() -> impl IntoView {
     let (view_data, set_view_data) = signal(None::<LiveOperatorView>);
     let (load_error, set_load_error) = signal(None::<String>);
     let (selected_rev_id, set_selected_rev_id) = signal(None::<u64>);
-    let (action_trigger, set_action_trigger) = signal(None::<SessionActionKind>);
-    let (skip_trigger, set_skip_trigger) = signal(false);
-    let (action_pending, set_action_pending) = signal(false);
-    let (action_status, set_action_status) = signal(String::new());
     let (next_continue, set_next_continue) = signal(None::<String>);
     let (review_note, set_review_note) = signal(String::new());
     let (show_help, set_show_help) = signal(false);
@@ -154,159 +150,28 @@ pub fn PatrolSurface() -> impl IntoView {
         }
     });
 
-    let execute_action = Action::new_local(move |kind: &SessionActionKind| {
-        let kind = kind.clone();
-        let set_action_pending = set_action_pending;
-        let set_action_status = set_action_status;
-        let set_action_trigger = set_action_trigger;
-        async move {
-            set_action_pending.set(true);
-
-            let Some(view) = view_data.get() else {
-                set_action_pending.set(false);
-                return;
-            };
-            let Some(edit) = selected_edit.get_untracked() else {
-                set_action_pending.set(false);
-                return;
-            };
-
-            let request = SessionActionExecutionRequest {
-                wiki_id: view.wiki_id.clone(),
-                kind: kind.clone(),
-                rev_id: edit.event.rev_id,
-                title: Some(edit.event.title.clone()),
-                target_user: match &edit.event.performer {
-                    sp42_core::EditorIdentity::Anonymous { label } => Some(label.clone()),
-                    sp42_core::EditorIdentity::Registered { username } => Some(username.clone()),
-                    sp42_core::EditorIdentity::Temporary { label } => Some(label.clone()),
-                },
-                undo_after_rev_id: edit.event.old_rev_id,
-                summary: {
-                    let note = review_note.get();
-                    if note.is_empty() {
-                        Some("SP42".to_string())
-                    } else {
-                        Some(format!("SP42: {note}"))
-                    }
-                },
-                selected_text: None,
-                batch_rev_ids: {
-                    let groups = group_rev_ids.get_untracked();
-                    groups.get(&edit.event.rev_id).cloned()
-                },
-                replacement_text: None,
-            };
-
-            let batch_count = request.batch_rev_ids.as_ref().map_or(1, Vec::len);
-            console::info(&format!(
-                "[SP42] action {} on rev {} title={:?} (batch={})",
-                kind.label(),
-                edit.event.rev_id,
-                edit.event.title,
-                batch_count
-            ));
-            match execute_dev_auth_action(&request).await {
-                Ok(response) => {
-                    if response.accepted {
-                        set_action_status.set(format!(
-                            "{} accepted for rev {}",
-                            kind.label(),
-                            edit.event.rev_id
-                        ));
-                        // Figure out the next edit before removing
-                        let current_queue = queue_signal.get_untracked();
-                        let acted_rev = edit.event.rev_id;
-                        let next_rev = current_queue
-                            .iter()
-                            .skip_while(|e| e.event.rev_id != acted_rev)
-                            .nth(1)
-                            .or_else(|| {
-                                current_queue
-                                    .iter()
-                                    .rev()
-                                    .skip_while(|e| e.event.rev_id != acted_rev)
-                                    .nth(1)
-                            })
-                            .map(|e| e.event.rev_id);
-
-                        // Remove the acted-on edit (and all group members if batch)
-                        let groups = group_rev_ids.get_untracked();
-                        let revs_to_remove: Vec<u64> = groups
-                            .get(&acted_rev)
-                            .cloned()
-                            .unwrap_or_else(|| vec![acted_rev]);
-                        let mut edits = all_edits.get_untracked();
-                        edits.retain(|e| !revs_to_remove.contains(&e.event.rev_id));
-                        set_all_edits.set(edits);
-                        set_selected_rev_id.set(next_rev);
-                        console::debug(&format!(
-                            "[SP42] removed rev {acted_rev}, next → {next_rev:?}"
-                        ));
-                        set_review_note.set(String::new());
-                        // Re-fetch to get fresh diff for the new selection
-                        set_selection_only_refetch.set(true);
-                        load_action.dispatch_local(());
-                    } else {
-                        set_action_status.set(format!(
-                            "{} rejected: {}",
-                            kind.label(),
-                            response.message.unwrap_or_default()
-                        ));
-                    }
-                }
-                Err(error) => {
-                    if error.contains("401") || error.contains("No authenticated") {
-                        // Session expired — try to re-bootstrap
-                        set_action_status.set("Session expired, re-authenticating...".to_string());
-                        let bootstrap_request = sp42_core::DevAuthBootstrapRequest {
-                            username: String::new(),
-                            scopes: Vec::new(),
-                            expires_at_ms: None,
-                        };
-                        if bootstrap_dev_auth_session(&bootstrap_request).await.is_ok() {
-                            // Retry the action once
-                            match execute_dev_auth_action(&request).await {
-                                Ok(response) if response.accepted => {
-                                    set_action_status.set(format!(
-                                        "{} accepted for rev {} (re-authenticated)",
-                                        kind.label(),
-                                        edit.event.rev_id
-                                    ));
-                                    let mut q = all_edits.get_untracked();
-                                    if let Some(pos) =
-                                        q.iter().position(|e| e.event.rev_id == edit.event.rev_id)
-                                    {
-                                        q.remove(pos);
-                                        set_all_edits.set(q);
-                                    }
-                                    set_review_note.set(String::new());
-                                }
-                                Ok(response) => {
-                                    set_action_status.set(format!(
-                                        "{} rejected: {}",
-                                        kind.label(),
-                                        response.message.unwrap_or_default()
-                                    ));
-                                }
-                                Err(retry_error) => {
-                                    set_action_status.set(format!("Retry failed: {retry_error}"));
-                                }
-                            }
-                        } else {
-                            set_action_status
-                                .set("Re-authentication failed. Reload the page.".to_string());
-                        }
-                    } else {
-                        set_action_status.set(format!("Action error: {error}"));
-                    }
-                }
-            }
-
-            set_action_pending.set(false);
-            set_action_trigger.set(None);
-        }
+    let reload_after_action = std::rc::Rc::new(move || {
+        load_action.dispatch_local(());
     });
+    let action_controller = create_patrol_action_controller(PatrolActionControllerInput {
+        view_data,
+        selected_edit,
+        review_note,
+        set_review_note,
+        group_rev_ids,
+        queue: queue_signal,
+        all_edits,
+        set_all_edits,
+        selected_index,
+        set_selected_rev_id,
+        set_selection_only_refetch,
+        reload_after_action,
+    });
+    let set_action_trigger = action_controller.set_action_trigger;
+    let set_skip_trigger = action_controller.set_skip_trigger;
+    let action_pending = action_controller.action_pending;
+    let action_status = action_controller.action_status;
+    let set_action_status = action_controller.set_action_status;
 
     let queue_len = Memo::new(move |_| queue_signal.get().len());
     let has_selection = Memo::new(move |_| selected_index.get() < queue_len.get());
@@ -351,23 +216,6 @@ pub fn PatrolSurface() -> impl IntoView {
         set_all_edits,
         set_action_status,
         artifacts: revision_artifacts,
-    });
-
-    Effect::new(move |_| {
-        if let Some(kind) = action_trigger.get() {
-            execute_action.dispatch_local(kind);
-        }
-    });
-
-    Effect::new(move |_| {
-        if skip_trigger.get() {
-            set_skip_trigger.set(false);
-            let idx = selected_index.get();
-            let queue = queue_signal.get_untracked();
-            if let Some(next) = queue.get(idx + 1) {
-                set_selected_rev_id.set(Some(next.event.rev_id));
-            }
-        }
     });
 
     // Start live EventStreams SSE only once; the queue_signal Memo applies filters reactively.

@@ -1,18 +1,14 @@
-use std::{
-    collections::HashMap,
-    sync::{Arc, Mutex},
-};
+use std::sync::{Arc, Mutex};
 
 use leptos::prelude::*;
 use send_wrapper::SendWrapper;
 use sp42_core::{
     LiveOperatorView, MediaDiffReport, SessionActionExecutionRequest, SessionActionKind,
-    StructuredDiff,
 };
 
 use crate::components::action_bar::ActionBar;
 use crate::components::context_header::ContextHeader;
-use crate::components::diff_viewer::{DiffViewer, EditAction, TagAction};
+use crate::components::diff_viewer::DiffViewer;
 use crate::components::filter_bar::{FilterBar, PatrolFilterParams};
 use crate::components::media_diff_gallery::MediaDiffGallery;
 use crate::components::queue_column::QueueColumn;
@@ -21,44 +17,16 @@ use crate::platform::auth::{bootstrap_dev_auth_session, execute_dev_auth_action}
 use crate::platform::config::configured_default_wiki_id;
 use crate::platform::console;
 use crate::platform::eventstream::{EventStreamHandle, StreamEvent, start_eventstream};
-use crate::platform::live::{fetch_diff, fetch_live_operator_view, fetch_media_diff};
+use crate::platform::live::fetch_live_operator_view;
 
 mod queue_controller;
+mod revision_artifacts;
 
 use queue_controller::create_patrol_queue_controller;
-
-/// Read `rev=N` from the URL hash fragment.
-fn rev_id_from_hash() -> Option<u64> {
-    #[cfg(target_arch = "wasm32")]
-    {
-        let hash = web_sys::window()?.location().hash().ok()?;
-        let hash = hash.trim_start_matches('#');
-        for part in hash.split('&') {
-            if let Some(val) = part.strip_prefix("rev=") {
-                return val.parse().ok();
-            }
-        }
-        None
-    }
-    #[cfg(not(target_arch = "wasm32"))]
-    {
-        None
-    }
-}
-
-/// Update the URL hash to reflect the selected revision.
-fn set_hash_rev(rev_id: u64) {
-    #[cfg(target_arch = "wasm32")]
-    {
-        if let Some(window) = web_sys::window() {
-            let _ = window.location().set_hash(&format!("rev={rev_id}"));
-        }
-    }
-    #[cfg(not(target_arch = "wasm32"))]
-    {
-        let _ = rev_id;
-    }
-}
+use revision_artifacts::{
+    RevisionArtifactEffectsInput, cache_initial_artifacts, create_revision_artifact_controller,
+    install_revision_artifact_effects, prefetch_queue_diffs, rev_id_from_hash,
+};
 
 #[component]
 pub fn PatrolSurface() -> impl IntoView {
@@ -74,15 +42,14 @@ pub fn PatrolSurface() -> impl IntoView {
     let (review_note, set_review_note) = signal(String::new());
     let (show_help, set_show_help) = signal(false);
     let (show_backoffice, set_show_backoffice) = signal(false);
-    let (diff_loading, set_diff_loading) = signal(false);
-    let (current_diff, set_current_diff) = signal(None::<StructuredDiff>);
-    let (diff_cache, set_diff_cache) = signal(HashMap::<u64, StructuredDiff>::new());
-    let (media_diff_loading, set_media_diff_loading) = signal(false);
-    let (current_media_diff, set_current_media_diff) = signal(None::<MediaDiffReport>);
-    let (media_diff_cache, set_media_diff_cache) = signal(HashMap::<u64, MediaDiffReport>::new());
-
-    let (tag_action, set_tag_action) = signal(None::<TagAction>);
-    let (edit_action, set_edit_action) = signal(None::<EditAction>);
+    let revision_artifacts = create_revision_artifact_controller();
+    let diff_loading = revision_artifacts.diff_loading;
+    let set_diff_loading = revision_artifacts.set_diff_loading;
+    let current_diff = revision_artifacts.current_diff;
+    let media_diff_loading = revision_artifacts.media_diff_loading;
+    let current_media_diff = revision_artifacts.current_media_diff;
+    let set_tag_action = revision_artifacts.set_tag_action;
+    let set_edit_action = revision_artifacts.set_edit_action;
     let queue_controller = create_patrol_queue_controller(selected_rev_id);
     let filters = queue_controller.filters;
     let set_filters = queue_controller.set_filters;
@@ -153,27 +120,7 @@ pub fn PatrolSurface() -> impl IntoView {
                     }
                     set_load_error.set(None);
                     set_next_continue.set(view.next_continue.clone());
-                    // Cache the initial diff from the server response
-                    if let (Some(diff), Some(sel_idx)) = (&view.diff, view.selected_index) {
-                        if let Some(edit) = view.queue.get(sel_idx) {
-                            let mut c = diff_cache.get_untracked();
-                            c.insert(edit.event.rev_id, diff.clone());
-                            set_diff_cache.set(c);
-                        }
-                    }
-                    if let (Some(media_diff), Some(sel_idx)) =
-                        (&view.media_diff, view.selected_index)
-                    {
-                        if let Some(edit) = view.queue.get(sel_idx) {
-                            let mut c = media_diff_cache.get_untracked();
-                            c.insert(edit.event.rev_id, media_diff.clone());
-                            set_media_diff_cache.set(c);
-                        }
-                    }
-                    if let Some(ref diff) = view.diff {
-                        set_current_diff.set(Some(diff.clone()));
-                    }
-                    set_current_media_diff.set(view.media_diff.clone());
+                    cache_initial_artifacts(&view, revision_artifacts);
                     if !selection_only_refetch.get_untracked() {
                         console::info(&format!(
                             "[SP42] server load: {} edits, diff={}",
@@ -195,28 +142,7 @@ pub fn PatrolSurface() -> impl IntoView {
                         set_all_edits.set(view.queue.clone());
                     }
                     set_selection_only_refetch.set(false);
-                    // Prefetch diffs for all queue items in the background
-                    let prefetch_queue = view.queue.clone();
-                    let prefetch_wiki = view.wiki_id.clone();
-                    wasm_bindgen_futures::spawn_local(async move {
-                        for item in &prefetch_queue {
-                            let rev_id = item.event.rev_id;
-                            if diff_cache.get_untracked().contains_key(&rev_id) {
-                                continue;
-                            }
-                            let old_rev_id = item.event.old_rev_id.unwrap_or(0);
-                            if old_rev_id == 0 {
-                                continue;
-                            }
-                            if let Ok(Some(diff)) =
-                                fetch_diff(&prefetch_wiki, rev_id, old_rev_id).await
-                            {
-                                let mut c = diff_cache.get_untracked();
-                                c.insert(rev_id, diff);
-                                set_diff_cache.set(c);
-                            }
-                        }
-                    });
+                    prefetch_queue_diffs(&view, revision_artifacts);
                     set_view_data.set(Some(view));
                     set_diff_loading.set(false);
                 }
@@ -416,226 +342,15 @@ pub fn PatrolSurface() -> impl IntoView {
         current
     });
 
-    // When selection changes, look up diff from cache or fetch it.
-    Effect::new(move |prev_rev: Option<Option<u64>>| {
-        let current_rev = selected_rev_id.get();
-        let Some(rev_id) = current_rev else {
-            return current_rev;
-        };
-
-        // Update URL hash
-        set_hash_rev(rev_id);
-
-        // Skip if same rev as before
-        if prev_rev == Some(current_rev) {
-            return current_rev;
-        }
-
-        console::debug(&format!("[SP42] selection changed → rev {rev_id}"));
-
-        // Snapshot the selected edit — decoupled from queue updates
-        let queue = queue_signal.get_untracked();
-        let edit = queue.iter().find(|e| e.event.rev_id == rev_id).cloned();
-        set_selected_edit.set(edit);
-
-        let cache = diff_cache.get_untracked();
-        if let Some(diff) = cache.get(&rev_id) {
-            console::debug(&format!(
-                "[SP42] diff cache HIT rev {rev_id} ({} segments)",
-                diff.segments.len()
-            ));
-            set_current_diff.set(Some(diff.clone()));
-            return current_rev;
-        }
-
-        console::debug(&format!("[SP42] diff cache MISS rev {rev_id} — fetching"));
-        set_diff_loading.set(true);
-        set_current_diff.set(None);
-        if let Some(edit) = selected_edit.get_untracked() {
-            let old_rev_id = edit.event.old_rev_id.unwrap_or(0);
-            let wiki_id = edit.event.wiki_id.clone();
-            wasm_bindgen_futures::spawn_local(async move {
-                match fetch_diff(&wiki_id, rev_id, old_rev_id).await {
-                    Ok(diff) => {
-                        if let Some(ref d) = diff {
-                            let mut c = diff_cache.get_untracked();
-                            c.insert(rev_id, d.clone());
-                            set_diff_cache.set(c);
-                        }
-                        set_current_diff.set(diff);
-                    }
-                    Err(_) => {
-                        set_current_diff.set(None);
-                    }
-                }
-                set_diff_loading.set(false);
-            });
-        }
-        current_rev
-    });
-
-    Effect::new(move |prev_rev: Option<Option<u64>>| {
-        let current_rev = selected_rev_id.get();
-        let Some(rev_id) = current_rev else {
-            set_current_media_diff.set(None);
-            set_media_diff_loading.set(false);
-            return current_rev;
-        };
-
-        if prev_rev == Some(current_rev) {
-            return current_rev;
-        }
-
-        let cache = media_diff_cache.get_untracked();
-        if let Some(report) = cache.get(&rev_id) {
-            set_current_media_diff.set(Some(report.clone()));
-            set_media_diff_loading.set(false);
-            return current_rev;
-        }
-
-        set_media_diff_loading.set(true);
-        set_current_media_diff.set(None);
-        if let Some(edit) = selected_edit.get_untracked() {
-            let old_rev_id = edit.event.old_rev_id.unwrap_or(0);
-            if old_rev_id == 0 {
-                set_media_diff_loading.set(false);
-                return current_rev;
-            }
-            let wiki_id = edit.event.wiki_id.clone();
-            wasm_bindgen_futures::spawn_local(async move {
-                match fetch_media_diff(&wiki_id, rev_id, old_rev_id).await {
-                    Ok(report) => {
-                        if let Some(ref media_diff) = report {
-                            let mut c = media_diff_cache.get_untracked();
-                            c.insert(rev_id, media_diff.clone());
-                            set_media_diff_cache.set(c);
-                        }
-                        set_current_media_diff.set(report);
-                    }
-                    Err(_) => {
-                        set_current_media_diff.set(None);
-                    }
-                }
-                set_media_diff_loading.set(false);
-            });
-        } else {
-            set_media_diff_loading.set(false);
-        }
-        current_rev
-    });
-
-    // Handle inline edit from double-click
-    Effect::new(move |_| {
-        let Some(action) = edit_action.get() else {
-            return;
-        };
-        set_edit_action.set(None);
-        let Some(edit) = selected_edit.get_untracked() else {
-            return;
-        };
-        let request = SessionActionExecutionRequest {
-            wiki_id: edit.event.wiki_id.clone(),
-            kind: SessionActionKind::InlineEdit,
-            rev_id: edit.event.rev_id,
-            title: Some(edit.event.title.clone()),
-            target_user: None,
-            undo_after_rev_id: None,
-            summary: Some("SP42: inline edit".to_string()),
-            selected_text: Some(action.original_text),
-            batch_rev_ids: None,
-            replacement_text: Some(action.new_text),
-        };
-        console::info(&format!("[SP42] inline edit on rev {}", request.rev_id));
-        set_action_status.set("Saving inline edit...".to_string());
-        wasm_bindgen_futures::spawn_local(async move {
-            match execute_dev_auth_action(&request).await {
-                Ok(r) if r.accepted => {
-                    set_action_status.set(format!("Edit saved on rev {}", request.rev_id));
-                    let mut c = diff_cache.get_untracked();
-                    c.remove(&request.rev_id);
-                    set_diff_cache.set(c);
-                    set_diff_loading.set(true);
-                    if let Some(item) = selected_edit.get_untracked() {
-                        let old = item.event.old_rev_id.unwrap_or(0);
-                        if let Ok(Some(d)) =
-                            fetch_diff(&item.event.wiki_id, item.event.rev_id, old).await
-                        {
-                            set_current_diff.set(Some(d));
-                        }
-                    }
-                    set_diff_loading.set(false);
-                }
-                Ok(r) => set_action_status
-                    .set(format!("Edit rejected: {}", r.message.unwrap_or_default())),
-                Err(e) => set_action_status.set(format!("Edit error: {e}")),
-            }
-        });
-    });
-
-    // Handle citation needed from context menu
-    Effect::new(move |_| {
-        let Some(action) = tag_action.get() else {
-            return;
-        };
-        set_tag_action.set(None);
-
-        let Some(edit) = selected_edit.get_untracked() else {
-            return;
-        };
-
-        let request = SessionActionExecutionRequest {
-            wiki_id: edit.event.wiki_id.clone(),
-            kind: SessionActionKind::TagCitationNeeded,
-            rev_id: edit.event.rev_id,
-            title: Some(edit.event.title.clone()),
-            target_user: None,
-            undo_after_rev_id: None,
-            summary: Some("SP42: added {{refnec}}".to_string()),
-            selected_text: Some(action.text),
-            batch_rev_ids: None,
-            replacement_text: None,
-        };
-
-        set_action_status.set("Adding citation needed...".to_string());
-        wasm_bindgen_futures::spawn_local(async move {
-            match execute_dev_auth_action(&request).await {
-                Ok(response) if response.accepted => {
-                    set_action_status.set(format!(
-                        "Citation needed + patrolled rev {}",
-                        request.rev_id
-                    ));
-                    // Remove from queue (it's now patrolled)
-                    let mut edits = all_edits.get_untracked();
-                    if let Some(pos) = edits.iter().position(|e| e.event.rev_id == request.rev_id) {
-                        edits.remove(pos);
-                        set_all_edits.set(edits);
-                    }
-                    // Invalidate the diff cache for this rev
-                    let mut c = diff_cache.get_untracked();
-                    c.remove(&request.rev_id);
-                    set_diff_cache.set(c);
-                    set_diff_loading.set(true);
-                    if let Some(item) = selected_edit.get_untracked() {
-                        let old = item.event.old_rev_id.unwrap_or(0);
-                        if let Ok(Some(diff)) =
-                            fetch_diff(&item.event.wiki_id, item.event.rev_id, old).await
-                        {
-                            set_current_diff.set(Some(diff));
-                        }
-                    }
-                    set_diff_loading.set(false);
-                }
-                Ok(response) => {
-                    set_action_status.set(format!(
-                        "Citation needed rejected: {}",
-                        response.message.unwrap_or_default()
-                    ));
-                }
-                Err(error) => {
-                    set_action_status.set(format!("Citation error: {error}"));
-                }
-            }
-        });
+    install_revision_artifact_effects(RevisionArtifactEffectsInput {
+        selected_rev_id,
+        queue: queue_signal,
+        selected_edit,
+        set_selected_edit,
+        all_edits,
+        set_all_edits,
+        set_action_status,
+        artifacts: revision_artifacts,
     });
 
     Effect::new(move |_| {

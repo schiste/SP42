@@ -54,6 +54,30 @@ operator/editor behavior or external integration behavior.
   passing test or observable in the closing PR — which CI already enforces under
   Constitution Article 5.
 
+## Retroactive (as-built) PRDs
+
+Most PRDs are written before code. A feature that already shipped without one can
+be documented retroactively, so future changes to it have an intent to amend
+rather than reconstruct. An as-built PRD characterizes the *existing* user-facing
+surface and follows the template with four adjustments:
+
+- **State** is `Implemented` from the start, with an `**As-built:**` marker line
+  noting it is a retroactive characterization — there is no forward "closing PR".
+- **Related ADRs** replaces *Spawned ADRs*: an as-built PRD links the ADRs that
+  already govern the feature; it did not spawn them.
+- **Definition of Done** is a *characterization* — each item is a behavior that is
+  already true, bound to an existing test or observable. These existing bindings
+  stand in for the closing-PR check the lifecycle otherwise requires of
+  `Implemented`. A behavior with no test is not a DoD item; it is recorded under
+  Known gaps.
+- **Known gaps / drift** replaces *Open questions*: factual observations of what is
+  undocumented, inconsistent, or untested, surfaced while reverse-engineering — not
+  design questions to resolve before acceptance.
+
+An as-built PRD is `Implemented` but not frozen the way a forward PRD's acceptance
+freezes it: later changes still amend or supersede it, and its Known gaps are the
+backlog a forward PRD would later pick up.
+
 ## Files
 
 - `0000-template.md` — the PRD template.

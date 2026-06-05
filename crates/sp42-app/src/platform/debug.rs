@@ -2,16 +2,11 @@ use serde_json::Value;
 use sp42_core::{
     CoordinationSnapshot, DevAuthActionTokenAvailability, DevAuthCapabilityReport,
     DevAuthDerivedCapabilities, DevAuthProbeAcceptance, DevAuthSessionStatus,
-    LocalOAuthConfigStatus, ServerDebugSummary,
+    LocalOAuthConfigStatus, ServerDebugSummary, routes,
 };
 
 #[cfg(target_arch = "wasm32")]
 use super::{auth, config::api_url, coordination, http::get_bytes};
-
-const DEBUG_SUMMARY_PATH: &str = "/debug/summary";
-const DEBUG_RUNTIME_PATH: &str = "/debug/runtime";
-const CAPABILITIES_PATH_PREFIX: &str = "/dev/auth/capabilities";
-const ACTION_HISTORY_PATH: &str = "/dev/actions/history";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DevActionHistoryRecord {
@@ -89,20 +84,28 @@ pub fn preview_dev_action_history() -> Vec<DevActionHistoryRecord> {
 
 #[cfg(target_arch = "wasm32")]
 pub async fn fetch_server_debug_summary() -> Result<ServerDebugSummary, String> {
-    let bytes = get_bytes(&api_url(DEBUG_SUMMARY_PATH), "fetch server debug summary").await?;
+    let bytes = get_bytes(
+        &api_url(routes::DEBUG_SUMMARY_PATH),
+        "fetch server debug summary",
+    )
+    .await?;
     serde_json::from_slice(&bytes).map_err(|error| error.to_string())
 }
 
 #[cfg(target_arch = "wasm32")]
 pub async fn fetch_runtime_debug_status() -> Result<RuntimeDebugStatus, String> {
-    let bytes = get_bytes(&api_url(DEBUG_RUNTIME_PATH), "fetch runtime debug status").await?;
+    let bytes = get_bytes(
+        &api_url(routes::DEBUG_RUNTIME_PATH),
+        "fetch runtime debug status",
+    )
+    .await?;
     parse_runtime_debug_status(&bytes)
 }
 
 #[cfg(target_arch = "wasm32")]
 pub async fn fetch_dev_auth_capabilities(wiki_id: &str) -> Result<DevAuthCapabilityReport, String> {
     let bytes = get_bytes(
-        &api_url(&format!("{CAPABILITIES_PATH_PREFIX}/{wiki_id}")),
+        &api_url(&routes::dev_auth_capabilities_path(wiki_id)),
         "fetch dev auth capabilities",
     )
     .await?;
@@ -111,7 +114,11 @@ pub async fn fetch_dev_auth_capabilities(wiki_id: &str) -> Result<DevAuthCapabil
 
 #[cfg(target_arch = "wasm32")]
 pub async fn fetch_dev_action_history() -> Result<Vec<DevActionHistoryRecord>, String> {
-    let bytes = get_bytes(&api_url(ACTION_HISTORY_PATH), "fetch dev action history").await?;
+    let bytes = get_bytes(
+        &api_url(routes::DEV_ACTION_HISTORY_PATH),
+        "fetch dev action history",
+    )
+    .await?;
     parse_dev_action_history(&bytes)
 }
 

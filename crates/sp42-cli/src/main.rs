@@ -5,6 +5,7 @@ use std::process::ExitCode;
 use futures::executor::block_on;
 use reqwest::header::COOKIE;
 use serde_json::Value;
+use sp42_core::routes as route_contracts;
 use sp42_core::traits::{MemoryStorage, ReplayEventSource};
 use sp42_core::{
     Action, ActionBroadcast, BacklogRuntime, BacklogRuntimeConfig, ContextInputs,
@@ -1511,20 +1512,44 @@ async fn fetch_server_report(base_url: &str) -> Result<BTreeMap<String, Value>, 
         .map_err(|error| format!("server report client failed to build: {error}"))?;
 
     let endpoints = [
-        ("healthz", "/healthz"),
-        ("operator_report", "/operator/report"),
-        ("operator_readiness", "/operator/readiness"),
-        ("operator_live", "/operator/live/frwiki?limit=1"),
-        ("operator_runtime", "/operator/runtime/frwiki"),
-        ("bootstrap_status", "/dev/auth/bootstrap/status"),
-        ("capabilities_frwiki", "/dev/auth/capabilities/frwiki"),
-        ("action_status", "/dev/actions/status"),
-        ("action_history", "/dev/actions/history?limit=1"),
+        ("healthz", route_contracts::HEALTHZ_PATH.to_string()),
+        (
+            "operator_report",
+            route_contracts::OPERATOR_REPORT_PATH.to_string(),
+        ),
+        (
+            "operator_readiness",
+            route_contracts::OPERATOR_READINESS_PATH.to_string(),
+        ),
+        (
+            "operator_live",
+            route_contracts::operator_live_path_with_query("frwiki", "limit=1"),
+        ),
+        (
+            "operator_runtime",
+            route_contracts::operator_runtime_path("frwiki"),
+        ),
+        (
+            "bootstrap_status",
+            route_contracts::DEV_AUTH_BOOTSTRAP_STATUS_PATH.to_string(),
+        ),
+        (
+            "capabilities_frwiki",
+            route_contracts::dev_auth_capabilities_path("frwiki"),
+        ),
+        (
+            "action_status",
+            route_contracts::ACTION_STATUS_PATH.to_string(),
+        ),
+        (
+            "action_history",
+            route_contracts::dev_action_history_path_with_limit(1),
+        ),
     ];
 
     let mut report = BTreeMap::new();
     for (label, path) in endpoints {
-        let value = fetch_server_json(&client, base_url, path).await?;
+        let value = fetch_server_json(&client, base_url, &path).await?;
         report.insert(label.to_string(), value);
     }
 
@@ -1611,7 +1636,7 @@ async fn execute_bridge_action(
 
     let session_cookie = session_cookie_from_headers(&bootstrap_response.headers)
         .ok_or_else(|| "bridge bootstrap did not set a session cookie".to_string())?;
-    let request_url = format!("{base_url}/dev/actions/execute");
+    let request_url = format!("{base_url}{}", route_contracts::DEV_ACTION_EXECUTE_PATH);
     let response = client
         .post(&request_url)
         .header(COOKIE, session_cookie.as_str())

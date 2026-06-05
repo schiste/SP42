@@ -4,6 +4,7 @@ use axum::http::Method;
 use axum::http::header::{CONTENT_TYPE, COOKIE};
 use axum::middleware;
 use axum::routing::get;
+use sp42_core::routes as route_contracts;
 use tower_http::cors::{AllowOrigin, CorsLayer};
 use tower_http::services::{ServeDir, ServeFile};
 
@@ -13,10 +14,8 @@ use crate::static_assets::{
     get_static_icon,
 };
 use crate::{
-    ACTION_HISTORY_PATH, ACTION_STATUS_PATH, AUTH_CALLBACK_PATH, AUTH_LOGIN_PATH, AUTH_LOGOUT_PATH,
-    AUTH_SESSION_PATH, AppState, CSRF_HEADER_NAME, OPERATOR_READINESS_PATH, OPERATOR_REPORT_PATH,
-    coordination_socket, delete_session, get_action_history, get_action_status,
-    get_article_inventory, get_auth_callback, get_auth_login, get_auth_session,
+    AppState, CSRF_HEADER_NAME, coordination_socket, delete_session, get_action_history,
+    get_action_status, get_article_inventory, get_auth_callback, get_auth_login, get_auth_session,
     get_bootstrap_status, get_capabilities, get_coordination_inspections,
     get_coordination_room_inspection, get_coordination_room_state, get_coordination_snapshot,
     get_debug_summary, get_healthz, get_live_operator_view, get_logical_storage_document,
@@ -63,78 +62,154 @@ pub(crate) fn build_router(state: AppState) -> Router {
 }
 
 fn operator_routes(router: Router<AppState>) -> Router<AppState> {
+    let router = coordination_routes(router);
+    let router = debug_routes(router);
+    let router = auth_routes(router);
+    let router = operator_api_routes(router);
+    let router = operator_storage_routes(router);
+    let router = dev_bridge_routes(router);
+    static_asset_routes(router)
+}
+
+fn coordination_routes(router: Router<AppState>) -> Router<AppState> {
     router
-        .route("/coordination/rooms", get(get_coordination_snapshot))
         .route(
-            "/coordination/rooms/{wiki_id}",
+            route_contracts::COORDINATION_ROOMS_PATH,
+            get(get_coordination_snapshot),
+        )
+        .route(
+            route_contracts::COORDINATION_ROOM_PATTERN,
             get(get_coordination_room_state),
         )
         .route(
-            "/coordination/rooms/{wiki_id}/inspection",
+            route_contracts::COORDINATION_ROOM_INSPECTION_PATTERN,
             get(get_coordination_room_inspection),
         )
         .route(
-            "/coordination/inspections",
+            route_contracts::COORDINATION_INSPECTIONS_PATH,
             get(get_coordination_inspections),
         )
-        .route("/debug/summary", get(get_debug_summary))
-        .route("/debug/runtime", get(get_runtime_debug))
-        .route(AUTH_LOGIN_PATH, get(get_auth_login))
-        .route(AUTH_CALLBACK_PATH, get(get_auth_callback))
-        .route(AUTH_SESSION_PATH, get(get_auth_session))
-        .route(AUTH_LOGOUT_PATH, axum::routing::post(post_auth_logout))
-        .route(OPERATOR_READINESS_PATH, get(get_operator_readiness))
-        .route(OPERATOR_REPORT_PATH, get(get_operator_report))
-        .route("/operator/live/{wiki_id}", get(get_live_operator_view))
-        .route("/operator/article/{wiki_id}", get(get_article_inventory))
         .route(
-            "/operator/diff/{wiki_id}/{rev_id}/{old_rev_id}",
+            route_contracts::COORDINATION_WS_PATTERN,
+            get(coordination_socket),
+        )
+}
+
+fn debug_routes(router: Router<AppState>) -> Router<AppState> {
+    router
+        .route(route_contracts::DEBUG_SUMMARY_PATH, get(get_debug_summary))
+        .route(route_contracts::DEBUG_RUNTIME_PATH, get(get_runtime_debug))
+}
+
+fn auth_routes(router: Router<AppState>) -> Router<AppState> {
+    router
+        .route(route_contracts::AUTH_LOGIN_PATH, get(get_auth_login))
+        .route(route_contracts::AUTH_CALLBACK_PATH, get(get_auth_callback))
+        .route(route_contracts::AUTH_SESSION_PATH, get(get_auth_session))
+        .route(
+            route_contracts::AUTH_LOGOUT_PATH,
+            axum::routing::post(post_auth_logout),
+        )
+}
+
+fn operator_api_routes(router: Router<AppState>) -> Router<AppState> {
+    router
+        .route(
+            route_contracts::OPERATOR_READINESS_PATH,
+            get(get_operator_readiness),
+        )
+        .route(
+            route_contracts::OPERATOR_REPORT_PATH,
+            get(get_operator_report),
+        )
+        .route(
+            route_contracts::OPERATOR_LIVE_PATTERN,
+            get(get_live_operator_view),
+        )
+        .route(
+            route_contracts::OPERATOR_ARTICLE_PATTERN,
+            get(get_article_inventory),
+        )
+        .route(
+            route_contracts::OPERATOR_DIFF_PATTERN,
             get(get_revision_diff),
         )
         .route(
-            "/operator/media-diff/{wiki_id}/{rev_id}/{old_rev_id}",
+            route_contracts::OPERATOR_MEDIA_DIFF_PATTERN,
             get(get_revision_media_diff),
         )
         .route(
-            "/operator/rendered-hunk/{wiki_id}/{rev_id}/{old_rev_id}/{hunk_index}",
+            route_contracts::OPERATOR_RENDERED_HUNK_PATTERN,
             get(get_rendered_hunk_preview),
         )
-        .route("/operator/runtime/{wiki_id}", get(get_operator_runtime))
         .route(
-            "/operator/storage/layout/{wiki_id}",
+            route_contracts::OPERATOR_RUNTIME_PATTERN,
+            get(get_operator_runtime),
+        )
+}
+
+fn operator_storage_routes(router: Router<AppState>) -> Router<AppState> {
+    router
+        .route(
+            route_contracts::OPERATOR_STORAGE_LAYOUT_PATTERN,
             get(get_operator_storage_layout),
         )
         .route(
-            "/operator/storage/document/{wiki_id}",
+            route_contracts::OPERATOR_STORAGE_DOCUMENT_PATTERN,
             get(get_storage_document).put(put_storage_document),
         )
         .route(
-            "/operator/storage/logical/{wiki_id}/{realm}/{kind}",
+            route_contracts::OPERATOR_STORAGE_LOGICAL_PATTERN,
             get(get_logical_storage_document).put(put_logical_storage_document),
         )
         .route(
-            "/operator/storage/public/{wiki_id}/{kind}",
+            route_contracts::OPERATOR_STORAGE_PUBLIC_PATTERN,
             get(get_public_storage_document).put(put_public_storage_document),
         )
-        .route("/ws/{wiki_id}", get(coordination_socket))
-        .route("/dev/auth/session", get(get_session).delete(delete_session))
-        .route("/dev/auth/capabilities/{wiki_id}", get(get_capabilities))
+}
+
+fn dev_bridge_routes(router: Router<AppState>) -> Router<AppState> {
+    router
         .route(
-            "/dev/actions/execute",
+            route_contracts::DEV_AUTH_SESSION_PATH,
+            get(get_session).delete(delete_session),
+        )
+        .route(
+            route_contracts::DEV_AUTH_CAPABILITIES_PATTERN,
+            get(get_capabilities),
+        )
+        .route(
+            route_contracts::DEV_ACTION_EXECUTE_PATH,
             axum::routing::post(post_execute_action),
         )
-        .route(ACTION_STATUS_PATH, get(get_action_status))
-        .route(ACTION_HISTORY_PATH, get(get_action_history))
+        .route(route_contracts::ACTION_STATUS_PATH, get(get_action_status))
         .route(
-            "/dev/auth/session/bootstrap",
+            route_contracts::ACTION_HISTORY_PATH,
+            get(get_action_history),
+        )
+        .route(
+            route_contracts::DEV_AUTH_BOOTSTRAP_SESSION_PATH,
             axum::routing::post(post_bootstrap_session),
         )
-        .route("/dev/auth/bootstrap/status", get(get_bootstrap_status))
-        .route("/healthz", get(get_healthz))
-        .route("/manifest.json", get(get_manifest_json))
-        .route("/runtime-config.js", get(get_runtime_config_js))
-        .route("/sw.js", get(get_service_worker))
-        .route("/offline.html", get(get_offline_html))
-        .route("/icons/{icon_name}", get(get_static_icon))
-        .route("/favicon.ico", get(get_favicon))
+        .route(
+            route_contracts::DEV_AUTH_BOOTSTRAP_STATUS_PATH,
+            get(get_bootstrap_status),
+        )
+}
+
+fn static_asset_routes(router: Router<AppState>) -> Router<AppState> {
+    router
+        .route(route_contracts::HEALTHZ_PATH, get(get_healthz))
+        .route(route_contracts::MANIFEST_JSON_PATH, get(get_manifest_json))
+        .route(
+            route_contracts::RUNTIME_CONFIG_JS_PATH,
+            get(get_runtime_config_js),
+        )
+        .route(
+            route_contracts::SERVICE_WORKER_PATH,
+            get(get_service_worker),
+        )
+        .route(route_contracts::OFFLINE_HTML_PATH, get(get_offline_html))
+        .route(route_contracts::ICON_PATTERN, get(get_static_icon))
+        .route(route_contracts::FAVICON_PATH, get(get_favicon))
 }

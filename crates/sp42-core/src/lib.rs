@@ -50,6 +50,7 @@ pub mod queue_builder;
 pub mod recent_changes;
 pub mod report_document;
 pub mod review_workbench;
+pub mod routes;
 pub mod scoring_engine;
 pub mod scoring_evaluation;
 pub mod scoring_policy;

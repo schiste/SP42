@@ -1,13 +1,10 @@
 use std::collections::BTreeSet;
 
 use serde_json::Value;
-use sp42_core::{CoordinationRoomSummary, CoordinationSnapshot, CoordinationStateSummary};
+use sp42_core::{CoordinationRoomSummary, CoordinationSnapshot, CoordinationStateSummary, routes};
 
 #[cfg(target_arch = "wasm32")]
 use super::{config::api_url, http::get_bytes};
-
-const COORDINATION_ROOMS_PATH: &str = "/coordination/rooms";
-const COORDINATION_INSPECTIONS_PATH: &str = "/coordination/inspections";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RoomInspectionReport {
@@ -252,7 +249,7 @@ pub fn coordination_room_narrative_lines(report: &RoomInspectionReport) -> Vec<S
 #[cfg(target_arch = "wasm32")]
 pub async fn fetch_coordination_snapshot() -> Result<CoordinationSnapshot, String> {
     let bytes = get_bytes(
-        &api_url(COORDINATION_ROOMS_PATH),
+        &api_url(routes::COORDINATION_ROOMS_PATH),
         "fetch coordination snapshot",
     )
     .await?;
@@ -264,7 +261,7 @@ pub async fn fetch_coordination_room_state(
     wiki_id: &str,
 ) -> Result<CoordinationStateSummary, String> {
     let bytes = get_bytes(
-        &api_url(&format!("{COORDINATION_ROOMS_PATH}/{wiki_id}")),
+        &api_url(&routes::coordination_room_path(wiki_id)),
         "fetch coordination room state",
     )
     .await?;
@@ -274,7 +271,7 @@ pub async fn fetch_coordination_room_state(
 #[cfg(target_arch = "wasm32")]
 pub async fn fetch_coordination_inspections() -> Result<RoomInspectionCollection, String> {
     let bytes = get_bytes(
-        &api_url(COORDINATION_INSPECTIONS_PATH),
+        &api_url(routes::COORDINATION_INSPECTIONS_PATH),
         "fetch coordination inspections",
     )
     .await?;
@@ -286,7 +283,7 @@ pub async fn fetch_coordination_room_inspection(
     wiki_id: &str,
 ) -> Result<RoomInspectionReport, String> {
     let bytes = get_bytes(
-        &api_url(&format!("{COORDINATION_ROOMS_PATH}/{wiki_id}/inspection")),
+        &api_url(&routes::coordination_room_inspection_path(wiki_id)),
         "fetch coordination room inspection",
     )
     .await?;

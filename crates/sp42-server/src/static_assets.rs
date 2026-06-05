@@ -9,6 +9,7 @@ use axum::{
     middleware::Next,
     response::{IntoResponse, Redirect, Response},
 };
+use sp42_core::routes as route_contracts;
 
 use crate::AppState;
 
@@ -151,7 +152,7 @@ pub(crate) async fn get_static_icon(Path(icon_name): Path<String>) -> impl IntoR
 }
 
 pub(crate) async fn get_favicon() -> impl IntoResponse {
-    Redirect::temporary("/icons/sp42-icon-192.svg")
+    Redirect::temporary(route_contracts::SP42_ICON_192_PATH)
 }
 
 async fn serve_static_file(path: PathBuf, content_type: &'static str) -> Response {

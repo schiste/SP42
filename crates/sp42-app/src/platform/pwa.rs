@@ -11,14 +11,16 @@ use wasm_bindgen::JsCast;
 #[cfg(target_arch = "wasm32")]
 use wasm_bindgen::JsValue;
 
+use sp42_core::routes;
+
 #[cfg(target_arch = "wasm32")]
 use super::globals;
 
-const MANIFEST_PATH: &str = "/manifest.json";
-const SW_PATH: &str = "/sw.js";
-const OFFLINE_PATH: &str = "/offline.html";
-const ICON_192_PATH: &str = "/icons/sp42-icon-192.svg";
-const ICON_512_PATH: &str = "/icons/sp42-icon-512.svg";
+const MANIFEST_PATH: &str = routes::MANIFEST_JSON_PATH;
+const SW_PATH: &str = routes::SERVICE_WORKER_PATH;
+const OFFLINE_PATH: &str = routes::OFFLINE_HTML_PATH;
+const ICON_192_PATH: &str = routes::SP42_ICON_192_PATH;
+const ICON_512_PATH: &str = routes::SP42_ICON_512_PATH;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PwaShellMode {

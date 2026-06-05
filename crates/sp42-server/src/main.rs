@@ -99,6 +99,13 @@ use crate::state::{
 };
 use crate::wiki_registry::WikiRegistry;
 use crate::wikimedia_capabilities::{CapabilityProbeTargets, probe_with_targets};
+#[cfg(test)]
+pub(crate) use sp42_core::routes::{
+    ACTION_HISTORY_PATH, ACTION_STATUS_PATH, OPERATOR_READINESS_PATH, OPERATOR_STORAGE_LAYOUT_PATH,
+};
+pub(crate) use sp42_core::routes::{
+    AUTH_CALLBACK_PATH, AUTH_LOGIN_PATH, AUTH_LOGOUT_PATH, OPERATOR_REPORT_PATH,
+};
 
 const SESSION_COOKIE_NAME: &str = "sp42_dev_session";
 const CSRF_HEADER_NAME: &str = "x-sp42-csrf-token";
@@ -107,17 +114,8 @@ const SESSION_IDLE_TIMEOUT_MS: i64 = 30 * 60 * 1000;
 const SESSION_ABSOLUTE_TIMEOUT_MS: i64 = 8 * 60 * 60 * 1000;
 const SESSION_COOKIE_MAX_AGE_SECONDS: i64 = SESSION_IDLE_TIMEOUT_MS / 1000;
 const PENDING_OAUTH_TTL_MS: i64 = 10 * 60 * 1000;
-const OPERATOR_READINESS_PATH: &str = "/operator/readiness";
-const OPERATOR_REPORT_PATH: &str = "/operator/report";
-const OPERATOR_STORAGE_LAYOUT_PATH: &str = "/operator/storage/layout";
-const ACTION_STATUS_PATH: &str = "/dev/actions/status";
-const ACTION_HISTORY_PATH: &str = "/dev/actions/history";
 const ACTION_HISTORY_LIMIT: usize = 50;
 const RESPONSE_BODY_PREVIEW_LIMIT: usize = 1_000;
-const AUTH_LOGIN_PATH: &str = "/auth/login";
-const AUTH_CALLBACK_PATH: &str = "/auth/callback";
-const AUTH_SESSION_PATH: &str = "/auth/session";
-const AUTH_LOGOUT_PATH: &str = "/auth/logout";
 const REVISION_ARTIFACT_CACHE_TTL_MS: i64 = 5 * 60 * 1000;
 const RENDERED_HUNK_CACHE_TTL_MS: i64 = 5 * 60 * 1000;
 const WIKIMEDIA_API_RETRY_ATTEMPTS: usize = 3;

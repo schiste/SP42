@@ -6,7 +6,7 @@ use sp42_core::{
     DevAuthBootstrapRequest, DevAuthSessionStatus, OAuthCallback, OAuthClientConfig,
     SessionActionExecutionRequest, SessionActionExecutionResponse, parse_action_execution_history,
     parse_action_execution_status, parse_callback_query, parse_dev_auth_status,
-    prepare_oauth_launch,
+    prepare_oauth_launch, routes,
 };
 use url::Url;
 
@@ -17,8 +17,6 @@ use super::{
     globals,
     http::{delete_bytes, forget_csrf_token, get_bytes, post_json_bytes, remember_csrf_token},
 };
-
-const DEV_AUTH_BOOTSTRAP_STATUS_PATH: &str = "/dev/auth/bootstrap/status";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BrowserAuthPreview {
@@ -148,7 +146,7 @@ pub async fn fetch_dev_auth_session_status() -> Result<DevAuthSessionStatus, Str
 #[cfg(target_arch = "wasm32")]
 pub async fn fetch_dev_auth_bootstrap_status() -> Result<DevAuthBootstrapStatus, String> {
     let bytes = get_bytes(
-        &api_url(DEV_AUTH_BOOTSTRAP_STATUS_PATH),
+        &api_url(routes::DEV_AUTH_BOOTSTRAP_STATUS_PATH),
         "fetch dev auth bootstrap status",
     )
     .await?;
@@ -179,7 +177,7 @@ pub async fn execute_dev_auth_action(
 ) -> Result<SessionActionExecutionResponse, String> {
     let body = serde_json::to_string(request).map_err(|error| error.to_string())?;
     let bytes = post_json_bytes(
-        &api_url("/dev/actions/execute"),
+        &api_url(routes::DEV_ACTION_EXECUTE_PATH),
         body,
         "execute dev auth action",
     )

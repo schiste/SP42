@@ -7,13 +7,13 @@ use url::Url;
 
 use crate::action_executor::SessionActionKind;
 use crate::errors::DevAuthError;
+pub use crate::routes::{
+    DEV_AUTH_ACTION_HISTORY_PATH, DEV_AUTH_ACTION_STATUS_PATH, DEV_AUTH_BOOTSTRAP_SESSION_PATH,
+    DEV_AUTH_SESSION_PATH,
+};
 use crate::types::{HttpMethod, HttpRequest};
 
 pub const DEV_AUTH_DEFAULT_BASE_URL: &str = "http://127.0.0.1:8788";
-pub const DEV_AUTH_SESSION_PATH: &str = "/dev/auth/session";
-pub const DEV_AUTH_BOOTSTRAP_SESSION_PATH: &str = "/dev/auth/session/bootstrap";
-pub const DEV_AUTH_ACTION_STATUS_PATH: &str = "/dev/actions/status";
-pub const DEV_AUTH_ACTION_HISTORY_PATH: &str = "/dev/actions/history";
 
 /// Compatibility payload for the local dev-auth bootstrap POST.
 ///

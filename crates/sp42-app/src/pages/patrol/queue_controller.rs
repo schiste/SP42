@@ -4,6 +4,7 @@ use leptos::prelude::*;
 use sp42_core::{EditorIdentity, QueuedEdit};
 
 use crate::components::filter_bar::PatrolFilterParams;
+use crate::platform::console;
 
 pub(super) struct PatrolQueueController {
     pub(super) filters: ReadSignal<PatrolFilterParams>,
@@ -59,6 +60,32 @@ pub(super) fn create_patrol_queue_controller(
         queue,
         selected_index,
     }
+}
+
+pub(super) fn install_filter_selection_reset(
+    filters: ReadSignal<PatrolFilterParams>,
+    queue: Memo<Vec<QueuedEdit>>,
+    set_selected_rev_id: WriteSignal<Option<u64>>,
+) {
+    Effect::new(move |prev_filters: Option<PatrolFilterParams>| {
+        let current = filters.get();
+        if prev_filters.as_ref() != Some(&current) {
+            let queue = queue.get_untracked();
+            let first_rev = queue.first().map(|edit| edit.event.rev_id);
+            let message = format!(
+                "[SP42] filters changed → {} visible edits{}",
+                queue.len(),
+                first_rev.map_or_else(String::new, |rev_id| format!(", selecting rev {rev_id}"))
+            );
+            if queue.is_empty() {
+                console::debug(&message);
+            } else {
+                console::info(&message);
+            }
+            set_selected_rev_id.set(first_rev);
+        }
+        current
+    });
 }
 
 fn filter_edits(edits: Vec<QueuedEdit>, filters: &PatrolFilterParams) -> Vec<QueuedEdit> {

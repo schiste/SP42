@@ -1,12 +1,11 @@
 use leptos::prelude::*;
-use sp42_core::SessionActionKind;
 
-use crate::components::filter_bar::{FilterBar, PatrolFilterParams};
+use crate::components::filter_bar::FilterBar;
 use crate::platform::config::configured_default_wiki_id;
-use crate::platform::console;
 
 mod action_controller;
 mod eventstream_controller;
+mod keyboard_controller;
 mod load_controller;
 mod queue_controller;
 mod revision_artifacts;
@@ -14,8 +13,9 @@ mod view_components;
 
 use action_controller::{PatrolActionControllerInput, create_patrol_action_controller};
 use eventstream_controller::install_patrol_eventstream;
+use keyboard_controller::handle_patrol_keydown;
 use load_controller::{PatrolLoadControllerInput, create_patrol_load_controller};
-use queue_controller::create_patrol_queue_controller;
+use queue_controller::{create_patrol_queue_controller, install_filter_selection_reset};
 use revision_artifacts::{
     RevisionArtifactEffectsInput, create_revision_artifact_controller,
     install_revision_artifact_effects,
@@ -91,28 +91,7 @@ pub fn PatrolSurface() -> impl IntoView {
     let queue_len = Memo::new(move |_| queue_signal.get().len());
     let has_selection = Memo::new(move |_| selected_index.get() < queue_len.get());
 
-    // Filter changes reset selection to the first visible item.
-    // Uses get_untracked for the queue so EventStream inserts don't
-    // trigger this — only explicit filter toggles do.
-    Effect::new(move |prev_filters: Option<PatrolFilterParams>| {
-        let current = filters.get();
-        if prev_filters.as_ref() != Some(&current) {
-            let queue = queue_signal.get_untracked();
-            let first_rev = queue.first().map(|e| e.event.rev_id);
-            let message = format!(
-                "[SP42] filters changed → {} visible edits{}",
-                queue.len(),
-                first_rev.map_or_else(String::new, |rev_id| format!(", selecting rev {rev_id}"))
-            );
-            if queue.is_empty() {
-                console::debug(&message);
-            } else {
-                console::info(&message);
-            }
-            set_selected_rev_id.set(first_rev);
-        }
-        current
-    });
+    install_filter_selection_reset(filters, queue_signal, set_selected_rev_id);
 
     install_revision_artifact_effects(RevisionArtifactEffectsInput {
         selected_rev_id,
@@ -126,55 +105,6 @@ pub fn PatrolSurface() -> impl IntoView {
     });
 
     install_patrol_eventstream(active_wiki_id.clone(), all_edits, set_all_edits);
-
-    let on_keydown = move |event: leptos::ev::KeyboardEvent| {
-        // Don't intercept when typing in an input
-        let tag = event
-            .target()
-            .and_then(|t| {
-                use wasm_bindgen::JsCast;
-                t.dyn_into::<web_sys::Element>().ok()
-            })
-            .map(|el| el.tag_name());
-        if matches!(tag.as_deref(), Some("INPUT") | Some("TEXTAREA")) {
-            return;
-        }
-
-        match event.key().as_str() {
-            "r" | "R" => set_action_trigger.set(Some(SessionActionKind::Rollback)),
-            "u" | "U" => set_action_trigger.set(Some(SessionActionKind::Undo)),
-            "p" | "P" => set_action_trigger.set(Some(SessionActionKind::Patrol)),
-            "s" | "S" => set_skip_trigger.set(true),
-            "ArrowUp" => {
-                event.prevent_default();
-                let idx = selected_index.get();
-                let queue = queue_signal.get();
-                if idx > 0 {
-                    if let Some(prev) = queue.get(idx - 1) {
-                        set_selected_rev_id.set(Some(prev.event.rev_id));
-                    }
-                }
-            }
-            "ArrowDown" => {
-                event.prevent_default();
-                let idx = selected_index.get();
-                let queue = queue_signal.get();
-                if let Some(next) = queue.get(idx + 1) {
-                    set_selected_rev_id.set(Some(next.event.rev_id));
-                }
-            }
-            "D" if event.ctrl_key() && event.shift_key() => {
-                event.prevent_default();
-                set_show_backoffice.update(|v| *v = !*v);
-            }
-            "?" => set_show_help.set(true),
-            "Escape" => {
-                set_show_help.set(false);
-                set_show_backoffice.set(false);
-            }
-            _ => {}
-        }
-    };
 
     view! {
         {move || {
@@ -198,7 +128,18 @@ pub fn PatrolSurface() -> impl IntoView {
             view! {
                 <div
                     tabindex="0"
-                    on:keydown=on_keydown
+                    on:keydown=move |event| {
+                        handle_patrol_keydown(
+                            event,
+                            set_action_trigger,
+                            set_skip_trigger,
+                            selected_index,
+                            queue_signal,
+                            set_selected_rev_id,
+                            set_show_backoffice,
+                            set_show_help,
+                        );
+                    }
                     class="patrol-grid"
                 >
 

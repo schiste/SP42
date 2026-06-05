@@ -9,6 +9,8 @@ pub(crate) mod media_diff_gallery;
 pub(crate) mod patrol_scenario_panel;
 pub(crate) mod patrol_session_digest_panel;
 pub(crate) mod queue_column;
+pub(crate) mod rendered_highlight;
+pub(crate) mod rendered_hunk_preview;
 pub(crate) mod shell_state_panel;
 pub(crate) mod status_badge;
 pub(crate) mod style;

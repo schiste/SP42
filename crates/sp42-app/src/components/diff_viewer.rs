@@ -1,12 +1,17 @@
-use std::collections::{HashMap, HashSet};
-
 use leptos::{html, prelude::*};
 use sp42_core::{
     DiffHunkKind, DiffLineSpan, DiffMarker, DiffMode, DiffMoveRole, DiffSegment, DiffSegmentKind,
-    InlineSpan, RenderedHunkPreview, StructuredDiff,
+    InlineSpan, StructuredDiff,
 };
 
-use crate::platform::live::fetch_rendered_hunk;
+#[cfg(target_arch = "wasm32")]
+use crate::components::rendered_highlight::find_rendered_highlight_matches;
+use crate::components::rendered_highlight::{
+    RenderedHighlightPhrase, RenderedHighlightSource, collect_rendered_highlight_phrases,
+};
+use crate::components::rendered_hunk_preview::{
+    RenderedHunkContext, RenderedHunkPreviewController, create_rendered_hunk_preview_controller,
+};
 
 /// Action triggered from the diff context menu.
 #[derive(Debug, Clone)]
@@ -115,12 +120,6 @@ struct SideBySideCell {
     inline_highlights: Vec<InlineSpan>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-struct RenderedHighlightPhrase {
-    text: String,
-    whole_word_only: bool,
-}
-
 #[component]
 pub fn DiffViewer(
     diff: Option<StructuredDiff>,
@@ -132,11 +131,7 @@ pub fn DiffViewer(
 ) -> impl IntoView {
     let (menu_pos, set_menu_pos) = signal(None::<(i32, i32, String)>);
     let (editing_line, set_editing_line) = signal(None::<(usize, String)>);
-    let (expanded_rendered_hunks, set_expanded_rendered_hunks) = signal(HashSet::<usize>::new());
-    let (rendered_hunk_cache, set_rendered_hunk_cache) =
-        signal(HashMap::<usize, RenderedHunkPreview>::new());
-    let (rendered_hunk_loading, set_rendered_hunk_loading) = signal(HashSet::<usize>::new());
-    let (rendered_hunk_errors, set_rendered_hunk_errors) = signal(HashMap::<usize, String>::new());
+    let rendered_hunks = create_rendered_hunk_preview_controller();
     let _ = (&on_edit, &editing_line, &set_editing_line);
 
     let Some(diff) = diff else {
@@ -169,8 +164,13 @@ pub fn DiffViewer(
     let (show_full, set_show_full) = signal(false);
     let (display_mode, set_display_mode) = signal(DiffDisplayMode::SideBySide);
     let collapsed_plan = compute_visibility(&diff.segments, 3);
-    let rendered_context =
-        old_rev_id.and_then(|old_rev_id| Some((wiki_id.clone()?, rev_id?, old_rev_id)));
+    let rendered_context = old_rev_id.and_then(|old_rev_id| {
+        Some(RenderedHunkContext::new(
+            wiki_id.clone()?,
+            rev_id?,
+            old_rev_id,
+        ))
+    });
 
     let seg_data: Vec<SegmentData> = diff
         .segments
@@ -287,14 +287,7 @@ pub fn DiffViewer(
                                         has_menu,
                                         set_menu_pos,
                                         rendered_context.clone(),
-                                        expanded_rendered_hunks,
-                                        set_expanded_rendered_hunks,
-                                        rendered_hunk_cache,
-                                        set_rendered_hunk_cache,
-                                        rendered_hunk_loading,
-                                        set_rendered_hunk_loading,
-                                        rendered_hunk_errors,
-                                        set_rendered_hunk_errors,
+                                        rendered_hunks,
                                     )
                                 })
                                 .collect_view()
@@ -330,14 +323,7 @@ pub fn DiffViewer(
                                     set_editing_line,
                                     on_edit,
                                     rendered_context.clone(),
-                                    expanded_rendered_hunks,
-                                    set_expanded_rendered_hunks,
-                                    rendered_hunk_cache,
-                                    set_rendered_hunk_cache,
-                                    rendered_hunk_loading,
-                                    set_rendered_hunk_loading,
-                                    rendered_hunk_errors,
-                                    set_rendered_hunk_errors,
+                                    rendered_hunks,
                                 )
                             })
                             .collect_view()
@@ -407,34 +393,23 @@ fn render_hunk(
     editing_line: ReadSignal<Option<(usize, String)>>,
     set_editing_line: WriteSignal<Option<(usize, String)>>,
     on_edit: Option<WriteSignal<Option<EditAction>>>,
-    rendered_context: Option<(String, u64, u64)>,
-    expanded_rendered_hunks: ReadSignal<HashSet<usize>>,
-    set_expanded_rendered_hunks: WriteSignal<HashSet<usize>>,
-    rendered_hunk_cache: ReadSignal<HashMap<usize, RenderedHunkPreview>>,
-    set_rendered_hunk_cache: WriteSignal<HashMap<usize, RenderedHunkPreview>>,
-    rendered_hunk_loading: ReadSignal<HashSet<usize>>,
-    set_rendered_hunk_loading: WriteSignal<HashSet<usize>>,
-    rendered_hunk_errors: ReadSignal<HashMap<usize, String>>,
-    set_rendered_hunk_errors: WriteSignal<HashMap<usize, String>>,
+    rendered_context: Option<RenderedHunkContext>,
+    rendered_hunks: RenderedHunkPreviewController,
 ) -> leptos::tachys::view::any_view::AnyView {
+    let rendered_toggle =
+        render_rendered_hunk_toggle(hunk_index, rendered_context.clone(), rendered_hunks);
+
     view! {
         <section
             style="display:grid;gap:6px;margin-block-end:12px;padding:7px 0 0;\
                    border-block-start:1px solid var(--border-light);"
         >
-            {render_hunk_header(hunk, ordinal, view! { <span></span> }.into_any())}
+            {render_hunk_header(hunk, ordinal, rendered_toggle)}
             {render_rendered_hunk_preview(
                 hunk,
                 hunk_index,
                 rendered_context.clone(),
-                expanded_rendered_hunks,
-                set_expanded_rendered_hunks,
-                rendered_hunk_cache,
-                set_rendered_hunk_cache,
-                rendered_hunk_loading,
-                set_rendered_hunk_loading,
-                rendered_hunk_errors,
-                set_rendered_hunk_errors,
+                rendered_hunks,
             )}
             <div style="display:grid;gap:2px;">
                 {hunk
@@ -474,36 +449,24 @@ fn render_hunk_side_by_side(
     diff_mode: DiffMode,
     has_menu: bool,
     set_menu_pos: WriteSignal<Option<(i32, i32, String)>>,
-    rendered_context: Option<(String, u64, u64)>,
-    expanded_rendered_hunks: ReadSignal<HashSet<usize>>,
-    set_expanded_rendered_hunks: WriteSignal<HashSet<usize>>,
-    rendered_hunk_cache: ReadSignal<HashMap<usize, RenderedHunkPreview>>,
-    set_rendered_hunk_cache: WriteSignal<HashMap<usize, RenderedHunkPreview>>,
-    rendered_hunk_loading: ReadSignal<HashSet<usize>>,
-    set_rendered_hunk_loading: WriteSignal<HashSet<usize>>,
-    rendered_hunk_errors: ReadSignal<HashMap<usize, String>>,
-    set_rendered_hunk_errors: WriteSignal<HashMap<usize, String>>,
+    rendered_context: Option<RenderedHunkContext>,
+    rendered_hunks: RenderedHunkPreviewController,
 ) -> leptos::tachys::view::any_view::AnyView {
     let rows = build_side_by_side_rows(&hunk.segments, diff_mode);
+    let rendered_toggle =
+        render_rendered_hunk_toggle(hunk_index, rendered_context.clone(), rendered_hunks);
 
     view! {
         <section
             style="display:grid;gap:6px;margin-block-end:12px;padding:7px 0 0;\
                    border-block-start:1px solid var(--border-light);"
         >
-            {render_hunk_header(hunk, ordinal, view! { <span></span> }.into_any())}
+            {render_hunk_header(hunk, ordinal, rendered_toggle)}
             {render_rendered_hunk_preview(
                 hunk,
                 hunk_index,
                 rendered_context.clone(),
-                expanded_rendered_hunks,
-                set_expanded_rendered_hunks,
-                rendered_hunk_cache,
-                set_rendered_hunk_cache,
-                rendered_hunk_loading,
-                set_rendered_hunk_loading,
-                rendered_hunk_errors,
-                set_rendered_hunk_errors,
+                rendered_hunks,
             )}
             {render_side_by_side_rows(rows, diff_mode, has_menu, set_menu_pos)}
         </section>
@@ -511,80 +474,17 @@ fn render_hunk_side_by_side(
     .into_any()
 }
 
-#[allow(clippy::too_many_arguments, dead_code)]
 fn render_rendered_hunk_toggle(
     hunk_index: usize,
-    rendered_context: Option<(String, u64, u64)>,
-    expanded_rendered_hunks: ReadSignal<HashSet<usize>>,
-    set_expanded_rendered_hunks: WriteSignal<HashSet<usize>>,
-    rendered_hunk_cache: ReadSignal<HashMap<usize, RenderedHunkPreview>>,
-    set_rendered_hunk_cache: WriteSignal<HashMap<usize, RenderedHunkPreview>>,
-    rendered_hunk_loading: ReadSignal<HashSet<usize>>,
-    set_rendered_hunk_loading: WriteSignal<HashSet<usize>>,
-    rendered_hunk_errors: ReadSignal<HashMap<usize, String>>,
-    set_rendered_hunk_errors: WriteSignal<HashMap<usize, String>>,
+    rendered_context: Option<RenderedHunkContext>,
+    rendered_hunks: RenderedHunkPreviewController,
 ) -> leptos::tachys::view::any_view::AnyView {
-    let Some((wiki_id, rev_id, old_rev_id)) = rendered_context else {
+    let Some(context) = rendered_context else {
         return view! { <span></span> }.into_any();
     };
 
-    let toggle = move |_| {
-        let is_expanded = expanded_rendered_hunks
-            .get_untracked()
-            .contains(&hunk_index);
-        let mut expanded = expanded_rendered_hunks.get_untracked();
-        if is_expanded {
-            expanded.remove(&hunk_index);
-            set_expanded_rendered_hunks.set(expanded);
-            return;
-        }
-
-        expanded.insert(hunk_index);
-        set_expanded_rendered_hunks.set(expanded);
-
-        if rendered_hunk_cache
-            .get_untracked()
-            .contains_key(&hunk_index)
-            || rendered_hunk_loading.get_untracked().contains(&hunk_index)
-        {
-            return;
-        }
-
-        let wiki_id = wiki_id.clone();
-        wasm_bindgen_futures::spawn_local(async move {
-            let mut loading = rendered_hunk_loading.get_untracked();
-            loading.insert(hunk_index);
-            set_rendered_hunk_loading.set(loading);
-
-            match fetch_rendered_hunk(&wiki_id, rev_id, old_rev_id, hunk_index).await {
-                Ok(Some(preview)) => {
-                    let mut cache = rendered_hunk_cache.get_untracked();
-                    cache.insert(hunk_index, preview);
-                    set_rendered_hunk_cache.set(cache);
-                    let mut errors = rendered_hunk_errors.get_untracked();
-                    errors.remove(&hunk_index);
-                    set_rendered_hunk_errors.set(errors);
-                }
-                Ok(None) => {
-                    let mut errors = rendered_hunk_errors.get_untracked();
-                    errors.insert(
-                        hunk_index,
-                        "No rendered preview is available for this hunk.".to_string(),
-                    );
-                    set_rendered_hunk_errors.set(errors);
-                }
-                Err(error) => {
-                    let mut errors = rendered_hunk_errors.get_untracked();
-                    errors.insert(hunk_index, error);
-                    set_rendered_hunk_errors.set(errors);
-                }
-            }
-
-            let mut loading = rendered_hunk_loading.get_untracked();
-            loading.remove(&hunk_index);
-            set_rendered_hunk_loading.set(loading);
-        });
-    };
+    let toggle_context = context.clone();
+    let toggle = move |_| rendered_hunks.toggle(toggle_context.clone(), hunk_index);
 
     view! {
         <button
@@ -593,7 +493,7 @@ fn render_rendered_hunk_toggle(
             on:click=toggle
         >
             {move || {
-                if expanded_rendered_hunks.get().contains(&hunk_index) {
+                if rendered_hunks.is_expanded(hunk_index) {
                     "Hide rendered"
                 } else {
                     "Show rendered"
@@ -604,41 +504,39 @@ fn render_rendered_hunk_toggle(
     .into_any()
 }
 
-#[allow(clippy::too_many_arguments)]
 fn render_rendered_hunk_preview(
     hunk: &HunkData,
     hunk_index: usize,
-    rendered_context: Option<(String, u64, u64)>,
-    expanded_rendered_hunks: ReadSignal<HashSet<usize>>,
-    _set_expanded_rendered_hunks: WriteSignal<HashSet<usize>>,
-    rendered_hunk_cache: ReadSignal<HashMap<usize, RenderedHunkPreview>>,
-    _set_rendered_hunk_cache: WriteSignal<HashMap<usize, RenderedHunkPreview>>,
-    rendered_hunk_loading: ReadSignal<HashSet<usize>>,
-    _set_rendered_hunk_loading: WriteSignal<HashSet<usize>>,
-    rendered_hunk_errors: ReadSignal<HashMap<usize, String>>,
-    _set_rendered_hunk_errors: WriteSignal<HashMap<usize, String>>,
+    rendered_context: Option<RenderedHunkContext>,
+    rendered_hunks: RenderedHunkPreviewController,
 ) -> leptos::tachys::view::any_view::AnyView {
     if rendered_context.is_none() {
         return view! { <span></span> }.into_any();
     }
 
-    let before_highlights = collect_rendered_highlight_phrases(hunk, DiffSegmentKind::Delete);
-    let after_highlights = collect_rendered_highlight_phrases(hunk, DiffSegmentKind::Insert);
+    let before_highlights = collect_rendered_highlight_phrases(
+        rendered_highlight_sources(hunk),
+        DiffSegmentKind::Delete,
+    );
+    let after_highlights = collect_rendered_highlight_phrases(
+        rendered_highlight_sources(hunk),
+        DiffSegmentKind::Insert,
+    );
 
     view! {
         {move || {
-            if !expanded_rendered_hunks.get().contains(&hunk_index) {
+            if !rendered_hunks.is_expanded(hunk_index) {
                 return view! { <span></span> }.into_any();
             }
 
-            if rendered_hunk_loading.get().contains(&hunk_index) {
+            if rendered_hunks.is_loading(hunk_index) {
                 view! {
                     <div class="card" style="padding:10px;gap:6px;">
                         <div class="text-muted" style="font-size:11px;">"Rendering hunk context..."</div>
                     </div>
                 }
                 .into_any()
-            } else if let Some(error) = rendered_hunk_errors.get().get(&hunk_index).cloned() {
+            } else if let Some(error) = rendered_hunks.error(hunk_index) {
                 view! {
                     <div class="card" style="padding:10px;gap:6px;border-color:rgba(239,68,68,.3);">
                         <strong style="font-size:11px;color:#fca5a5;">"Rendered preview unavailable"</strong>
@@ -647,7 +545,7 @@ fn render_rendered_hunk_preview(
                 }
                 .into_any()
             } else {
-                let Some(preview) = rendered_hunk_cache.get().get(&hunk_index).cloned() else {
+                let Some(preview) = rendered_hunks.preview(hunk_index) else {
                     return view! { <span></span> }.into_any();
                 };
 
@@ -695,6 +593,16 @@ fn render_rendered_hunk_preview(
         }}
     }
     .into_any()
+}
+
+fn rendered_highlight_sources(
+    hunk: &HunkData,
+) -> impl Iterator<Item = RenderedHighlightSource<'_>> {
+    hunk.segments.iter().map(|segment| RenderedHighlightSource {
+        kind: segment.kind,
+        text: &segment.text,
+        inline_highlights: &segment.inline_highlights,
+    })
 }
 
 #[component]
@@ -1127,162 +1035,6 @@ fn diff_marker_label(marker: &DiffMarker) -> &'static str {
     }
 }
 
-fn collect_rendered_highlight_phrases(
-    hunk: &HunkData,
-    target_kind: DiffSegmentKind,
-) -> Vec<RenderedHighlightPhrase> {
-    let mut phrases = Vec::new();
-    let mut seen = HashSet::new();
-
-    for segment in hunk
-        .segments
-        .iter()
-        .filter(|segment| segment.kind == target_kind)
-    {
-        if !segment.inline_highlights.is_empty() {
-            for span in segment
-                .inline_highlights
-                .iter()
-                .filter(|span| span.kind == target_kind)
-            {
-                push_rendered_highlight_phrases(&mut phrases, &mut seen, &span.text, false);
-            }
-        } else {
-            push_rendered_highlight_phrases(&mut phrases, &mut seen, &segment.text, true);
-        }
-    }
-
-    phrases.sort_by(|left, right| {
-        right
-            .text
-            .len()
-            .cmp(&left.text.len())
-            .then_with(|| left.text.cmp(&right.text))
-    });
-    phrases.truncate(24);
-    phrases
-}
-
-fn push_rendered_highlight_phrases(
-    phrases: &mut Vec<RenderedHighlightPhrase>,
-    seen: &mut HashSet<String>,
-    raw: &str,
-    fallback_only: bool,
-) {
-    for line in split_text_lines(raw) {
-        for phrase in build_rendered_highlight_candidates(&line, fallback_only) {
-            let dedupe_key = format!("{}:{}", phrase.whole_word_only as u8, phrase.text);
-            if seen.insert(dedupe_key) {
-                phrases.push(phrase);
-            }
-        }
-    }
-}
-
-fn normalize_rendered_highlight_phrase(raw: &str) -> Option<String> {
-    let collapsed = raw.split_whitespace().collect::<Vec<_>>().join(" ");
-    let trimmed = collapsed.trim();
-    if trimmed.len() < 3 {
-        return None;
-    }
-    if !trimmed.chars().any(|ch| ch.is_alphanumeric()) {
-        return None;
-    }
-    let has_markup = ["[[", "]]", "{{", "}}", "|", "http://", "https://", "="]
-        .iter()
-        .any(|token| trimmed.contains(token));
-    if has_markup {
-        return None;
-    }
-    Some(trimmed.to_string())
-}
-
-fn build_rendered_highlight_candidates(
-    raw: &str,
-    fallback_only: bool,
-) -> Vec<RenderedHighlightPhrase> {
-    let Some(normalized) = normalize_rendered_highlight_phrase(raw) else {
-        return Vec::new();
-    };
-
-    let tokens = extract_rendered_word_tokens(&normalized);
-    if tokens.is_empty() {
-        return Vec::new();
-    }
-
-    let mut candidates = Vec::new();
-
-    if !fallback_only && tokens.len() <= 4 && normalized.len() <= 48 {
-        candidates.push(RenderedHighlightPhrase {
-            text: normalized.clone(),
-            whole_word_only: true,
-        });
-    }
-
-    if !fallback_only && tokens.len() > 1 {
-        for window in (2..=3).rev() {
-            if tokens.len() < window {
-                continue;
-            }
-            for index in 0..=tokens.len() - window {
-                let phrase = tokens[index..index + window].join(" ");
-                if phrase.len() >= 5 {
-                    candidates.push(RenderedHighlightPhrase {
-                        text: phrase,
-                        whole_word_only: true,
-                    });
-                }
-            }
-        }
-    }
-
-    for token in tokens {
-        if token.chars().count() >= 3 {
-            candidates.push(RenderedHighlightPhrase {
-                text: token,
-                whole_word_only: true,
-            });
-        }
-    }
-
-    candidates
-}
-
-fn extract_rendered_word_tokens(text: &str) -> Vec<String> {
-    let mut tokens = Vec::new();
-    let mut current = String::new();
-
-    for ch in text.chars() {
-        if ch.is_alphanumeric() {
-            current.push(ch);
-        } else if (ch == '\'' || ch == '’' || ch == '-' || ch == '_') && !current.is_empty() {
-            current.push(ch);
-        } else if !current.is_empty() {
-            trim_token_suffix(&mut current);
-            if current.chars().any(|ch| ch.is_alphanumeric()) {
-                tokens.push(std::mem::take(&mut current));
-            } else {
-                current.clear();
-            }
-        }
-    }
-
-    if !current.is_empty() {
-        trim_token_suffix(&mut current);
-        if current.chars().any(|ch| ch.is_alphanumeric()) {
-            tokens.push(current);
-        }
-    }
-
-    tokens
-}
-
-fn trim_token_suffix(token: &mut String) {
-    while token.chars().last().is_some_and(|ch| !ch.is_alphanumeric()) {
-        token.pop();
-    }
-}
-
 #[cfg(target_arch = "wasm32")]
 fn apply_rendered_highlights(
     root: web_sys::Element,
@@ -1357,60 +1109,6 @@ fn collect_text_nodes(node: &web_sys::Node, nodes: &mut Vec<web_sys::Text>) {
         collect_text_nodes(&current, nodes);
         child = next;
     }
-}
-
-fn find_rendered_highlight_matches(
-    text: &str,
-    phrases: &[RenderedHighlightPhrase],
-) -> Vec<(usize, usize)> {
-    let mut matches = Vec::new();
-    let mut cursor = 0usize;
-
-    while cursor < text.len() {
-        let candidate = phrases
-            .iter()
-            .filter_map(|phrase| find_rendered_phrase_match(text, cursor, phrase))
-            .min_by(|left, right| left.0.cmp(&right.0).then_with(|| right.1.cmp(&left.1)));
-
-        let Some((start, len)) = candidate else {
-            break;
-        };
-        let end = start + len;
-        matches.push((start, end));
-        cursor = end;
-    }
-
-    matches
-}
-
-fn find_rendered_phrase_match(
-    text: &str,
-    cursor: usize,
-    phrase: &RenderedHighlightPhrase,
-) -> Option<(usize, usize)> {
-    let mut search_from = cursor;
-    while search_from < text.len() {
-        let offset = text[search_from..].find(&phrase.text)?;
-        let start = search_from + offset;
-        let end = start + phrase.text.len();
-        if !phrase.whole_word_only || is_whole_word_match(text, start, end) {
-            return Some((start, phrase.text.len()));
-        }
-        search_from = end;
-    }
-    None
-}
-
-fn is_whole_word_match(text: &str, start: usize, end: usize) -> bool {
-    let prev_ok = text[..start]
-        .chars()
-        .next_back()
-        .is_none_or(|ch| !ch.is_alphanumeric());
-    let next_ok = text[end..]
-        .chars()
-        .next()
-        .is_none_or(|ch| !ch.is_alphanumeric());
-    prev_ok && next_ok
 }
 
 fn inline_highlight_style(span: &InlineSpan) -> &'static str {
@@ -1615,10 +1313,8 @@ mod tests {
     use sp42_core::{DiffLineSpan, DiffMode, DiffSegment, DiffSegmentKind};
 
     use super::{
-        RenderedHighlightPhrase, SegmentData, SegmentVisibility,
-        build_rendered_highlight_candidates, build_side_by_side_rows, compute_visibility,
-        extract_rendered_word_tokens, find_rendered_highlight_matches, format_line_label,
-        normalize_rendered_highlight_phrase,
+        SegmentData, SegmentVisibility, build_side_by_side_rows, compute_visibility,
+        format_line_label,
     };
 
     fn segment(kind: DiffSegmentKind) -> DiffSegment {
@@ -1786,83 +1482,6 @@ mod tests {
             rows[1].right.as_ref().map(|cell| cell.line_label.as_str()),
             Some("9")
         );
-    }
-
-    #[test]
-    fn normalize_rendered_highlight_phrase_filters_markup_noise() {
-        assert_eq!(
-            normalize_rendered_highlight_phrase("  Added text here  "),
-            Some("Added text here".to_string())
-        );
-        assert_eq!(normalize_rendered_highlight_phrase("{{Infobox}}"), None);
-        assert_eq!(
-            normalize_rendered_highlight_phrase("[[File:Example.jpg]]"),
-            None
-        );
-        assert_eq!(normalize_rendered_highlight_phrase("  "), None);
-    }
-
-    #[test]
-    fn rendered_highlight_matches_prefer_longer_phrase_at_same_position() {
-        let matches = find_rendered_highlight_matches(
-            "Added a major city landmark",
-            &[
-                RenderedHighlightPhrase {
-                    text: "Added".to_string(),
-                    whole_word_only: true,
-                },
-                RenderedHighlightPhrase {
-                    text: "Added a major".to_string(),
-                    whole_word_only: true,
-                },
-            ],
-        );
-
-        assert_eq!(matches, vec![(0, "Added a major".len())]);
-    }
-
-    #[test]
-    fn rendered_highlight_matches_respect_word_boundaries() {
-        let matches = find_rendered_highlight_matches(
-            "Capitales parisiennes",
-            &[RenderedHighlightPhrase {
-                text: "pari".to_string(),
-                whole_word_only: true,
-            }],
-        );
-
-        assert!(matches.is_empty());
-    }
-
-    #[test]
-    fn extract_rendered_word_tokens_keeps_short_meaningful_units() {
-        assert_eq!(
-            extract_rendered_word_tokens("Jean-Pierre d'Arc 2024"),
-            vec![
-                "Jean-Pierre".to_string(),
-                "d'Arc".to_string(),
-                "2024".to_string()
-            ]
-        );
-    }
-
-    #[test]
-    fn build_rendered_highlight_candidates_avoids_long_sentence_fallbacks() {
-        let candidates = build_rendered_highlight_candidates(
-            "This is a long changed sentence with many words in it",
-            true,
-        );
-        let texts = candidates
-            .into_iter()
-            .map(|candidate| candidate.text)
-            .collect::<Vec<_>>();
-
-        assert!(
-            !texts.contains(&"This is a long changed sentence with many words in it".to_string())
-        );
-        assert!(texts.contains(&"long".to_string()));
-        assert!(texts.contains(&"changed".to_string()));
-        assert!(texts.contains(&"sentence".to_string()));
     }
 
     #[test]

@@ -4,8 +4,23 @@
 **Date:** 2026-06-05
 **State:** Implemented
 **As-built:** retroactive characterization of an already-shipped feature (no forward "closing PR").
-**Related ADRs:** ADR-0001 (foundational decisions), ADR-0002 (local dev-auth bridge contract)
+**Related ADRs:** ADR-0001 (foundational decisions), ADR-0002 (local dev-auth bridge contract — but operator identity/capabilities are owned by PRD-0005)
 **Discussion:** (PR link added on filing)
+
+## Scope boundary
+
+This PRD characterizes **the operator's main review loop** — what a reviewer does, in what order, to work a wiki's recent changes one revision at a time: pull a ranked queue, walk it, inspect the diff in place, and choose a disposition without leaving the page. It is the workflow that ties the other surfaces together, and it deliberately *references* rather than restates them:
+
+- **What a score, signal, or rank MEANS, and the score-gated action *recommendation*** — why an edit surfaced and which disposition scoring *suggests* — is scoring/ranking semantics owned by **PRD-0003**. This workflow consumes and displays that result; it does not define it.
+- **What a chosen disposition DOES on the wiki, and how the operator knows it landed** — the on-wiki meaning of rollback / undo / patrol / tag / inline-fix and its reported outcome — is owned by **PRD-0004**. This PRD picks the disposition and ends the loop; PRD-0004 picks up at "the operator has decided."
+- **Who the operator is acting as, and which dispositions their identity may perform** — the server-owned session, the per-wiki capability report, and login — is owned by **PRD-0005**. This workflow *relies on* that surface to know which actions to offer and which to mark available.
+- **How a disposition is carried out** — the action contract, token acquisition, request building, and execution — is *implementation* (the content-edit editing mechanism is governed by ADR-0003). This PRD references that mechanism, it does not specify it.
+- **How the live view and the per-selection action preflight are *assembled*** — the `GET /operator/live/{wiki_id}` payload shape and the preflight's construction — is *implementation*; that contract has no ADR of its own yet (see Known gaps).
+
+The one split worth stating explicitly is inside the per-selection **action preflight**, because it straddles two PRDs:
+
+- **Action *availability* + retry classification** — does the active session have the rights and tokens to perform this disposition, and if not, what is the retry path (session refresh / backoff / operator change)? This is an operator-workflow + auth concern (identity owned by PRD-0005) and is **owned by this PRD**. Its observable is `preflight_classifies_missing_tokens_as_session_refresh` (in the DoD below).
+- **Action *recommendation* (the score gate)** — given the edit's score and signals, which single disposition does scoring *suggest*? Per the scoring constitution, "Scoring may recommend attention and actions" (`docs/scoring/SCORING_CONSTITUTION.md` §5.1) and recommendation thresholds are a reserved scoring question (§17 Q2), so this is scoring/action semantics **owned by PRD-0003**, whose DoD binds it (`preflight_recommends_rollback_for_high_score_edit`). This PRD only *displays* the recommended disposition the preflight returns.
 
 ## Problem
 
@@ -27,104 +42,71 @@ inspect-decide-advance rather than hunting across tools and tabs.
 
 The patrol review workflow is the operator's main loop. It lets a reviewer:
 
-- **Open a live operator view for one wiki** and receive a single assembled payload:
-  the ranked queue, the selected revision's diff, the scoring context, a prepared
-  set of actions for the selection, stream/backlog status, and session/auth state
-  (`LiveOperatorView`, `crates/sp42-core/src/live_operator.rs:148`; assembled by the
-  server route `GET /operator/live/{wiki_id}`,
-  `crates/sp42-server/src/operator_live.rs:25`).
-- **Have recent changes ingested into a queue automatically**, from two sources that
-  normalize into the same `EditEvent`/`QueuedEdit` shape: the live `EventStreams`
-  feed (`StreamIngestor::ingest`, `crates/sp42-core/src/stream_ingestor.rs:63`) and the
-  `MediaWiki` `recentchanges` backlog poll (`build_recent_changes_request`,
-  `crates/sp42-core/src/recent_changes.rs:82`). Bots and other out-of-scope changes are
-  filtered out before they ever reach the queue, and ingestion checkpoints its cursor so
-  a reconnect or a fresh page load resumes where the operator left off rather than
-  re-showing handled edits (`StreamRuntime::next_actionable_event`,
-  `crates/sp42-core/src/stream_runtime.rs:87`; backlog `rccontinue` checkpoint reuse,
-  `crates/sp42-server/tests/operator_live.rs:443`).
-- **Inspect the selected revision in place.** The patrol surface
-  (`PatrolSurface`, `crates/sp42-app/src/pages/patrol.rs:27`) shows a queue pane, a diff
-  pane, a session bar, a filter bar, and an action footer. Selecting a queue row (click,
-  the `Up`/`Down` arrow keys, or a `rev=` URL hash) loads that revision's structured diff
-  — served from a prefetched per-revision cache when available, fetched on demand on a
-  miss (`install_selected_diff_effect`,
-  `crates/sp42-app/src/pages/patrol/revision_artifacts.rs:177`). Selection is driven only
-  by explicit operator action, never by a background stream insert — `selected_edit` is
-  the "Single authoritative source for the selected edit ... Only updated by explicit
-  human actions — never by EventStream inserts" (`crates/sp42-app/src/pages/patrol.rs:50`).
-- **See why an edit ranks where it does.** Each `QueuedEdit` carries a `CompositeScore`
-  (`crates/sp42-core/src/types.rs:286`) whose `total` and per-signal `contributions`
-  (`SignalContribution`, `crates/sp42-core/src/types.rs:279`) explain the rank. The
-  per-signal labels the operator sees — `Anonymous user`, `Obvious vandalism`,
-  `LiftWing risk`, `Trusted user`, … — are the `Display` strings of the `ScoringSignal`
-  enum (impl at `crates/sp42-core/src/types.rs:249`). The operator can open an inspector feed of
-  labelled queue/stream/backlog/diff/review lines for the session (`InspectorFeed`,
-  `crates/sp42-app/src/components/inspector_feed.rs:26`). (The score itself — which
-  signals fire and the weights they carry — is scoring/ranking *semantics* owned by
-  PRD-0003; this workflow consumes and displays the result, it does not define it.)
+- **Open one live operator view for a wiki.** A single live surface for `wiki_id`
+  brings together, in one place, the ranked queue, the selected revision's diff, the
+  scoring context, the dispositions prepared for the selection, stream/backlog status,
+  and session/auth state — so the operator works the loop without leaving the page.
+  (How that view is assembled and served is implementation; its contract is exercised
+  by the end-to-end test in the DoD.)
+- **Have recent changes ingested into one queue automatically**, from two sources —
+  the live `EventStreams` feed and the `MediaWiki` `recentchanges` backlog poll — that
+  the operator experiences as a single, source-agnostic queue. Bots and other
+  out-of-scope changes are filtered out before they ever reach the queue, and ingestion
+  resumes where the operator left off: a reconnect or a fresh page load picks up at a
+  checkpoint rather than re-showing handled edits. (The normalization and checkpoint
+  mechanism is implementation; the behavior is bound in the DoD.)
+- **Inspect the selected revision in place.** The patrol surface shows a queue pane, a
+  diff pane, a session bar, a filter bar, and an action footer. Selecting a queue row
+  (click, the `Up`/`Down` arrow keys, or a `rev=` URL hash) loads that revision's
+  structured diff in place. Selection is driven only by explicit operator action, never
+  by a background stream insert: the operator's place in the queue is theirs, and a new
+  edit arriving on the stream never re-points the inspection out from under them.
+- **See why an edit ranks where it does**, in the operator's own vocabulary. Each queued
+  edit carries the per-signal reasons that explain its rank, and the per-signal labels
+  the operator sees — `Anonymous user`, `Obvious vandalism`, `LiftWing risk`,
+  `Trusted user`, … — are surfaced next to the edit. The operator can open an inspector
+  feed of labelled queue/stream/backlog/diff/review lines for the session. (The score
+  itself — which signals fire and the weights they carry — is scoring/ranking *semantics*
+  owned by PRD-0003; this workflow consumes and displays the result, it does not define
+  it.)
 - **Filter the queue without re-fetching.** Bots, minor edits, new pages, registered /
-  anonymous / temporary editors, a tag, and a minimum score can be toggled client-side;
-  changing filters re-selects the first visible edit
-  (`filter_edits`, `crates/sp42-core` filter params applied in
-  `crates/sp42-app/src/pages/patrol/queue_controller.rs:91`).
+  anonymous / temporary editors, a tag, and a minimum score can be toggled client-side
+  over the already-fetched edits, so toggling a filter is instant and does not spend a
+  round trip or disturb the checkpoint; changing filters re-selects the first visible
+  edit. (Client-side filtering is implementation; the coarse server-side `rcshow`
+  bot/unpatrolled/minor/anon cut is applied once at ingestion — see Alternatives.)
 - **Choose a disposition for the selected revision** from the action footer or a
-  one-key shortcut — `r` rollback, `u` undo, `p` mark patrolled, `s` skip
-  (`crates/sp42-app/src/pages/patrol/keyboard_controller.rs:18`). On an accepted
+  one-key shortcut — `r` rollback, `u` undo, `p` mark patrolled, `s` skip. On an accepted
   action the edit (and its grouped siblings) is removed from the queue, the review note
-  is cleared, and selection advances to the next item, giving the fast N→N+1 cadence
-  (`install_action_effect`, `crates/sp42-app/src/pages/patrol/action_controller.rs:120`;
-  the removal-and-advance itself is `remove_accepted_edit`,
-  `crates/sp42-app/src/pages/patrol/action_controller.rs:240`).
+  is cleared, and selection advances to the next item, giving the fast N→N+1 cadence.
 - **See, next to the selection, which dispositions the current session can actually
-  perform.** As one section of the assembled view, the live route attaches a per-selection
-  action preflight (`LiveOperatorView.action_preflight`,
-  `crates/sp42-core/src/live_operator.rs:169`; built by
-  `build_live_operator_action_preflight`, `crates/sp42-core/src/live_operator.rs:187`),
-  so the operator is not offered a doomed action blind. Whether an action is *available*
-  is an operator-rights/token question (this workflow's concern; see ADR-0002): a
+  perform.** The live view attaches a per-selection action preflight so the operator is
+  not offered a doomed action blind. Whether an action is *available* is an
+  operator-rights/token question (this workflow's concern; identity owned by PRD-0005): a
   disposition blocked by a missing token is marked `available=false` with a retry
-  classification rather than silently failing
-  (`action_availability`, `crates/sp42-core/src/live_operator.rs:283`). Whether an action
-  is *recommended* — the score-gated suggestion (`is_recommended` and its score cutoffs) —
-  is scoring/action-recommendation *semantics* and is owned by PRD-0003; this workflow
-  surfaces the recommendation the preflight produces, it does not define the gating.
+  classification rather than silently failing. Whether an action is *recommended* — the
+  score-gated suggestion — is scoring/action-recommendation *semantics* owned by PRD-0003;
+  this workflow surfaces the recommendation the preflight produces, it does not define the
+  gating (see Scope boundary).
 
-A disposition (`SessionActionKind`: rollback, patrol, undo, tag-citation-needed,
-inline-edit — `crates/sp42-core/src/action_executor.rs:80`) is the operator's decision
-about a revision; the actual MediaWiki call behind it (tokens, request building,
-execution, audit) is out of scope for this PRD and is governed elsewhere.
-
-## Scope boundary with PRD-0003 (score-gated action recommendation)
-
-The action preflight (`build_live_operator_action_preflight`) does two structurally
-different things, split here so each is owned by exactly one PRD:
-
-- **Action *availability* + retry classification** — does the active session have the
-  rights and tokens to perform this disposition, and if not, what is the retry path
-  (session refresh / backoff / operator change)? This is an operator-workflow + auth
-  concern (ADR-0002 dev-auth bridge) and is **owned by this PRD (PRD-0002)**. Its
-  observable is `preflight_classifies_missing_tokens_as_session_refresh` (in the DoD
-  below).
-- **Action *recommendation* (the score gate)** — given the edit's `CompositeScore` and
-  signals, which single disposition does scoring *suggest*? This is the score-gated
-  suggestion produced by `is_recommended` (`crates/sp42-core/src/live_operator.rs:373`,
-  cutoffs at `:392`/`:398`/`:401`). Per the scoring constitution, "Scoring may recommend
-  attention and actions" (`docs/scoring/SCORING_CONSTITUTION.md` §5.1) and recommendation
-  thresholds are a reserved scoring question (§17 Q2), so this is scoring/action-semantics
-  and is **owned by PRD-0003**, whose DoD binds the recommendation behavior
-  (`live_operator.rs::preflight_recommends_rollback_for_high_score_edit`). This PRD only
-  *displays* the recommended disposition the preflight returns.
-
-This split removes the prior double-attribution: this PRD no longer claims the
-recommendation semantics or binds the `preflight_recommends_rollback_for_high_score_edit`
-test in its own Definition of Done.
+A disposition is the operator's decision about a revision; what that decision *means on
+the wiki* and how its outcome is reported is owned by **PRD-0004**, and the actual
+MediaWiki call behind it (tokens, request building, execution, audit) is implementation,
+out of scope for this PRD.
 
 ## Definition of Done
 
 Each item is a behavior that already holds, bound to an existing test or observable.
-Items the workflow merely *consumes* but does not *own* (the score itself; the score-gated
-recommendation) are deliberately not listed — they are bound in PRD-0003.
+Items the workflow merely *consumes* but does not *own* (the score itself; the
+score-gated recommendation, bound in PRD-0003) are deliberately not listed. (Internal
+assembly/classification helpers behind the loop — the operator summary, the per-edit
+prepared-action previews, inspector-lane classification, and the wikitext article
+inventory — are additionally unit-tested in `crates/sp42-core` /
+`crates/sp42-app` (`operator_summary.rs::builds_operator_summary_from_report`,
+`review_workbench.rs::builds_request_and_training_previews`,
+`inspector_feed.rs::classifies_known_prefixes`,
+`article_inventory.rs::inventories_article_references_and_categories`), but they are
+assembly mechanism, not operator-observable loop outcomes.)
 
 - [x] A single `recentchanges`-feed event is ingested and normalized into a queued
   edit (rev id, editor classification) — verified by
@@ -159,72 +141,60 @@ recommendation) are deliberately not listed — they are bound in PRD-0003.
   by `crates/sp42-core/src/live_operator.rs::preflight_classifies_missing_tokens_as_session_refresh`.
   (The *recommendation* half of the preflight — the score gate — is bound in PRD-0003's
   DoD, not here.)
-- [x] An operator-facing session summary is built from the patrol report — queue depth,
-  the selected revision, severity counts, section availability — verified by
-  `crates/sp42-core/src/operator_summary.rs::builds_operator_summary_from_report`.
-- [x] Prepared per-edit review actions (rollback / patrol / undo previews) are built for
-  a ranked edit — verified by
-  `crates/sp42-core/src/review_workbench.rs::builds_request_and_training_previews`.
-- [x] Inspector lines are classified into the operator's labelled lanes (queue, stream,
-  backlog, coordination, diff, …) for the live session feed — verified by
-  `crates/sp42-app/src/components/inspector_feed.rs::classifies_known_prefixes`.
-- [x] The current article's references, sections, categories, and citation templates are
-  inventoried from wikitext as inspection context — verified by
-  `crates/sp42-core/src/article_inventory.rs::inventories_article_references_and_categories`.
 
 ## Alternatives
 
 - **Background auto-advancing selection.** The queue could re-point the operator to a
   newer/higher-scoring edit as the stream delivers it. The shipped design deliberately
-  rejects this: `selected_edit` is the "Single authoritative source for the selected
-  edit ... Only updated by explicit human actions — never by EventStream inserts"
-  (`crates/sp42-app/src/pages/patrol.rs:50`). The operator's place in the queue is theirs;
-  new edits accumulate without yanking the current inspection.
+  rejects this: the selected revision is updated only by explicit human action, never by
+  a stream insert. The operator's place in the queue is theirs; new edits accumulate
+  without yanking the current inspection.
 - **Server-side filtering of the queue.** Bot/minor/editor-class/tag/min-score filters
   could be a server query. They are applied client-side over the already-fetched edits
-  (`filter_edits`, `crates/sp42-app/src/pages/patrol/queue_controller.rs:91`) so toggling
-  a filter is instant and does not spend a round trip or disturb the checkpoint; the
-  server-side `rcshow` filter is reserved for the coarse bot/unpatrolled/minor/anon cut
-  at ingestion (`crates/sp42-core/src/recent_changes.rs:116`).
+  so toggling a filter is instant and does not spend a round trip or disturb the
+  checkpoint; the server-side `rcshow` filter is reserved for the coarse
+  bot/unpatrolled/minor/anon cut at ingestion.
 - **Two separate ingestion features (stream vs. backlog).** Instead, both the live
-  `EventStreams` feed and the `recentchanges` poll normalize into the same `EditEvent`
-  and share the same checkpoint discipline (`stream_runtime.rs`, `recent_changes.rs`),
-  so the queue and the rest of the loop are source-agnostic.
+  `EventStreams` feed and the `recentchanges` poll normalize into the same edit shape
+  and share the same checkpoint discipline, so the queue and the rest of the loop are
+  source-agnostic.
 - **Numeric-only ranking.** The queue could surface only a score. Instead each edit
-  carries its per-signal `contributions` (`SignalContribution`,
-  `crates/sp42-core/src/types.rs:279`) so the rank is explainable in the operator's own
-  vocabulary, not an opaque number.
+  carries its per-signal reasons so the rank is explainable in the operator's own
+  vocabulary, not an opaque number. (The score and its decomposition are PRD-0003.)
 
 ## Risks
 
 - **Stale or duplicated queue items on reconnect.** A reconnect that didn't checkpoint
   correctly could re-show handled edits. Mitigation: the cursor is only advanced when an
-  event is actually processed, a malformed payload leaves it untouched
-  (`crates/sp42-core/src/stream_runtime.rs::invalid_payload_does_not_advance_checkpoint`,
-  `:359`), and the backlog `rccontinue` is persisted and reused across requests
-  (`crates/sp42-server/tests/operator_live.rs:443`).
+  event is actually processed, a malformed payload leaves it untouched, and the backlog
+  continue token is persisted and reused across requests.
 - **Acting on the wrong revision after a fast advance.** Because dispositions are
   one-keypress, an operator could act on a revision that changed under them. Mitigation:
-  the selection is decoupled from stream inserts (`crates/sp42-app/src/pages/patrol.rs:50`);
-  keyboard handling is suppressed while typing in an input/textarea so a note keystroke
-  never fires an action (`is_text_entry_event` guard,
-  `crates/sp42-app/src/pages/patrol/keyboard_controller.rs:14` / `:54`); and the action
-  request is built from the explicitly selected edit's `rev_id`
-  (`build_action_request`, `crates/sp42-app/src/pages/patrol/action_controller.rs:188`).
+  the selection is decoupled from stream inserts, so a newer edit never re-points the
+  inspection; keyboard handling is suppressed while typing in an input/textarea so a note
+  keystroke never fires an action; and the action request is built from the explicitly
+  selected edit's `rev_id`.
 - **Choosing a disposition the account can't perform.** Rights or tokens may be missing.
   Mitigation: the preflight marks unavailable actions and classifies the retry path
   (session refresh / backoff / operator change) rather than letting the operator fire a
-  doomed action blind (`action_availability`,
-  `crates/sp42-core/src/live_operator.rs:283`); an auth failure at action time triggers a
-  re-authenticate-and-retry (`retry_after_reauthentication`,
-  `crates/sp42-app/src/pages/patrol/action_controller.rs:277`).
-- **Inspection context can mislead.** The article inventory is wikitext-derived and, by
-  its own note, "Inventory is wikitext-derived and does not yet validate external URLs,
-  Wikidata claims, or Commons metadata" (`crates/sp42-core/src/article_inventory.rs:110`);
-  diff/score are a decision aid, not a verdict. The human still confirms every disposition.
+  doomed action blind, and an auth failure at action time triggers a
+  re-authenticate-and-retry. (How identity and capabilities are established and gated is
+  PRD-0005; what the action does once chosen is PRD-0004.)
+- **Inspection context can mislead.** The article inventory is wikitext-derived: it does
+  not yet validate external URLs, Wikidata claims, or Commons metadata, so it is context
+  for the operator's judgment rather than a verified fact. The diff and the score are a
+  decision aid, not a verdict — the human still confirms every disposition.
 
 ## Known gaps / drift
 
+- **The assembled live-operator-view contract has no ADR.** The `GET /operator/live/{wiki_id}`
+  payload that bundles the ranked queue, the selected diff, the scoring context, the
+  per-selection action preflight, and backlog/session state into one response is a
+  public-contract concern that, per `docs/prd/README.md`, warrants its own ADR, but none
+  exists; its structure lives only in code and is pinned only by the end-to-end
+  `operator_live` test. *(This PRD owns the loop's user-facing intent; the assembled
+  view's structure should become an ADR this PRD links. The disposition-execution
+  contract gap is owned by PRD-0004.)*
 - **No standalone test for the `patrol.rs` surface wiring.** The page-level component
   (queue/diff/action panes, the keyboard handler, the selection-vs-stream invariant in
   `crates/sp42-app/src/pages/patrol.rs`) is exercised only indirectly; the app-layer

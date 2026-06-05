@@ -23,6 +23,10 @@ use crate::platform::console;
 use crate::platform::eventstream::{EventStreamHandle, StreamEvent, start_eventstream};
 use crate::platform::live::{fetch_diff, fetch_live_operator_view, fetch_media_diff};
 
+mod queue_controller;
+
+use queue_controller::create_patrol_queue_controller;
+
 /// Read `rev=N` from the URL hash fragment.
 fn rev_id_from_hash() -> Option<u64> {
     #[cfg(target_arch = "wasm32")]
@@ -66,7 +70,6 @@ pub fn PatrolSurface() -> impl IntoView {
     let (skip_trigger, set_skip_trigger) = signal(false);
     let (action_pending, set_action_pending) = signal(false);
     let (action_status, set_action_status) = signal(String::new());
-    let (filters, set_filters) = signal(PatrolFilterParams::default());
     let (next_continue, set_next_continue) = signal(None::<String>);
     let (review_note, set_review_note) = signal(String::new());
     let (show_help, set_show_help) = signal(false);
@@ -77,116 +80,17 @@ pub fn PatrolSurface() -> impl IntoView {
     let (media_diff_loading, set_media_diff_loading) = signal(false);
     let (current_media_diff, set_current_media_diff) = signal(None::<MediaDiffReport>);
     let (media_diff_cache, set_media_diff_cache) = signal(HashMap::<u64, MediaDiffReport>::new());
-    let (all_edits, set_all_edits) = signal(Vec::<sp42_core::QueuedEdit>::new());
 
     let (tag_action, set_tag_action) = signal(None::<TagAction>);
     let (edit_action, set_edit_action) = signal(None::<EditAction>);
-    let (group_rev_ids, set_group_rev_ids) = signal(HashMap::<u64, Vec<u64>>::new());
-
-    // Derived filtered + optionally grouped queue
-    let queue_signal = Memo::new(move |_: Option<&Vec<sp42_core::QueuedEdit>>| {
-        let edits = all_edits.get();
-        let f = filters.get();
-        let filtered: Vec<_> = edits
-            .into_iter()
-            .filter(|item| {
-                if f.unpatrolled_only && item.event.is_patrolled.is_enabled() {
-                    return false;
-                }
-                if !f.include_bots && item.event.is_bot.is_enabled() {
-                    return false;
-                }
-                if !f.include_minor && item.event.is_minor.is_enabled() {
-                    return false;
-                }
-                if !f.include_new_pages && item.event.is_new_page.is_enabled() {
-                    return false;
-                }
-                match &item.event.performer {
-                    sp42_core::EditorIdentity::Anonymous { .. } => {
-                        if !f.include_anonymous {
-                            return false;
-                        }
-                    }
-                    sp42_core::EditorIdentity::Temporary { .. } => {
-                        if !f.include_temporary {
-                            return false;
-                        }
-                    }
-                    sp42_core::EditorIdentity::Registered { .. } => {
-                        if !f.include_registered {
-                            return false;
-                        }
-                    }
-                }
-                if let Some(ref tag) = f.tag_filter {
-                    if !tag.trim().is_empty() && !item.event.tags.iter().any(|t| t == tag.trim()) {
-                        return false;
-                    }
-                }
-                if let Some(min) = f.min_score {
-                    if item.score.total < min {
-                        return false;
-                    }
-                }
-                true
-            })
-            .collect();
-
-        if !f.group_edits {
-            set_group_rev_ids.set(HashMap::new());
-            return filtered.into_iter().take(f.limit as usize).collect();
-        }
-
-        // Group by (title, performer label)
-        let mut groups: Vec<(String, Vec<sp42_core::QueuedEdit>)> = Vec::new();
-        for item in filtered {
-            let key = format!(
-                "{}|{}",
-                item.event.title,
-                performer_key(&item.event.performer)
-            );
-            if let Some(group) = groups.iter_mut().find(|(k, _)| k == &key) {
-                group.1.push(item);
-            } else {
-                groups.push((key, vec![item]));
-            }
-        }
-
-        let mut grouped = Vec::new();
-        let mut rev_map = HashMap::new();
-        for (_key, mut members) in groups {
-            if members.len() == 1 {
-                grouped.push(members.remove(0));
-            } else {
-                // Sort by rev_id to find oldest→newest
-                members.sort_by_key(|e| e.event.rev_id);
-                let all_revs: Vec<u64> = members.iter().map(|e| e.event.rev_id).collect();
-                let oldest_old = members.first().and_then(|e| e.event.old_rev_id);
-                let newest = members.last().expect("non-empty group");
-                let max_score = members.iter().map(|e| e.score.total).max().unwrap_or(0);
-                let total_delta: i32 = members.iter().map(|e| e.event.byte_delta).sum();
-
-                let mut merged = newest.clone();
-                merged.event.old_rev_id = oldest_old;
-                merged.event.byte_delta = total_delta;
-                merged.score.total = max_score;
-
-                rev_map.insert(merged.event.rev_id, all_revs);
-                grouped.push(merged);
-            }
-        }
-
-        set_group_rev_ids.set(rev_map);
-        grouped.into_iter().take(f.limit as usize).collect()
-    });
-    // Derive the selected index from rev_id — stable across queue reorders
-    let selected_index = Memo::new(move |_| {
-        let queue = queue_signal.get();
-        let rev = selected_rev_id.get();
-        rev.and_then(|r| queue.iter().position(|e| e.event.rev_id == r))
-            .unwrap_or(0)
-    });
+    let queue_controller = create_patrol_queue_controller(selected_rev_id);
+    let filters = queue_controller.filters;
+    let set_filters = queue_controller.set_filters;
+    let all_edits = queue_controller.all_edits;
+    let set_all_edits = queue_controller.set_all_edits;
+    let group_rev_ids = queue_controller.group_rev_ids;
+    let queue_signal = queue_controller.queue;
+    let selected_index = queue_controller.selected_index;
 
     // Single authoritative source for the selected edit.
     // Only updated by explicit human actions — never by EventStream inserts.
@@ -1320,13 +1224,5 @@ fn stream_event_to_queued_edit(event: &StreamEvent) -> sp42_core::QueuedEdit {
             total: score,
             contributions,
         },
-    }
-}
-
-fn performer_key(performer: &sp42_core::EditorIdentity) -> String {
-    match performer {
-        sp42_core::EditorIdentity::Registered { username } => username.clone(),
-        sp42_core::EditorIdentity::Anonymous { label } => label.clone(),
-        sp42_core::EditorIdentity::Temporary { label } => label.clone(),
     }
 }

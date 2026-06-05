@@ -35,6 +35,7 @@ pub mod coordination_runtime;
 pub mod coordination_state;
 pub mod debug_snapshot;
 pub mod dev_auth;
+pub mod dev_preview;
 pub mod diff_engine;
 pub mod errors;
 pub mod liftwing;
@@ -93,6 +94,13 @@ pub use dev_auth::{
     DevAuthProbeAcceptance, DevAuthSessionStatus, LocalOAuthConfigStatus,
     build_dev_auth_bootstrap_request, build_dev_auth_clear_request, parse_action_execution_history,
     parse_action_execution_status, parse_dev_auth_status,
+};
+pub use dev_preview::{
+    DEV_PREVIEW_ACTOR, DEV_PREVIEW_DEFAULT_CONFIG, DEV_PREVIEW_REV_ID,
+    DEV_PREVIEW_SAMPLE_BACKLOG_RESPONSE, DEV_PREVIEW_SAMPLE_EVENTS, DEV_PREVIEW_WIKI_ID,
+    DevBacklogPreview, DevCoordinationPreview, DevStreamPreview, build_dev_backlog_preview,
+    build_dev_coordination_preview, build_dev_stream_preview, dev_coordination_message_label,
+    dev_coordination_preview_messages, parse_default_dev_wiki_config,
 };
 pub use diff_engine::{
     DiffHunk, DiffHunkKind, DiffLineSpan, DiffMarker, DiffMode, DiffMoveRole, DiffScoringHints,

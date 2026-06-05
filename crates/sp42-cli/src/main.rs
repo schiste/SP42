@@ -6,49 +6,21 @@ use futures::executor::block_on;
 use reqwest::header::COOKIE;
 use serde_json::Value;
 use sp42_core::routes as route_contracts;
-use sp42_core::traits::{MemoryStorage, ReplayEventSource};
 use sp42_core::{
-    Action, ActionBroadcast, BacklogRuntime, BacklogRuntimeConfig, ContextInputs,
-    CoordinationMessage, CoordinationState, DevAuthBootstrapRequest, DevAuthSessionStatus,
-    EditClaim, FlaggedEdit, HttpResponse, PatrolScenarioReportInputs, PresenceHeartbeat,
-    QueuedEdit, RaceResolution, RecentChangesQuery, ScoreDelta, SessionActionExecutionRequest,
-    SessionActionExecutionResponse, SessionActionKind, ShellStateInputs, StreamIngestor,
-    build_dev_auth_bootstrap_request, build_liftwing_score_request, build_patrol_scenario_report,
-    build_ranked_queue, build_recent_changes_request, build_review_workbench,
-    build_scoring_context, build_session_action_execution_requests, build_shell_state_model,
-    decode_message, encode_message, parse_dev_auth_status, parse_wiki_config,
+    ContextInputs, DEV_PREVIEW_SAMPLE_EVENTS, DEV_PREVIEW_WIKI_ID, DevAuthBootstrapRequest,
+    DevAuthSessionStatus, PatrolScenarioReportInputs, QueuedEdit, RecentChangesQuery,
+    SessionActionExecutionRequest, SessionActionExecutionResponse, SessionActionKind,
+    ShellStateInputs, StreamIngestor, build_dev_auth_bootstrap_request, build_dev_backlog_preview,
+    build_dev_coordination_preview, build_dev_stream_preview, build_liftwing_score_request,
+    build_patrol_scenario_report, build_ranked_queue, build_recent_changes_request,
+    build_review_workbench, build_scoring_context, build_session_action_execution_requests,
+    build_shell_state_model, parse_default_dev_wiki_config, parse_dev_auth_status,
     render_patrol_scenario_markdown, render_patrol_scenario_text, render_shell_state_markdown,
     render_shell_state_text, score_edit_with_context,
 };
-use sp42_core::{ServerSentEvent, StreamRuntime};
 use std::collections::{BTreeMap, BTreeSet};
 
-const DEFAULT_CONFIG: &str = include_str!("../../../configs/frwiki.yaml");
-const SAMPLE_EVENTS: &str = include_str!("../../../fixtures/frwiki_recentchanges_batch.jsonl");
 const LOCAL_SERVER_BASE_URL: &str = "http://127.0.0.1:8788";
-const SAMPLE_BACKLOG_RESPONSE: &str = r#"{
-  "continue": { "rccontinue": "20260324010202|456" },
-  "query": {
-    "recentchanges": [
-      {
-        "type": "edit",
-        "title": "Exemple",
-        "ns": 0,
-        "revid": 123460,
-        "old_revid": 123459,
-        "user": "192.0.2.11",
-        "timestamp": "2026-03-24T01:02:03Z",
-        "bot": false,
-        "minor": false,
-        "new": false,
-        "oldlen": 120,
-        "newlen": 90,
-        "comment": "backlog sample",
-        "tags": ["mw-reverted"]
-      }
-    ]
-  }
-}"#;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum OutputFormat {
@@ -125,12 +97,12 @@ fn run() -> Result<String, String> {
     let options = parse_options(std::env::args().skip(1))?;
     let input = read_stdin().map_err(|error| error.to_string())?;
     let payload = if input.trim().is_empty() {
-        SAMPLE_EVENTS
+        DEV_PREVIEW_SAMPLE_EVENTS
     } else {
         input.as_str()
     };
 
-    let config = parse_wiki_config(DEFAULT_CONFIG).map_err(|error| error.to_string())?;
+    let config = parse_default_dev_wiki_config().map_err(|error| error.to_string())?;
     let ranked = load_ranked_queue(&config, payload)?;
 
     match selected_shell_mode(&options) {
@@ -725,45 +697,10 @@ fn render_stream_preview(
     payload: &str,
     format: OutputFormat,
 ) -> Result<String, String> {
-    let source = ReplayEventSource::new(payload.lines().enumerate().filter_map(|(index, line)| {
-        let trimmed = line.trim();
-        if trimmed.is_empty() {
-            return None;
-        }
-
-        Some(ServerSentEvent {
-            event_type: Some("message".to_string()),
-            id: Some(format!("fixture-{}", index + 1)),
-            data: trimmed.to_string(),
-            retry_ms: None,
-        })
-    }));
-
-    let storage = MemoryStorage::default();
-    let mut runtime = StreamRuntime::from_config(config, source, storage);
-
-    let (edits, status) = block_on(async {
-        runtime
-            .initialize()
-            .await
-            .map_err(|error| error.to_string())?;
-
-        let mut edits = Vec::new();
-        while let Some(edit) = runtime
-            .next_actionable_event()
-            .await
-            .map_err(|error| error.to_string())?
-        {
-            edits.push(edit);
-        }
-
-        runtime
-            .reconnect_from_checkpoint()
-            .await
-            .map_err(|error| error.to_string())?;
-
-        Ok::<_, String>((edits, runtime.status()))
-    })?;
+    let preview = block_on(build_dev_stream_preview(config, payload, "fixture"))
+        .map_err(|error| error.to_string())?;
+    let edits = preview.edits;
+    let status = preview.status;
 
     match format {
         OutputFormat::Text => Ok([
@@ -824,35 +761,10 @@ fn render_backlog_preview(
     config: &sp42_core::WikiConfig,
     format: OutputFormat,
 ) -> Result<String, String> {
-    let storage = MemoryStorage::default();
-    let client = sp42_core::traits::StubHttpClient::new([Ok(HttpResponse {
-        status: 200,
-        headers: BTreeMap::new(),
-        body: SAMPLE_BACKLOG_RESPONSE.as_bytes().to_vec(),
-    })]);
-    let mut runtime = BacklogRuntime::from_config(
-        config,
-        storage,
-        BacklogRuntimeConfig {
-            limit: 5,
-            include_bots: false,
-        },
-    );
-
-    let (request, batch, status) = block_on(async {
-        runtime
-            .initialize()
-            .await
-            .map_err(|error| error.to_string())?;
-        let request = runtime
-            .build_next_request()
-            .map_err(|error| error.to_string())?;
-        let batch = runtime
-            .poll(&client)
-            .await
-            .map_err(|error| error.to_string())?;
-        Ok::<_, String>((request, batch, runtime.status()))
-    })?;
+    let preview = block_on(build_dev_backlog_preview(config)).map_err(|error| error.to_string())?;
+    let request = preview.request;
+    let batch = preview.batch;
+    let status = preview.status;
 
     match format {
         OutputFormat::Text => Ok([
@@ -916,23 +828,11 @@ fn render_backlog_preview(
 }
 
 fn render_coordination_preview(format: OutputFormat) -> Result<String, String> {
-    let messages = coordination_preview_messages();
-    let mut state = CoordinationState::new("frwiki");
-    let mut roundtrips = Vec::new();
+    let preview =
+        build_dev_coordination_preview(DEV_PREVIEW_WIKI_ID).map_err(|error| error.to_string())?;
+    let summary = preview.summary;
+    let roundtrips = preview.roundtrips;
 
-    for message in messages {
-        let (byte_len, decoded) = encode_message(&message)
-            .and_then(|bytes| {
-                let byte_len = bytes.len();
-                decode_message(&bytes).map(|decoded| (byte_len, decoded))
-            })
-            .map_err(|error| error.to_string())?;
-        let label = coordination_message_label(&decoded);
-        let _ = state.apply(decoded);
-        roundtrips.push(format!("roundtrip {label} bytes={byte_len}"));
-    }
-
-    let summary = state.summary();
     match format {
         OutputFormat::Text => Ok([
             format!(
@@ -1994,55 +1894,6 @@ fn render_markdown_code_block(language: &str, body: &str) -> String {
     }
 }
 
-fn coordination_preview_messages() -> Vec<CoordinationMessage> {
-    vec![
-        CoordinationMessage::EditClaim(EditClaim {
-            wiki_id: "frwiki".to_string(),
-            rev_id: 123_456,
-            actor: "LocalUser".to_string(),
-        }),
-        CoordinationMessage::PresenceHeartbeat(PresenceHeartbeat {
-            wiki_id: "frwiki".to_string(),
-            actor: "LocalUser".to_string(),
-            active_edit_count: 1,
-        }),
-        CoordinationMessage::ScoreDelta(ScoreDelta {
-            wiki_id: "frwiki".to_string(),
-            rev_id: 123_456,
-            delta: 8,
-            reason: "LiftWing + warning history".to_string(),
-        }),
-        CoordinationMessage::FlaggedEdit(FlaggedEdit {
-            wiki_id: "frwiki".to_string(),
-            rev_id: 123_456,
-            score: 95,
-            reason: "possible vandalism".to_string(),
-        }),
-        CoordinationMessage::ActionBroadcast(ActionBroadcast {
-            wiki_id: "frwiki".to_string(),
-            rev_id: 123_456,
-            action: Action::Rollback,
-            actor: "LocalUser".to_string(),
-        }),
-        CoordinationMessage::RaceResolution(RaceResolution {
-            wiki_id: "frwiki".to_string(),
-            rev_id: 123_456,
-            winning_actor: "LocalUser".to_string(),
-        }),
-    ]
-}
-
-fn coordination_message_label(message: &CoordinationMessage) -> &'static str {
-    match message {
-        CoordinationMessage::ActionBroadcast(_) => "ActionBroadcast",
-        CoordinationMessage::EditClaim(_) => "EditClaim",
-        CoordinationMessage::ScoreDelta(_) => "ScoreDelta",
-        CoordinationMessage::PresenceHeartbeat(_) => "PresenceHeartbeat",
-        CoordinationMessage::FlaggedEdit(_) => "FlaggedEdit",
-        CoordinationMessage::RaceResolution(_) => "RaceResolution",
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeMap;
@@ -2058,17 +1909,21 @@ mod tests {
         server_report_lines,
     };
     use serde_json::json;
-    use sp42_core::{StreamIngestor, build_ranked_queue, parse_wiki_config};
+    use sp42_core::{
+        DEV_PREVIEW_SAMPLE_EVENTS, StreamIngestor, build_ranked_queue,
+        parse_default_dev_wiki_config,
+    };
 
-    const DEFAULT_CONFIG: &str = include_str!("../../../configs/frwiki.yaml");
-    const SAMPLE_EVENTS: &str = include_str!("../../../fixtures/frwiki_recentchanges_batch.jsonl");
+    fn fixture_config() -> sp42_core::WikiConfig {
+        parse_default_dev_wiki_config().expect("config should parse")
+    }
 
     #[test]
     fn renders_ranked_queue_lines() {
-        let config = parse_wiki_config(DEFAULT_CONFIG).expect("config should parse");
+        let config = fixture_config();
         let ingestor = StreamIngestor::from_config(&config);
         let events = ingestor
-            .ingest_lines(SAMPLE_EVENTS)
+            .ingest_lines(DEV_PREVIEW_SAMPLE_EVENTS)
             .expect("events should parse");
         let ranked = build_ranked_queue(events, &config.scoring).expect("queue should build");
 
@@ -2081,10 +1936,10 @@ mod tests {
 
     #[test]
     fn renders_ranked_queue_as_json() {
-        let config = parse_wiki_config(DEFAULT_CONFIG).expect("config should parse");
+        let config = fixture_config();
         let ingestor = StreamIngestor::from_config(&config);
         let events = ingestor
-            .ingest_lines(SAMPLE_EVENTS)
+            .ingest_lines(DEV_PREVIEW_SAMPLE_EVENTS)
             .expect("events should parse");
         let ranked = build_ranked_queue(events, &config.scoring).expect("queue should build");
 
@@ -2096,10 +1951,10 @@ mod tests {
 
     #[test]
     fn renders_ranked_queue_as_markdown() {
-        let config = parse_wiki_config(DEFAULT_CONFIG).expect("config should parse");
+        let config = fixture_config();
         let ingestor = StreamIngestor::from_config(&config);
         let events = ingestor
-            .ingest_lines(SAMPLE_EVENTS)
+            .ingest_lines(DEV_PREVIEW_SAMPLE_EVENTS)
             .expect("events should parse");
         let ranked = build_ranked_queue(events, &config.scoring).expect("queue should build");
 
@@ -2223,10 +2078,10 @@ mod tests {
 
     #[test]
     fn renders_scenario_report() {
-        let config = parse_wiki_config(DEFAULT_CONFIG).expect("config should parse");
+        let config = fixture_config();
         let ingestor = StreamIngestor::from_config(&config);
         let events = ingestor
-            .ingest_lines(SAMPLE_EVENTS)
+            .ingest_lines(DEV_PREVIEW_SAMPLE_EVENTS)
             .expect("events should parse");
         let ranked = build_ranked_queue(events, &config.scoring).expect("queue should build");
 
@@ -2264,10 +2119,10 @@ mod tests {
 
     #[test]
     fn renders_scenario_report_as_markdown() {
-        let config = parse_wiki_config(DEFAULT_CONFIG).expect("config should parse");
+        let config = fixture_config();
         let ingestor = StreamIngestor::from_config(&config);
         let events = ingestor
-            .ingest_lines(SAMPLE_EVENTS)
+            .ingest_lines(DEV_PREVIEW_SAMPLE_EVENTS)
             .expect("events should parse");
         let ranked = build_ranked_queue(events, &config.scoring).expect("queue should build");
 
@@ -2296,10 +2151,10 @@ mod tests {
 
     #[test]
     fn renders_scenario_report_as_json() {
-        let config = parse_wiki_config(DEFAULT_CONFIG).expect("config should parse");
+        let config = fixture_config();
         let ingestor = StreamIngestor::from_config(&config);
         let events = ingestor
-            .ingest_lines(SAMPLE_EVENTS)
+            .ingest_lines(DEV_PREVIEW_SAMPLE_EVENTS)
             .expect("events should parse");
         let ranked = build_ranked_queue(events, &config.scoring).expect("queue should build");
 
@@ -2332,10 +2187,10 @@ mod tests {
 
     #[test]
     fn renders_session_digest_in_all_formats() {
-        let config = parse_wiki_config(DEFAULT_CONFIG).expect("config should parse");
+        let config = fixture_config();
         let ingestor = StreamIngestor::from_config(&config);
         let events = ingestor
-            .ingest_lines(SAMPLE_EVENTS)
+            .ingest_lines(DEV_PREVIEW_SAMPLE_EVENTS)
             .expect("events should parse");
         let ranked = build_ranked_queue(events, &config.scoring).expect("queue should build");
         let options = CliOptions {
@@ -2381,10 +2236,10 @@ mod tests {
 
     #[test]
     fn renders_action_preview_in_all_formats() {
-        let config = parse_wiki_config(DEFAULT_CONFIG).expect("config should parse");
+        let config = fixture_config();
         let ingestor = StreamIngestor::from_config(&config);
         let events = ingestor
-            .ingest_lines(SAMPLE_EVENTS)
+            .ingest_lines(DEV_PREVIEW_SAMPLE_EVENTS)
             .expect("events should parse");
         let ranked = build_ranked_queue(events, &config.scoring).expect("queue should build");
         let options = CliOptions {
@@ -2423,10 +2278,10 @@ mod tests {
 
     #[test]
     fn renders_workbench_preview() {
-        let config = parse_wiki_config(DEFAULT_CONFIG).expect("config should parse");
+        let config = fixture_config();
         let ingestor = StreamIngestor::from_config(&config);
         let events = ingestor
-            .ingest_lines(SAMPLE_EVENTS)
+            .ingest_lines(DEV_PREVIEW_SAMPLE_EVENTS)
             .expect("events should parse");
         let ranked = build_ranked_queue(events, &config.scoring).expect("queue should build");
 
@@ -2449,10 +2304,10 @@ mod tests {
 
     #[test]
     fn renders_context_preview() {
-        let config = parse_wiki_config(DEFAULT_CONFIG).expect("config should parse");
+        let config = fixture_config();
         let ingestor = StreamIngestor::from_config(&config);
         let events = ingestor
-            .ingest_lines(SAMPLE_EVENTS)
+            .ingest_lines(DEV_PREVIEW_SAMPLE_EVENTS)
             .expect("events should parse");
         let ranked = build_ranked_queue(events, &config.scoring).expect("queue should build");
 
@@ -2474,9 +2329,9 @@ mod tests {
 
     #[test]
     fn renders_stream_preview() {
-        let config = parse_wiki_config(DEFAULT_CONFIG).expect("config should parse");
+        let config = fixture_config();
 
-        let summary = render_stream_preview(&config, SAMPLE_EVENTS, OutputFormat::Text)
+        let summary = render_stream_preview(&config, DEV_PREVIEW_SAMPLE_EVENTS, OutputFormat::Text)
             .expect("stream mode should render");
 
         assert!(summary.contains("stream checkpoint_key="));
@@ -2486,7 +2341,7 @@ mod tests {
 
     #[test]
     fn renders_backlog_preview() {
-        let config = parse_wiki_config(DEFAULT_CONFIG).expect("config should parse");
+        let config = fixture_config();
 
         let summary = render_backlog_preview(&config, OutputFormat::Text)
             .expect("backlog mode should render");
@@ -2508,15 +2363,20 @@ mod tests {
 
     #[test]
     fn renders_parity_report() {
-        let config = parse_wiki_config(DEFAULT_CONFIG).expect("config should parse");
+        let config = fixture_config();
         let ingestor = StreamIngestor::from_config(&config);
         let events = ingestor
-            .ingest_lines(SAMPLE_EVENTS)
+            .ingest_lines(DEV_PREVIEW_SAMPLE_EVENTS)
             .expect("events should parse");
         let ranked = build_ranked_queue(events, &config.scoring).expect("queue should build");
 
-        let summary = render_parity_report(&config, &ranked, SAMPLE_EVENTS, OutputFormat::Text)
-            .expect("parity report should render");
+        let summary = render_parity_report(
+            &config,
+            &ranked,
+            DEV_PREVIEW_SAMPLE_EVENTS,
+            OutputFormat::Text,
+        )
+        .expect("parity report should render");
 
         assert!(summary.contains("operator parity report wiki=frwiki"));
         assert!(summary.contains("backlog report"));
@@ -2527,15 +2387,20 @@ mod tests {
 
     #[test]
     fn renders_parity_report_as_markdown() {
-        let config = parse_wiki_config(DEFAULT_CONFIG).expect("config should parse");
+        let config = fixture_config();
         let ingestor = StreamIngestor::from_config(&config);
         let events = ingestor
-            .ingest_lines(SAMPLE_EVENTS)
+            .ingest_lines(DEV_PREVIEW_SAMPLE_EVENTS)
             .expect("events should parse");
         let ranked = build_ranked_queue(events, &config.scoring).expect("queue should build");
 
-        let summary = render_parity_report(&config, &ranked, SAMPLE_EVENTS, OutputFormat::Markdown)
-            .expect("parity report should render");
+        let summary = render_parity_report(
+            &config,
+            &ranked,
+            DEV_PREVIEW_SAMPLE_EVENTS,
+            OutputFormat::Markdown,
+        )
+        .expect("parity report should render");
 
         assert!(summary.contains("## Parity report"));
         assert!(summary.contains("## Ranked queue"));

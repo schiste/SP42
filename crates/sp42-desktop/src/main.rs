@@ -1,50 +1,21 @@
-use std::collections::BTreeMap;
 use std::process::ExitCode;
 
 use futures::executor::block_on;
-use sp42_core::traits::{MemoryStorage, ReplayEventSource, StubHttpClient};
 use sp42_core::{
-    Action, ActionBroadcast, BacklogRuntime, BacklogRuntimeConfig, BacklogRuntimeStatus,
-    ContextInputs, CoordinationMessage, CoordinationState, CoordinationStateSummary, EditClaim,
-    FlaggedEdit, HttpResponse, PatrolOperatorSummary, PatrolScenarioReport,
-    PatrolScenarioReportInputs, PatrolSessionDigest, PresenceHeartbeat, QueuedEdit, RaceResolution,
-    RecentChangesQuery, ScoreDelta, ServerSentEvent, ShellStateInputs, ShellStateModel,
-    StreamIngestor, StreamRuntime, StreamRuntimeStatus, build_liftwing_score_request,
-    build_patrol_operator_summary, build_patrol_scenario_report, build_patrol_session_digest,
-    build_ranked_queue, build_recent_changes_request, build_review_workbench,
-    build_scoring_context, build_shell_state_model, decode_message, diff_lines, encode_message,
-    parse_wiki_config, render_patrol_operator_summary_markdown,
+    BacklogRuntimeStatus, ContextInputs, DEV_PREVIEW_SAMPLE_EVENTS, DEV_PREVIEW_WIKI_ID,
+    DevBacklogPreview, DevCoordinationPreview, DevStreamPreview, PatrolOperatorSummary,
+    PatrolScenarioReport, PatrolScenarioReportInputs, PatrolSessionDigest, QueuedEdit,
+    RecentChangesQuery, ShellStateInputs, ShellStateModel, StreamIngestor,
+    build_dev_backlog_preview, build_dev_coordination_preview, build_dev_stream_preview,
+    build_liftwing_score_request, build_patrol_operator_summary, build_patrol_scenario_report,
+    build_patrol_session_digest, build_ranked_queue, build_recent_changes_request,
+    build_review_workbench, build_scoring_context, build_shell_state_model, diff_lines,
+    parse_default_dev_wiki_config, render_patrol_operator_summary_markdown,
     render_patrol_operator_summary_text, render_patrol_scenario_markdown,
     render_patrol_scenario_text, render_patrol_session_digest_markdown,
     render_patrol_session_digest_text, render_shell_state_markdown, render_shell_state_text,
     score_edit_with_context,
 };
-
-const DEFAULT_CONFIG: &str = include_str!("../../../configs/frwiki.yaml");
-const SAMPLE_EVENTS: &str = include_str!("../../../fixtures/frwiki_recentchanges_batch.jsonl");
-const SAMPLE_BACKLOG_RESPONSE: &str = r#"{
-  "continue": { "rccontinue": "20260324010202|456" },
-  "query": {
-    "recentchanges": [
-      {
-        "type": "edit",
-        "title": "Exemple",
-        "ns": 0,
-        "revid": 123460,
-        "old_revid": 123459,
-        "user": "192.0.2.11",
-        "timestamp": "2026-03-24T01:02:03Z",
-        "bot": false,
-        "minor": false,
-        "new": false,
-        "oldlen": 120,
-        "newlen": 90,
-        "comment": "backlog sample",
-        "tags": ["mw-reverted"]
-      }
-    ]
-}
-}"#;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum OutputFormat {
@@ -272,7 +243,7 @@ fn render_desktop_summary_value(
 }
 
 fn build_console_snapshot() -> Result<DesktopConsoleSnapshot, String> {
-    let config = parse_wiki_config(DEFAULT_CONFIG).map_err(|error| error.to_string())?;
+    let config = parse_default_dev_wiki_config().map_err(|error| error.to_string())?;
     let queue = build_desktop_queue(&config)?;
     let top = queue
         .first()
@@ -283,13 +254,21 @@ fn build_console_snapshot() -> Result<DesktopConsoleSnapshot, String> {
         .map_err(|error| error.to_string())?;
     let recentchanges_request = build_desktop_recentchanges_request(&config)?;
     let liftwing_request = build_desktop_liftwing_request(&config, top)?;
-    let (stream_status, stream_edits) = build_stream_snapshot(&config)?;
-    let (backlog_status, backlog_request, backlog_batch) = build_backlog_snapshot(&config)?;
-    let (coordination_summary, roundtrips) = build_coordination_snapshot()?;
+    let stream_snapshot = block_on(build_dev_stream_preview(
+        &config,
+        DEV_PREVIEW_SAMPLE_EVENTS,
+        "desktop-fixture",
+    ))
+    .map_err(|error| error.to_string())?;
+    let backlog_snapshot =
+        block_on(build_dev_backlog_preview(&config)).map_err(|error| error.to_string())?;
+    let coordination_snapshot =
+        build_dev_coordination_preview(DEV_PREVIEW_WIKI_ID).map_err(|error| error.to_string())?;
     let diff = diff_lines("Avant\n", "Avant\nApres\n");
-    let stream_preview = render_stream_preview(&config)?;
-    let backlog_preview = render_backlog_preview(&config)?;
-    let coordination_preview = render_coordination_preview()?;
+    let stream_actionable_lines = render_stream_actionable_lines(&stream_snapshot);
+    let stream_preview = render_stream_preview(&stream_snapshot);
+    let backlog_preview = render_backlog_preview(&backlog_snapshot);
+    let coordination_preview = render_coordination_preview(&coordination_snapshot);
     let transport_lines = build_desktop_transport_lines(&DesktopTransportInputs {
         queue: &queue,
         top,
@@ -298,11 +277,11 @@ fn build_console_snapshot() -> Result<DesktopConsoleSnapshot, String> {
         contextual_score: &contextual_score,
         recentchanges_request: &recentchanges_request,
         liftwing_request: &liftwing_request,
-        backlog_status: &backlog_status,
-        backlog_request: &backlog_request,
-        backlog_batch: &backlog_batch,
-        roundtrips: &roundtrips,
-        stream_actionable_lines: &stream_edits,
+        backlog_status: &backlog_snapshot.status,
+        backlog_request: &backlog_snapshot.request,
+        backlog_batch: &backlog_snapshot.batch,
+        roundtrips: &coordination_snapshot.roundtrips,
+        stream_actionable_lines: &stream_actionable_lines,
         stream_preview: &stream_preview,
         backlog_preview: &backlog_preview,
         coordination_preview: &coordination_preview,
@@ -314,9 +293,9 @@ fn build_console_snapshot() -> Result<DesktopConsoleSnapshot, String> {
         scoring_context: Some(&context),
         diff: Some(&diff),
         review_workbench: Some(&workbench),
-        stream_status: Some(&stream_status),
-        backlog_status: Some(&backlog_status),
-        coordination: Some(&coordination_summary),
+        stream_status: Some(&stream_snapshot.status),
+        backlog_status: Some(&backlog_snapshot.status),
+        coordination: Some(&coordination_snapshot.summary),
         wiki_id_hint: Some(&config.wiki_id),
     });
     let operator_summary = build_patrol_operator_summary(&sp42_core::PatrolOperatorSummaryInputs {
@@ -344,7 +323,7 @@ fn build_console_snapshot() -> Result<DesktopConsoleSnapshot, String> {
 fn build_desktop_queue(config: &sp42_core::WikiConfig) -> Result<Vec<QueuedEdit>, String> {
     let ingestor = StreamIngestor::from_config(config);
     let events = ingestor
-        .ingest_lines(SAMPLE_EVENTS)
+        .ingest_lines(DEV_PREVIEW_SAMPLE_EVENTS)
         .map_err(|error| error.to_string())?;
     build_ranked_queue(events, &config.scoring).map_err(|error| error.to_string())
 }
@@ -485,113 +464,12 @@ fn build_desktop_transport_lines(inputs: &DesktopTransportInputs<'_>) -> Vec<Str
     transport_lines
 }
 
-fn build_stream_snapshot(
-    config: &sp42_core::WikiConfig,
-) -> Result<(StreamRuntimeStatus, Vec<String>), String> {
-    let source = ReplayEventSource::new(SAMPLE_EVENTS.lines().enumerate().filter_map(
-        |(index, line)| {
-            let trimmed = line.trim();
-            if trimmed.is_empty() {
-                return None;
-            }
-
-            Some(ServerSentEvent {
-                event_type: Some("message".to_string()),
-                id: Some(format!("desktop-fixture-{}", index + 1)),
-                data: trimmed.to_string(),
-                retry_ms: None,
-            })
-        },
-    ));
-    let storage = MemoryStorage::default();
-    let mut runtime = StreamRuntime::from_config(config, source, storage);
-    let edits = block_on(async {
-        runtime
-            .initialize()
-            .await
-            .map_err(|error| error.to_string())?;
-        let mut edits = Vec::new();
-        while let Some(edit) = runtime
-            .next_actionable_event()
-            .await
-            .map_err(|error| error.to_string())?
-        {
-            edits.push(edit);
-        }
-        runtime
-            .reconnect_from_checkpoint()
-            .await
-            .map_err(|error| error.to_string())?;
-        Ok::<_, String>((runtime.status(), edits))
-    })?;
-
-    let (status, edits) = edits;
-    Ok((
-        status,
-        edits
-            .into_iter()
-            .map(|edit| format!("stream rev={} title=\"{}\"", edit.rev_id, edit.title))
-            .collect(),
-    ))
-}
-
-fn build_backlog_snapshot(
-    config: &sp42_core::WikiConfig,
-) -> Result<
-    (
-        BacklogRuntimeStatus,
-        sp42_core::HttpRequest,
-        sp42_core::RecentChangesBatch,
-    ),
-    String,
-> {
-    let storage = MemoryStorage::default();
-    let client = StubHttpClient::new([Ok(HttpResponse {
-        status: 200,
-        headers: BTreeMap::new(),
-        body: SAMPLE_BACKLOG_RESPONSE.as_bytes().to_vec(),
-    })]);
-    let mut runtime = BacklogRuntime::from_config(
-        config,
-        storage,
-        BacklogRuntimeConfig {
-            limit: 5,
-            include_bots: false,
-        },
-    );
-
-    block_on(async {
-        runtime
-            .initialize()
-            .await
-            .map_err(|error| error.to_string())?;
-        let request = runtime
-            .build_next_request()
-            .map_err(|error| error.to_string())?;
-        let batch = runtime
-            .poll(&client)
-            .await
-            .map_err(|error| error.to_string())?;
-        Ok::<_, String>((runtime.status(), request, batch))
-    })
-}
-
-fn build_coordination_snapshot() -> Result<(CoordinationStateSummary, Vec<String>), String> {
-    let mut state = CoordinationState::new("frwiki");
-    let mut roundtrips = Vec::new();
-    for message in coordination_preview_messages() {
-        let (byte_len, decoded) = encode_message(&message)
-            .and_then(|bytes| {
-                let byte_len = bytes.len();
-                decode_message(&bytes).map(|decoded| (byte_len, decoded))
-            })
-            .map_err(|error| error.to_string())?;
-        let label = coordination_message_label(&decoded);
-        let _ = state.apply(decoded);
-        roundtrips.push(format!("roundtrip {label} bytes={byte_len}"));
-    }
-
-    Ok((state.summary(), roundtrips))
+fn render_stream_actionable_lines(snapshot: &DevStreamPreview) -> Vec<String> {
+    snapshot
+        .edits
+        .iter()
+        .map(|edit| format!("stream rev={} title=\"{}\"", edit.rev_id, edit.title))
+        .collect()
 }
 
 fn render_queue_items(queue: &[QueuedEdit]) -> String {
@@ -619,112 +497,38 @@ fn render_markdown_section(title: &str, body: &str) -> String {
     }
 }
 
-fn render_stream_preview(config: &sp42_core::WikiConfig) -> Result<String, String> {
-    let source = ReplayEventSource::new(SAMPLE_EVENTS.lines().enumerate().filter_map(
-        |(index, line)| {
-            let trimmed = line.trim();
-            if trimmed.is_empty() {
-                return None;
-            }
-
-            Some(ServerSentEvent {
-                event_type: Some("message".to_string()),
-                id: Some(format!("desktop-fixture-{}", index + 1)),
-                data: trimmed.to_string(),
-                retry_ms: None,
-            })
-        },
-    ));
-    let storage = MemoryStorage::default();
-    let mut runtime = StreamRuntime::from_config(config, source, storage);
-    let status = block_on(async {
-        runtime
-            .initialize()
-            .await
-            .map_err(|error| error.to_string())?;
-        while runtime
-            .next_actionable_event()
-            .await
-            .map_err(|error| error.to_string())?
-            .is_some()
-        {}
-        runtime
-            .reconnect_from_checkpoint()
-            .await
-            .map_err(|error| error.to_string())?;
-        Ok::<_, String>(runtime.status())
-    })?;
-
-    Ok(format!(
+fn render_stream_preview(snapshot: &DevStreamPreview) -> String {
+    let status = &snapshot.status;
+    format!(
         "stream delivered={} filtered={} reconnects={} checkpoint={}",
         status.delivered_events,
         status.filtered_events,
         status.reconnect_attempts,
-        status.last_event_id.unwrap_or_else(|| "none".to_string())
-    ))
+        status.last_event_id.as_deref().unwrap_or("none")
+    )
 }
 
-fn render_backlog_preview(config: &sp42_core::WikiConfig) -> Result<String, String> {
-    let storage = MemoryStorage::default();
-    let client = StubHttpClient::new([Ok(HttpResponse {
-        status: 200,
-        headers: BTreeMap::new(),
-        body: SAMPLE_BACKLOG_RESPONSE.as_bytes().to_vec(),
-    })]);
-    let mut runtime = BacklogRuntime::from_config(
-        config,
-        storage,
-        BacklogRuntimeConfig {
-            limit: 5,
-            include_bots: false,
-        },
-    );
-
-    let (request, batch, status) = block_on(async {
-        runtime
-            .initialize()
-            .await
-            .map_err(|error| error.to_string())?;
-        let request = runtime
-            .build_next_request()
-            .map_err(|error| error.to_string())?;
-        let batch = runtime
-            .poll(&client)
-            .await
-            .map_err(|error| error.to_string())?;
-        Ok::<_, String>((request, batch, runtime.status()))
-    })?;
-
-    Ok(format!(
+fn render_backlog_preview(snapshot: &DevBacklogPreview) -> String {
+    format!(
         "backlog report {:?} {}\nbacklog batch={} total={} polls={} checkpoint={} next_continue={} first_rev={}",
-        request.method,
-        request.url,
-        batch.events.len(),
-        status.total_events,
-        status.poll_count,
-        status.checkpoint_key,
-        status.next_continue.unwrap_or_else(|| "none".to_string()),
-        batch.events.first().map_or(0, |event| event.rev_id)
-    ))
+        snapshot.request.method,
+        snapshot.request.url,
+        snapshot.batch.events.len(),
+        snapshot.status.total_events,
+        snapshot.status.poll_count,
+        snapshot.status.checkpoint_key,
+        snapshot.status.next_continue.as_deref().unwrap_or("none"),
+        snapshot
+            .batch
+            .events
+            .first()
+            .map_or(0, |event| event.rev_id)
+    )
 }
 
-fn render_coordination_preview() -> Result<String, String> {
-    let mut state = CoordinationState::new("frwiki");
-    let mut roundtrips = Vec::new();
-    for message in coordination_preview_messages() {
-        let (byte_len, decoded) = encode_message(&message)
-            .and_then(|bytes| {
-                let byte_len = bytes.len();
-                decode_message(&bytes).map(|decoded| (byte_len, decoded))
-            })
-            .map_err(|error| error.to_string())?;
-        let label = coordination_message_label(&decoded);
-        let _ = state.apply(decoded);
-        roundtrips.push(format!("roundtrip {label} bytes={byte_len}"));
-    }
-
-    let summary = state.summary();
-    Ok([
+fn render_coordination_preview(snapshot: &DevCoordinationPreview) -> String {
+    let summary = &snapshot.summary;
+    [
         format!(
             "coordination wiki={} claims={} presence={} flags={} deltas={} resolutions={} actions={}",
             summary.wiki_id,
@@ -735,62 +539,13 @@ fn render_coordination_preview() -> Result<String, String> {
             summary.race_resolutions.len(),
             summary.recent_actions.len()
         ),
-        roundtrips.join("\n"),
+        snapshot.roundtrips.join("\n"),
         summary.claims.first().map_or_else(
             || "coordination claims unavailable".to_string(),
             |claim| format!("coordination claim rev={} actor={}", claim.rev_id, claim.actor),
         ),
     ]
-    .join("\n"))
-}
-
-fn coordination_preview_messages() -> Vec<CoordinationMessage> {
-    vec![
-        CoordinationMessage::EditClaim(EditClaim {
-            wiki_id: "frwiki".to_string(),
-            rev_id: 123_456,
-            actor: "LocalUser".to_string(),
-        }),
-        CoordinationMessage::PresenceHeartbeat(PresenceHeartbeat {
-            wiki_id: "frwiki".to_string(),
-            actor: "LocalUser".to_string(),
-            active_edit_count: 1,
-        }),
-        CoordinationMessage::ScoreDelta(ScoreDelta {
-            wiki_id: "frwiki".to_string(),
-            rev_id: 123_456,
-            delta: 8,
-            reason: "LiftWing + warning history".to_string(),
-        }),
-        CoordinationMessage::FlaggedEdit(FlaggedEdit {
-            wiki_id: "frwiki".to_string(),
-            rev_id: 123_456,
-            score: 95,
-            reason: "possible vandalism".to_string(),
-        }),
-        CoordinationMessage::ActionBroadcast(ActionBroadcast {
-            wiki_id: "frwiki".to_string(),
-            rev_id: 123_456,
-            action: Action::Rollback,
-            actor: "LocalUser".to_string(),
-        }),
-        CoordinationMessage::RaceResolution(RaceResolution {
-            wiki_id: "frwiki".to_string(),
-            rev_id: 123_456,
-            winning_actor: "LocalUser".to_string(),
-        }),
-    ]
-}
-
-fn coordination_message_label(message: &CoordinationMessage) -> &'static str {
-    match message {
-        CoordinationMessage::ActionBroadcast(_) => "ActionBroadcast",
-        CoordinationMessage::EditClaim(_) => "EditClaim",
-        CoordinationMessage::ScoreDelta(_) => "ScoreDelta",
-        CoordinationMessage::PresenceHeartbeat(_) => "PresenceHeartbeat",
-        CoordinationMessage::FlaggedEdit(_) => "FlaggedEdit",
-        CoordinationMessage::RaceResolution(_) => "RaceResolution",
-    }
+    .join("\n")
 }
 
 #[cfg(test)]

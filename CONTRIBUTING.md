@@ -23,6 +23,9 @@ constraints.
 - Open an ADR for changes that affect crate boundaries, auth/session behavior,
   runtime deployment behavior, scoring policy, desktop packaging, or public
   contracts
+- Open a PRD for changes that alter operator- or editor-facing behavior
+- For crate extraction and ownership boundaries, follow
+  [ADR-0004](docs/adr/0004-crate-boundary-collaboration-model.md)
 
 ## Local Checks
 

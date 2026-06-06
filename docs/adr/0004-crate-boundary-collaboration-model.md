@@ -1,0 +1,192 @@
+# ADR-0004: Crate boundaries for collaborative feature ownership
+
+**Status:** Proposed
+**Date:** 2026-06-06
+**Author:** SP42
+
+## Context
+
+SP42 is becoming a multi-maintainer open source project. The workspace already
+has separate shell crates for the browser, server, CLI, and desktop targets, but
+most domain behavior still lives in `sp42-core`.
+
+That was useful while contracts were changing quickly. It now creates review and
+ownership risks:
+
+- unrelated features can collide inside one broad crate
+- `sp42-core` can become a god crate
+- feature ownership is hard to assign
+- CLI, desktop, browser, and server code can drift when shared orchestration has
+  no clear home
+- PR scope is harder to review when one change crosses many domains
+
+This is an ADR-only change. It defines internal architecture and ownership
+boundaries; it does not change operator-facing behavior, so no PRD is required.
+
+## Decision
+
+SP42 will use Rust crates as bounded-context and maintainer-ownership boundaries
+for large feature areas. A crate split is justified when it improves ownership,
+reviewability, dependency direction, and API stability. A split is not justified
+when it only renames modules.
+
+Crate boundaries must follow these rules:
+
+- **Single responsibility:** one domain crate owns one coherent feature area and
+  public contract.
+- **Open/closed:** adding a wiki, shell, runtime adapter, report consumer, or
+  deployment target should add config or an implementation, not edits across
+  every caller.
+- **Substitution:** shared traits need deterministic test doubles that satisfy
+  the same contract as production adapters.
+- **Small interfaces:** crates expose narrow APIs, not catch-all service objects.
+- **Dependency inversion:** domain logic depends on traits and data contracts;
+  shell crates provide concrete I/O adapters.
+- **DRY:** route contracts, fixtures, filtering, reporting, and cross-target
+  construction have one authoritative implementation.
+
+Cargo features are not an ownership boundary. Use them for optional adapters or
+platform support; use crates for ownership and review scope.
+
+Dependency flow remains one-way:
+
+```text
+shared contracts
+  -> domain crates
+  -> shell crates and deployment adapters
+```
+
+Domain crates must not depend on `sp42-server`, `sp42-app`, `sp42-cli`,
+`sp42-desktop`, or Tauri.
+
+## Target Vision
+
+The final architecture separates stable contracts, domain behavior, and shells:
+
+```text
+crates/
+  sp42-types/         # shared contracts, errors, traits, branding
+  sp42-wiki/          # wiki config, registry, capability profiles
+  sp42-live/          # EventStreams, backlog runtime, queue filtering
+  sp42-coordination/  # messages, codecs, state, room runtime
+  sp42-actions/       # patrol/rollback/undo/save action contracts
+  sp42-reporting/     # reports, digests, summaries, shell state
+  sp42-devtools/      # deterministic fixtures and previews
+  sp42-core/          # compatibility facade during migration, then shrink
+  sp42-server/        # HTTP server, auth/session, static serving, adapters
+  sp42-app/           # browser UI shell
+  sp42-cli/           # CLI shell
+  sp42-desktop/       # desktop shell
+```
+
+This is the target shape. The project should split early when a contract is
+clear, but it should not split a domain before the public API would survive real
+use by at least two callers.
+
+`sp42-core` is transitional. It may re-export stable APIs while callers migrate,
+but it should stop accumulating new domain ownership once a target crate exists.
+
+## Contract Stabilization Plan
+
+Before a domain becomes its own crate, stabilize its contract in this order:
+
+1. **Name the boundary:** define what the crate owns and what it must not own.
+2. **Name the consumers:** list the shell crates or runtimes that will depend on
+   it.
+3. **Freeze the public types:** identify request/response structs, errors,
+   traits, and feature flags that callers will use.
+4. **Move tests with the contract:** include deterministic fixtures or doubles
+   that prove the crate can be tested without production I/O.
+5. **Prove one-way dependencies:** confirm the crate does not depend on shell
+   crates, deployment adapters, or UI frameworks.
+6. **Extract without behavior change:** land file moves and import rewrites
+   before feature changes.
+
+When a contract is still unclear, keep the code in `sp42-core` behind module
+boundaries and stabilize the API there first.
+
+## Split Decisions
+
+Initial split decisions:
+
+- **Split now: `sp42-devtools`.** Preview/report fixtures are deterministic,
+  shared by CLI and desktop, and not production runtime behavior.
+- **Split early: `sp42-reporting`.** Reports, digests, summaries, and shell
+  state already serve multiple shells and should not drift.
+- **Split early: `sp42-wiki`.** Multiwiki support is a production requirement;
+  wiki config, registry, defaults, and capability profiles need an Open/Closed
+  boundary.
+- **Stabilize then split: `sp42-coordination`.** The room/state/message contract
+  should be stable before extraction because it affects multi-user behavior.
+- **Stabilize then split: `sp42-live`.** EventStreams, backlog runtime, queue
+  filtering, and multiwiki defaults should settle together.
+- **Stabilize then split: `sp42-actions`.** MediaWiki action contracts should
+  wait for authenticated validation and the content-editing ADR outcome.
+- **Split last or in slices: `sp42-types`.** A shared types crate is useful only
+  after repeated contracts prove they need a neutral home; otherwise it becomes
+  a dumping ground.
+
+## Extraction Rules
+
+Create a new domain crate only when most of these are true:
+
+- the domain has a clear maintainer or reviewer group
+- its public API is stable, or an ADR records the intended contract
+- at least two shell crates or runtime paths consume the code
+- the split removes duplication or reduces review blast radius
+- tests move with the crate and remain deterministic
+- the new crate does not create dependency cycles
+- the extraction can land as small commits with no behavior change
+
+If those conditions are not met, improve module boundaries inside `sp42-core`
+first.
+
+Preferred extraction order:
+
+1. `sp42-devtools`
+2. `sp42-reporting`
+3. `sp42-wiki`
+4. `sp42-coordination`
+5. `sp42-live`
+6. `sp42-actions`
+7. `sp42-types`
+
+`sp42-core` may re-export stable APIs during migration so callers can move in
+small steps. New code should depend on the extracted crate once it exists.
+
+## Pull Request Rules
+
+Crate-boundary PRs must include:
+
+- an ADR link or ADR update when creating a new domain crate
+- dependency-direction notes
+- validation notes for the extracted crate and affected shell crates
+- a compatibility plan for moved public APIs
+- no unrelated refactors in the same commit
+
+Reviewers should reject splits that only create a new place for duplicated
+logic.
+
+## Alternatives Considered
+
+- **Keep one broad `sp42-core`:** simpler today, but weaker for ownership,
+  review scope, and long-term Open/Closed design.
+- **Split everything now:** mechanically cheap while the repo is small, but it
+  freezes unstable public APIs and risks creating a shared-types dumping ground.
+- **Use Cargo features as the boundary:** useful for optional adapters, but too
+  weak for ownership, review, and dependency-direction control.
+
+## Consequences
+
+- Maintainers get clearer ownership boundaries and smaller review surfaces.
+- Contributors can work in a feature area without needing full-system context.
+- Shared logic has a stronger home, reducing drift between targets.
+- `sp42-core` can shrink over time instead of accumulating every domain.
+- Migration will temporarily add re-export boilerplate.
+
+## Non-Goals
+
+- No all-at-once workspace split.
+- No permanent maintainer assignment for every future crate.
+- No change to deployment targets, licensing, auth/session rules, or public API
+  contracts.

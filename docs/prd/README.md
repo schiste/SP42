@@ -56,16 +56,3 @@ auth/token/CSRF, desktop packaging, storage formats) stay ADR-only.
 
 - `0000-template.md` — the PRD template.
 - `NNNN-title.md` — one file per PRD, sequential, zero-padded.
-
-## Proposed `GOVERNANCE.md` addition
-
-Insert under `## Decision Making`, after the ADR trigger list:
-
-```markdown
-A change also requires a Product Requirements Document (PRD) when it introduces
-or changes an operator- or editor-facing capability, an operator workflow, what
-a user sees or decides, or scoring/ranking/Wikimedia action *semantics* (as
-distinct from implementation). PRDs record user-facing intent and a definition
-of done; they live in `docs/prd/` and link the ADRs they spawn. See
-`docs/prd/README.md`.
-```

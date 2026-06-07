@@ -6,7 +6,7 @@
 **State:** Implemented
 **As-built:** retroactive characterization of an already-shipped feature (no forward "closing PR").
 **Related ADRs:** ADR-0001 (foundational decisions — §5 the Toolforge hosting posture, whose persistent-WebSocket support is still an open question; §7 the trait-isolated I/O posture). The coordination *contract* itself has **no ADR yet** — tracked in #21.
-**Discussion:** (PR link added on filing)
+**Discussion:** https://github.com/schiste/SP42/pull/4
 
 > **Orientation.** Read **Known gaps / drift** first for the boundary between what
 > the *server relay and protocol* do (fully built and tested) and what the

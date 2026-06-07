@@ -6,7 +6,7 @@
 **State:** Implemented
 **As-built:** retroactive characterization of an already-shipped feature (no forward "closing PR").
 **Related ADRs:** ADR-0002 (local dev-auth bridge — governs the *mechanism* of token custody, the canonical empty-bootstrap contract, and server-side identity/scope derivation; this PRD references that contract, it does not specify it)
-**Discussion:** (PR link added on filing)
+**Discussion:** https://github.com/schiste/SP42/pull/4
 
 ## Scope boundary
 

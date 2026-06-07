@@ -6,7 +6,7 @@
 **State:** Implemented
 **As-built:** retroactive characterization of an already-shipped feature (no forward "closing PR").
 **Related ADRs:** ADR-0001 (foundational decisions), ADR-0002 (local dev-auth bridge contract — but operator identity/capabilities are owned by PRD-0005). The assembled live-operator-view contract has no ADR yet — tracked in #18.
-**Discussion:** (PR link added on filing)
+**Discussion:** https://github.com/schiste/SP42/pull/4
 
 ## Scope boundary
 

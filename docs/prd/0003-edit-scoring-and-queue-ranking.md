@@ -6,7 +6,7 @@
 **State:** Implemented
 **As-built:** retroactive characterization of an already-shipped feature (no forward "closing PR").
 **Related ADRs:** ADR-0001 (foundational decisions — §9 LiftWing as supplementary ML scoring provider). The scoring/ranking *contract* itself (the composite-score shape, the policy-file schema, the compile-to-runtime step) has no ADR yet — its governance lives in `docs/scoring/SCORING_CONSTITUTION.md`; the ADR is tracked in #19.
-**Discussion:** (PR link added on filing)
+**Discussion:** https://github.com/schiste/SP42/pull/4
 
 ## Scope boundary
 

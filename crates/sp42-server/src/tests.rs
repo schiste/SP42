@@ -8,21 +8,33 @@ use axum::body::{Body, to_bytes};
 use axum::http::{HeaderMap, Method, Request, StatusCode};
 use axum::routing::get;
 use axum::{Json, Router};
-use sp42_core::LocalOAuthSourceReport;
+use sp42_core::routes::{
+    ACTION_HISTORY_PATH, ACTION_STATUS_PATH, OPERATOR_READINESS_PATH, OPERATOR_REPORT_PATH,
+    OPERATOR_STORAGE_LAYOUT_PATH,
+};
+use sp42_core::{
+    ActionExecutionHistoryReport, ActionExecutionLogEntry, ActionExecutionStatusReport,
+    LocalOAuthSourceReport, SessionActionKind,
+};
 use sp42_types::{Clock, FileStorage, Storage, SystemClock};
 use tower::util::ServiceExt;
 
-use super::{
-    ACTION_HISTORY_PATH, ACTION_STATUS_PATH, ActionExecutionHistoryReport, ActionExecutionLogEntry,
-    ActionExecutionStatusReport, AppState, CoordinationRoomInspection, DevAuthBootstrapStatus,
-    OPERATOR_READINESS_PATH, OPERATOR_REPORT_PATH, OPERATOR_STORAGE_LAYOUT_PATH, OperatorReport,
-    OperatorRuntimeInspection, OperatorStorageLayoutView, RoomInspectionCollection,
-    RuntimeDebugStatus, ServerHealthStatus, SessionActionKind, StoredSession, build_router, now_ms,
-    operator_endpoint_manifest, to_status,
-};
+use super::{OperatorStorageLayoutView, now_ms};
 use crate::coordination::CoordinationRegistry;
+use crate::coordination::CoordinationRoomInspection;
 use crate::deployment::{DeploymentConfig, DeploymentMode};
+use crate::endpoint_manifest::operator_endpoint_manifest;
 use crate::local_env::LocalOAuthConfig;
+use crate::routes::build_router;
+use crate::runtime_status::{
+    CapabilityCacheStatus, CapabilityProbeHint, DevAuthBootstrapStatus, OperatorReport,
+    OperatorRuntimeInspection, RoomInspectionCollection, RuntimeDebugStatus, ServerHealthStatus,
+};
+use crate::session_runtime::{
+    CSRF_HEADER_NAME, SESSION_COOKIE_NAME, install_session,
+    session_cookie_header as runtime_session_cookie_header, to_status,
+};
+use crate::state::{AppState, StoredSession};
 use crate::wikimedia_capabilities::CapabilityProbeTargets;
 use futures::{SinkExt, StreamExt};
 use sp42_wiki::WikiRegistry;
@@ -554,7 +566,7 @@ async fn dev_session_delete_requires_csrf_for_cookie_session() {
         test_session("Example", "secret-token", created_at_ms),
     );
     let router = build_router(state.clone());
-    let cookie = format!("{}={session_id}", crate::SESSION_COOKIE_NAME);
+    let cookie = format!("{SESSION_COOKIE_NAME}={session_id}");
 
     let missing_csrf = router
         .clone()
@@ -578,7 +590,7 @@ async fn dev_session_delete_requires_csrf_for_cookie_session() {
                 .method(Method::DELETE)
                 .uri("/dev/auth/session")
                 .header(axum::http::header::COOKIE, cookie)
-                .header(crate::CSRF_HEADER_NAME, "csrf-token")
+                .header(CSRF_HEADER_NAME, "csrf-token")
                 .body(Body::empty())
                 .expect("request should build"),
         )
@@ -623,7 +635,7 @@ async fn bootstrap_session_is_disabled_outside_local_mode() {
 fn vps_session_cookie_is_secure() {
     let mut state = test_state();
     state.deployment = test_deployment_for_mode(DeploymentMode::Vps);
-    let cookie = super::session_cookie_header(&state, "session-cookie")
+    let cookie = runtime_session_cookie_header(&state, "session-cookie")
         .expect("session cookie header should build")
         .to_str()
         .expect("session cookie header should be text")
@@ -838,12 +850,12 @@ fn live_operator_backend_status_reflects_readiness() {
                 loaded_from_source: true,
             },
         },
-        capability_probe: super::CapabilityProbeHint {
+        capability_probe: CapabilityProbeHint {
             wiki_id: "frwiki".to_string(),
             endpoint: "/dev/auth/capabilities/frwiki".to_string(),
             available: true,
         },
-        capability_cache: super::CapabilityCacheStatus {
+        capability_cache: CapabilityCacheStatus {
             present: true,
             fresh: true,
             age_ms: Some(7),
@@ -1547,7 +1559,7 @@ async fn logical_storage_document_route_resolves_profile_page() {
         started_at: Instant::now(),
     };
     let current_ms = state.clock.now_ms();
-    let session_id = crate::install_session(
+    let session_id = install_session(
         &state,
         None,
         StoredSession {
@@ -1576,7 +1588,7 @@ async fn logical_storage_document_route_resolves_profile_page() {
                 .uri("/operator/storage/logical/frwiki/personal/profile?username=Schiste")
                 .header(
                     axum::http::header::COOKIE,
-                    format!("{}={session_id}", crate::SESSION_COOKIE_NAME),
+                    format!("{SESSION_COOKIE_NAME}={session_id}"),
                 )
                 .body(Body::empty())
                 .expect("request should build"),
@@ -1630,7 +1642,7 @@ async fn public_storage_document_route_returns_typed_preferences() {
         started_at: Instant::now(),
     };
     let current_ms = state.clock.now_ms();
-    let session_id = crate::install_session(
+    let session_id = install_session(
         &state,
         None,
         StoredSession {
@@ -1659,7 +1671,7 @@ async fn public_storage_document_route_returns_typed_preferences() {
                 .uri("/operator/storage/public/frwiki/preferences?username=Schiste")
                 .header(
                     axum::http::header::COOKIE,
-                    format!("{}={session_id}", crate::SESSION_COOKIE_NAME),
+                    format!("{SESSION_COOKIE_NAME}={session_id}"),
                 )
                 .body(Body::empty())
                 .expect("request should build"),

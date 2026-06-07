@@ -9,9 +9,9 @@ use sp42_types::Clock;
 use sp42_wiki::WikiRegistry;
 use tokio::sync::RwLock;
 
-use crate::IngestionSupervisorSnapshot;
 use crate::coordination::CoordinationRegistry;
 use crate::deployment::DeploymentConfig;
+use crate::live_queue::IngestionSupervisorSnapshot;
 use crate::local_env::LocalOAuthConfig;
 use crate::revision_artifacts::{CachedRenderedHunkPreview, CachedRevisionArtifacts};
 use crate::wikimedia_capabilities::CapabilityProbeTargets;

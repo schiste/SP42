@@ -18,11 +18,10 @@ use crate::coordination::{
     CoordinationRegistry, CoordinationRoomInspection, CoordinationRoomMetrics,
 };
 use crate::endpoint_manifest::{OperatorEndpointDescriptor, operator_endpoint_manifest};
+use crate::live_queue::supervisor_snapshot_for_wiki;
 use crate::session_runtime::{bootstrap_status, current_status, prune_expired_sessions};
-use crate::{
-    AppState, OPERATOR_REPORT_PATH, cache_is_fresh, capability_report_for_request,
-    resolved_wiki_config, supervisor_snapshot_for_wiki,
-};
+use crate::state::AppState;
+use crate::{cache_is_fresh, capability_report_for_request, resolved_wiki_config};
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub(crate) struct DevAuthBootstrapStatus {
@@ -209,7 +208,7 @@ pub(crate) async fn server_readiness(state: &AppState, headers: &HeaderMap) -> S
         bootstrap,
         capability_probe,
         capability_cache,
-        operator_report_path: OPERATOR_REPORT_PATH.to_string(),
+        operator_report_path: route_contracts::OPERATOR_REPORT_PATH.to_string(),
         coordination: coordination_snapshot,
     }
 }
@@ -232,7 +231,7 @@ pub(crate) async fn runtime_debug(state: &AppState, headers: &HeaderMap) -> Runt
         oauth: state.local_oauth.status(),
         capabilities,
         capability_cache,
-        operator_report_path: OPERATOR_REPORT_PATH.to_string(),
+        operator_report_path: route_contracts::OPERATOR_REPORT_PATH.to_string(),
         coordination,
     }
 }

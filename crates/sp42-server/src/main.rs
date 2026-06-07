@@ -3,6 +3,7 @@ mod auth_routes;
 mod coordination;
 mod deployment;
 mod endpoint_manifest;
+mod http_errors;
 mod ingestion_supervisor;
 mod live_queue;
 mod local_env;
@@ -25,13 +26,12 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Instant;
 
 use axum::Json;
-use axum::extract::OriginalUri;
 use axum::extract::Path;
 use axum::extract::Query;
 use axum::extract::State;
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
 use axum::http::{HeaderMap, StatusCode};
-use axum::response::{IntoResponse, Redirect, Response};
+use axum::response::IntoResponse;
 use futures::{SinkExt, StreamExt};
 use sp42_types::{Clock, HttpClient, HttpMethod, HttpRequest, SystemClock};
 use tokio::net::TcpListener;
@@ -40,128 +40,40 @@ use tracing::{info, warn};
 
 use sp42_coordination::CoordinationSnapshot;
 use sp42_core::{
-    ActionExecutionHistoryReport, ActionExecutionLogEntry, ActionExecutionStatusReport,
-    ArticleInventory, DevAuthBootstrapRequest, DevAuthCapabilityReport, DevAuthSessionStatus,
-    FlagState, OAuthCallback, OAuthClientConfig, OAuthTokenResponse, PublicAuditLedgerEntry,
-    PublicStorageDocumentData, SessionActionExecutionRequest, SessionActionExecutionResponse,
-    SessionActionKind, TokenKind, WikiConfig, WikiStorageConfig, WikiStorageDocument,
+    ArticleInventory, DevAuthCapabilityReport, DevAuthSessionStatus, FlagState,
+    PublicStorageDocumentData, TokenKind, WikiConfig, WikiStorageConfig, WikiStorageDocument,
     WikiStorageDocumentKind, WikiStorageLoadedDocument, WikiStoragePlan, WikiStoragePlanInput,
     WikiStorageWriteOutcome, WikiStorageWriteRequest, build_article_inventory,
-    build_authorization_url, build_media_diff, build_wiki_storage_plan,
-    default_public_storage_document, diff_lines, execute_fetch_token, generate_oauth_state,
-    generate_pkce_verifier, load_wiki_storage_document, parse_callback_query,
+    build_wiki_storage_plan, execute_fetch_token, load_wiki_storage_document,
     render_wiki_storage_document_page, render_wiki_storage_index_page,
     resolve_wiki_storage_document, save_wiki_storage_document,
 };
-use sp42_live::{
-    LiveOperatorBackendStatus, LiveOperatorPhaseTiming, LiveOperatorPublicDocuments,
-    LiveOperatorTelemetry,
-};
-use sp42_reporting::LiveOperatorView;
+use sp42_live::LiveOperatorBackendStatus;
 use sp42_wiki::WikiRegistry;
 
-#[cfg(test)]
-use crate::coordination::CoordinationRoomInspection;
 use crate::coordination::{CoordinationEnvelope, CoordinationRegistry};
 use crate::deployment::DeploymentConfig;
-#[cfg(test)]
-use crate::endpoint_manifest::operator_endpoint_manifest;
-pub(crate) use crate::live_queue::{
-    IngestionSupervisorSnapshot, LiveOperatorAssembly, LiveOperatorFinalization,
-    LiveOperatorProductContext, LiveOperatorPublicContextState, LivePublicDocumentLoadSpec,
-    LiveViewFilterParams, build_live_operator_notes, build_live_operator_products,
-    finalize_live_operator_view, load_live_operator_bootstrap, load_live_queue_state,
-    load_selected_review_state, supervisor_snapshot_for_wiki,
-};
+use crate::http_errors::{gateway_error, invalid_payload, unauthorized_error};
 use crate::local_env::LocalOAuthConfig;
-pub(crate) use crate::revision_artifacts::{
-    fetch_revision_diff, fetch_revision_media_diff, get_rendered_hunk_preview, get_revision_diff,
-    get_revision_media_diff,
-};
 use crate::routes::build_router;
 use crate::runtime_adapters::{
     BearerHttpClient, build_http_client, init_tracing, runtime_storage_root,
 };
-#[cfg(test)]
-pub(crate) use crate::runtime_status::{
-    CapabilityCacheStatus, CapabilityProbeHint, OperatorReport, OperatorRuntimeInspection,
-    RuntimeDebugStatus,
-};
-pub(crate) use crate::runtime_status::{
-    DevAuthBootstrapStatus, RoomInspectionCollection, ServerHealthStatus, empty_room_inspection,
-    get_debug_summary, get_healthz, get_operator_readiness, get_operator_report,
-    get_operator_runtime, get_runtime_debug, persisted_stream_status, room_inspection,
-    runtime_storage_for, server_readiness,
+use crate::runtime_status::{
+    RoomInspectionCollection, ServerHealthStatus, empty_room_inspection, room_inspection,
 };
 use crate::session_runtime::{
     current_session_snapshot, prune_expired_sessions, session_expires_at_ms,
 };
-#[cfg(test)]
-pub(crate) use crate::session_runtime::{install_session, session_cookie_header, to_status};
-use crate::state::{
-    AppState, CachedCapabilityReport, PendingOAuthLogin, SessionSnapshot, StoredSession,
-};
+use crate::state::{AppState, CachedCapabilityReport, SessionSnapshot};
 use crate::wikimedia_capabilities::{CapabilityProbeTargets, probe_with_targets};
-#[cfg(test)]
-pub(crate) use sp42_core::routes::{
-    ACTION_HISTORY_PATH, ACTION_STATUS_PATH, OPERATOR_READINESS_PATH, OPERATOR_STORAGE_LAYOUT_PATH,
-};
-pub(crate) use sp42_core::routes::{
-    AUTH_CALLBACK_PATH, AUTH_LOGIN_PATH, AUTH_LOGOUT_PATH, OPERATOR_REPORT_PATH,
-};
 
-const SESSION_COOKIE_NAME: &str = "sp42_dev_session";
-const CSRF_HEADER_NAME: &str = "x-sp42-csrf-token";
 const CAPABILITY_CACHE_TTL_MS: i64 = 30_000;
-const SESSION_IDLE_TIMEOUT_MS: i64 = 30 * 60 * 1000;
-const SESSION_ABSOLUTE_TIMEOUT_MS: i64 = 8 * 60 * 60 * 1000;
-const SESSION_COOKIE_MAX_AGE_SECONDS: i64 = SESSION_IDLE_TIMEOUT_MS / 1000;
-const PENDING_OAUTH_TTL_MS: i64 = 10 * 60 * 1000;
-const ACTION_HISTORY_LIMIT: usize = 50;
-const RESPONSE_BODY_PREVIEW_LIMIT: usize = 1_000;
-const REVISION_ARTIFACT_CACHE_TTL_MS: i64 = 5 * 60 * 1000;
-const RENDERED_HUNK_CACHE_TTL_MS: i64 = 5 * 60 * 1000;
-const WIKIMEDIA_API_RETRY_ATTEMPTS: usize = 3;
-const WIKIMEDIA_API_RETRY_DELAY_MS: u64 = 150;
 
 #[derive(Clone)]
 struct AuthenticatedWikiContext {
     client: BearerHttpClient,
     config: WikiConfig,
-}
-
-#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Deserialize, serde::Serialize)]
-struct ActionHistoryQuery {
-    limit: Option<usize>,
-}
-
-#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Deserialize, serde::Serialize)]
-struct AuthLoginQuery {
-    next: Option<String>,
-    wiki_id: Option<String>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-struct OAuthSessionView {
-    authenticated: FlagState,
-    username: Option<String>,
-    scopes: Vec<String>,
-    expires_at_ms: Option<i64>,
-    upstream_access_expires_at_ms: Option<i64>,
-    refresh_available: FlagState,
-    bridge_mode: String,
-    csrf_token: Option<String>,
-    local_token_available: FlagState,
-    oauth_client_ready: FlagState,
-    login_path: String,
-    logout_path: String,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize)]
-struct OAuthProfileResponse {
-    username: String,
-    #[serde(default)]
-    grants: Vec<String>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, serde::Deserialize, serde::Serialize)]
@@ -424,13 +336,6 @@ fn spawn_ingestion_supervisors(state: &AppState) {
     ingestion_supervisor::spawn_ingestion_supervisors(state);
 }
 
-fn gateway_error(message: impl Into<String>) -> (StatusCode, Json<serde_json::Value>) {
-    (
-        StatusCode::BAD_GATEWAY,
-        Json(serde_json::json!({ "error": message.into() })),
-    )
-}
-
 async fn authenticated_wiki_context(
     state: &AppState,
     headers: &HeaderMap,
@@ -445,36 +350,6 @@ async fn authenticated_wiki_context(
         client: BearerHttpClient::new(state.http_client.clone(), access_token),
         config,
     })
-}
-
-pub(crate) fn validate_csrf_header(
-    headers: &HeaderMap,
-    session: &SessionSnapshot,
-) -> Result<(), (StatusCode, Json<serde_json::Value>)> {
-    let Some(header_value) = headers
-        .get(CSRF_HEADER_NAME)
-        .and_then(|value| value.to_str().ok())
-    else {
-        return Err(forbidden_error("Missing CSRF token header."));
-    };
-
-    if header_value == session.csrf_token {
-        Ok(())
-    } else {
-        Err(forbidden_error("Invalid CSRF token header."))
-    }
-}
-
-pub(crate) async fn require_session_csrf(
-    state: &AppState,
-    headers: &HeaderMap,
-) -> Result<(), (StatusCode, Json<serde_json::Value>)> {
-    let Some(session) = current_session_snapshot(state, headers, false).await else {
-        return Err(unauthorized_error(
-            "No authenticated bridge session is active.",
-        ));
-    };
-    validate_csrf_header(headers, &session)
 }
 
 async fn required_csrf_token(
@@ -648,114 +523,6 @@ async fn get_operator_storage_layout(
                 Json(serde_json::json!({ "error": error })),
             )
         })
-}
-
-async fn get_live_operator_view(
-    Path(wiki_id): Path<String>,
-    axum::extract::Query(filters): axum::extract::Query<LiveViewFilterParams>,
-    State(state): State<AppState>,
-    headers: HeaderMap,
-) -> impl IntoResponse {
-    operator_live::get_live_operator_view(
-        Path(wiki_id),
-        axum::extract::Query(filters),
-        State(state),
-        headers,
-    )
-    .await
-}
-
-async fn get_storage_document(
-    Path(wiki_id): Path<String>,
-    Query(query): Query<StorageDocumentQuery>,
-    State(state): State<AppState>,
-    headers: HeaderMap,
-) -> Result<Json<WikiStorageLoadedDocument>, (StatusCode, Json<serde_json::Value>)> {
-    storage_routes::get_storage_document(Path(wiki_id), Query(query), State(state), headers).await
-}
-
-async fn put_storage_document(
-    Path(wiki_id): Path<String>,
-    State(state): State<AppState>,
-    headers: HeaderMap,
-    Json(payload): Json<StorageDocumentSavePayload>,
-) -> Result<Json<WikiStorageWriteOutcome>, (StatusCode, Json<serde_json::Value>)> {
-    require_session_csrf(&state, &headers).await?;
-    storage_routes::put_storage_document(Path(wiki_id), State(state), headers, Json(payload)).await
-}
-
-async fn get_logical_storage_document(
-    Path((wiki_id, realm, kind)): Path<(
-        String,
-        StorageDocumentRealmInput,
-        StorageDocumentKindInput,
-    )>,
-    Query(query): Query<LogicalStorageDocumentQuery>,
-    State(state): State<AppState>,
-    headers: HeaderMap,
-) -> Result<Json<LogicalStorageDocumentView>, (StatusCode, Json<serde_json::Value>)> {
-    storage_routes::get_logical_storage_document(
-        Path((wiki_id, realm, kind)),
-        Query(query),
-        State(state),
-        headers,
-    )
-    .await
-}
-
-async fn put_logical_storage_document(
-    Path((wiki_id, realm, kind)): Path<(
-        String,
-        StorageDocumentRealmInput,
-        StorageDocumentKindInput,
-    )>,
-    Query(query): Query<LogicalStorageDocumentQuery>,
-    State(state): State<AppState>,
-    headers: HeaderMap,
-    Json(payload): Json<LogicalStorageDocumentSavePayload>,
-) -> Result<Json<LogicalStorageDocumentWriteView>, (StatusCode, Json<serde_json::Value>)> {
-    require_session_csrf(&state, &headers).await?;
-    storage_routes::put_logical_storage_document(
-        Path((wiki_id, realm, kind)),
-        Query(query),
-        State(state),
-        headers,
-        Json(payload),
-    )
-    .await
-}
-
-async fn get_public_storage_document(
-    Path((wiki_id, kind)): Path<(String, PublicStorageDocumentRouteKind)>,
-    Query(query): Query<PublicStorageDocumentQuery>,
-    State(state): State<AppState>,
-    headers: HeaderMap,
-) -> Result<Json<PublicStorageDocumentView>, (StatusCode, Json<serde_json::Value>)> {
-    storage_routes::get_public_storage_document(
-        Path((wiki_id, kind)),
-        Query(query),
-        State(state),
-        headers,
-    )
-    .await
-}
-
-async fn put_public_storage_document(
-    Path((wiki_id, kind)): Path<(String, PublicStorageDocumentRouteKind)>,
-    Query(query): Query<PublicStorageDocumentQuery>,
-    State(state): State<AppState>,
-    headers: HeaderMap,
-    Json(payload): Json<PublicStorageDocumentSavePayload>,
-) -> Result<Json<PublicStorageDocumentWriteView>, (StatusCode, Json<serde_json::Value>)> {
-    require_session_csrf(&state, &headers).await?;
-    storage_routes::put_public_storage_document(
-        Path((wiki_id, kind)),
-        Query(query),
-        State(state),
-        headers,
-        Json(payload),
-    )
-    .await
 }
 
 async fn operator_storage_layout_view(
@@ -1237,119 +1004,6 @@ async fn capability_report_for_session(
     .await
 }
 
-async fn get_auth_login(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-    Query(query): Query<AuthLoginQuery>,
-) -> Result<Redirect, (StatusCode, Json<serde_json::Value>)> {
-    auth_routes::get_auth_login(State(state), headers, Query(query)).await
-}
-
-async fn get_auth_callback(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-    OriginalUri(uri): OriginalUri,
-) -> Result<Response, (StatusCode, Json<serde_json::Value>)> {
-    auth_routes::get_auth_callback(State(state), headers, OriginalUri(uri)).await
-}
-
-async fn get_auth_session(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-) -> Json<OAuthSessionView> {
-    auth_routes::get_auth_session(State(state), headers).await
-}
-
-async fn post_auth_logout(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
-    auth_routes::post_auth_logout(State(state), headers).await
-}
-
-async fn get_session(State(state): State<AppState>, headers: HeaderMap) -> impl IntoResponse {
-    auth_routes::get_session(State(state), headers).await
-}
-
-async fn get_capabilities(
-    Path(wiki_id): Path<String>,
-    State(state): State<AppState>,
-    headers: HeaderMap,
-) -> Json<DevAuthCapabilityReport> {
-    auth_routes::get_capabilities(Path(wiki_id), State(state), headers).await
-}
-
-async fn get_action_status(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-) -> Json<ActionExecutionStatusReport> {
-    action_routes::get_action_status(State(state), headers).await
-}
-
-async fn get_action_history(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-    Query(query): Query<ActionHistoryQuery>,
-) -> Json<ActionExecutionHistoryReport> {
-    action_routes::get_action_history(State(state), headers, Query(query)).await
-}
-
-async fn post_bootstrap_session(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-    Json(payload): Json<DevAuthBootstrapRequest>,
-) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
-    auth_routes::post_bootstrap_session(State(state), headers, Json(payload)).await
-}
-
-async fn delete_session(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
-    auth_routes::delete_session(State(state), headers).await
-}
-
-async fn get_bootstrap_status(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-) -> Json<DevAuthBootstrapStatus> {
-    auth_routes::get_bootstrap_status(State(state), headers).await
-}
-
-async fn post_execute_action(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-    Json(payload): Json<SessionActionExecutionRequest>,
-) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
-    action_routes::post_execute_action(State(state), headers, Json(payload)).await
-}
-
-fn action_feedback_for_entry(entry: &ActionExecutionLogEntry) -> String {
-    action_routes::action_feedback_for_entry(entry)
-}
-
-async fn action_status_report(
-    state: &AppState,
-    headers: &HeaderMap,
-) -> ActionExecutionStatusReport {
-    action_routes::action_status_report(state, headers).await
-}
-
-async fn action_history_report(
-    state: &AppState,
-    headers: &HeaderMap,
-    limit: Option<usize>,
-) -> ActionExecutionHistoryReport {
-    action_routes::action_history_report(state, headers, limit).await
-}
-
-fn invalid_payload(message: &str) -> (StatusCode, Json<serde_json::Value>) {
-    (
-        StatusCode::BAD_REQUEST,
-        Json(serde_json::json!({ "error": message })),
-    )
-}
-
 fn split_scope_string(value: &str) -> Vec<String> {
     value
         .split_whitespace()
@@ -1486,24 +1140,6 @@ fn resolved_wiki_config(state: &AppState, wiki_id: &str) -> Result<sp42_core::Wi
         );
     }
     Ok(config)
-}
-
-fn forbidden_error(message: &str) -> (StatusCode, Json<serde_json::Value>) {
-    (
-        StatusCode::FORBIDDEN,
-        Json(serde_json::json!({ "error": message })),
-    )
-}
-
-fn unauthorized_error(message: &str) -> (StatusCode, Json<serde_json::Value>) {
-    (
-        StatusCode::UNAUTHORIZED,
-        Json(serde_json::json!({ "error": message })),
-    )
-}
-
-fn truncate_response_body(body: &[u8]) -> String {
-    action_routes::truncate_response_body(body)
 }
 
 #[cfg(test)]

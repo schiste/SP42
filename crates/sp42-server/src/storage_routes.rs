@@ -3,28 +3,33 @@ use axum::{
     extract::{Path, Query, State},
     http::{HeaderMap, StatusCode},
 };
-use sp42_core::parse_public_storage_document;
-
-use crate::runtime_adapters::BearerHttpClient;
-use crate::{
-    ActionExecutionLogEntry, AppState, DevAuthCapabilityReport, DevAuthSessionStatus, FlagState,
-    LiveOperatorPublicContextState, LiveOperatorPublicDocuments, LivePublicDocumentLoadSpec,
-    LogicalStorageDocumentQuery, LogicalStorageDocumentSavePayload, LogicalStorageDocumentView,
-    LogicalStorageDocumentWriteView, PublicAuditLedgerEntry, PublicStorageDocumentData,
-    PublicStorageDocumentQuery, PublicStorageDocumentRouteKind, PublicStorageDocumentSavePayload,
-    PublicStorageDocumentView, PublicStorageDocumentWriteView, ResolvedPublicStorageDocument,
-    SessionActionExecutionRequest, SessionSnapshot, StorageDocumentKindInput, StorageDocumentQuery,
-    StorageDocumentRealmInput, StorageDocumentSavePayload, StoragePlanRequest, TokenKind,
-    WikiConfig, WikiStorageConfig, WikiStorageDocument, WikiStorageDocumentKind,
-    WikiStorageLoadedDocument, WikiStorageWriteOutcome, WikiStorageWriteRequest,
-    action_feedback_for_entry, authenticated_wiki_context, build_wiki_storage_plan,
-    default_public_storage_document, execute_fetch_token, invalid_payload,
-    load_storage_document_with_context, load_wiki_storage_document, require_logical_storage_slug,
-    required_csrf_token, resolve_logical_storage_document, resolve_wiki_storage_document,
-    resolved_wiki_config, save_storage_document_with_context, save_wiki_storage_document,
-    storage_plan_input,
+use sp42_core::{
+    ActionExecutionLogEntry, DevAuthCapabilityReport, DevAuthSessionStatus, FlagState,
+    PublicAuditLedgerEntry, PublicAuditLedgerReasoning, PublicStorageDocumentData,
+    SessionActionExecutionRequest, TokenKind, WikiConfig, WikiStorageConfig, WikiStorageDocument,
+    WikiStorageDocumentKind, WikiStorageLoadedDocument, WikiStorageWriteOutcome,
+    WikiStorageWriteRequest, build_wiki_storage_plan, default_public_storage_document,
+    execute_fetch_token, load_wiki_storage_document, parse_public_storage_document,
+    resolve_wiki_storage_document, save_wiki_storage_document,
 };
-use sp42_core::PublicAuditLedgerReasoning;
+use sp42_live::LiveOperatorPublicDocuments;
+
+use crate::action_routes::action_feedback_for_entry;
+use crate::http_errors::invalid_payload;
+use crate::live_queue::{LiveOperatorPublicContextState, LivePublicDocumentLoadSpec};
+use crate::runtime_adapters::BearerHttpClient;
+use crate::session_runtime::require_session_csrf;
+use crate::state::{AppState, SessionSnapshot};
+use crate::{
+    LogicalStorageDocumentQuery, LogicalStorageDocumentSavePayload, LogicalStorageDocumentView,
+    LogicalStorageDocumentWriteView, PublicStorageDocumentQuery, PublicStorageDocumentRouteKind,
+    PublicStorageDocumentSavePayload, PublicStorageDocumentView, PublicStorageDocumentWriteView,
+    ResolvedPublicStorageDocument, StorageDocumentKindInput, StorageDocumentQuery,
+    StorageDocumentRealmInput, StorageDocumentSavePayload, StoragePlanRequest,
+    authenticated_wiki_context, load_storage_document_with_context, require_logical_storage_slug,
+    required_csrf_token, resolve_logical_storage_document, resolved_wiki_config,
+    save_storage_document_with_context, storage_plan_input,
+};
 
 pub(crate) async fn get_storage_document(
     Path(wiki_id): Path<String>,
@@ -49,6 +54,8 @@ pub(crate) async fn put_storage_document(
     headers: HeaderMap,
     Json(payload): Json<StorageDocumentSavePayload>,
 ) -> Result<Json<WikiStorageWriteOutcome>, (StatusCode, Json<serde_json::Value>)> {
+    require_session_csrf(&state, &headers).await?;
+
     let StorageDocumentSavePayload {
         document,
         human_summary,
@@ -116,6 +123,8 @@ pub(crate) async fn put_logical_storage_document(
     headers: HeaderMap,
     Json(payload): Json<LogicalStorageDocumentSavePayload>,
 ) -> Result<Json<LogicalStorageDocumentWriteView>, (StatusCode, Json<serde_json::Value>)> {
+    require_session_csrf(&state, &headers).await?;
+
     let document =
         resolve_logical_storage_document(&state, &headers, &wiki_id, &realm, &kind, &query)
             .await
@@ -888,6 +897,8 @@ pub(crate) async fn put_public_storage_document(
     headers: HeaderMap,
     Json(payload): Json<PublicStorageDocumentSavePayload>,
 ) -> Result<Json<PublicStorageDocumentWriteView>, (StatusCode, Json<serde_json::Value>)> {
+    require_session_csrf(&state, &headers).await?;
+
     let document = resolve_public_storage_document(&state, &headers, &wiki_id, &kind, &query)
         .await
         .map_err(|message| invalid_payload(&message))?;

@@ -1,6 +1,7 @@
 # PRD-0001: Citation verification for revision review
 
-**Author:** Luis Villa
+**Drafter:** Claude Code Opus 4.8
+**Editor:** Luis Villa
 **Date:** 2026-06-04
 **State:** Draft
 **Discussion:** <PR link>

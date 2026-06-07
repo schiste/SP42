@@ -1,7 +1,8 @@
 use std::collections::HashMap;
 
 use leptos::prelude::*;
-use sp42_core::{EditorIdentity, QueuedEdit, live_operator_query_matches};
+use sp42_core::{EditorIdentity, QueuedEdit};
+use sp42_live::live_operator_query_matches;
 
 use crate::components::filter_bar::PatrolFilterParams;
 use crate::platform::console;

@@ -2110,7 +2110,11 @@ dependencies = [
  "leptos",
  "send_wrapper",
  "serde_json",
+ "sp42-coordination",
  "sp42-core",
+ "sp42-live",
+ "sp42-reporting",
+ "sp42-wiki",
  "url",
  "wasm-bindgen",
  "wasm-bindgen-futures",
@@ -2126,6 +2130,21 @@ dependencies = [
  "serde",
  "serde_json",
  "sp42-core",
+ "sp42-devtools",
+ "sp42-reporting",
+]
+
+[[package]]
+name = "sp42-coordination"
+version = "0.1.0"
+dependencies = [
+ "futures",
+ "proptest",
+ "rmp-serde",
+ "serde",
+ "sp42-core",
+ "thiserror 2.0.18",
+ "tracing",
 ]
 
 [[package]]
@@ -2136,7 +2155,6 @@ dependencies = [
  "base64",
  "futures",
  "proptest",
- "rmp-serde",
  "serde",
  "serde_json",
  "serde_yaml",
@@ -2154,7 +2172,47 @@ dependencies = [
  "futures",
  "serde_json",
  "sp42-core",
+ "sp42-devtools",
+ "sp42-reporting",
  "url",
+]
+
+[[package]]
+name = "sp42-devtools"
+version = "0.1.0"
+dependencies = [
+ "futures",
+ "sp42-coordination",
+ "sp42-core",
+ "sp42-live",
+ "sp42-reporting",
+ "sp42-wiki",
+ "thiserror 2.0.18",
+]
+
+[[package]]
+name = "sp42-live"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "futures",
+ "proptest",
+ "serde",
+ "serde_json",
+ "sp42-core",
+]
+
+[[package]]
+name = "sp42-reporting"
+version = "0.1.0"
+dependencies = [
+ "proptest",
+ "serde",
+ "serde_json",
+ "sp42-coordination",
+ "sp42-core",
+ "sp42-live",
+ "sp42-wiki",
 ]
 
 [[package]]
@@ -2168,13 +2226,28 @@ dependencies = [
  "reqwest",
  "serde",
  "serde_json",
+ "sp42-coordination",
  "sp42-core",
+ "sp42-live",
+ "sp42-reporting",
+ "sp42-wiki",
  "tokio",
  "tokio-tungstenite",
  "tower",
  "tower-http",
  "tracing",
  "tracing-subscriber",
+ "url",
+]
+
+[[package]]
+name = "sp42-wiki"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_yaml",
+ "sp42-core",
+ "thiserror 2.0.18",
  "url",
 ]
 

@@ -2,12 +2,11 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::backlog_runtime::BacklogRuntimeStatus;
-use crate::coordination_state::CoordinationStateSummary;
-use crate::diff_engine::StructuredDiff;
-use crate::review_workbench::ReviewWorkbench;
-use crate::stream_runtime::StreamRuntimeStatus;
-use crate::types::{QueuedEdit, ScoringContext};
+use sp42_coordination::CoordinationStateSummary;
+use sp42_core::diff_engine::StructuredDiff;
+use sp42_core::review_workbench::ReviewWorkbench;
+use sp42_core::types::{QueuedEdit, ScoringContext};
+use sp42_live::{BacklogRuntimeStatus, StreamRuntimeStatus};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum TraceLevel {
@@ -262,21 +261,21 @@ fn push_coordination_snapshot(
 
 #[cfg(test)]
 mod tests {
-    use crate::diff_engine::diff_lines;
-    use crate::review_workbench::build_review_workbench;
-    use crate::scoring_engine::{score_edit, score_edit_with_context};
-    use crate::types::{
+    use sp42_core::diff_engine::diff_lines;
+    use sp42_core::review_workbench::build_review_workbench;
+    use sp42_core::scoring_engine::{score_edit, score_edit_with_context};
+    use sp42_core::types::{
         EditEvent, EditorIdentity, QueuedEdit, ScoringConfig, ScoringContext, UserRiskProfile,
         WarningLevel,
     };
+    use sp42_live::{BacklogRuntimeStatus, StreamRuntimeStatus};
 
     use super::{DebugSnapshotInputs, TraceLevel, build_debug_snapshot};
 
     #[test]
     fn builds_snapshot_from_available_inputs() {
-        let config =
-            crate::config_parser::parse_wiki_config(include_str!("../../../configs/frwiki.yaml"))
-                .expect("config should parse");
+        let config = sp42_wiki::parse_wiki_config(include_str!("../../../configs/frwiki.yaml"))
+            .expect("config should parse");
         let event = EditEvent {
             wiki_id: "frwiki".to_string(),
             title: "Exemple".to_string(),
@@ -312,9 +311,9 @@ mod tests {
         let diff = diff_lines("Avant\n", "Avant\nApres\n");
         let workbench = build_review_workbench(&config, &item, "token-123", "Reviewer", None)
             .expect("workbench should build");
-        let coordination = crate::coordination_state::CoordinationStateSummary {
+        let coordination = sp42_coordination::CoordinationStateSummary {
             wiki_id: "frwiki".to_string(),
-            claims: vec![crate::types::EditClaim {
+            claims: vec![sp42_coordination::EditClaim {
                 wiki_id: "frwiki".to_string(),
                 rev_id: 123_456,
                 actor: "Reviewer".to_string(),
@@ -325,14 +324,14 @@ mod tests {
             race_resolutions: Vec::new(),
             recent_actions: Vec::new(),
         };
-        let stream_status = crate::stream_runtime::StreamRuntimeStatus {
+        let stream_status = StreamRuntimeStatus {
             checkpoint_key: "stream.last_event_id.frwiki".to_string(),
             last_event_id: Some("event-2".to_string()),
             delivered_events: 1,
             filtered_events: 2,
             reconnect_attempts: 1,
         };
-        let backlog_status = crate::backlog_runtime::BacklogRuntimeStatus {
+        let backlog_status = BacklogRuntimeStatus {
             checkpoint_key: "recentchanges.rccontinue.frwiki".to_string(),
             next_continue: Some("20260324010202|456".to_string()),
             last_batch_size: 25,

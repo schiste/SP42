@@ -30,7 +30,8 @@ Detailed status lives in [docs/STATUS.md](docs/STATUS.md).
 
 ## Repository Layout
 
-- `crates/sp42-core`: pure domain logic, contracts, parsing, scoring, and action helpers
+- `crates/sp42-core`: shared contracts, scoring, runtime primitives, and action helpers
+- `crates/sp42-wiki`: wiki config parsing, registry/default selection, and capability profiles
 - `crates/sp42-app`: browser and PWA shell
 - `crates/sp42-cli`: CLI shell
 - `crates/sp42-desktop`: desktop shell

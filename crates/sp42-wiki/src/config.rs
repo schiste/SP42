@@ -3,9 +3,9 @@
 use std::collections::BTreeSet;
 
 use crate::errors::ConfigError;
-use crate::scoring_policy::load_embedded_compiled_scoring_policy;
-use crate::types::{WikiConfig, WikiTemplates};
 use serde::Deserialize;
+use sp42_core::scoring_policy::load_embedded_compiled_scoring_policy;
+use sp42_core::{WikiConfig, WikiTemplates};
 use url::Url;
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]

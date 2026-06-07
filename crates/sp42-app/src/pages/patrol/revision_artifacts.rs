@@ -2,9 +2,9 @@ use std::collections::HashMap;
 
 use leptos::prelude::*;
 use sp42_core::{
-    LiveOperatorView, MediaDiffReport, QueuedEdit, SessionActionExecutionRequest,
-    SessionActionKind, StructuredDiff,
+    MediaDiffReport, QueuedEdit, SessionActionExecutionRequest, SessionActionKind, StructuredDiff,
 };
+use sp42_reporting::LiveOperatorView;
 
 use crate::components::diff_viewer::{EditAction, TagAction};
 use crate::platform::auth::execute_dev_auth_action;

@@ -1,4 +1,3 @@
-use std::collections::BTreeSet;
 use std::env;
 use std::fmt;
 
@@ -11,6 +10,10 @@ use sp42_core::{
     DevAuthActionTokenAvailability, DevAuthCapabilityReadiness, DevAuthCapabilityReport,
     DevAuthDerivedCapabilities, DevAuthEditCapabilities, DevAuthModerationCapabilities,
     DevAuthProbeAcceptance, LocalOAuthConfigStatus, WikiConfig,
+};
+use sp42_wiki::{
+    WikiActionTokenAvailability, WikiCapabilityProfile, WikiCapabilityProfileInput,
+    derive_wiki_capability_profile,
 };
 
 const PROFILE_URL: &str = "https://meta.wikimedia.org/w/rest.php/oauth2/resource/profile";
@@ -268,48 +271,28 @@ fn derive_report(
     let wiki_groups = sort_strings(userinfo.groups);
     let wiki_rights = sort_strings(userinfo.rights);
 
-    let grant_set: BTreeSet<_> = oauth_grants.iter().map(String::as_str).collect();
-    let right_set: BTreeSet<_> = wiki_rights.iter().map(String::as_str).collect();
-
     let csrf_token_available = token_present(tokens.csrftoken.as_deref());
     let patrol_token_available = token_present(tokens.patroltoken.as_deref());
     let rollback_token_available = token_present(tokens.rollbacktoken.as_deref());
-
-    let can_edit =
-        grant_set.contains("editpage") && right_set.contains("edit") && csrf_token_available;
-    let can_patrol =
-        grant_set.contains("patrol") && right_set.contains("patrol") && patrol_token_available;
-    let can_rollback = grant_set.contains("rollback")
-        && right_set.contains("rollback")
-        && rollback_token_available;
-
-    let mut notes = vec![
-        "SP42 recentchanges reads do not require authentication; the token is needed for user-linked actions and rights validation.".to_string(),
-        format!(
-            "Capability probe verified profile, userinfo, and token endpoints for {}.",
-            config.wiki_id
-        ),
-    ];
-
-    if grant_set.contains("rollback") && !right_set.contains("rollback") {
-        notes.push(format!(
-            "The token carries the OAuth rollback grant, but the account does not currently have the rollback right on {}.",
-            config.wiki_id
-        ));
-    }
-
-    if rollback_token_available && !right_set.contains("rollback") {
-        notes.push(
-            "A rollback token was returned by the API, but SP42 still treats rollback as unavailable because the wiki right is missing.".to_string(),
-        );
-    }
-
-    if grant_set.contains("patrol") && !right_set.contains("patrol") {
-        notes.push(format!(
-            "The token carries the OAuth patrol grant, but the account does not currently have the patrol right on {}.",
-            config.wiki_id
-        ));
-    }
+    let WikiCapabilityProfile {
+        read,
+        editing,
+        moderation,
+        mut notes,
+    } = derive_wiki_capability_profile(&WikiCapabilityProfileInput {
+        wiki_id: &config.wiki_id,
+        oauth_grants: &oauth_grants,
+        wiki_rights: &wiki_rights,
+        tokens: WikiActionTokenAvailability {
+            csrf_token_available,
+            patrol_token_available,
+            rollback_token_available,
+        },
+    });
+    notes.push(format!(
+        "Capability probe verified profile, userinfo, and token endpoints for {}.",
+        config.wiki_id
+    ));
 
     DevAuthCapabilityReport {
         checked: true,
@@ -329,17 +312,17 @@ fn derive_report(
         },
         capabilities: DevAuthDerivedCapabilities {
             read: DevAuthCapabilityReadiness {
-                can_authenticate: true,
-                can_query_userinfo: true,
-                can_read_recent_changes: true,
+                can_authenticate: read.can_authenticate,
+                can_query_userinfo: read.can_query_userinfo,
+                can_read_recent_changes: read.can_read_recent_changes,
             },
             editing: DevAuthEditCapabilities {
-                can_edit,
-                can_undo: can_edit,
+                can_edit: editing.can_edit,
+                can_undo: editing.can_undo,
             },
             moderation: DevAuthModerationCapabilities {
-                can_patrol,
-                can_rollback,
+                can_patrol: moderation.can_patrol,
+                can_rollback: moderation.can_rollback,
             },
         },
         notes,
@@ -465,7 +448,7 @@ mod tests {
     use reqwest::Client;
     use serde::Deserialize;
     use sp42_core::LocalOAuthConfigStatus;
-    use sp42_core::parse_wiki_config;
+    use sp42_wiki::parse_wiki_config;
 
     use super::{
         CapabilityProbeTargets, OAuthProfile, TokenPayload, UserInfoPayload, derive_report,

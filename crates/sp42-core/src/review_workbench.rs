@@ -3,10 +3,10 @@
 use serde::{Deserialize, Serialize};
 use url::Url;
 
-use crate::action_executor::{
+use crate::action_contracts::{
     PatrolRequest, RollbackRequest, SessionActionExecutionRequest, SessionActionKind, UndoRequest,
-    build_patrol_request, build_rollback_request, build_undo_request,
 };
+use crate::action_executor::{build_patrol_request, build_rollback_request, build_undo_request};
 use crate::errors::ReviewWorkbenchError;
 use crate::training_data::{TrainingLabel, encode_csv, encode_json_line};
 use crate::types::{Action, EditorIdentity, HttpMethod, QueuedEdit, WikiConfig};
@@ -204,16 +204,15 @@ fn performer_label(performer: &EditorIdentity) -> String {
 
 #[cfg(test)]
 mod tests {
-    use crate::config_parser::parse_wiki_config;
     use crate::scoring_engine::score_edit;
+    use crate::test_fixtures::fixture_wiki_config;
     use crate::types::{EditEvent, EditorIdentity, QueuedEdit, ScoringConfig};
 
     use super::{build_review_workbench, build_session_action_execution_requests};
 
     #[test]
     fn builds_request_and_training_previews() {
-        let config = parse_wiki_config(include_str!("../../../configs/frwiki.yaml"))
-            .expect("config should parse");
+        let config = fixture_wiki_config();
         let event = EditEvent {
             wiki_id: "frwiki".to_string(),
             title: "Exemple".to_string(),
@@ -248,8 +247,7 @@ mod tests {
 
     #[test]
     fn builds_tokenless_session_action_requests() {
-        let config = parse_wiki_config(include_str!("../../../configs/frwiki.yaml"))
-            .expect("config should parse");
+        let config = fixture_wiki_config();
         let event = EditEvent {
             wiki_id: "frwiki".to_string(),
             title: "Exemple".to_string(),

@@ -7,16 +7,20 @@ use reqwest::header::COOKIE;
 use serde_json::Value;
 use sp42_core::routes as route_contracts;
 use sp42_core::{
-    ContextInputs, DEV_PREVIEW_SAMPLE_EVENTS, DEV_PREVIEW_WIKI_ID, DevAuthBootstrapRequest,
-    DevAuthSessionStatus, PatrolScenarioReportInputs, QueuedEdit, RecentChangesQuery,
-    SessionActionExecutionRequest, SessionActionExecutionResponse, SessionActionKind,
-    ShellStateInputs, StreamIngestor, build_dev_auth_bootstrap_request, build_dev_backlog_preview,
-    build_dev_coordination_preview, build_dev_stream_preview, build_liftwing_score_request,
-    build_patrol_scenario_report, build_ranked_queue, build_recent_changes_request,
-    build_review_workbench, build_scoring_context, build_session_action_execution_requests,
-    build_shell_state_model, parse_default_dev_wiki_config, parse_dev_auth_status,
-    render_patrol_scenario_markdown, render_patrol_scenario_text, render_shell_state_markdown,
-    render_shell_state_text, score_edit_with_context,
+    DevAuthBootstrapRequest, DevAuthSessionStatus, QueuedEdit, SessionActionExecutionRequest,
+    SessionActionExecutionResponse, SessionActionKind, build_dev_auth_bootstrap_request,
+    parse_dev_auth_status,
+};
+use sp42_devtools::{
+    DEV_PREVIEW_SAMPLE_EVENTS, DEV_PREVIEW_WIKI_ID, DevContextOptions, DevWorkbenchOptions,
+    build_dev_action_requests, build_dev_backlog_preview, build_dev_context,
+    build_dev_context_preview, build_dev_coordination_preview, build_dev_queue,
+    build_dev_stream_preview, build_dev_workbench, parse_default_dev_wiki_config,
+};
+use sp42_reporting::{
+    PatrolScenarioReportInputs, ShellStateInputs, build_patrol_scenario_report,
+    build_shell_state_model, render_patrol_scenario_markdown, render_patrol_scenario_text,
+    render_shell_state_markdown, render_shell_state_text,
 };
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -161,16 +165,7 @@ fn load_ranked_queue(
     config: &sp42_core::WikiConfig,
     payload: &str,
 ) -> Result<Vec<QueuedEdit>, String> {
-    let ingestor = StreamIngestor::from_config(config);
-    let events = ingestor
-        .ingest_lines(payload)
-        .map_err(|error| error.to_string())?;
-
-    if events.is_empty() {
-        return Ok(Vec::new());
-    }
-
-    build_ranked_queue(events, &config.scoring).map_err(|error| error.to_string())
+    build_dev_queue(config, payload).map_err(|error| error.to_string())
 }
 
 fn parse_options(args: impl IntoIterator<Item = String>) -> Result<CliOptions, String> {
@@ -293,6 +288,21 @@ fn build_context_preview(
         talk_page,
         liftwing_probability,
     })
+}
+
+fn dev_context_options(options: &ContextPreviewOptions) -> DevContextOptions {
+    DevContextOptions {
+        talk_page_wikitext: options.talk_page.clone(),
+        liftwing_probability: options.liftwing_probability,
+    }
+}
+
+fn dev_workbench_options(options: &WorkbenchOptions) -> DevWorkbenchOptions {
+    DevWorkbenchOptions {
+        token: options.token.clone(),
+        actor: options.actor.clone(),
+        note: Some(options.note.clone()),
+    }
 }
 
 fn next_option_value<I>(args: &mut I, flag: &str) -> Result<String, String>
@@ -435,14 +445,8 @@ fn render_workbench(
     let item = queue
         .first()
         .ok_or_else(|| "No queue item available for action workbench mode.".to_string())?;
-    let workbench = build_review_workbench(
-        config,
-        item,
-        &options.token,
-        &options.actor,
-        Some(&options.note),
-    )
-    .map_err(|error| error.to_string())?;
+    let workbench = build_dev_workbench(config, item, &dev_workbench_options(options))
+        .map_err(|error| error.to_string())?;
 
     match format {
         OutputFormat::Text => Ok([
@@ -531,58 +535,32 @@ fn render_context_preview(
     let item = queue
         .first()
         .ok_or_else(|| "No queue item available for context mode.".to_string())?;
-    let recentchanges_request = build_recent_changes_request(
-        config,
-        &RecentChangesQuery {
-            limit: 25,
-            rccontinue: None,
-            include_bots: false.into(),
-            unpatrolled_only: false.into(),
-            include_minor: true.into(),
-            include_anonymous: true.into(),
-            include_new_pages: true.into(),
-            tag_filter: None,
-            namespace_override: None,
-        },
-    )
-    .map_err(|error| error.to_string())?;
-    let liftwing_request = build_liftwing_score_request(
-        config,
-        &sp42_core::LiftWingRequest {
-            rev_id: item.event.rev_id,
-        },
-    )
-    .map_err(|error| error.to_string())?;
-    let context = build_scoring_context(&ContextInputs {
-        talk_page_wikitext: options.talk_page.clone(),
-        liftwing_probability: options.liftwing_probability,
-    });
-    let score = score_edit_with_context(&item.event, &config.scoring, &context)
+    let preview = build_dev_context_preview(config, item, &dev_context_options(options))
         .map_err(|error| error.to_string())?;
 
     match format {
         OutputFormat::Text => Ok(render_context_preview_text(
-            item,
-            &recentchanges_request,
-            &liftwing_request,
-            &context,
-            &score,
+            &preview.selected,
+            &preview.recentchanges_request,
+            &preview.liftwing_request,
+            &preview.context,
+            &preview.contextual_score,
             options,
         )),
         OutputFormat::Markdown => Ok(render_context_preview_markdown(
-            item,
-            &recentchanges_request,
-            &liftwing_request,
-            &context,
-            &score,
+            &preview.selected,
+            &preview.recentchanges_request,
+            &preview.liftwing_request,
+            &preview.context,
+            &preview.contextual_score,
             options,
         )),
         OutputFormat::Json => render_context_preview_json(
-            item,
-            &recentchanges_request,
-            &liftwing_request,
-            &context,
-            &score,
+            &preview.selected,
+            &preview.recentchanges_request,
+            &preview.liftwing_request,
+            &preview.context,
+            &preview.contextual_score,
             options,
         ),
     }
@@ -1007,22 +985,14 @@ fn render_scenario_report(
     format: OutputFormat,
 ) -> Result<String, String> {
     let selected = queue.first();
-    let scoring_context = options.context_preview.as_ref().map(|context| {
-        build_scoring_context(&ContextInputs {
-            talk_page_wikitext: context.talk_page.clone(),
-            liftwing_probability: context.liftwing_probability,
-        })
-    });
+    let scoring_context = options
+        .context_preview
+        .as_ref()
+        .map(|context| build_dev_context(&dev_context_options(context)));
     let review_workbench = match (selected, options.workbench.as_ref()) {
         (Some(item), Some(workbench)) => Some(
-            build_review_workbench(
-                config,
-                item,
-                &workbench.token,
-                &workbench.actor,
-                Some(&workbench.note),
-            )
-            .map_err(|error| error.to_string())?,
+            build_dev_workbench(config, item, &dev_workbench_options(workbench))
+                .map_err(|error| error.to_string())?,
         ),
         _ => None,
     };
@@ -1067,12 +1037,10 @@ fn render_session_digest(
     let selected = queue
         .first()
         .ok_or_else(|| "No queue item available for session digest.".to_string())?;
-    let scoring_context = options.context_preview.as_ref().map(|context| {
-        build_scoring_context(&ContextInputs {
-            talk_page_wikitext: context.talk_page.clone(),
-            liftwing_probability: context.liftwing_probability,
-        })
-    });
+    let scoring_context = options
+        .context_preview
+        .as_ref()
+        .map(|context| build_dev_context(&dev_context_options(context)));
     let workbench = build_cli_session_workbench(config, queue.first(), options)?;
     let scenario = build_patrol_scenario_report(&PatrolScenarioReportInputs {
         queue,
@@ -1165,23 +1133,19 @@ fn build_cli_session_workbench(
     options: &CliOptions,
 ) -> Result<Option<sp42_core::ReviewWorkbench>, String> {
     match (options.workbench.as_ref(), selected) {
-        (Some(workbench), Some(item)) => build_review_workbench(
-            config,
-            item,
-            &workbench.token,
-            &workbench.actor,
-            Some(&workbench.note),
-        )
-        .map(Some)
-        .map_err(|error| error.to_string()),
+        (Some(workbench), Some(item)) => {
+            build_dev_workbench(config, item, &dev_workbench_options(workbench))
+                .map(Some)
+                .map_err(|error| error.to_string())
+        }
         _ => Ok(None),
     }
 }
 
 #[derive(Debug, Clone, Copy)]
 struct SessionDigestArtifacts<'a> {
-    shell_state: &'a sp42_core::ShellStateModel,
-    scenario: &'a sp42_core::PatrolScenarioReport,
+    shell_state: &'a sp42_reporting::ShellStateModel,
+    scenario: &'a sp42_reporting::PatrolScenarioReport,
 }
 
 fn render_session_digest_json(
@@ -1228,8 +1192,8 @@ fn render_action_preview(
         .first()
         .ok_or_else(|| "No queue item available for action mode.".to_string())?;
     let note = action_note(options);
-    let requests = build_session_action_execution_requests(selected, note.as_deref())
-        .map_err(|error| error.to_string())?;
+    let requests =
+        build_dev_action_requests(selected, note.as_deref()).map_err(|error| error.to_string())?;
 
     match format {
         OutputFormat::Text => Ok([
@@ -1289,8 +1253,8 @@ fn render_action_execute(
         .first()
         .ok_or_else(|| "No queue item available for action execution.".to_string())?;
     let note = action_note(options);
-    let requests = build_session_action_execution_requests(selected, note.as_deref())
-        .map_err(|error| error.to_string())?;
+    let requests =
+        build_dev_action_requests(selected, note.as_deref()).map_err(|error| error.to_string())?;
     let request = requests
         .iter()
         .find(|request| request.kind == options.action_kind)
@@ -1909,23 +1873,22 @@ mod tests {
         server_report_lines,
     };
     use serde_json::json;
-    use sp42_core::{
-        DEV_PREVIEW_SAMPLE_EVENTS, StreamIngestor, build_ranked_queue,
-        parse_default_dev_wiki_config,
+    use sp42_devtools::{
+        DEV_PREVIEW_SAMPLE_EVENTS, build_dev_queue, parse_default_dev_wiki_config,
     };
 
     fn fixture_config() -> sp42_core::WikiConfig {
         parse_default_dev_wiki_config().expect("config should parse")
     }
 
+    fn fixture_queue(config: &sp42_core::WikiConfig) -> Vec<sp42_core::QueuedEdit> {
+        build_dev_queue(config, DEV_PREVIEW_SAMPLE_EVENTS).expect("queue should build")
+    }
+
     #[test]
     fn renders_ranked_queue_lines() {
         let config = fixture_config();
-        let ingestor = StreamIngestor::from_config(&config);
-        let events = ingestor
-            .ingest_lines(DEV_PREVIEW_SAMPLE_EVENTS)
-            .expect("events should parse");
-        let ranked = build_ranked_queue(events, &config.scoring).expect("queue should build");
+        let ranked = fixture_queue(&config);
 
         let summary = render_queue(&ranked, OutputFormat::Text).expect("text render should work");
 
@@ -1937,11 +1900,7 @@ mod tests {
     #[test]
     fn renders_ranked_queue_as_json() {
         let config = fixture_config();
-        let ingestor = StreamIngestor::from_config(&config);
-        let events = ingestor
-            .ingest_lines(DEV_PREVIEW_SAMPLE_EVENTS)
-            .expect("events should parse");
-        let ranked = build_ranked_queue(events, &config.scoring).expect("queue should build");
+        let ranked = fixture_queue(&config);
 
         let summary = render_queue(&ranked, OutputFormat::Json).expect("json render should work");
 
@@ -1952,11 +1911,7 @@ mod tests {
     #[test]
     fn renders_ranked_queue_as_markdown() {
         let config = fixture_config();
-        let ingestor = StreamIngestor::from_config(&config);
-        let events = ingestor
-            .ingest_lines(DEV_PREVIEW_SAMPLE_EVENTS)
-            .expect("events should parse");
-        let ranked = build_ranked_queue(events, &config.scoring).expect("queue should build");
+        let ranked = fixture_queue(&config);
 
         let summary =
             render_queue(&ranked, OutputFormat::Markdown).expect("markdown render should work");
@@ -2079,11 +2034,7 @@ mod tests {
     #[test]
     fn renders_scenario_report() {
         let config = fixture_config();
-        let ingestor = StreamIngestor::from_config(&config);
-        let events = ingestor
-            .ingest_lines(DEV_PREVIEW_SAMPLE_EVENTS)
-            .expect("events should parse");
-        let ranked = build_ranked_queue(events, &config.scoring).expect("queue should build");
+        let ranked = fixture_queue(&config);
 
         let summary = render_scenario_report(
             &config,
@@ -2120,11 +2071,7 @@ mod tests {
     #[test]
     fn renders_scenario_report_as_markdown() {
         let config = fixture_config();
-        let ingestor = StreamIngestor::from_config(&config);
-        let events = ingestor
-            .ingest_lines(DEV_PREVIEW_SAMPLE_EVENTS)
-            .expect("events should parse");
-        let ranked = build_ranked_queue(events, &config.scoring).expect("queue should build");
+        let ranked = fixture_queue(&config);
 
         let summary = render_scenario_report(
             &config,
@@ -2152,11 +2099,7 @@ mod tests {
     #[test]
     fn renders_scenario_report_as_json() {
         let config = fixture_config();
-        let ingestor = StreamIngestor::from_config(&config);
-        let events = ingestor
-            .ingest_lines(DEV_PREVIEW_SAMPLE_EVENTS)
-            .expect("events should parse");
-        let ranked = build_ranked_queue(events, &config.scoring).expect("queue should build");
+        let ranked = fixture_queue(&config);
 
         let summary = render_scenario_report(
             &config,
@@ -2188,11 +2131,7 @@ mod tests {
     #[test]
     fn renders_session_digest_in_all_formats() {
         let config = fixture_config();
-        let ingestor = StreamIngestor::from_config(&config);
-        let events = ingestor
-            .ingest_lines(DEV_PREVIEW_SAMPLE_EVENTS)
-            .expect("events should parse");
-        let ranked = build_ranked_queue(events, &config.scoring).expect("queue should build");
+        let ranked = fixture_queue(&config);
         let options = CliOptions {
             format: OutputFormat::Text,
             workbench: Some(WorkbenchOptions {
@@ -2237,11 +2176,7 @@ mod tests {
     #[test]
     fn renders_action_preview_in_all_formats() {
         let config = fixture_config();
-        let ingestor = StreamIngestor::from_config(&config);
-        let events = ingestor
-            .ingest_lines(DEV_PREVIEW_SAMPLE_EVENTS)
-            .expect("events should parse");
-        let ranked = build_ranked_queue(events, &config.scoring).expect("queue should build");
+        let ranked = fixture_queue(&config);
         let options = CliOptions {
             format: OutputFormat::Text,
             workbench: None,
@@ -2279,11 +2214,7 @@ mod tests {
     #[test]
     fn renders_workbench_preview() {
         let config = fixture_config();
-        let ingestor = StreamIngestor::from_config(&config);
-        let events = ingestor
-            .ingest_lines(DEV_PREVIEW_SAMPLE_EVENTS)
-            .expect("events should parse");
-        let ranked = build_ranked_queue(events, &config.scoring).expect("queue should build");
+        let ranked = fixture_queue(&config);
 
         let summary = render_workbench(
             &config,
@@ -2305,11 +2236,7 @@ mod tests {
     #[test]
     fn renders_context_preview() {
         let config = fixture_config();
-        let ingestor = StreamIngestor::from_config(&config);
-        let events = ingestor
-            .ingest_lines(DEV_PREVIEW_SAMPLE_EVENTS)
-            .expect("events should parse");
-        let ranked = build_ranked_queue(events, &config.scoring).expect("queue should build");
+        let ranked = fixture_queue(&config);
 
         let summary = render_context_preview(
             &config,
@@ -2364,11 +2291,7 @@ mod tests {
     #[test]
     fn renders_parity_report() {
         let config = fixture_config();
-        let ingestor = StreamIngestor::from_config(&config);
-        let events = ingestor
-            .ingest_lines(DEV_PREVIEW_SAMPLE_EVENTS)
-            .expect("events should parse");
-        let ranked = build_ranked_queue(events, &config.scoring).expect("queue should build");
+        let ranked = fixture_queue(&config);
 
         let summary = render_parity_report(
             &config,
@@ -2388,11 +2311,7 @@ mod tests {
     #[test]
     fn renders_parity_report_as_markdown() {
         let config = fixture_config();
-        let ingestor = StreamIngestor::from_config(&config);
-        let events = ingestor
-            .ingest_lines(DEV_PREVIEW_SAMPLE_EVENTS)
-            .expect("events should parse");
-        let ranked = build_ranked_queue(events, &config.scoring).expect("queue should build");
+        let ranked = fixture_queue(&config);
 
         let summary = render_parity_report(
             &config,

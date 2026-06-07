@@ -1,13 +1,13 @@
 //! Shared runtime that couples coordination transport with deterministic state.
 
-use crate::coordination_client::CoordinationClient;
+use crate::client::CoordinationClient;
 use crate::errors::CoordinationError;
-use crate::traits::WebSocket;
-use crate::types::{
-    Action, ActionBroadcast, CoordinationMessage, EditClaim, FlaggedEdit, PresenceHeartbeat,
+use crate::messages::{
+    ActionBroadcast, CoordinationMessage, EditClaim, FlaggedEdit, PresenceHeartbeat,
     RaceResolution, ScoreDelta,
 };
 use crate::{CoordinationState, CoordinationStateSummary};
+use sp42_core::{Action, WebSocket};
 use tracing::warn;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -327,9 +327,9 @@ mod tests {
     use futures::executor::block_on;
 
     use super::CoordinationRuntime;
-    use crate::coordination_codec::encode_message;
-    use crate::traits::LoopbackWebSocket;
-    use crate::types::{Action, CoordinationMessage, EditClaim, WebSocketFrame};
+    use crate::encode_message;
+    use crate::messages::{CoordinationMessage, EditClaim};
+    use sp42_core::{Action, LoopbackWebSocket, WebSocketFrame};
 
     #[test]
     fn optimistic_claim_updates_state_and_status() {
@@ -377,7 +377,7 @@ mod tests {
     #[test]
     fn drain_incoming_stops_at_limit() {
         let payload_a = encode_message(&CoordinationMessage::ActionBroadcast(
-            crate::types::ActionBroadcast {
+            crate::ActionBroadcast {
                 wiki_id: "frwiki".to_string(),
                 rev_id: 11,
                 action: Action::Rollback,

@@ -1,0 +1,131 @@
+domain: vandalism_patrol
+wiki_id: testwiki
+policy_version: fixture-v0.1
+evaluation_profile: vandalism_patrol_default
+inherits_from:
+lifecycle: active
+
+dimensions:
+  content: 1.0
+  actor: 0.45
+  subject: 0.35
+  context: 0.60
+  temporal: 0.40
+  policy: 0.30
+  external_evaluation: 0.35
+
+identity:
+  contribution_cap: 25
+  anonymous_modifier_enabled: true
+  temporary_modifier_enabled: true
+  account_age_modifier_enabled: false
+
+queue:
+  default_limit: 25
+  max_limit: 250
+  min_score_cutoff: 0
+
+signal_parameters:
+  large_content_removal_threshold: -500
+  massive_blanking_threshold: -900
+  repeated_character_run_threshold: 5
+  profanity_markers:
+    - vandalism
+  link_markers:
+    - http://
+    - https://
+  trusted_tags:
+    - mw-manual-revert
+    - mw-rollback
+    - trusted
+  revert_tags:
+    - mw-reverted
+    - mw-undo
+  suspicious_comment_markers:
+    - rvv
+    - vandalism
+    - blanking
+    - nonsense
+
+rules:
+  anonymous_user:
+    enabled: true
+    weight: 25
+  temporary_account:
+    enabled: true
+    weight: 20
+  new_page:
+    enabled: true
+    weight: 20
+  reverted_before:
+    enabled: true
+    weight: 30
+  large_content_removal:
+    enabled: true
+    weight: 15
+    threshold: -500
+  link_addition:
+    enabled: true
+    weight: -12
+  reference_addition:
+    enabled: true
+    weight: -14
+  category_addition:
+    enabled: true
+    weight: -10
+  interwiki_addition:
+    enabled: true
+    weight: -10
+  mass_blanking:
+    enabled: true
+    weight: 25
+  inserted_profanity:
+    enabled: true
+    weight: 35
+  repeated_character_noise:
+    enabled: true
+    weight: 20
+  profanity:
+    enabled: true
+    weight: 30
+  link_spam:
+    enabled: true
+    weight: 20
+  trusted_user:
+    enabled: true
+    weight: -40
+  bot_like_edit:
+    enabled: true
+    weight: -50
+  liftwing_risk:
+    enabled: true
+    weight: 35
+  warning_history:
+    enabled: true
+    weight: 25
+  obvious_vandalism:
+    enabled: true
+    weight: 35
+  duplicate_pattern:
+    enabled: true
+    weight: 18
+    max_bonus: 18
+
+combination_rules:
+  - slug: warning_history_and_large_removal
+    enabled: true
+    weight: 12
+    when_all:
+      - warning_history
+      - large_content_removal
+
+external_evaluation_config:
+  liftwing:
+    enabled: false
+    role: disabled
+    max_contribution: 0
+
+fairness:
+  max_newcomer_fp_regression_bps: 50
+  max_temporary_fp_regression_bps: 50
+  max_anonymous_fp_regression_bps: 50

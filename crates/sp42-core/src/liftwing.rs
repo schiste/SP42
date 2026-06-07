@@ -176,15 +176,13 @@ mod tests {
         LiftWingRequest, build_liftwing_score_request, execute_liftwing_score,
         parse_liftwing_score_response,
     };
-    use crate::config_parser::parse_wiki_config;
+    use crate::test_fixtures::fixture_wiki_config;
     use crate::traits::StubHttpClient;
     use crate::types::HttpResponse;
 
-    const CONFIG: &str = include_str!("../../../configs/frwiki.yaml");
-
     #[test]
     fn builds_liftwing_request() {
-        let config = parse_wiki_config(CONFIG).expect("config should parse");
+        let config = fixture_wiki_config();
         let request = build_liftwing_score_request(&config, &LiftWingRequest { rev_id: 123_456 })
             .expect("request should build");
         let body = String::from_utf8(request.body).expect("body should be utf-8");
@@ -296,7 +294,7 @@ mod tests {
 
     #[test]
     fn rejects_zero_revision_requests() {
-        let config = parse_wiki_config(CONFIG).expect("config should parse");
+        let config = fixture_wiki_config();
         let error = build_liftwing_score_request(&config, &LiftWingRequest { rev_id: 0 })
             .expect_err("zero rev_id should fail");
 
@@ -305,7 +303,7 @@ mod tests {
 
     #[test]
     fn executes_liftwing_request_through_http_trait() {
-        let config = parse_wiki_config(CONFIG).expect("config should parse");
+        let config = fixture_wiki_config();
         let client = StubHttpClient::new([Ok(HttpResponse {
             status: 200,
             headers: BTreeMap::new(),

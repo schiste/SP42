@@ -1,5 +1,5 @@
 use leptos::prelude::*;
-use sp42_core::{PatrolScenarioReadiness, PatrolScenarioReport, ReportSeverity};
+use sp42_reporting::{PatrolScenarioReadiness, PatrolScenarioReport, ReportSeverity};
 
 use super::{InspectorFeed, StatusBadge, StatusTone, inspector_entries_from_lines};
 
@@ -156,7 +156,7 @@ pub fn recommendation_tone(report: &PatrolScenarioReport) -> StatusTone {
 }
 
 #[must_use]
-pub fn finding_summary_tone(findings: &[sp42_core::PatrolScenarioFinding]) -> StatusTone {
+pub fn finding_summary_tone(findings: &[sp42_reporting::PatrolScenarioFinding]) -> StatusTone {
     if findings
         .iter()
         .any(|finding| finding.severity == ReportSeverity::Blocker)
@@ -173,7 +173,7 @@ pub fn finding_summary_tone(findings: &[sp42_core::PatrolScenarioFinding]) -> St
 }
 
 #[must_use]
-pub fn finding_summary_line(finding: &sp42_core::PatrolScenarioFinding) -> String {
+pub fn finding_summary_line(finding: &sp42_reporting::PatrolScenarioFinding) -> String {
     format!("{} {}: {}", finding.severity, finding.code, finding.message)
 }
 
@@ -229,7 +229,7 @@ mod tests {
             wiki_id: "frwiki".to_string(),
             queue_depth: 2,
             readiness,
-            selected: Some(sp42_core::PatrolScenarioSelectedEdit {
+            selected: Some(sp42_reporting::PatrolScenarioSelectedEdit {
                 wiki_id: "frwiki".to_string(),
                 rev_id: 123_456,
                 title: "Example".to_string(),
@@ -246,16 +246,18 @@ mod tests {
                 code: "diff_changes".to_string(),
                 message: "diff segments=2".to_string(),
             }],
-            debug_snapshot: sp42_core::build_debug_snapshot(&sp42_core::DebugSnapshotInputs {
-                queue: &[],
-                selected: None,
-                scoring_context: None,
-                diff: None,
-                review_workbench: None,
-                stream_status: None,
-                backlog_status: None,
-                coordination: None,
-            }),
+            debug_snapshot: sp42_reporting::build_debug_snapshot(
+                &sp42_reporting::DebugSnapshotInputs {
+                    queue: &[],
+                    selected: None,
+                    scoring_context: None,
+                    diff: None,
+                    review_workbench: None,
+                    stream_status: None,
+                    backlog_status: None,
+                    coordination: None,
+                },
+            ),
         }
     }
 

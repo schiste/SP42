@@ -2,15 +2,13 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::{
-    ActionExecutionHistoryReport, ActionExecutionStatusReport, BacklogRuntimeStatus,
-    CoordinationRoomSummary, CoordinationStateSummary, DebugSnapshot, DevAuthCapabilityReport,
-    DevAuthSessionStatus, EditorIdentity, FlagState, LocalOAuthConfigStatus,
-    LocalOAuthSourceReport, MediaDiffReport, PatrolScenarioReport, PatrolSessionDigest,
-    PublicRuleSetDocument, PublicTeamDefinitionDocument, PublicTeamRegistryDocument,
-    PublicUserPreferencesDocument, QueuedEdit, ReviewWorkbench, ScoringContext, ScoringSignal,
-    SessionActionExecutionRequest, SessionActionKind, ShellStateModel, StreamRuntimeStatus,
-    StructuredDiff, build_session_action_execution_requests,
+use crate::{BacklogRuntimeStatus, StreamRuntimeStatus};
+use sp42_core::{
+    ActionExecutionStatusReport, DevAuthCapabilityReport, DevAuthSessionStatus, EditorIdentity,
+    FlagState, LocalOAuthConfigStatus, LocalOAuthSourceReport, PublicRuleSetDocument,
+    PublicTeamDefinitionDocument, PublicTeamRegistryDocument, PublicUserPreferencesDocument,
+    QueuedEdit, ScoringSignal, SessionActionExecutionRequest, SessionActionKind,
+    build_session_action_execution_requests,
 };
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -378,45 +376,6 @@ pub struct LiveOperatorHeuristicProvenance {
     pub notes: Vec<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct LiveOperatorView {
-    pub project: String,
-    pub fetched_at_ms: i64,
-    pub wiki_id: String,
-    pub query: LiveOperatorQuery,
-    pub queue: Vec<QueuedEdit>,
-    pub selected_index: Option<usize>,
-    pub scoring_context: Option<ScoringContext>,
-    pub diff: Option<StructuredDiff>,
-    pub media_diff: Option<MediaDiffReport>,
-    pub review_workbench: Option<ReviewWorkbench>,
-    pub stream_status: Option<StreamRuntimeStatus>,
-    pub backlog_status: Option<BacklogRuntimeStatus>,
-    pub scenario_report: PatrolScenarioReport,
-    pub session_digest: PatrolSessionDigest,
-    pub shell_state: ShellStateModel,
-    pub capabilities: DevAuthCapabilityReport,
-    pub auth: DevAuthSessionStatus,
-    pub backend: LiveOperatorBackendStatus,
-    pub action_status: ActionExecutionStatusReport,
-    pub action_history: ActionExecutionHistoryReport,
-    pub action_preflight: LiveOperatorActionPreflight,
-    #[serde(default)]
-    pub public_documents: LiveOperatorPublicDocuments,
-    #[serde(default)]
-    pub heuristic_provenance: Vec<LiveOperatorHeuristicProvenance>,
-    pub selected_heuristic_provenance: Option<LiveOperatorHeuristicProvenance>,
-    pub ingestion_supervisor: Option<LiveIngestionSupervisorStatus>,
-    pub coordination_room: Option<CoordinationRoomSummary>,
-    pub coordination_state: Option<CoordinationStateSummary>,
-    #[serde(default)]
-    pub debug_snapshot: DebugSnapshot,
-    #[serde(default)]
-    pub telemetry: LiveOperatorTelemetry,
-    pub notes: Vec<String>,
-    pub next_continue: Option<String>,
-}
-
 #[must_use]
 pub fn build_live_operator_action_preflight(
     selected: Option<&QueuedEdit>,
@@ -661,7 +620,7 @@ mod tests {
         LiveOperatorBackendStatus, LiveOperatorQuery, LiveOperatorRetryClass,
         build_live_operator_action_preflight, classify_retry, filter_live_operator_queue,
     };
-    use crate::{
+    use sp42_core::{
         ActionExecutionStatusReport, CompositeScore, DevAuthActionTokenAvailability,
         DevAuthCapabilityReadiness, DevAuthCapabilityReport, DevAuthDerivedCapabilities,
         DevAuthEditCapabilities, DevAuthModerationCapabilities, DevAuthProbeAcceptance,
@@ -938,7 +897,7 @@ mod tests {
 
         assert_eq!(
             preflight.recommended_kind,
-            Some(crate::SessionActionKind::Rollback)
+            Some(sp42_core::SessionActionKind::Rollback)
         );
         assert!(
             preflight
@@ -973,7 +932,7 @@ mod tests {
         let rollback = preflight
             .recommendations
             .iter()
-            .find(|entry| matches!(entry.kind, crate::SessionActionKind::Rollback))
+            .find(|entry| matches!(entry.kind, sp42_core::SessionActionKind::Rollback))
             .expect("rollback recommendation should exist");
         assert!(!rollback.available);
         assert_eq!(

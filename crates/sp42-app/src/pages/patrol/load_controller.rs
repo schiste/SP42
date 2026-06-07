@@ -1,5 +1,6 @@
 use leptos::prelude::*;
-use sp42_core::{LiveOperatorView, QueuedEdit};
+use sp42_core::QueuedEdit;
+use sp42_reporting::LiveOperatorView;
 
 use super::revision_artifacts::{
     RevisionArtifactController, cache_initial_artifacts, prefetch_queue_diffs, rev_id_from_hash,

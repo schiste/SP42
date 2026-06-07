@@ -15,7 +15,6 @@ mod session_runtime;
 mod state;
 mod static_assets;
 mod storage_routes;
-mod wiki_registry;
 mod wikimedia_capabilities;
 
 use std::collections::HashMap;
@@ -42,22 +41,27 @@ use tokio::sync::RwLock;
 use tracing::{info, warn};
 use tracing_subscriber::EnvFilter;
 
+use sp42_coordination::CoordinationSnapshot;
 use sp42_core::{
     ActionExecutionHistoryReport, ActionExecutionLogEntry, ActionExecutionStatusReport,
-    ArticleInventory, Clock, CoordinationSnapshot, DevAuthBootstrapRequest,
-    DevAuthCapabilityReport, DevAuthSessionStatus, FlagState, LiveOperatorBackendStatus,
-    LiveOperatorPhaseTiming, LiveOperatorPublicDocuments, LiveOperatorTelemetry, LiveOperatorView,
-    OAuthCallback, OAuthClientConfig, OAuthTokenResponse, PublicAuditLedgerEntry,
-    PublicStorageDocumentData, SessionActionExecutionRequest, SessionActionExecutionResponse,
-    SessionActionKind, SystemClock, TokenKind, WikiConfig, WikiStorageConfig, WikiStorageDocument,
-    WikiStorageDocumentKind, WikiStorageLoadedDocument, WikiStoragePlan, WikiStoragePlanInput,
-    WikiStorageWriteOutcome, WikiStorageWriteRequest, build_article_inventory,
-    build_authorization_url, build_media_diff, build_wiki_storage_plan,
+    ArticleInventory, Clock, DevAuthBootstrapRequest, DevAuthCapabilityReport,
+    DevAuthSessionStatus, FlagState, OAuthCallback, OAuthClientConfig, OAuthTokenResponse,
+    PublicAuditLedgerEntry, PublicStorageDocumentData, SessionActionExecutionRequest,
+    SessionActionExecutionResponse, SessionActionKind, SystemClock, TokenKind, WikiConfig,
+    WikiStorageConfig, WikiStorageDocument, WikiStorageDocumentKind, WikiStorageLoadedDocument,
+    WikiStoragePlan, WikiStoragePlanInput, WikiStorageWriteOutcome, WikiStorageWriteRequest,
+    build_article_inventory, build_authorization_url, build_media_diff, build_wiki_storage_plan,
     default_public_storage_document, diff_lines, execute_fetch_token, generate_oauth_state,
     generate_pkce_verifier, load_wiki_storage_document, parse_callback_query,
     render_wiki_storage_document_page, render_wiki_storage_index_page,
     resolve_wiki_storage_document, save_wiki_storage_document,
 };
+use sp42_live::{
+    LiveOperatorBackendStatus, LiveOperatorPhaseTiming, LiveOperatorPublicDocuments,
+    LiveOperatorTelemetry,
+};
+use sp42_reporting::LiveOperatorView;
+use sp42_wiki::WikiRegistry;
 
 #[cfg(test)]
 use crate::coordination::CoordinationRoomInspection;
@@ -97,7 +101,6 @@ pub(crate) use crate::session_runtime::{install_session, session_cookie_header, 
 use crate::state::{
     AppState, CachedCapabilityReport, PendingOAuthLogin, SessionSnapshot, StoredSession,
 };
-use crate::wiki_registry::WikiRegistry;
 use crate::wikimedia_capabilities::{CapabilityProbeTargets, probe_with_targets};
 #[cfg(test)]
 pub(crate) use sp42_core::routes::{
@@ -1464,31 +1467,31 @@ fn sanitize_coordination_payload(payload: Vec<u8>, actor: Option<&str>) -> Vec<u
     let Some(actor) = actor else {
         return payload;
     };
-    let Ok(message) = sp42_core::decode_message(&payload) else {
+    let Ok(message) = sp42_coordination::decode_message(&payload) else {
         warn!("received undecodable coordination payload while rewriting actor");
         return payload;
     };
     let rewritten = match message {
-        sp42_core::CoordinationMessage::ActionBroadcast(mut action) => {
+        sp42_coordination::CoordinationMessage::ActionBroadcast(mut action) => {
             action.actor = actor.to_string();
-            sp42_core::CoordinationMessage::ActionBroadcast(action)
+            sp42_coordination::CoordinationMessage::ActionBroadcast(action)
         }
-        sp42_core::CoordinationMessage::EditClaim(mut claim) => {
+        sp42_coordination::CoordinationMessage::EditClaim(mut claim) => {
             claim.actor = actor.to_string();
-            sp42_core::CoordinationMessage::EditClaim(claim)
+            sp42_coordination::CoordinationMessage::EditClaim(claim)
         }
-        sp42_core::CoordinationMessage::PresenceHeartbeat(mut presence) => {
+        sp42_coordination::CoordinationMessage::PresenceHeartbeat(mut presence) => {
             presence.actor = actor.to_string();
-            sp42_core::CoordinationMessage::PresenceHeartbeat(presence)
+            sp42_coordination::CoordinationMessage::PresenceHeartbeat(presence)
         }
-        sp42_core::CoordinationMessage::RaceResolution(mut resolution) => {
+        sp42_coordination::CoordinationMessage::RaceResolution(mut resolution) => {
             resolution.winning_actor = actor.to_string();
-            sp42_core::CoordinationMessage::RaceResolution(resolution)
+            sp42_coordination::CoordinationMessage::RaceResolution(resolution)
         }
         other => other,
     };
 
-    sp42_core::encode_message(&rewritten).unwrap_or(payload)
+    sp42_coordination::encode_message(&rewritten).unwrap_or(payload)
 }
 
 fn config_for_state_wiki(
@@ -1504,7 +1507,10 @@ fn config_for_state_wiki(
 }
 
 fn resolved_wiki_config(state: &AppState, wiki_id: &str) -> Result<sp42_core::WikiConfig, String> {
-    let mut config = state.wiki_registry.config(wiki_id)?;
+    let mut config = state
+        .wiki_registry
+        .config(wiki_id)
+        .map_err(|error| error.to_string())?;
     if let Some(api_url) = &state.capability_targets.api_url {
         config.api_url = reqwest::Url::parse(api_url)
             .map_err(|error| format!("api_url override was invalid: {error}"))?;

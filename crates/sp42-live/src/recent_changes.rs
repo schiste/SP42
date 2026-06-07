@@ -4,9 +4,9 @@ use std::collections::BTreeMap;
 
 use serde::Deserialize;
 
-use crate::errors::RecentChangesError;
-use crate::traits::HttpClient;
-use crate::types::{
+use sp42_core::errors::RecentChangesError;
+use sp42_core::traits::HttpClient;
+use sp42_core::{
     EditEvent, EditorIdentity, FlagState, HttpMethod, HttpRequest, HttpResponse, WikiConfig,
 };
 
@@ -465,15 +465,12 @@ mod tests {
         RecentChangesBatch, RecentChangesQuery, build_recent_changes_request,
         execute_recent_changes, parse_recent_changes_response, parse_rfc3339_utc_to_ms,
     };
-    use crate::config_parser::parse_wiki_config;
-    use crate::traits::StubHttpClient;
-    use crate::types::HttpResponse;
-
-    const CONFIG: &str = include_str!("../../../configs/frwiki.yaml");
+    use crate::test_fixtures::fixture_wiki_config;
+    use sp42_core::{HttpResponse, StubHttpClient};
 
     #[test]
     fn builds_recentchanges_request() {
-        let config = parse_wiki_config(CONFIG).expect("config should parse");
+        let config = fixture_wiki_config();
         let request = build_recent_changes_request(
             &config,
             &RecentChangesQuery {
@@ -503,7 +500,7 @@ mod tests {
 
     #[test]
     fn builds_recentchanges_request_with_bots_enabled_without_filter() {
-        let config = parse_wiki_config(CONFIG).expect("config should parse");
+        let config = fixture_wiki_config();
         let request = build_recent_changes_request(
             &config,
             &RecentChangesQuery {
@@ -525,7 +522,7 @@ mod tests {
 
     #[test]
     fn rejects_empty_rccontinue_tokens() {
-        let config = parse_wiki_config(CONFIG).expect("config should parse");
+        let config = fixture_wiki_config();
 
         let error = build_recent_changes_request(
             &config,
@@ -562,7 +559,7 @@ mod tests {
 
     #[test]
     fn parses_recentchanges_response() {
-        let config = parse_wiki_config(CONFIG).expect("config should parse");
+        let config = fixture_wiki_config();
         let response = HttpResponse {
             status: 200,
             headers: BTreeMap::new(),
@@ -599,7 +596,7 @@ mod tests {
 
     #[test]
     fn normalizes_empty_response_continue_tokens_to_none() {
-        let config = parse_wiki_config(CONFIG).expect("config should parse");
+        let config = fixture_wiki_config();
         let response = HttpResponse {
             status: 200,
             headers: BTreeMap::new(),
@@ -619,7 +616,7 @@ mod tests {
 
     #[test]
     fn parses_recentchanges_response_and_filters_unwanted_events() {
-        let config = parse_wiki_config(CONFIG).expect("config should parse");
+        let config = fixture_wiki_config();
         let response = HttpResponse {
             status: 200,
             headers: BTreeMap::new(),
@@ -693,7 +690,7 @@ mod tests {
 
     #[test]
     fn rejects_non_success_http_status() {
-        let config = parse_wiki_config(CONFIG).expect("config should parse");
+        let config = fixture_wiki_config();
         let response = HttpResponse {
             status: 500,
             headers: BTreeMap::new(),
@@ -709,7 +706,7 @@ mod tests {
 
     #[test]
     fn executes_recentchanges_request_through_http_trait() {
-        let config = parse_wiki_config(CONFIG).expect("config should parse");
+        let config = fixture_wiki_config();
         let client = StubHttpClient::new([Ok(HttpResponse {
             status: 200,
             headers: BTreeMap::new(),
@@ -739,7 +736,7 @@ mod tests {
 
     #[test]
     fn rejects_invalid_timestamp_in_response() {
-        let config = parse_wiki_config(CONFIG).expect("config should parse");
+        let config = fixture_wiki_config();
         let response = HttpResponse {
             status: 200,
             headers: BTreeMap::new(),
@@ -773,7 +770,7 @@ mod tests {
 
     #[test]
     fn parses_temporary_users_and_keeps_bots_when_requested() {
-        let config = parse_wiki_config(CONFIG).expect("config should parse");
+        let config = fixture_wiki_config();
         let response = HttpResponse {
             status: 200,
             headers: BTreeMap::new(),
@@ -806,14 +803,14 @@ mod tests {
         assert!(batch.events[0].is_bot.is_enabled());
         assert!(matches!(
             batch.events[0].performer,
-            crate::types::EditorIdentity::Temporary { .. }
+            sp42_core::EditorIdentity::Temporary { .. }
         ));
         assert_eq!(batch.events[0].timestamp_ms, 1_774_366_920_500);
     }
 
     #[test]
     fn saturates_extreme_byte_delta_in_response() {
-        let config = parse_wiki_config(CONFIG).expect("config should parse");
+        let config = fixture_wiki_config();
         let response = HttpResponse {
             status: 200,
             headers: BTreeMap::new(),

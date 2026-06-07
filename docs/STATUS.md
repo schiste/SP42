@@ -7,7 +7,10 @@ This document tracks the current implementation state by phase. It is meant to b
 Foundations are complete:
 
 - Cargo workspace and toolchain policy are in place
-- `sp42-core` owns shared contracts, traits, errors, and pure logic
+- `sp42-core` owns shared contracts, traits, scoring primitives, and runtime logic
+- `sp42-wiki` owns wiki config parsing, registry/default selection, fixtures, and capability profiles
+- `sp42-live` owns EventStreams ingestion, recentchanges/backlog polling, live queue filtering, and live operator contracts
+- action contracts are split from MediaWiki execution and server session adapters; a future `sp42-actions` crate should wait until shared neutral types avoid a crate cycle
 - CI enforces formatting, linting, tests, coverage, and dependency checks
 - ADR-0001 records the foundational architecture decisions
 
@@ -15,8 +18,8 @@ Foundations are complete:
 
 The offline patrol engine is now effectively complete for local development:
 
-- EventStreams ingestion is implemented with typed filtering, timestamp normalization, persisted checkpoint restore, and batch-drain helpers
-- recentchanges/backlog polling is implemented with stricter checkpoint semantics and runtime query/checkpoint inspection helpers
+- `sp42-live` implements EventStreams ingestion with typed filtering, timestamp normalization, persisted checkpoint restore, and batch-drain helpers
+- `sp42-live` implements recentchanges/backlog polling with stricter checkpoint semantics and runtime query/checkpoint inspection helpers
 - scoring, queueing, diffing, and action-workbench preparation are implemented
 - rollback, patrol, undo, and token flows now validate MediaWiki API-level error payloads instead of trusting HTTP success alone
 - training export, user-risk parsing/cache, and LiftWing-aware context hooks are wired

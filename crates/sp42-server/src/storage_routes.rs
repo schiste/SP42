@@ -939,7 +939,8 @@ mod tests {
         owner_username_from_title,
     };
     use crate::FlagState;
-    use sp42_core::{PublicStorageDocumentData, WikiStorageDocumentKind, parse_wiki_config};
+    use sp42_core::{PublicStorageDocumentData, WikiStorageDocumentKind};
+    use sp42_wiki::parse_wiki_config;
 
     #[test]
     fn bootstrap_rule_set_uses_config_and_actor_defaults() {

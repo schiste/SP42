@@ -1,9 +1,8 @@
 use std::collections::HashMap;
 
 use leptos::prelude::*;
-use sp42_core::{
-    EditorIdentity, LiveOperatorView, QueuedEdit, SessionActionExecutionRequest, SessionActionKind,
-};
+use sp42_core::{EditorIdentity, QueuedEdit, SessionActionExecutionRequest, SessionActionKind};
+use sp42_reporting::LiveOperatorView;
 
 use crate::platform::auth::{bootstrap_dev_auth_session, execute_dev_auth_action};
 use crate::platform::console;

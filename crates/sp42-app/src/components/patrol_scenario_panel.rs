@@ -1,5 +1,5 @@
 use leptos::prelude::*;
-use sp42_core::{
+use sp42_reporting::{
     PatrolScenarioFinding, PatrolScenarioReadiness, PatrolScenarioReport, PatrolScenarioSection,
     ReportSeverity, render_patrol_scenario_text,
 };
@@ -306,7 +306,7 @@ mod tests {
             wiki_id: "frwiki".to_string(),
             queue_depth: 2,
             readiness: PatrolScenarioReadiness::Ready,
-            selected: Some(sp42_core::PatrolScenarioSelectedEdit {
+            selected: Some(sp42_reporting::PatrolScenarioSelectedEdit {
                 wiki_id: "frwiki".to_string(),
                 rev_id: 123_456,
                 title: "Example".to_string(),
@@ -362,16 +362,18 @@ mod tests {
                     message: "diff segments=2".to_string(),
                 },
             ],
-            debug_snapshot: sp42_core::build_debug_snapshot(&sp42_core::DebugSnapshotInputs {
-                queue: &[],
-                selected: None,
-                scoring_context: None,
-                diff: None,
-                review_workbench: None,
-                stream_status: None,
-                backlog_status: None,
-                coordination: None,
-            }),
+            debug_snapshot: sp42_reporting::build_debug_snapshot(
+                &sp42_reporting::DebugSnapshotInputs {
+                    queue: &[],
+                    selected: None,
+                    scoring_context: None,
+                    diff: None,
+                    review_workbench: None,
+                    stream_status: None,
+                    backlog_status: None,
+                    coordination: None,
+                },
+            ),
         }
     }
 

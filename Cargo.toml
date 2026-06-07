@@ -2,9 +2,14 @@
 members = [
     "crates/sp42-app",
     "crates/sp42-cli",
+    "crates/sp42-coordination",
     "crates/sp42-core",
+    "crates/sp42-devtools",
     "crates/sp42-desktop",
+    "crates/sp42-live",
+    "crates/sp42-reporting",
     "crates/sp42-server",
+    "crates/sp42-wiki",
     "xtask",
 ]
 resolver = "3"

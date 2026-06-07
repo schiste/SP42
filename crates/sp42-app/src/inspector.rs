@@ -1,11 +1,10 @@
 use std::collections::BTreeMap;
 
 use futures::executor::block_on;
+use sp42_coordination::{CoordinationSnapshot, CoordinationStateSummary};
 use sp42_core::traits::{MemoryStorage, ReplayEventSource, StubHttpClient};
-use sp42_core::{
-    BacklogRuntime, BacklogRuntimeConfig, CoordinationSnapshot, CoordinationStateSummary,
-    HttpResponse, ReviewWorkbench, StreamRuntime, WikiConfig,
-};
+use sp42_core::{HttpResponse, ReviewWorkbench, WikiConfig};
+use sp42_live::{BacklogRuntime, BacklogRuntimeConfig, StreamRuntime};
 
 const SAMPLE_STREAM_EVENTS: &str =
     include_str!("../../../fixtures/frwiki_recentchanges_batch.jsonl");
@@ -288,18 +287,18 @@ pub fn stream_request_from_steps(steps: &str) -> StreamPreviewRequest {
 
 #[cfg(test)]
 mod tests {
-    use sp42_core::parse_wiki_config;
+    use sp42_wiki::parse_wiki_config;
 
     use super::{
         backlog_request_from_limit, render_backlog_preview_lines,
         render_coordination_snapshot_lines, render_coordination_state_lines,
         render_review_workbench_lines, render_stream_preview_lines, stream_request_from_steps,
     };
-    use sp42_core::{
-        Action, ActionBroadcast, CoordinationRoomSummary, CoordinationSnapshot,
-        CoordinationStateSummary, EditClaim, FlaggedEdit, PresenceHeartbeat, RaceResolution,
-        ReviewWorkbench,
+    use sp42_coordination::{
+        ActionBroadcast, CoordinationRoomSummary, CoordinationSnapshot, CoordinationStateSummary,
+        EditClaim, FlaggedEdit, PresenceHeartbeat, RaceResolution,
     };
+    use sp42_core::{Action, ReviewWorkbench};
 
     const CONFIG: &str = include_str!("../../../configs/frwiki.yaml");
 

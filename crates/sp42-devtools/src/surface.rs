@@ -25,7 +25,7 @@ pub enum DevtoolsError {
     #[error(transparent)]
     Backlog(#[from] sp42_core::BacklogRuntimeError),
     #[error(transparent)]
-    Codec(#[from] sp42_core::CodecError),
+    Codec(#[from] sp42_coordination::CodecError),
     #[error(transparent)]
     Config(#[from] sp42_core::ConfigError),
     #[error("developer fixture produced no queue item")]

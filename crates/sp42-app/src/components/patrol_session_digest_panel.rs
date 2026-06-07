@@ -246,16 +246,18 @@ mod tests {
                 code: "diff_changes".to_string(),
                 message: "diff segments=2".to_string(),
             }],
-            debug_snapshot: sp42_core::build_debug_snapshot(&sp42_core::DebugSnapshotInputs {
-                queue: &[],
-                selected: None,
-                scoring_context: None,
-                diff: None,
-                review_workbench: None,
-                stream_status: None,
-                backlog_status: None,
-                coordination: None,
-            }),
+            debug_snapshot: sp42_reporting::build_debug_snapshot(
+                &sp42_reporting::DebugSnapshotInputs {
+                    queue: &[],
+                    selected: None,
+                    scoring_context: None,
+                    diff: None,
+                    review_workbench: None,
+                    stream_status: None,
+                    backlog_status: None,
+                    coordination: None,
+                },
+            ),
         }
     }
 

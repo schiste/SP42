@@ -4,7 +4,7 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
-use crate::types::{
+use crate::messages::{
     ActionBroadcast, CoordinationMessage, EditClaim, FlaggedEdit, PresenceHeartbeat,
     RaceResolution, ScoreDelta,
 };
@@ -207,10 +207,11 @@ fn message_wiki_id(message: &CoordinationMessage) -> &str {
 
 #[cfg(test)]
 mod tests {
-    use crate::types::{
-        Action, ActionBroadcast, CoordinationMessage, EditClaim, FlaggedEdit, PresenceHeartbeat,
+    use crate::messages::{
+        ActionBroadcast, CoordinationMessage, EditClaim, FlaggedEdit, PresenceHeartbeat,
         RaceResolution, ScoreDelta,
     };
+    use sp42_core::Action;
 
     use super::CoordinationState;
 

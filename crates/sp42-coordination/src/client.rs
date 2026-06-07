@@ -1,12 +1,12 @@
 //! Coordination protocol client helpers built on the injected `WebSocket` trait.
 
-use crate::coordination_codec::{decode_message, encode_message};
 use crate::errors::CoordinationError;
-use crate::traits::WebSocket;
-use crate::types::{
-    Action, ActionBroadcast, CoordinationMessage, EditClaim, FlaggedEdit, PresenceHeartbeat,
-    RaceResolution, ScoreDelta, WebSocketFrame,
+use crate::messages::{
+    ActionBroadcast, CoordinationMessage, EditClaim, FlaggedEdit, PresenceHeartbeat,
+    RaceResolution, ScoreDelta,
 };
+use crate::{decode_message, encode_message};
+use sp42_core::{Action, WebSocket, WebSocketFrame};
 
 pub struct CoordinationClient<S> {
     socket: S,
@@ -187,11 +187,9 @@ mod tests {
     use futures::executor::block_on;
 
     use super::CoordinationClient;
-    use crate::coordination_codec::encode_message;
-    use crate::traits::LoopbackWebSocket;
-    use crate::types::{
-        Action, CoordinationMessage, EditClaim, PresenceHeartbeat, RaceResolution, WebSocketFrame,
-    };
+    use crate::encode_message;
+    use crate::messages::{CoordinationMessage, EditClaim, PresenceHeartbeat, RaceResolution};
+    use sp42_core::{Action, LoopbackWebSocket, WebSocketFrame};
 
     #[test]
     fn sends_edit_claim_frame() {
@@ -241,8 +239,7 @@ mod tests {
             WebSocketFrame::Binary(bytes) => bytes.clone(),
             frame => panic!("unexpected frame: {frame:?}"),
         };
-        let decoded =
-            crate::coordination_codec::decode_message(&payload).expect("payload should decode");
+        let decoded = crate::decode_message(&payload).expect("payload should decode");
 
         assert_eq!(
             decoded,
@@ -278,8 +275,7 @@ mod tests {
             WebSocketFrame::Binary(bytes) => bytes.clone(),
             frame => panic!("unexpected frame: {frame:?}"),
         };
-        let decoded =
-            crate::coordination_codec::decode_message(&payload).expect("payload should decode");
+        let decoded = crate::decode_message(&payload).expect("payload should decode");
 
         assert_eq!(
             decoded,

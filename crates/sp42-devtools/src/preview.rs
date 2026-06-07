@@ -2,17 +2,17 @@
 
 use std::collections::BTreeMap;
 
+use sp42_coordination::{
+    ActionBroadcast, CodecError, CoordinationMessage, CoordinationState, CoordinationStateSummary,
+    EditClaim, FlaggedEdit, PresenceHeartbeat, RaceResolution, ScoreDelta, decode_message,
+    encode_message,
+};
 use sp42_core::backlog_runtime::{BacklogRuntime, BacklogRuntimeConfig, BacklogRuntimeStatus};
-use sp42_core::coordination_codec::{decode_message, encode_message};
-use sp42_core::coordination_state::{CoordinationState, CoordinationStateSummary};
-use sp42_core::errors::{BacklogRuntimeError, CodecError, ConfigError, StreamRuntimeError};
+use sp42_core::errors::{BacklogRuntimeError, ConfigError, StreamRuntimeError};
 use sp42_core::recent_changes::RecentChangesBatch;
 use sp42_core::stream_runtime::{StreamRuntime, StreamRuntimeStatus};
 use sp42_core::traits::{MemoryStorage, ReplayEventSource, StubHttpClient};
-use sp42_core::types::{
-    Action, ActionBroadcast, CoordinationMessage, EditClaim, EditEvent, FlaggedEdit, HttpRequest,
-    HttpResponse, PresenceHeartbeat, RaceResolution, ScoreDelta, ServerSentEvent, WikiConfig,
-};
+use sp42_core::types::{Action, EditEvent, HttpRequest, HttpResponse, ServerSentEvent, WikiConfig};
 
 pub const DEV_PREVIEW_WIKI_ID: &str = "frwiki";
 pub const DEV_PREVIEW_ACTOR: &str = "LocalUser";

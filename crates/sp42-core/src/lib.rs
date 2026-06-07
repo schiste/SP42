@@ -29,11 +29,6 @@ pub mod backlog_runtime;
 pub mod branding;
 pub mod config_parser;
 pub mod context_builder;
-pub mod coordination_client;
-pub mod coordination_codec;
-pub mod coordination_runtime;
-pub mod coordination_state;
-pub mod debug_snapshot;
 pub mod dev_auth;
 pub mod diff_engine;
 pub mod errors;
@@ -71,14 +66,6 @@ pub use article_inventory::{
 pub use backlog_runtime::{BacklogRuntime, BacklogRuntimeConfig, BacklogRuntimeStatus};
 pub use config_parser::parse_wiki_config;
 pub use context_builder::{ContextInputs, build_scoring_context};
-pub use coordination_client::CoordinationClient;
-pub use coordination_codec::{decode_message, encode_message};
-pub use coordination_runtime::{CoordinationRuntime, CoordinationRuntimeStatus};
-pub use coordination_state::{CoordinationState, CoordinationStateSummary};
-pub use debug_snapshot::{
-    DebugSnapshot, DebugSnapshotInputs, DecisionTrace, PerformanceMarker, TraceLevel,
-    build_debug_snapshot,
-};
 pub use dev_auth::{
     ActionExecutionHistoryReport, ActionExecutionLogEntry, ActionExecutionStatusReport,
     DEV_AUTH_ACTION_HISTORY_PATH, DEV_AUTH_ACTION_STATUS_PATH, DEV_AUTH_BOOTSTRAP_SESSION_PATH,
@@ -96,11 +83,11 @@ pub use diff_engine::{
     diff_chars, diff_lines,
 };
 pub use errors::{
-    ActionError, BacklogRuntimeError, CodecError, ConfigError, CoordinationError, DevAuthError,
-    DiffError, EventSourceError, HttpClientError, LiftWingError, OAuthError, PublicDocumentError,
-    RecentChangesError, ReviewWorkbenchError, ScoringError, ScoringEvaluationError,
-    ScoringPolicyError, StorageError, StreamIngestorError, StreamRuntimeError, TrainingDataError,
-    UserAnalysisError, WebSocketError, WikiStorageError,
+    ActionError, BacklogRuntimeError, ConfigError, DevAuthError, DiffError, EventSourceError,
+    HttpClientError, LiftWingError, OAuthError, PublicDocumentError, RecentChangesError,
+    ReviewWorkbenchError, ScoringError, ScoringEvaluationError, ScoringPolicyError, StorageError,
+    StreamIngestorError, StreamRuntimeError, TrainingDataError, UserAnalysisError, WebSocketError,
+    WikiStorageError,
 };
 pub use liftwing::{
     LiftWingRequest, build_liftwing_score_request, execute_liftwing_score,
@@ -170,13 +157,11 @@ pub use traits::{
     ReplayEventSource, Rng, SequenceRng, Storage, StubHttpClient, SystemClock, WebSocket,
 };
 pub use types::{
-    Action, ActionBroadcast, CompositeScore, CoordinationMessage, CoordinationRoomSummary,
-    CoordinationSnapshot, EditClaim, EditEvent, EditorIdentity, FlagState, FlaggedEdit, HttpMethod,
-    HttpRequest, HttpResponse, LocalOAuthSourceReport, PresenceHeartbeat, QueueHeuristicPolicy,
-    QueuedEdit, RaceResolution, ScoreDelta, ScoreWeights, ScoringCombinationRule, ScoringConfig,
-    ScoringContext, ScoringExternalEvaluationConfig, ScoringIdentityConfig, ScoringSignal,
-    ScoringSignalParameters, ServerDebugSummary, ServerSentEvent, SignalContribution,
-    UserRiskProfile, WarningLevel, WebSocketFrame, WikiConfig, WikiTemplates,
+    Action, CompositeScore, EditEvent, EditorIdentity, FlagState, HttpMethod, HttpRequest,
+    HttpResponse, LocalOAuthSourceReport, QueueHeuristicPolicy, QueuedEdit, ScoreWeights,
+    ScoringCombinationRule, ScoringConfig, ScoringContext, ScoringExternalEvaluationConfig,
+    ScoringIdentityConfig, ScoringSignal, ScoringSignalParameters, ServerSentEvent,
+    SignalContribution, UserRiskProfile, WarningLevel, WebSocketFrame, WikiConfig, WikiTemplates,
 };
 pub use user_analyzer::{
     UserRiskCache, build_user_risk_profile, count_warning_templates, parse_warning_level,

@@ -16,6 +16,7 @@ rand.workspace = true
 reqwest.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+sp42-coordination = { path = "../sp42-coordination" }
 sp42-core = { path = "../sp42-core" }
 sp42-reporting = { path = "../sp42-reporting" }
 tokio.workspace = true

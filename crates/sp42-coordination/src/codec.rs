@@ -1,7 +1,7 @@
 //! `MessagePack` codec helpers for coordination messages.
 
 use crate::errors::CodecError;
-use crate::types::CoordinationMessage;
+use crate::messages::CoordinationMessage;
 
 /// Encode a coordination message to `MessagePack`.
 ///
@@ -25,11 +25,12 @@ pub fn decode_message(bytes: &[u8]) -> Result<CoordinationMessage, CodecError> {
 #[cfg(test)]
 mod tests {
     use super::{decode_message, encode_message};
-    use crate::types::{
-        Action, ActionBroadcast, CoordinationMessage, EditClaim, FlaggedEdit, PresenceHeartbeat,
+    use crate::messages::{
+        ActionBroadcast, CoordinationMessage, EditClaim, FlaggedEdit, PresenceHeartbeat,
         RaceResolution, ScoreDelta,
     };
     use proptest::prelude::*;
+    use sp42_core::Action;
 
     #[test]
     fn round_trip_identity() {

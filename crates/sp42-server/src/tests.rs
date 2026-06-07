@@ -324,16 +324,18 @@ async fn connect_anonymous_socket(base_url: &str, wiki_id: &str) -> TestWebSocke
 
 async fn send_coordination_message(
     socket: &mut TestWebSocket,
-    message: sp42_core::CoordinationMessage,
+    message: sp42_coordination::CoordinationMessage,
 ) {
-    let payload = sp42_core::encode_message(&message).expect("message should encode");
+    let payload = sp42_coordination::encode_message(&message).expect("message should encode");
     socket
         .send(WebSocketMessage::Binary(payload.into()))
         .await
         .expect("websocket send should succeed");
 }
 
-async fn recv_coordination_message(socket: &mut TestWebSocket) -> sp42_core::CoordinationMessage {
+async fn recv_coordination_message(
+    socket: &mut TestWebSocket,
+) -> sp42_coordination::CoordinationMessage {
     loop {
         let frame = socket
             .next()
@@ -343,10 +345,11 @@ async fn recv_coordination_message(socket: &mut TestWebSocket) -> sp42_core::Coo
 
         match frame {
             WebSocketMessage::Binary(bytes) => {
-                return sp42_core::decode_message(&bytes).expect("binary payload should decode");
+                return sp42_coordination::decode_message(&bytes)
+                    .expect("binary payload should decode");
             }
             WebSocketMessage::Text(text) => {
-                return sp42_core::decode_message(text.as_str().as_bytes())
+                return sp42_coordination::decode_message(text.as_str().as_bytes())
                     .expect("text payload should decode");
             }
             WebSocketMessage::Ping(_) | WebSocketMessage::Pong(_) | WebSocketMessage::Frame(_) => {}
@@ -403,11 +406,11 @@ fn test_session(username: &str, access_token: &str, created_at_ms: i64) -> Store
 }
 
 fn assert_claim_actor(
-    message: &sp42_core::CoordinationMessage,
+    message: &sp42_coordination::CoordinationMessage,
     expected_actor: &str,
     expected_rev_id: u64,
 ) {
-    let sp42_core::CoordinationMessage::EditClaim(claim) = message else {
+    let sp42_coordination::CoordinationMessage::EditClaim(claim) = message else {
         panic!("expected edit claim message, got {message:?}");
     };
     assert_eq!(claim.actor, expected_actor);
@@ -415,11 +418,11 @@ fn assert_claim_actor(
 }
 
 fn assert_presence_actor(
-    message: &sp42_core::CoordinationMessage,
+    message: &sp42_coordination::CoordinationMessage,
     expected_actor: &str,
     expected_edit_count: u32,
 ) {
-    let sp42_core::CoordinationMessage::PresenceHeartbeat(heartbeat) = message else {
+    let sp42_coordination::CoordinationMessage::PresenceHeartbeat(heartbeat) = message else {
         panic!("expected presence heartbeat message, got {message:?}");
     };
     assert_eq!(heartbeat.actor, expected_actor);
@@ -427,11 +430,11 @@ fn assert_presence_actor(
 }
 
 fn assert_action_actor(
-    message: &sp42_core::CoordinationMessage,
+    message: &sp42_coordination::CoordinationMessage,
     expected_actor: &str,
     expected_action: &sp42_core::Action,
 ) {
-    let sp42_core::CoordinationMessage::ActionBroadcast(action) = message else {
+    let sp42_coordination::CoordinationMessage::ActionBroadcast(action) = message else {
         panic!("expected action broadcast message, got {message:?}");
     };
     assert_eq!(action.actor, expected_actor);
@@ -439,11 +442,11 @@ fn assert_action_actor(
 }
 
 fn assert_race_resolution_actor(
-    message: &sp42_core::CoordinationMessage,
+    message: &sp42_coordination::CoordinationMessage,
     expected_actor: &str,
     expected_rev_id: u64,
 ) {
-    let sp42_core::CoordinationMessage::RaceResolution(resolution) = message else {
+    let sp42_coordination::CoordinationMessage::RaceResolution(resolution) = message else {
         panic!("expected race resolution message, got {message:?}");
     };
     assert_eq!(resolution.winning_actor, expected_actor);
@@ -846,7 +849,7 @@ fn live_operator_backend_status_reflects_readiness() {
             wiki_id: Some("frwiki".to_string()),
         },
         operator_report_path: OPERATOR_REPORT_PATH.to_string(),
-        coordination: sp42_core::CoordinationSnapshot::default(),
+        coordination: sp42_coordination::CoordinationSnapshot::default(),
     };
 
     let backend = super::live_operator_backend_status(&readiness, &readiness.auth);
@@ -1818,7 +1821,7 @@ async fn coordination_snapshot_route_is_available() {
     let body = to_bytes(response.into_body(), usize::MAX)
         .await
         .expect("response body should read");
-    let snapshot: sp42_core::CoordinationSnapshot =
+    let snapshot: sp42_coordination::CoordinationSnapshot =
         serde_json::from_slice(&body).expect("snapshot should parse");
 
     assert_eq!(snapshot.rooms.len(), 1);
@@ -1830,13 +1833,13 @@ async fn coordination_snapshot_route_is_available() {
 #[tokio::test]
 async fn coordination_inspections_route_is_available() {
     let state = test_state();
-    let payload = sp42_core::encode_message(&sp42_core::CoordinationMessage::EditClaim(
-        sp42_core::EditClaim {
+    let payload = sp42_coordination::encode_message(
+        &sp42_coordination::CoordinationMessage::EditClaim(sp42_coordination::EditClaim {
             wiki_id: "frwiki".to_string(),
             rev_id: 123_456,
             actor: "Alice".to_string(),
-        },
-    ))
+        }),
+    )
     .expect("message should encode");
     state
         .coordination
@@ -1882,13 +1885,13 @@ async fn coordination_inspections_route_is_available() {
 #[tokio::test]
 async fn coordination_room_state_route_is_available() {
     let state = test_state();
-    let payload = sp42_core::encode_message(&sp42_core::CoordinationMessage::EditClaim(
-        sp42_core::EditClaim {
+    let payload = sp42_coordination::encode_message(
+        &sp42_coordination::CoordinationMessage::EditClaim(sp42_coordination::EditClaim {
             wiki_id: "frwiki".to_string(),
             rev_id: 123_456,
             actor: "Alice".to_string(),
-        },
-    ))
+        }),
+    )
     .expect("message should encode");
     state
         .coordination
@@ -1917,7 +1920,7 @@ async fn coordination_room_state_route_is_available() {
     let body = to_bytes(response.into_body(), usize::MAX)
         .await
         .expect("response body should read");
-    let summary: sp42_core::CoordinationStateSummary =
+    let summary: sp42_coordination::CoordinationStateSummary =
         serde_json::from_slice(&body).expect("room summary should parse");
 
     assert_eq!(summary.wiki_id, "frwiki");
@@ -1927,13 +1930,13 @@ async fn coordination_room_state_route_is_available() {
 #[tokio::test]
 async fn coordination_room_inspection_route_is_available() {
     let state = test_state();
-    let payload = sp42_core::encode_message(&sp42_core::CoordinationMessage::EditClaim(
-        sp42_core::EditClaim {
+    let payload = sp42_coordination::encode_message(
+        &sp42_coordination::CoordinationMessage::EditClaim(sp42_coordination::EditClaim {
             wiki_id: "frwiki".to_string(),
             rev_id: 123_456,
             actor: "Alice".to_string(),
-        },
-    ))
+        }),
+    )
     .expect("message should encode");
     state
         .coordination
@@ -2030,7 +2033,7 @@ async fn debug_summary_route_is_available() {
     let body = to_bytes(response.into_body(), usize::MAX)
         .await
         .expect("response body should read");
-    let summary: sp42_core::ServerDebugSummary =
+    let summary: sp42_reporting::ServerDebugSummary =
         serde_json::from_slice(&body).expect("summary should parse");
 
     assert_eq!(summary.project, sp42_core::branding::PROJECT_NAME);
@@ -2066,7 +2069,7 @@ async fn multi_user_coordination_flow_round_trips_across_authenticated_clients()
 
     send_coordination_message(
         &mut alice,
-        sp42_core::CoordinationMessage::EditClaim(sp42_core::EditClaim {
+        sp42_coordination::CoordinationMessage::EditClaim(sp42_coordination::EditClaim {
             wiki_id: "frwiki".to_string(),
             rev_id: 123_456,
             actor: "Mallory".to_string(),
@@ -2081,11 +2084,13 @@ async fn multi_user_coordination_flow_round_trips_across_authenticated_clients()
 
     send_coordination_message(
         &mut bob,
-        sp42_core::CoordinationMessage::PresenceHeartbeat(sp42_core::PresenceHeartbeat {
-            wiki_id: "frwiki".to_string(),
-            actor: "Mallory".to_string(),
-            active_edit_count: 2,
-        }),
+        sp42_coordination::CoordinationMessage::PresenceHeartbeat(
+            sp42_coordination::PresenceHeartbeat {
+                wiki_id: "frwiki".to_string(),
+                actor: "Mallory".to_string(),
+                active_edit_count: 2,
+            },
+        ),
     )
     .await;
 
@@ -2096,12 +2101,14 @@ async fn multi_user_coordination_flow_round_trips_across_authenticated_clients()
 
     send_coordination_message(
         &mut carol,
-        sp42_core::CoordinationMessage::ActionBroadcast(sp42_core::ActionBroadcast {
-            wiki_id: "frwiki".to_string(),
-            rev_id: 123_456,
-            action: sp42_core::Action::Warn,
-            actor: "Mallory".to_string(),
-        }),
+        sp42_coordination::CoordinationMessage::ActionBroadcast(
+            sp42_coordination::ActionBroadcast {
+                wiki_id: "frwiki".to_string(),
+                rev_id: 123_456,
+                action: sp42_core::Action::Warn,
+                actor: "Mallory".to_string(),
+            },
+        ),
     )
     .await;
 
@@ -2112,7 +2119,7 @@ async fn multi_user_coordination_flow_round_trips_across_authenticated_clients()
 
     send_coordination_message(
         &mut bob,
-        sp42_core::CoordinationMessage::RaceResolution(sp42_core::RaceResolution {
+        sp42_coordination::CoordinationMessage::RaceResolution(sp42_coordination::RaceResolution {
             wiki_id: "frwiki".to_string(),
             rev_id: 123_456,
             winning_actor: "Mallory".to_string(),
@@ -2160,7 +2167,7 @@ async fn anonymous_multi_user_flow_preserves_actor_and_clears_presence() {
 
     send_coordination_message(
         &mut alpha,
-        sp42_core::CoordinationMessage::EditClaim(sp42_core::EditClaim {
+        sp42_coordination::CoordinationMessage::EditClaim(sp42_coordination::EditClaim {
             wiki_id: "frwiki".to_string(),
             rev_id: 900_001,
             actor: "AnonymousUser".to_string(),
@@ -2172,11 +2179,13 @@ async fn anonymous_multi_user_flow_preserves_actor_and_clears_presence() {
 
     send_coordination_message(
         &mut alpha,
-        sp42_core::CoordinationMessage::PresenceHeartbeat(sp42_core::PresenceHeartbeat {
-            wiki_id: "frwiki".to_string(),
-            actor: "AnonymousUser".to_string(),
-            active_edit_count: 1,
-        }),
+        sp42_coordination::CoordinationMessage::PresenceHeartbeat(
+            sp42_coordination::PresenceHeartbeat {
+                wiki_id: "frwiki".to_string(),
+                actor: "AnonymousUser".to_string(),
+                active_edit_count: 1,
+            },
+        ),
     )
     .await;
     let beta_presence = recv_coordination_message(&mut beta).await;
@@ -2184,11 +2193,13 @@ async fn anonymous_multi_user_flow_preserves_actor_and_clears_presence() {
 
     send_coordination_message(
         &mut alpha,
-        sp42_core::CoordinationMessage::PresenceHeartbeat(sp42_core::PresenceHeartbeat {
-            wiki_id: "frwiki".to_string(),
-            actor: "AnonymousUser".to_string(),
-            active_edit_count: 0,
-        }),
+        sp42_coordination::CoordinationMessage::PresenceHeartbeat(
+            sp42_coordination::PresenceHeartbeat {
+                wiki_id: "frwiki".to_string(),
+                actor: "AnonymousUser".to_string(),
+                active_edit_count: 0,
+            },
+        ),
     )
     .await;
     let beta_presence_clear = recv_coordination_message(&mut beta).await;
@@ -2265,7 +2276,7 @@ async fn coordination_room_persists_after_disconnect_and_reports_zero_clients() 
 
     send_coordination_message(
         &mut alice,
-        sp42_core::CoordinationMessage::EditClaim(sp42_core::EditClaim {
+        sp42_coordination::CoordinationMessage::EditClaim(sp42_coordination::EditClaim {
             wiki_id: "frwiki".to_string(),
             rev_id: 777_001,
             actor: "Mallory".to_string(),
@@ -2310,7 +2321,7 @@ async fn reconnecting_client_resubscribes_and_room_state_persists() {
 
     send_coordination_message(
         &mut alice,
-        sp42_core::CoordinationMessage::EditClaim(sp42_core::EditClaim {
+        sp42_coordination::CoordinationMessage::EditClaim(sp42_coordination::EditClaim {
             wiki_id: "frwiki".to_string(),
             rev_id: 880_001,
             actor: "Mallory".to_string(),
@@ -2334,11 +2345,13 @@ async fn reconnecting_client_resubscribes_and_room_state_persists() {
     let mut bob_reconnected = connect_session_socket(&base_url, "frwiki", "session-b").await;
     send_coordination_message(
         &mut alice,
-        sp42_core::CoordinationMessage::PresenceHeartbeat(sp42_core::PresenceHeartbeat {
-            wiki_id: "frwiki".to_string(),
-            actor: "Mallory".to_string(),
-            active_edit_count: 3,
-        }),
+        sp42_coordination::CoordinationMessage::PresenceHeartbeat(
+            sp42_coordination::PresenceHeartbeat {
+                wiki_id: "frwiki".to_string(),
+                actor: "Mallory".to_string(),
+                active_edit_count: 3,
+            },
+        ),
     )
     .await;
     let bob_presence = recv_coordination_message(&mut bob_reconnected).await;
@@ -2386,7 +2399,7 @@ async fn competing_claims_follow_last_writer_until_race_resolution() {
 
     send_coordination_message(
         &mut alice,
-        sp42_core::CoordinationMessage::EditClaim(sp42_core::EditClaim {
+        sp42_coordination::CoordinationMessage::EditClaim(sp42_coordination::EditClaim {
             wiki_id: "frwiki".to_string(),
             rev_id: 990_001,
             actor: "Mallory".to_string(),
@@ -2400,7 +2413,7 @@ async fn competing_claims_follow_last_writer_until_race_resolution() {
 
     send_coordination_message(
         &mut bob,
-        sp42_core::CoordinationMessage::EditClaim(sp42_core::EditClaim {
+        sp42_coordination::CoordinationMessage::EditClaim(sp42_coordination::EditClaim {
             wiki_id: "frwiki".to_string(),
             rev_id: 990_001,
             actor: "Mallory".to_string(),
@@ -2423,7 +2436,7 @@ async fn competing_claims_follow_last_writer_until_race_resolution() {
 
     send_coordination_message(
         &mut alice,
-        sp42_core::CoordinationMessage::RaceResolution(sp42_core::RaceResolution {
+        sp42_coordination::CoordinationMessage::RaceResolution(sp42_coordination::RaceResolution {
             wiki_id: "frwiki".to_string(),
             rev_id: 990_001,
             winning_actor: "Mallory".to_string(),
@@ -2437,7 +2450,7 @@ async fn competing_claims_follow_last_writer_until_race_resolution() {
 
     send_coordination_message(
         &mut bob,
-        sp42_core::CoordinationMessage::EditClaim(sp42_core::EditClaim {
+        sp42_coordination::CoordinationMessage::EditClaim(sp42_coordination::EditClaim {
             wiki_id: "frwiki".to_string(),
             rev_id: 990_001,
             actor: "Mallory".to_string(),
@@ -2491,11 +2504,13 @@ async fn stale_presence_is_pruned_from_room_state_reports() {
 
     send_coordination_message(
         &mut alice,
-        sp42_core::CoordinationMessage::PresenceHeartbeat(sp42_core::PresenceHeartbeat {
-            wiki_id: "frwiki".to_string(),
-            actor: "Mallory".to_string(),
-            active_edit_count: 2,
-        }),
+        sp42_coordination::CoordinationMessage::PresenceHeartbeat(
+            sp42_coordination::PresenceHeartbeat {
+                wiki_id: "frwiki".to_string(),
+                actor: "Mallory".to_string(),
+                active_edit_count: 2,
+            },
+        ),
     )
     .await;
     let bob_presence = recv_coordination_message(&mut bob).await;
@@ -2542,7 +2557,7 @@ async fn fresh_client_recovers_race_resolved_state_via_room_inspection() {
 
     send_coordination_message(
         &mut bob,
-        sp42_core::CoordinationMessage::EditClaim(sp42_core::EditClaim {
+        sp42_coordination::CoordinationMessage::EditClaim(sp42_coordination::EditClaim {
             wiki_id: "frwiki".to_string(),
             rev_id: 991_001,
             actor: "Mallory".to_string(),
@@ -2554,7 +2569,7 @@ async fn fresh_client_recovers_race_resolved_state_via_room_inspection() {
 
     send_coordination_message(
         &mut alice,
-        sp42_core::CoordinationMessage::RaceResolution(sp42_core::RaceResolution {
+        sp42_coordination::CoordinationMessage::RaceResolution(sp42_coordination::RaceResolution {
             wiki_id: "frwiki".to_string(),
             rev_id: 991_001,
             winning_actor: "Mallory".to_string(),
@@ -2579,12 +2594,14 @@ async fn fresh_client_recovers_race_resolved_state_via_room_inspection() {
 
     send_coordination_message(
         &mut bob,
-        sp42_core::CoordinationMessage::ActionBroadcast(sp42_core::ActionBroadcast {
-            wiki_id: "frwiki".to_string(),
-            rev_id: 991_001,
-            action: sp42_core::Action::MarkPatrolled,
-            actor: "Mallory".to_string(),
-        }),
+        sp42_coordination::CoordinationMessage::ActionBroadcast(
+            sp42_coordination::ActionBroadcast {
+                wiki_id: "frwiki".to_string(),
+                rev_id: 991_001,
+                action: sp42_core::Action::MarkPatrolled,
+                actor: "Mallory".to_string(),
+            },
+        ),
     )
     .await;
     let alice_action = recv_coordination_message(&mut alice).await;
@@ -2626,11 +2643,13 @@ async fn reconnect_storm_keeps_room_counts_and_live_delivery_consistent() {
 
         send_coordination_message(
             &mut alice,
-            sp42_core::CoordinationMessage::PresenceHeartbeat(sp42_core::PresenceHeartbeat {
-                wiki_id: "frwiki".to_string(),
-                actor: "Mallory".to_string(),
-                active_edit_count: u32::try_from(cycle + 1).expect("cycle fits in u32"),
-            }),
+            sp42_coordination::CoordinationMessage::PresenceHeartbeat(
+                sp42_coordination::PresenceHeartbeat {
+                    wiki_id: "frwiki".to_string(),
+                    actor: "Mallory".to_string(),
+                    active_edit_count: u32::try_from(cycle + 1).expect("cycle fits in u32"),
+                },
+            ),
         )
         .await;
 

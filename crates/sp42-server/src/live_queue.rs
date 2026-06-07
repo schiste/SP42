@@ -1,20 +1,21 @@
 use std::collections::BTreeMap;
 
 use axum::http::HeaderMap;
+use sp42_coordination::{CoordinationRoomSummary, CoordinationStateSummary};
 use sp42_core::{
     ActionExecutionHistoryReport, ActionExecutionStatusReport, BacklogRuntime,
-    BacklogRuntimeConfig, ContextInputs, CoordinationRoomSummary, DEFAULT_LIVE_OPERATOR_LIMIT,
-    DebugSnapshotInputs, DevAuthCapabilityReport, DevAuthSessionStatus, FlagState, LiftWingRequest,
-    LiveOperatorBackendStatus, LiveOperatorHeuristicProvenance, LiveOperatorPhaseTiming,
-    LiveOperatorPublicDocuments, LiveOperatorQuery, LiveOperatorTelemetry,
-    PublicStorageDocumentData, QueueHeuristicPolicy, QueuedEdit, RecentChangesQuery,
-    StreamRuntimeStatus, WikiConfig, build_debug_snapshot, build_live_operator_action_preflight,
-    build_ranked_queue_with_policy, build_review_workbench, build_scoring_context,
-    execute_liftwing_score, execute_recent_changes, filter_live_operator_queue,
-    score_edit_with_context,
+    BacklogRuntimeConfig, ContextInputs, DEFAULT_LIVE_OPERATOR_LIMIT, DevAuthCapabilityReport,
+    DevAuthSessionStatus, FlagState, LiftWingRequest, LiveOperatorBackendStatus,
+    LiveOperatorHeuristicProvenance, LiveOperatorPhaseTiming, LiveOperatorPublicDocuments,
+    LiveOperatorQuery, LiveOperatorTelemetry, PublicStorageDocumentData, QueueHeuristicPolicy,
+    QueuedEdit, RecentChangesQuery, StreamRuntimeStatus, WikiConfig,
+    build_live_operator_action_preflight, build_ranked_queue_with_policy, build_review_workbench,
+    build_scoring_context, execute_liftwing_score, execute_recent_changes,
+    filter_live_operator_queue, score_edit_with_context,
 };
 use sp42_reporting::{
-    LiveOperatorView, PatrolScenarioReportInputs, PatrolSessionDigestInputs, ShellStateInputs,
+    DebugSnapshot, DebugSnapshotInputs, LiveOperatorView, PatrolScenarioReportInputs,
+    PatrolSessionDigestInputs, ShellStateInputs, build_debug_snapshot,
     build_patrol_scenario_report, build_patrol_session_digest, build_shell_state_model,
 };
 
@@ -93,7 +94,7 @@ pub(crate) struct SelectedReviewState {
     pub(crate) media_diff: Option<sp42_core::MediaDiffReport>,
     pub(crate) review_workbench: Option<sp42_core::ReviewWorkbench>,
     pub(crate) readiness: ServerHealthStatus,
-    pub(crate) coordination_state: Option<sp42_core::CoordinationStateSummary>,
+    pub(crate) coordination_state: Option<CoordinationStateSummary>,
     pub(crate) coordination_room: Option<CoordinationRoomSummary>,
 }
 
@@ -102,7 +103,7 @@ pub(crate) struct LiveOperatorProducts {
     pub(crate) session_digest: sp42_reporting::PatrolSessionDigest,
     pub(crate) shell_state: sp42_reporting::ShellStateModel,
     pub(crate) backend: LiveOperatorBackendStatus,
-    pub(crate) debug_snapshot: sp42_core::DebugSnapshot,
+    pub(crate) debug_snapshot: DebugSnapshot,
     pub(crate) action_preflight: sp42_core::LiveOperatorActionPreflight,
     pub(crate) heuristic_provenance: Vec<LiveOperatorHeuristicProvenance>,
     pub(crate) selected_heuristic_provenance: Option<LiveOperatorHeuristicProvenance>,

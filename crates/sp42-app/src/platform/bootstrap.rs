@@ -1,4 +1,5 @@
-use sp42_core::{CoordinationSnapshot, ServerDebugSummary};
+use sp42_coordination::CoordinationSnapshot;
+use sp42_reporting::ServerDebugSummary;
 
 use super::{auth, coordination, debug, pwa};
 
@@ -111,10 +112,9 @@ pub fn bootstrap_error_lines(error: &str) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::{BrowserBootstrapSnapshot, bootstrap_error_lines, bootstrap_status_sections};
-    use sp42_core::{
-        CoordinationSnapshot, DevAuthCapabilityReport, DevAuthSessionStatus,
-        LocalOAuthConfigStatus, ServerDebugSummary,
-    };
+    use sp42_coordination::CoordinationSnapshot;
+    use sp42_core::{DevAuthCapabilityReport, DevAuthSessionStatus, LocalOAuthConfigStatus};
+    use sp42_reporting::ServerDebugSummary;
 
     #[test]
     fn bootstrap_error_lines_prefix_error() {

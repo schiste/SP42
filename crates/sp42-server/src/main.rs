@@ -42,12 +42,13 @@ use tokio::sync::RwLock;
 use tracing::{info, warn};
 use tracing_subscriber::EnvFilter;
 
+use sp42_coordination::CoordinationSnapshot;
 use sp42_core::{
     ActionExecutionHistoryReport, ActionExecutionLogEntry, ActionExecutionStatusReport,
-    ArticleInventory, Clock, CoordinationSnapshot, DevAuthBootstrapRequest,
-    DevAuthCapabilityReport, DevAuthSessionStatus, FlagState, LiveOperatorBackendStatus,
-    LiveOperatorPhaseTiming, LiveOperatorPublicDocuments, LiveOperatorTelemetry, OAuthCallback,
-    OAuthClientConfig, OAuthTokenResponse, PublicAuditLedgerEntry, PublicStorageDocumentData,
+    ArticleInventory, Clock, DevAuthBootstrapRequest, DevAuthCapabilityReport,
+    DevAuthSessionStatus, FlagState, LiveOperatorBackendStatus, LiveOperatorPhaseTiming,
+    LiveOperatorPublicDocuments, LiveOperatorTelemetry, OAuthCallback, OAuthClientConfig,
+    OAuthTokenResponse, PublicAuditLedgerEntry, PublicStorageDocumentData,
     SessionActionExecutionRequest, SessionActionExecutionResponse, SessionActionKind, SystemClock,
     TokenKind, WikiConfig, WikiStorageConfig, WikiStorageDocument, WikiStorageDocumentKind,
     WikiStorageLoadedDocument, WikiStoragePlan, WikiStoragePlanInput, WikiStorageWriteOutcome,
@@ -1464,31 +1465,31 @@ fn sanitize_coordination_payload(payload: Vec<u8>, actor: Option<&str>) -> Vec<u
     let Some(actor) = actor else {
         return payload;
     };
-    let Ok(message) = sp42_core::decode_message(&payload) else {
+    let Ok(message) = sp42_coordination::decode_message(&payload) else {
         warn!("received undecodable coordination payload while rewriting actor");
         return payload;
     };
     let rewritten = match message {
-        sp42_core::CoordinationMessage::ActionBroadcast(mut action) => {
+        sp42_coordination::CoordinationMessage::ActionBroadcast(mut action) => {
             action.actor = actor.to_string();
-            sp42_core::CoordinationMessage::ActionBroadcast(action)
+            sp42_coordination::CoordinationMessage::ActionBroadcast(action)
         }
-        sp42_core::CoordinationMessage::EditClaim(mut claim) => {
+        sp42_coordination::CoordinationMessage::EditClaim(mut claim) => {
             claim.actor = actor.to_string();
-            sp42_core::CoordinationMessage::EditClaim(claim)
+            sp42_coordination::CoordinationMessage::EditClaim(claim)
         }
-        sp42_core::CoordinationMessage::PresenceHeartbeat(mut presence) => {
+        sp42_coordination::CoordinationMessage::PresenceHeartbeat(mut presence) => {
             presence.actor = actor.to_string();
-            sp42_core::CoordinationMessage::PresenceHeartbeat(presence)
+            sp42_coordination::CoordinationMessage::PresenceHeartbeat(presence)
         }
-        sp42_core::CoordinationMessage::RaceResolution(mut resolution) => {
+        sp42_coordination::CoordinationMessage::RaceResolution(mut resolution) => {
             resolution.winning_actor = actor.to_string();
-            sp42_core::CoordinationMessage::RaceResolution(resolution)
+            sp42_coordination::CoordinationMessage::RaceResolution(resolution)
         }
         other => other,
     };
 
-    sp42_core::encode_message(&rewritten).unwrap_or(payload)
+    sp42_coordination::encode_message(&rewritten).unwrap_or(payload)
 }
 
 fn config_for_state_wiki(

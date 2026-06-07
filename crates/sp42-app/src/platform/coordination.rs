@@ -1,7 +1,8 @@
 use std::collections::BTreeSet;
 
 use serde_json::Value;
-use sp42_core::{CoordinationRoomSummary, CoordinationSnapshot, CoordinationStateSummary, routes};
+use sp42_coordination::{CoordinationRoomSummary, CoordinationSnapshot, CoordinationStateSummary};
+use sp42_core::routes;
 
 #[cfg(target_arch = "wasm32")]
 use super::{config::api_url, http::get_bytes};
@@ -388,7 +389,7 @@ mod tests {
     use super::{
         coordination_room_narrative_lines, parse_room_inspection_collection, room_inspection_lines,
     };
-    use sp42_core::{CoordinationRoomSummary, CoordinationStateSummary};
+    use sp42_coordination::{CoordinationRoomSummary, CoordinationStateSummary};
 
     #[test]
     fn room_inspection_lines_cover_presence_and_state() {
@@ -507,34 +508,34 @@ mod tests {
             },
             state: Some(CoordinationStateSummary {
                 wiki_id: "frwiki".to_string(),
-                claims: vec![sp42_core::EditClaim {
+                claims: vec![sp42_coordination::EditClaim {
                     wiki_id: "frwiki".to_string(),
                     rev_id: 123,
                     actor: "Alice".to_string(),
                 }],
-                presence: vec![sp42_core::PresenceHeartbeat {
+                presence: vec![sp42_coordination::PresenceHeartbeat {
                     wiki_id: "frwiki".to_string(),
                     actor: "Alice".to_string(),
                     active_edit_count: 2,
                 }],
-                flagged_edits: vec![sp42_core::FlaggedEdit {
+                flagged_edits: vec![sp42_coordination::FlaggedEdit {
                     wiki_id: "frwiki".to_string(),
                     rev_id: 123,
                     score: 95,
                     reason: "possible vandalism".to_string(),
                 }],
-                score_deltas: vec![sp42_core::ScoreDelta {
+                score_deltas: vec![sp42_coordination::ScoreDelta {
                     wiki_id: "frwiki".to_string(),
                     rev_id: 123,
                     delta: 5,
                     reason: "recent action".to_string(),
                 }],
-                race_resolutions: vec![sp42_core::RaceResolution {
+                race_resolutions: vec![sp42_coordination::RaceResolution {
                     wiki_id: "frwiki".to_string(),
                     rev_id: 123,
                     winning_actor: "Alice".to_string(),
                 }],
-                recent_actions: vec![sp42_core::ActionBroadcast {
+                recent_actions: vec![sp42_coordination::ActionBroadcast {
                     wiki_id: "frwiki".to_string(),
                     rev_id: 123,
                     action: sp42_core::Action::Rollback,

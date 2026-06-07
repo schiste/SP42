@@ -1,5 +1,5 @@
 [package]
-name = "sp42-reporting"
+name = "sp42-coordination"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -9,10 +9,12 @@ rust-version.workspace = true
 workspace = true
 
 [dependencies]
+rmp-serde.workspace = true
 serde.workspace = true
-sp42-coordination = { path = "../sp42-coordination" }
 sp42-core = { path = "../sp42-core" }
+thiserror.workspace = true
+tracing.workspace = true
 
 [dev-dependencies]
+futures.workspace = true
 proptest = "1.9.0"
-serde_json.workspace = true

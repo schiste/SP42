@@ -20,6 +20,7 @@ js-sys.workspace = true
 leptos.workspace = true
 serde_json.workspace = true
 send_wrapper.workspace = true
+sp42-coordination = { path = "../sp42-coordination" }
 sp42-core = { path = "../sp42-core" }
 sp42-reporting = { path = "../sp42-reporting" }
 url.workspace = true

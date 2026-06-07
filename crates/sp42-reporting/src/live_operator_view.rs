@@ -1,16 +1,16 @@
 //! Browser-facing live operator payload that includes reporting models.
 
 use serde::{Deserialize, Serialize};
+use sp42_coordination::{CoordinationRoomSummary, CoordinationStateSummary};
 use sp42_core::{
     ActionExecutionHistoryReport, ActionExecutionStatusReport, BacklogRuntimeStatus,
-    CoordinationRoomSummary, CoordinationStateSummary, DebugSnapshot, DevAuthCapabilityReport,
-    DevAuthSessionStatus, LiveIngestionSupervisorStatus, LiveOperatorActionPreflight,
-    LiveOperatorBackendStatus, LiveOperatorHeuristicProvenance, LiveOperatorPublicDocuments,
-    LiveOperatorQuery, LiveOperatorTelemetry, MediaDiffReport, QueuedEdit, ReviewWorkbench,
-    ScoringContext, StreamRuntimeStatus, StructuredDiff,
+    DevAuthCapabilityReport, DevAuthSessionStatus, LiveIngestionSupervisorStatus,
+    LiveOperatorActionPreflight, LiveOperatorBackendStatus, LiveOperatorHeuristicProvenance,
+    LiveOperatorPublicDocuments, LiveOperatorQuery, LiveOperatorTelemetry, MediaDiffReport,
+    QueuedEdit, ReviewWorkbench, ScoringContext, StreamRuntimeStatus, StructuredDiff,
 };
 
-use crate::{PatrolScenarioReport, PatrolSessionDigest, ShellStateModel};
+use crate::{DebugSnapshot, PatrolScenarioReport, PatrolSessionDigest, ShellStateModel};
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct LiveOperatorView {

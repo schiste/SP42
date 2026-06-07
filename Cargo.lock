@@ -2110,6 +2110,7 @@ dependencies = [
  "leptos",
  "send_wrapper",
  "serde_json",
+ "sp42-coordination",
  "sp42-core",
  "sp42-reporting",
  "url",
@@ -2132,6 +2133,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "sp42-coordination"
+version = "0.1.0"
+dependencies = [
+ "futures",
+ "proptest",
+ "rmp-serde",
+ "serde",
+ "sp42-core",
+ "thiserror 2.0.18",
+ "tracing",
+]
+
+[[package]]
 name = "sp42-core"
 version = "0.1.0"
 dependencies = [
@@ -2139,7 +2153,6 @@ dependencies = [
  "base64",
  "futures",
  "proptest",
- "rmp-serde",
  "serde",
  "serde_json",
  "serde_yaml",
@@ -2167,6 +2180,7 @@ name = "sp42-devtools"
 version = "0.1.0"
 dependencies = [
  "futures",
+ "sp42-coordination",
  "sp42-core",
  "sp42-reporting",
  "thiserror 2.0.18",
@@ -2179,6 +2193,7 @@ dependencies = [
  "proptest",
  "serde",
  "serde_json",
+ "sp42-coordination",
  "sp42-core",
 ]
 
@@ -2193,6 +2208,7 @@ dependencies = [
  "reqwest",
  "serde",
  "serde_json",
+ "sp42-coordination",
  "sp42-core",
  "sp42-reporting",
  "tokio",

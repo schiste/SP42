@@ -3,10 +3,11 @@ use std::sync::Arc;
 
 use tokio::sync::{RwLock, broadcast};
 
-use sp42_core::{
-    Clock, CoordinationMessage, CoordinationRoomSummary, CoordinationSnapshot, CoordinationState,
-    CoordinationStateSummary, SystemClock, decode_message,
+use sp42_coordination::{
+    CoordinationMessage, CoordinationRoomSummary, CoordinationSnapshot, CoordinationState,
+    CoordinationStateSummary, decode_message,
 };
+use sp42_core::{Clock, SystemClock};
 
 const ROOM_CAPACITY: usize = 128;
 const PRESENCE_STALE_AFTER_MS: i64 = 60_000;
@@ -325,7 +326,8 @@ mod tests {
     use std::sync::Arc;
     use std::sync::atomic::{AtomicI64, Ordering};
 
-    use sp42_core::{Clock, CoordinationMessage, EditClaim, encode_message};
+    use sp42_coordination::{CoordinationMessage, EditClaim, encode_message};
+    use sp42_core::Clock;
 
     use super::{CoordinationEnvelope, CoordinationRegistry, ROOM_IDLE_EVICT_AFTER_MS};
 

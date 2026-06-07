@@ -1,9 +1,10 @@
 use serde_json::Value;
+use sp42_coordination::CoordinationSnapshot;
 use sp42_core::{
-    CoordinationSnapshot, DevAuthActionTokenAvailability, DevAuthCapabilityReport,
-    DevAuthDerivedCapabilities, DevAuthProbeAcceptance, DevAuthSessionStatus,
-    LocalOAuthConfigStatus, ServerDebugSummary, routes,
+    DevAuthActionTokenAvailability, DevAuthCapabilityReport, DevAuthDerivedCapabilities,
+    DevAuthProbeAcceptance, DevAuthSessionStatus, LocalOAuthConfigStatus, routes,
 };
+use sp42_reporting::ServerDebugSummary;
 
 #[cfg(target_arch = "wasm32")]
 use super::{auth, config::api_url, coordination, http::get_bytes};
@@ -335,7 +336,8 @@ mod tests {
         DevActionHistoryRecord, RuntimeDebugStatus, dev_action_history_lines,
         parse_dev_action_history, parse_runtime_debug_status, runtime_debug_status_lines,
     };
-    use sp42_core::{CoordinationSnapshot, DevAuthSessionStatus, LocalOAuthConfigStatus};
+    use sp42_coordination::CoordinationSnapshot;
+    use sp42_core::{DevAuthSessionStatus, LocalOAuthConfigStatus};
 
     #[test]
     fn runtime_debug_status_lines_include_key_statuses() {

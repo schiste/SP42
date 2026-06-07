@@ -25,7 +25,9 @@ all_docs() {
   return 0
 }
 
-staged="$(git diff --cached --name-only --diff-filter=ACMR)"
+# No --diff-filter: deletions must be classified too, so deleting a non-docs
+# file (e.g. a source module) still forces the full checks.
+staged="$(git diff --cached --name-only)"
 docs_only=0
 if all_docs "$staged"; then docs_only=1; fi
 

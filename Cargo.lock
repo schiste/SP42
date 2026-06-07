@@ -2126,6 +2126,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sp42-core",
+ "sp42-devtools",
 ]
 
 [[package]]
@@ -2154,7 +2155,17 @@ dependencies = [
  "futures",
  "serde_json",
  "sp42-core",
+ "sp42-devtools",
  "url",
+]
+
+[[package]]
+name = "sp42-devtools"
+version = "0.1.0"
+dependencies = [
+ "futures",
+ "sp42-core",
+ "thiserror 2.0.18",
 ]
 
 [[package]]

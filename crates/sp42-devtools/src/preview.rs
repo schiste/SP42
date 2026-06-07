@@ -2,14 +2,14 @@
 
 use std::collections::BTreeMap;
 
-use crate::backlog_runtime::{BacklogRuntime, BacklogRuntimeConfig, BacklogRuntimeStatus};
-use crate::coordination_codec::{decode_message, encode_message};
-use crate::coordination_state::{CoordinationState, CoordinationStateSummary};
-use crate::errors::{BacklogRuntimeError, CodecError, ConfigError, StreamRuntimeError};
-use crate::recent_changes::RecentChangesBatch;
-use crate::stream_runtime::{StreamRuntime, StreamRuntimeStatus};
-use crate::traits::{MemoryStorage, ReplayEventSource, StubHttpClient};
-use crate::types::{
+use sp42_core::backlog_runtime::{BacklogRuntime, BacklogRuntimeConfig, BacklogRuntimeStatus};
+use sp42_core::coordination_codec::{decode_message, encode_message};
+use sp42_core::coordination_state::{CoordinationState, CoordinationStateSummary};
+use sp42_core::errors::{BacklogRuntimeError, CodecError, ConfigError, StreamRuntimeError};
+use sp42_core::recent_changes::RecentChangesBatch;
+use sp42_core::stream_runtime::{StreamRuntime, StreamRuntimeStatus};
+use sp42_core::traits::{MemoryStorage, ReplayEventSource, StubHttpClient};
+use sp42_core::types::{
     Action, ActionBroadcast, CoordinationMessage, EditClaim, EditEvent, FlaggedEdit, HttpRequest,
     HttpResponse, PresenceHeartbeat, RaceResolution, ScoreDelta, ServerSentEvent, WikiConfig,
 };
@@ -69,7 +69,7 @@ pub struct DevCoordinationPreview {
 ///
 /// Returns [`ConfigError`] when the embedded fixture is invalid.
 pub fn parse_default_dev_wiki_config() -> Result<WikiConfig, ConfigError> {
-    crate::parse_wiki_config(DEV_PREVIEW_DEFAULT_CONFIG)
+    sp42_core::parse_wiki_config(DEV_PREVIEW_DEFAULT_CONFIG)
 }
 
 /// Build a stream runtime preview from JSONL recentchanges events.

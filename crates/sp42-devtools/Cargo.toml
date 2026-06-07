@@ -1,5 +1,5 @@
 [package]
-name = "sp42-desktop"
+name = "sp42-devtools"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -9,8 +9,8 @@ rust-version.workspace = true
 workspace = true
 
 [dependencies]
-futures.workspace = true
-serde_json.workspace = true
 sp42-core = { path = "../sp42-core" }
-sp42-devtools = { path = "../sp42-devtools" }
-url.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+futures.workspace = true

@@ -110,25 +110,25 @@ assembly mechanism, not operator-observable loop outcomes.)
 
 - [x] A single `recentchanges`-feed event is ingested and normalized into a queued
   edit (rev id, editor classification) — verified by
-  `crates/sp42-core/src/stream_ingestor.rs::ingests_supported_recentchange_event`.
+  `crates/sp42-live/src/stream_ingestor.rs::ingests_supported_recentchange_event`.
 - [x] A newline-delimited batch of stream events is ingested into an ordered list of
   edits — verified by
-  `crates/sp42-core/src/stream_ingestor.rs::ingests_json_lines_batch`.
+  `crates/sp42-live/src/stream_ingestor.rs::ingests_json_lines_batch`.
 - [x] Out-of-scope changes are filtered before reaching the queue (unrelated wiki, bot
-  edits) — verified by `crates/sp42-core/src/stream_ingestor.rs::filters_out_unrelated_wikis`
+  edits) — verified by `crates/sp42-live/src/stream_ingestor.rs::filters_out_unrelated_wikis`
   and `::filters_out_bot_edits`.
 - [x] A `MediaWiki` `list=recentchanges` backlog request is built with the expected
   params and an unpatrolled/bot `rcshow` filter, and its response parses into edit
   events plus a continue token — verified by
-  `crates/sp42-core/src/recent_changes.rs::builds_recentchanges_request` and
+  `crates/sp42-live/src/recent_changes.rs::builds_recentchanges_request` and
   `::parses_recentchanges_response`.
 - [x] The stream runtime walks events until an actionable edit is produced and persists
   the stream cursor, so ingestion resumes at a checkpoint — verified by
-  `crates/sp42-core/src/stream_runtime.rs::streams_until_actionable_event_and_persists_cursor`
+  `crates/sp42-live/src/stream_runtime.rs::streams_until_actionable_event_and_persists_cursor`
   and `::drains_actionable_events_up_to_limit`.
 - [x] A malformed event does not advance the checkpoint (handled edits are not skipped
   on the next read) — verified by
-  `crates/sp42-core/src/stream_runtime.rs::invalid_payload_does_not_advance_checkpoint`.
+  `crates/sp42-live/src/stream_runtime.rs::invalid_payload_does_not_advance_checkpoint`.
 - [x] The live operator view assembles a per-wiki payload (ranked queue, selected diff,
   prepared review actions, backlog status, capabilities) and reuses the persisted
   backlog checkpoint across repeated and concurrent requests — verified by the
@@ -138,7 +138,7 @@ assembly mechanism, not operator-observable loop outcomes.)
 - [x] For the selected edit, the preflight reports which dispositions the active session
   can *perform*, and a disposition blocked by a missing token is reported as
   `available=false` with a retry classification rather than silently failing — verified
-  by `crates/sp42-core/src/live_operator.rs::preflight_classifies_missing_tokens_as_session_refresh`.
+  by `crates/sp42-live/src/live_operator.rs::preflight_classifies_missing_tokens_as_session_refresh`.
   (The *recommendation* half of the preflight — the score gate — is bound in PRD-0003's
   DoD, not here.)
 
@@ -204,33 +204,33 @@ assembly mechanism, not operator-observable loop outcomes.)
   in the WASM UI layer. The DoD above is bound only to surfaces that do have tests.
 - **`Action` vs `SessionActionKind` are two disposition vocabularies.** The review
   workbench's training labels use `core::Action` (Rollback / Revert / Warn / Report /
-  MarkPatrolled, `crates/sp42-core/src/types.rs:385`), while the live loop and preflight
+  MarkPatrolled, `crates/sp42-core/src/types.rs`), while the live loop and preflight
   use `SessionActionKind` (Rollback / Patrol / Undo / TagCitationNeeded / InlineEdit,
-  `crates/sp42-core/src/action_executor.rs:80`). The sets overlap but are not identical
+  `crates/sp42-core/src/action_contracts.rs`). The sets overlap but are not identical
   (e.g. `Warn`/`Report` exist only in `Action`; `Undo`/`Patrol`/tagging only in
   `SessionActionKind`). This is undocumented and a likely source of confusion for a
   maintainer.
 - **`skip` (`s`) has two code paths.** The keyboard handler raises a skip trigger
-  (`crates/sp42-app/src/pages/patrol/keyboard_controller.rs:22` → `install_skip_effect`,
-  `crates/sp42-app/src/pages/patrol/action_controller.rs:169`), which advances selection
+  (`crates/sp42-app/src/pages/patrol/keyboard_controller.rs` → `install_skip_effect`,
+  `crates/sp42-app/src/pages/patrol/action_controller.rs`), which advances selection
   to `idx + 1`, while `ArrowDown` advances via a separate branch in the keyboard handler
-  (`crates/sp42-app/src/pages/patrol/keyboard_controller.rs:33`). Both move to `idx + 1`
+  (`crates/sp42-app/src/pages/patrol/keyboard_controller.rs`). Both move to `idx + 1`
   but are not unified.
 - **Two `recentchanges` timestamp parsers coexist.** `stream_ingestor.rs` and
   `recent_changes.rs` each carry a near-identical hand-rolled RFC-3339/`days_from_civil`
   implementation (`parse_rfc3339_utc` returning seconds+nanos,
-  `crates/sp42-core/src/stream_ingestor.rs:215`; `parse_rfc3339_utc_to_ms` returning ms,
-  `crates/sp42-core/src/recent_changes.rs:272`; each with its own `days_from_civil` at
-  `stream_ingestor.rs:321` / `recent_changes.rs:313`). They are independently tested but
+  `crates/sp42-live/src/stream_ingestor.rs`; `parse_rfc3339_utc_to_ms` returning ms,
+  `crates/sp42-live/src/recent_changes.rs`; each with its own `days_from_civil` at
+  `stream_ingestor.rs` / `recent_changes.rs`). They are independently tested but
   duplicated; drift between them would silently change ingestion behavior.
 - **Inspector lane classification is prefix-fragile.** `classify_inspector_line` keys off
-  the string prefix before `=` (`crates/sp42-app/src/components/inspector_feed.rs:71`); a
+  the string prefix before `=` (`crates/sp42-app/src/components/inspector_feed.rs`); a
   renamed summary line would fall through to the `General` lane without any test catching
   it.
 - **`is_recommended` thresholds are magic numbers (recommendation semantics, owned by
   PRD-0003).** Disposition recommendation uses bare score cutoffs (rollback `>= 70`,
-  `crates/sp42-core/src/live_operator.rs:392`; patrol `< 60`, `:398`; undo `>= 40`, `:401`)
-  inside `is_recommended` (`:373`), with no doc tying them to the scoring constitution
+  `crates/sp42-live/src/live_operator.rs`; patrol `< 60`; undo `>= 40`)
+  inside `is_recommended`, with no doc tying them to the scoring constitution
   (`docs/scoring/SCORING_CONSTITUTION.md`, which §17 Q2 leaves "Should action recommendation
   thresholds be constitutionalized separately from queue-priority thresholds?" open). A
   change to scoring weights could quietly shift recommendations. The recommendation
@@ -240,12 +240,12 @@ assembly mechanism, not operator-observable loop outcomes.)
 - **Edit-grouping merge is lossy by design but undocumented.** When `group_edits` collapses
   same-title/same-performer edits it keeps the newest revision but overwrites its score
   with the group max and its byte-delta with the group sum
-  (`crates/sp42-app/src/pages/patrol/queue_controller.rs:139`); the operator sees a
+  (`crates/sp42-app/src/pages/patrol/queue_controller.rs`); the operator sees a
   synthesized row whose displayed score no longer matches that single revision. There is
   no UI-layer test for this.
 - **Anonymous-vs-temporary editor classification differs subtly across ingestors.** Both
-  `classify_editor` implementations (`crates/sp42-core/src/stream_ingestor.rs:145` and
-  `crates/sp42-core/src/recent_changes.rs:254`) classify a `~`-prefixed user as Temporary
+  `classify_editor` implementations (`crates/sp42-live/src/stream_ingestor.rs` and
+  `crates/sp42-live/src/recent_changes.rs`) classify a `~`-prefixed user as Temporary
   and an IP as Anonymous, but they are separate implementations; the live filter
-  (`crates/sp42-app/src/pages/patrol/queue_controller.rs:107`) trusts whichever produced
+  (`crates/sp42-app/src/pages/patrol/queue_controller.rs`) trusts whichever produced
   the event.

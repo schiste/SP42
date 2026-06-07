@@ -106,7 +106,7 @@ Known gaps).
 
 Each item is an operator-observable behavior that is **already true**, bound to an
 existing test. *(The wire codec round-trip and the room-state reducer are
-additionally unit-tested as pure mechanism — `crates/sp42-core/src/coordination_codec.rs`
+additionally unit-tested as pure mechanism — `crates/sp42-coordination/src/codec.rs`
 and `…/coordination_state.rs` — but that mechanism is owned by the not-yet-written
 coordination ADR; see Known gaps.)*
 
@@ -123,13 +123,13 @@ coordination ADR; see Known gaps.)*
 - [x] A presence heartbeat with a positive edit count makes the operator present;
   a heartbeat of zero clears them from the room's presence list — verified by
   `crates/sp42-server/src/tests.rs::anonymous_multi_user_flow_preserves_actor_and_clears_presence`
-  and, at the reducer level, `crates/sp42-core/src/coordination_state.rs::removes_presence_when_active_count_hits_zero`.
+  and, at the reducer level, `crates/sp42-coordination/src/state.rs::removes_presence_when_active_count_hits_zero`.
 - [x] Competing claims on the same revision follow last-writer-wins, and a race
   resolution then pins the winning operator so subsequent claims by others no
   longer take over that revision — verified by
   `crates/sp42-server/src/tests.rs::competing_claims_follow_last_writer_until_race_resolution`
   and, at the reducer level,
-  `crates/sp42-core/src/coordination_state.rs::aggregates_score_deltas_and_applies_race_resolution`.
+  `crates/sp42-coordination/src/state.rs::aggregates_score_deltas_and_applies_race_resolution`.
 - [x] An operator who connects late recovers the current claims, present
   operators, and race-resolution state of a room via the inspection endpoint
   without being replayed the live backlog — verified by
@@ -156,7 +156,7 @@ coordination ADR; see Known gaps.)*
   `::missing_coordination_room_inspection_returns_empty_bootstrap_model`.
 - [x] The collaboration picture survives a wire encode/decode round-trip for every
   message kind, so what one operator emits is what peers observe — verified by
-  `crates/sp42-core/src/coordination_codec.rs::property_round_trip_identity` (proptest).
+  `crates/sp42-coordination/src/codec.rs::property_round_trip_identity` (proptest).
 - [x] A room with no connected clients and no activity is evicted after the idle
   window, so the relay does not accumulate dead rooms — verified by
   `crates/sp42-server/src/coordination.rs::evicts_idle_rooms_with_no_connected_clients`.
@@ -234,50 +234,50 @@ Factual observations from reverse-engineering the shipped code; these replace
   should become an ADR this PRD links.)*
 - **The live socket client is not wired into the interactive patrol UI.** The
   browser app fetches only a read-only bootstrap snapshot
-  (`crates/sp42-app/src/platform/bootstrap.rs:29`); the in-app fetch helpers are
-  retained only as dead-code keep-alive references (`crates/sp42-app/src/lib.rs:92-99`).
+  (`crates/sp42-app/src/platform/bootstrap.rs`); the in-app fetch helpers are
+  retained only as dead-code keep-alive references (`crates/sp42-app/src/lib.rs`).
   No UI, desktop, or CLI call site invokes `CoordinationClient::claim_edit` or
-  `send_presence` (`crates/sp42-core/src/coordination_client.rs:36,97`), and the
+  `send_presence` (`crates/sp42-coordination/src/client.rs`), and the
   `CoordinationRuntime` that couples client transport to live state
-  (`crates/sp42-core/src/coordination_runtime.rs`) has no caller outside its own
+  (`crates/sp42-coordination/src/runtime.rs`) has no caller outside its own
   unit tests. So claiming an item or emitting presence is **not reachable through
   the shipped GUI**; only the server relay and the client protocol library are
   built and tested.
 - **CLI / desktop "coordination" previews are fixtures.** Both replay a hardcoded
-  `coordination_preview_messages()` set (`crates/sp42-cli/src/main.rs:1997`;
-  `build_coordination_snapshot`, `crates/sp42-desktop/src/main.rs:579`) to
+  `coordination_preview_messages()` set (`crates/sp42-cli/src/main.rs`;
+  `build_coordination_snapshot`, `crates/sp42-desktop/src/main.rs`) to
   demonstrate the codec and reducer, not live room data.
 - **No explicit claim release / un-claim.** `CoordinationMessage`
-  (`crates/sp42-core/src/types.rs:481`) has no release variant. A claim changes
+  (`crates/sp42-coordination/src/messages.rs`) has no release variant. A claim changes
   hands only via a later `EditClaim` (last-writer-wins) or a `RaceResolution`, and
   is otherwise dropped only when the whole room is idle-evicted after 5 minutes
-  (`ROOM_IDLE_EVICT_AFTER_MS`, `crates/sp42-server/src/coordination.rs:13`).
+  (`ROOM_IDLE_EVICT_AFTER_MS`, `crates/sp42-server/src/coordination.rs`).
 - **Presence staleness is tested via a test hook, not real time.** The 60s
   presence timeout (`PRESENCE_STALE_AFTER_MS`,
-  `crates/sp42-server/src/coordination.rs:12`) is exercised by forcing the
+  `crates/sp42-server/src/coordination.rs`) is exercised by forcing the
   last-seen timestamp through `set_presence_last_seen_for_test`
-  (`crates/sp42-server/src/tests.rs:2504`). The clock-driven *room* eviction path
+  (`crates/sp42-server/src/tests.rs`). The clock-driven *room* eviction path
   is unit-tested in the registry (`evicts_idle_rooms_with_no_connected_clients`,
-  `crates/sp42-server/src/coordination.rs:472`).
+  `crates/sp42-server/src/coordination.rs`).
 - **Rooms are in-memory and per-process.** `CoordinationRegistry` holds an
-  `Arc<RwLock<HashMap>>` (`crates/sp42-server/src/coordination.rs:16`); state is
+  `Arc<RwLock<HashMap>>` (`crates/sp42-server/src/coordination.rs`); state is
   lost on restart and is not shared across server instances. No persistence test
   exists because there is no persistence.
 - **Actor attribution is asymmetric across message kinds.** The server attributes
   from the session for `ActionBroadcast`, `EditClaim`, `PresenceHeartbeat`, and
   `RaceResolution`, but passes `ScoreDelta` and `FlaggedEdit` through unchanged
-  (`other => other`, `crates/sp42-server/src/main.rs:1488`). Those two carry no
+  (`other => other`, `crates/sp42-server/src/main.rs`). Those two carry no
   actor field, so it is benign, but the asymmetry is undocumented.
 - **Anonymous connections trust the wire actor.** With no session the sanitizer
-  returns the payload unchanged (`crates/sp42-server/src/main.rs:1464`), verified
+  returns the payload unchanged (`crates/sp42-server/src/main.rs`), verified
   intentionally by `anonymous_multi_user_flow_preserves_actor_and_clears_presence`
-  (`crates/sp42-server/src/tests.rs:2155`). This is the local-dev posture, not a
+  (`crates/sp42-server/src/tests.rs`). This is the local-dev posture, not a
   production guarantee.
 - **Recent-actions log is silently capped at 25.** The reducer drains the oldest
-  entries past 25 (`crates/sp42-core/src/coordination_state.rs:134`); the cap is
+  entries past 25 (`crates/sp42-coordination/src/state.rs`); the cap is
   not surfaced to operators.
 - **Score-delta reasons accumulate unbounded.** Merging deltas on one revision
-  concatenates reasons with `" | "` (`crates/sp42-core/src/coordination_state.rs:117`)
+  concatenates reasons with `" | "` (`crates/sp42-coordination/src/state.rs`)
   with no length bound; no test guards reason growth.
 - **Toolforge WebSocket support is an open hosting question.** ADR-0001 §5 flags
   that persistent WebSocket support on Toolforge is unverified, with a VPS

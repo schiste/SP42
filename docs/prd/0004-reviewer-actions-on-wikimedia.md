@@ -46,7 +46,7 @@ Each item is an operator-observable behavior that is **already true**, bound to 
 - [x] The operator's review note flows into the recorded disposition's feedback — verified by `crates/sp42-server/src/action_routes.rs::action_feedback_includes_rationale_summary`.
 - [x] Each disposition's outcome is recorded in, and read back from, the session's action history — verified by `crates/sp42-server/src/tests.rs::action_history_route_returns_recorded_entries`.
 - [x] The session's action status aggregates outcomes and surfaces the latest result to the operator — verified by `…tests.rs::action_status_route_returns_shell_feedback`.
-- [x] A disposition the session cannot perform is marked unavailable (rather than silently failing), and a missing token is classified as "available after a session refresh" — verified by `crates/sp42-core/src/live_operator.rs::preflight_classifies_missing_tokens_as_session_refresh` and `::retry_classifier_maps_codes_to_classes`.
+- [x] A disposition the session cannot perform is marked unavailable (rather than silently failing), and a missing token is classified as "available after a session refresh" — verified by `crates/sp42-live/src/live_operator.rs::preflight_classifies_missing_tokens_as_session_refresh` and `::retry_classifier_maps_codes_to_classes`.
 
 *(The score-gated **recommendation** of a disposition — e.g. suggesting rollback for a high-score edit — is scoring semantics owned by **PRD-0003**; the toolbar and keys that **choose** a disposition are workflow owned by **PRD-0002**. This PRD owns only what the chosen disposition does and how its outcome is reported.)*
 
@@ -68,11 +68,11 @@ Each item is an operator-observable behavior that is **already true**, bound to 
 ## Known gaps / drift
 
 - **The action contract has no ADR.** ADR-0003 governs only the content-edit *editing mechanism*. The broader action contract — the set of dispositions (`SessionActionKind`), the execute-action route, token acquisition, and the CSRF/`baserevid` enforcement — is a public-contract concern that, per `docs/prd/README.md`, warrants its own ADR, but none exists; its structural decisions live only in code. *(This PRD owns the dispositions' user-facing meaning; the contract's structure should become an ADR this PRD links.)*
-- **The per-disposition entitlement re-check is untested at the unit level.** The server's per-verb required-field and capability gate (`validate_action_request`, `action_routes.rs:762`) is exercised only through the live route; no unit test asserts that a missing field or unmet entitlement yields `400`/`403`.
+- **The per-disposition entitlement re-check is untested at the unit level.** The server's per-verb required-field and capability gate (`validate_action_request`, `action_routes.rs`) is exercised only through the live route; no unit test asserts that a missing field or unmet entitlement yields `400`/`403`.
 - **No forged-request rejection test on the execute-action route.** The route requires an authenticated session and a same-session CSRF header, but no test POSTs a missing/forged header to *this* endpoint (the only such test covers the session-delete route). *(The CSRF mechanism itself is PRD-0005 / implementation.)*
-- **The two content dispositions have no tests.** The inline-fix and citation-flag paths (`action_routes.rs:360`, `:411`), including the "text not found" rejection, are entirely uncovered.
-- **The undo ordering guard is untested.** SP42 refuses an undo whose target is not strictly newer than the prior revision (`action_executor.rs:256`), but only the success path is tested.
+- **The two content dispositions have no tests.** The inline-fix and citation-flag paths (`action_routes.rs`), including the "text not found" rejection, are entirely uncovered.
+- **The undo ordering guard is untested.** SP42 refuses an undo whose target is not strictly newer than the prior revision (`action_executor.rs`), but only the success path is tested.
 - **ADR-0003 interim hardening not yet present.** The content dispositions still do unguarded first-occurrence replacement; ADR-0003's exactly-one-occurrence guard is described but not implemented.
-- **Hand-rolled date for the citation flag.** The citation-needed template's date is derived from epoch days by hand (`current_french_date`, `action_routes.rs:489`) and is untested.
+- **Hand-rolled date for the citation flag.** The citation-needed template's date is derived from epoch days by hand (`current_french_date`, `action_routes.rs`) and is untested.
 - **Content dispositions are not on the main action toolbar.** The toolbar exposes Rollback / Undo / Patrol / Skip; the content dispositions are reached from the diff-viewer context menu — a less discoverable surface.
-- **Multi-revision patrol fan-out is untested.** The loop issuing one patrol call per merged revision id (`action_routes.rs:260`) has no test; the patrol execution test covers a single id only.
+- **Multi-revision patrol fan-out is untested.** The loop issuing one patrol call per merged revision id (`action_routes.rs`) has no test; the patrol execution test covers a single id only.

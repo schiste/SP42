@@ -7,9 +7,10 @@ use sp42_live::{
 };
 use sp42_types::StorageError;
 
+use crate::runtime_adapters::BearerHttpClient;
 use crate::{
-    AppState, BearerHttpClient, IngestionSupervisorSnapshot, persisted_stream_status,
-    resolved_wiki_config, runtime_storage_for,
+    AppState, IngestionSupervisorSnapshot, persisted_stream_status, resolved_wiki_config,
+    runtime_storage_for,
 };
 
 pub(crate) fn supervisor_poll_interval_ms() -> u64 {

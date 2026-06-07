@@ -10,6 +10,7 @@ mod oauth_runtime;
 mod operator_live;
 mod revision_artifacts;
 mod routes;
+pub(crate) mod runtime_adapters;
 mod runtime_status;
 mod session_runtime;
 mod state;
@@ -19,12 +20,10 @@ mod wikimedia_capabilities;
 
 use std::collections::HashMap;
 use std::io;
-use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
-use async_trait::async_trait;
 use axum::Json;
 use axum::extract::OriginalUri;
 use axum::extract::Path;
@@ -34,14 +33,10 @@ use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Redirect, Response};
 use futures::{SinkExt, StreamExt};
-use rand::Rng as _;
-use sp42_types::{
-    Clock, HttpClient, HttpClientError, HttpMethod, HttpRequest, HttpResponse, SystemClock,
-};
+use sp42_types::{Clock, HttpClient, HttpMethod, HttpRequest, SystemClock};
 use tokio::net::TcpListener;
 use tokio::sync::RwLock;
 use tracing::{info, warn};
-use tracing_subscriber::EnvFilter;
 
 use sp42_coordination::CoordinationSnapshot;
 use sp42_core::{
@@ -84,6 +79,9 @@ pub(crate) use crate::revision_artifacts::{
     get_revision_media_diff,
 };
 use crate::routes::build_router;
+use crate::runtime_adapters::{
+    BearerHttpClient, build_http_client, init_tracing, runtime_storage_root,
+};
 #[cfg(test)]
 pub(crate) use crate::runtime_status::{
     CapabilityCacheStatus, CapabilityProbeHint, OperatorReport, OperatorRuntimeInspection,
@@ -164,14 +162,6 @@ struct OAuthProfileResponse {
     username: String,
     #[serde(default)]
     grants: Vec<String>,
-}
-
-struct ServerRng;
-
-impl sp42_types::Rng for ServerRng {
-    fn next_u64(&mut self) -> u64 {
-        rand::rng().random()
-    }
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, serde::Deserialize, serde::Serialize)]
@@ -430,39 +420,8 @@ async fn main() -> Result<(), std::io::Error> {
     axum::serve(listener, router).await
 }
 
-fn build_http_client() -> io::Result<reqwest::Client> {
-    reqwest::Client::builder()
-        .timeout(Duration::from_secs(5))
-        .user_agent(sp42_core::branding::USER_AGENT)
-        .build()
-        .map_err(|error| io::Error::other(format!("failed to build reqwest client: {error}")))
-}
-
 fn spawn_ingestion_supervisors(state: &AppState) {
     ingestion_supervisor::spawn_ingestion_supervisors(state);
-}
-
-fn init_tracing() {
-    let filter = EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| EnvFilter::new("sp42_server=info,sp42_core=warn"));
-
-    let _ = tracing_subscriber::fmt()
-        .with_env_filter(filter)
-        .with_target(true)
-        .with_ansi(false)
-        .try_init();
-}
-
-fn runtime_storage_root() -> PathBuf {
-    std::env::var_os("SP42_RUNTIME_DIR").map_or_else(
-        || {
-            PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-                .join("..")
-                .join("..")
-                .join(".sp42-runtime")
-        },
-        PathBuf::from,
-    )
 }
 
 fn gateway_error(message: impl Into<String>) -> (StatusCode, Json<serde_json::Value>) {
@@ -1545,68 +1504,6 @@ fn unauthorized_error(message: &str) -> (StatusCode, Json<serde_json::Value>) {
 
 fn truncate_response_body(body: &[u8]) -> String {
     action_routes::truncate_response_body(body)
-}
-
-#[derive(Debug, Clone)]
-struct BearerHttpClient {
-    client: reqwest::Client,
-    access_token: String,
-}
-
-impl BearerHttpClient {
-    fn new(client: reqwest::Client, access_token: String) -> Self {
-        Self {
-            client,
-            access_token,
-        }
-    }
-}
-
-#[async_trait]
-impl HttpClient for BearerHttpClient {
-    async fn execute(&self, request: HttpRequest) -> Result<HttpResponse, HttpClientError> {
-        let mut builder = match request.method {
-            HttpMethod::Get => self.client.get(request.url),
-            HttpMethod::Post => self.client.post(request.url),
-            HttpMethod::Put => self.client.put(request.url),
-            HttpMethod::Patch => self.client.patch(request.url),
-            HttpMethod::Delete => self.client.delete(request.url),
-        }
-        .bearer_auth(&self.access_token);
-
-        for (key, value) in request.headers {
-            builder = builder.header(&key, &value);
-        }
-
-        let response = if request.body.is_empty() {
-            builder.send().await
-        } else {
-            builder.body(request.body).send().await
-        }
-        .map_err(|error| HttpClientError::Transport {
-            message: error.to_string(),
-        })?;
-
-        let status = response.status().as_u16();
-        let mut headers = HashMap::new();
-        for (key, value) in response.headers() {
-            if let Ok(value) = value.to_str() {
-                headers.insert(key.to_string(), value.to_string());
-            }
-        }
-        let body = response
-            .bytes()
-            .await
-            .map_err(|error| HttpClientError::InvalidResponse {
-                message: error.to_string(),
-            })?;
-
-        Ok(HttpResponse {
-            status,
-            headers: headers.into_iter().collect(),
-            body: body.to_vec(),
-        })
-    }
 }
 
 #[cfg(test)]

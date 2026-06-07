@@ -23,9 +23,10 @@ use sp42_reporting::{
     build_patrol_scenario_report, build_patrol_session_digest, build_shell_state_model,
 };
 
+use crate::runtime_adapters::BearerHttpClient;
 use crate::session_runtime::current_status;
 use crate::{
-    AppState, BearerHttpClient, PublicStorageDocumentQuery, PublicStorageDocumentRouteKind,
+    AppState, PublicStorageDocumentQuery, PublicStorageDocumentRouteKind,
     ResolvedPublicStorageDocument, ServerHealthStatus, action_history_report, action_status_report,
     capability_report_for_request, fetch_revision_diff, fetch_revision_media_diff,
     live_operator_backend_status, resolved_wiki_config, runtime_storage_for, server_readiness,

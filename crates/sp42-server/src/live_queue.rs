@@ -3,15 +3,19 @@ use std::collections::BTreeMap;
 use axum::http::HeaderMap;
 use sp42_coordination::{CoordinationRoomSummary, CoordinationStateSummary};
 use sp42_core::{
-    ActionExecutionHistoryReport, ActionExecutionStatusReport, BacklogRuntime,
-    BacklogRuntimeConfig, ContextInputs, DEFAULT_LIVE_OPERATOR_LIMIT, DevAuthCapabilityReport,
-    DevAuthSessionStatus, FlagState, LiftWingRequest, LiveOperatorBackendStatus,
+    ActionExecutionHistoryReport, ActionExecutionStatusReport, ContextInputs,
+    DevAuthCapabilityReport, DevAuthSessionStatus, FlagState, LiftWingRequest,
+    PublicStorageDocumentData, QueueHeuristicPolicy, QueuedEdit, WikiConfig,
+    build_ranked_queue_with_policy, build_review_workbench, build_scoring_context,
+    execute_liftwing_score, score_edit_with_context,
+};
+use sp42_live::{
+    BacklogRuntime, BacklogRuntimeConfig, BacklogRuntimeStatus, DEFAULT_LIVE_OPERATOR_LIMIT,
+    LiveIngestionSupervisorStatus, LiveOperatorActionPreflight, LiveOperatorBackendStatus,
     LiveOperatorHeuristicProvenance, LiveOperatorPhaseTiming, LiveOperatorPublicDocuments,
-    LiveOperatorQuery, LiveOperatorTelemetry, PublicStorageDocumentData, QueueHeuristicPolicy,
-    QueuedEdit, RecentChangesQuery, StreamRuntimeStatus, WikiConfig,
-    build_live_operator_action_preflight, build_ranked_queue_with_policy, build_review_workbench,
-    build_scoring_context, execute_liftwing_score, execute_recent_changes,
-    filter_live_operator_queue, score_edit_with_context,
+    LiveOperatorQuery, LiveOperatorTelemetry, RecentChangesBatch, RecentChangesQuery,
+    StreamRuntimeStatus, build_live_operator_action_preflight, execute_recent_changes,
+    filter_live_operator_queue,
 };
 use sp42_reporting::{
     DebugSnapshot, DebugSnapshotInputs, LiveOperatorView, PatrolScenarioReportInputs,
@@ -74,15 +78,15 @@ pub(crate) struct LiveOperatorBootstrap {
 
 pub(crate) struct LiveQueueState {
     pub(crate) query: LiveOperatorQuery,
-    pub(crate) batch: sp42_core::RecentChangesBatch,
-    pub(crate) backlog_status: sp42_core::BacklogRuntimeStatus,
+    pub(crate) batch: RecentChangesBatch,
+    pub(crate) backlog_status: BacklogRuntimeStatus,
     pub(crate) queue: Vec<QueuedEdit>,
     pub(crate) selected_index: Option<usize>,
 }
 
 #[derive(Debug, Clone)]
 pub(crate) struct IngestionSupervisorSnapshot {
-    pub(crate) status: sp42_core::LiveIngestionSupervisorStatus,
+    pub(crate) status: LiveIngestionSupervisorStatus,
     pub(crate) queue: Vec<QueuedEdit>,
     pub(crate) next_continue: Option<String>,
 }
@@ -104,14 +108,14 @@ pub(crate) struct LiveOperatorProducts {
     pub(crate) shell_state: sp42_reporting::ShellStateModel,
     pub(crate) backend: LiveOperatorBackendStatus,
     pub(crate) debug_snapshot: DebugSnapshot,
-    pub(crate) action_preflight: sp42_core::LiveOperatorActionPreflight,
+    pub(crate) action_preflight: LiveOperatorActionPreflight,
     pub(crate) heuristic_provenance: Vec<LiveOperatorHeuristicProvenance>,
     pub(crate) selected_heuristic_provenance: Option<LiveOperatorHeuristicProvenance>,
 }
 
 pub(crate) struct LiveOperatorProductContext<'a> {
     pub(crate) stream_status: &'a StreamRuntimeStatus,
-    pub(crate) backlog_status: &'a sp42_core::BacklogRuntimeStatus,
+    pub(crate) backlog_status: &'a BacklogRuntimeStatus,
     pub(crate) auth: &'a DevAuthSessionStatus,
     pub(crate) action_status: &'a ActionExecutionStatusReport,
     pub(crate) capabilities: &'a DevAuthCapabilityReport,
@@ -125,7 +129,7 @@ pub(crate) struct LiveOperatorFinalization {
     pub(crate) public_documents: LiveOperatorPublicDocuments,
     pub(crate) telemetry: LiveOperatorTelemetry,
     pub(crate) notes: Vec<String>,
-    pub(crate) ingestion_supervisor: Option<sp42_core::LiveIngestionSupervisorStatus>,
+    pub(crate) ingestion_supervisor: Option<LiveIngestionSupervisorStatus>,
 }
 
 pub(crate) struct LiveOperatorAssembly {
@@ -291,14 +295,14 @@ fn queue_state_from_supervisor(
     let queue = filter_live_operator_queue(rebuilt_queue, &query);
     LiveQueueState {
         query,
-        batch: sp42_core::RecentChangesBatch {
+        batch: RecentChangesBatch {
             events: queue.iter().map(|item| item.event.clone()).collect(),
             next_continue: snapshot.next_continue,
         },
         backlog_status: snapshot
             .status
             .backlog_status
-            .unwrap_or(sp42_core::BacklogRuntimeStatus {
+            .unwrap_or(BacklogRuntimeStatus {
                 checkpoint_key: format!("recentchanges.rccontinue.{wiki_id}"),
                 next_continue: None,
                 last_batch_size: 0,
@@ -512,7 +516,7 @@ pub(crate) async fn load_selected_review_state(
 
 pub(crate) fn build_live_operator_notes(
     query: &LiveOperatorQuery,
-    backlog_status: &sp42_core::BacklogRuntimeStatus,
+    backlog_status: &BacklogRuntimeStatus,
     queue: &[QueuedEdit],
     scoring_context: Option<&sp42_core::ScoringContext>,
     diff: Option<&sp42_core::StructuredDiff>,

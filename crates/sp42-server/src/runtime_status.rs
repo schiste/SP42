@@ -7,10 +7,10 @@ use axum::{
 };
 use sp42_coordination::{CoordinationRoomSummary, CoordinationSnapshot, CoordinationState};
 use sp42_core::{
-    BacklogRuntime, BacklogRuntimeConfig, DevAuthCapabilityReport, DevAuthSessionStatus,
-    FileStorage, LocalOAuthConfigStatus, LocalOAuthSourceReport, Storage, StreamRuntimeStatus,
-    routes as route_contracts,
+    DevAuthCapabilityReport, DevAuthSessionStatus, FileStorage, LocalOAuthConfigStatus,
+    LocalOAuthSourceReport, Storage, routes as route_contracts,
 };
+use sp42_live::{BacklogRuntime, BacklogRuntimeConfig, BacklogRuntimeStatus, StreamRuntimeStatus};
 use sp42_reporting::ServerDebugSummary;
 
 use crate::coordination::{
@@ -98,7 +98,7 @@ pub(crate) struct RoomInspectionCollection {
 pub(crate) struct OperatorRuntimeInspection {
     pub(crate) wiki_id: String,
     pub(crate) storage_root: String,
-    pub(crate) backlog: sp42_core::BacklogRuntimeStatus,
+    pub(crate) backlog: BacklogRuntimeStatus,
     pub(crate) stream_checkpoint_key: String,
     pub(crate) stream_last_event_id: Option<String>,
     pub(crate) notes: Vec<String>,
@@ -271,7 +271,7 @@ pub(crate) async fn operator_runtime_inspection(
             backlog: snapshot
                 .status
                 .backlog_status
-                .unwrap_or(sp42_core::BacklogRuntimeStatus {
+                .unwrap_or(BacklogRuntimeStatus {
                     checkpoint_key: format!("recentchanges.rccontinue.{wiki_id}"),
                     next_continue: snapshot.next_continue,
                     last_batch_size: 0,

@@ -4,9 +4,9 @@ use std::collections::BTreeMap;
 
 use serde::Deserialize;
 
-use crate::errors::RecentChangesError;
-use crate::traits::HttpClient;
-use crate::types::{
+use sp42_core::errors::RecentChangesError;
+use sp42_core::traits::HttpClient;
+use sp42_core::{
     EditEvent, EditorIdentity, FlagState, HttpMethod, HttpRequest, HttpResponse, WikiConfig,
 };
 
@@ -466,8 +466,7 @@ mod tests {
         execute_recent_changes, parse_recent_changes_response, parse_rfc3339_utc_to_ms,
     };
     use crate::test_fixtures::fixture_wiki_config;
-    use crate::traits::StubHttpClient;
-    use crate::types::HttpResponse;
+    use sp42_core::{HttpResponse, StubHttpClient};
 
     #[test]
     fn builds_recentchanges_request() {
@@ -804,7 +803,7 @@ mod tests {
         assert!(batch.events[0].is_bot.is_enabled());
         assert!(matches!(
             batch.events[0].performer,
-            crate::types::EditorIdentity::Temporary { .. }
+            sp42_core::EditorIdentity::Temporary { .. }
         ));
         assert_eq!(batch.events[0].timestamp_ms, 1_774_366_920_500);
     }

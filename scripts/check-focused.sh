@@ -24,11 +24,11 @@ fi
 mkdir -p "$SP42_APP_DIST_DIR"
 
 run_step "focused cargo check" \
-  "$CARGO_BIN" check -p sp42-core -p sp42-server -p sp42-cli -p sp42-devtools -p sp42-desktop -p sp42-reporting -p sp42-coordination -p sp42-wiki
+  "$CARGO_BIN" check -p sp42-core -p sp42-server -p sp42-cli -p sp42-devtools -p sp42-desktop -p sp42-reporting -p sp42-coordination -p sp42-wiki -p sp42-live
 
 run_step "focused cargo test" \
   env RUST_TEST_THREADS="${RUST_TEST_THREADS:-1}" \
-  "$CARGO_BIN" test -p sp42-core -p sp42-server -p sp42-cli -p sp42-devtools -p sp42-desktop -p sp42-reporting -p sp42-coordination -p sp42-wiki
+  "$CARGO_BIN" test -p sp42-core -p sp42-server -p sp42-cli -p sp42-devtools -p sp42-desktop -p sp42-reporting -p sp42-coordination -p sp42-wiki -p sp42-live
 
 run_step "focused trunk build" \
   "$TRUNK_BIN" build --config Trunk.toml

@@ -3,11 +3,10 @@
 use serde::{Deserialize, Serialize};
 
 use sp42_coordination::CoordinationStateSummary;
-use sp42_core::backlog_runtime::BacklogRuntimeStatus;
 use sp42_core::diff_engine::StructuredDiff;
 use sp42_core::review_workbench::ReviewWorkbench;
-use sp42_core::stream_runtime::StreamRuntimeStatus;
 use sp42_core::types::{QueuedEdit, ScoringContext};
+use sp42_live::{BacklogRuntimeStatus, StreamRuntimeStatus};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum TraceLevel {
@@ -269,6 +268,7 @@ mod tests {
         EditEvent, EditorIdentity, QueuedEdit, ScoringConfig, ScoringContext, UserRiskProfile,
         WarningLevel,
     };
+    use sp42_live::{BacklogRuntimeStatus, StreamRuntimeStatus};
 
     use super::{DebugSnapshotInputs, TraceLevel, build_debug_snapshot};
 
@@ -324,14 +324,14 @@ mod tests {
             race_resolutions: Vec::new(),
             recent_actions: Vec::new(),
         };
-        let stream_status = sp42_core::stream_runtime::StreamRuntimeStatus {
+        let stream_status = StreamRuntimeStatus {
             checkpoint_key: "stream.last_event_id.frwiki".to_string(),
             last_event_id: Some("event-2".to_string()),
             delivered_events: 1,
             filtered_events: 2,
             reconnect_attempts: 1,
         };
-        let backlog_status = sp42_core::backlog_runtime::BacklogRuntimeStatus {
+        let backlog_status = BacklogRuntimeStatus {
             checkpoint_key: "recentchanges.rccontinue.frwiki".to_string(),
             next_continue: Some("20260324010202|456".to_string()),
             last_batch_size: 25,

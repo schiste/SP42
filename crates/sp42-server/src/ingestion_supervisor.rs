@@ -1,8 +1,9 @@
 use std::time::Duration;
 
-use sp42_core::{
-    BacklogRuntime, BacklogRuntimeConfig, DEFAULT_LIVE_OPERATOR_LIMIT, QueuedEdit,
-    StreamRuntimeStatus, WikiConfig, build_ranked_queue,
+use sp42_core::{QueuedEdit, WikiConfig, build_ranked_queue};
+use sp42_live::{
+    BacklogRuntime, BacklogRuntimeConfig, BacklogRuntimeStatus, DEFAULT_LIVE_OPERATOR_LIMIT,
+    LiveIngestionSupervisorStatus, RecentChangesBatch, StreamRuntimeStatus,
 };
 
 use crate::{
@@ -119,7 +120,7 @@ pub(crate) async fn supervisor_snapshot_iteration(
                 );
             }
             IngestionSupervisorSnapshot {
-                status: sp42_core::LiveIngestionSupervisorStatus {
+                status: LiveIngestionSupervisorStatus {
                     wiki_id: wiki_id.to_string(),
                     active: true,
                     poll_interval_ms,
@@ -158,7 +159,7 @@ pub(crate) fn supervisor_inactive_snapshot(
     note: String,
 ) -> IngestionSupervisorSnapshot {
     IngestionSupervisorSnapshot {
-        status: sp42_core::LiveIngestionSupervisorStatus {
+        status: LiveIngestionSupervisorStatus {
             wiki_id: wiki_id.to_string(),
             active: false,
             poll_interval_ms,
@@ -183,8 +184,8 @@ pub(crate) async fn perform_supervisor_poll(
     access_token: String,
 ) -> Result<
     (
-        sp42_core::RecentChangesBatch,
-        sp42_core::BacklogRuntimeStatus,
+        RecentChangesBatch,
+        BacklogRuntimeStatus,
         StreamRuntimeStatus,
         Vec<QueuedEdit>,
     ),

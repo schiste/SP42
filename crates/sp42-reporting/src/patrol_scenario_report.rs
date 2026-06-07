@@ -7,11 +7,10 @@ use crate::report_document::{
 };
 use crate::{DebugSnapshot, DebugSnapshotInputs, build_debug_snapshot};
 use sp42_coordination::CoordinationStateSummary;
-use sp42_core::backlog_runtime::BacklogRuntimeStatus;
 use sp42_core::diff_engine::StructuredDiff;
 use sp42_core::review_workbench::ReviewWorkbench;
-use sp42_core::stream_runtime::StreamRuntimeStatus;
 use sp42_core::types::{QueuedEdit, ScoringContext};
+use sp42_live::{BacklogRuntimeStatus, StreamRuntimeStatus};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ReportSeverity {
@@ -599,15 +598,14 @@ mod tests {
     use sp42_coordination::{
         ActionBroadcast, EditClaim, FlaggedEdit, PresenceHeartbeat, RaceResolution, ScoreDelta,
     };
-    use sp42_core::backlog_runtime::BacklogRuntimeStatus;
     use sp42_core::diff_engine::diff_lines;
     use sp42_core::review_workbench::build_review_workbench;
     use sp42_core::scoring_engine::score_edit;
-    use sp42_core::stream_runtime::StreamRuntimeStatus;
     use sp42_core::types::{
         Action, EditEvent, EditorIdentity, QueuedEdit, ScoringConfig, ScoringContext,
         UserRiskProfile, WarningLevel,
     };
+    use sp42_live::{BacklogRuntimeStatus, StreamRuntimeStatus};
     use sp42_wiki::parse_wiki_config;
 
     use super::{

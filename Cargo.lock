@@ -2112,6 +2112,7 @@ dependencies = [
  "serde_json",
  "sp42-coordination",
  "sp42-core",
+ "sp42-live",
  "sp42-reporting",
  "sp42-wiki",
  "url",
@@ -2183,9 +2184,22 @@ dependencies = [
  "futures",
  "sp42-coordination",
  "sp42-core",
+ "sp42-live",
  "sp42-reporting",
  "sp42-wiki",
  "thiserror 2.0.18",
+]
+
+[[package]]
+name = "sp42-live"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "futures",
+ "proptest",
+ "serde",
+ "serde_json",
+ "sp42-core",
 ]
 
 [[package]]
@@ -2197,6 +2211,7 @@ dependencies = [
  "serde_json",
  "sp42-coordination",
  "sp42-core",
+ "sp42-live",
  "sp42-wiki",
 ]
 
@@ -2213,6 +2228,7 @@ dependencies = [
  "serde_json",
  "sp42-coordination",
  "sp42-core",
+ "sp42-live",
  "sp42-reporting",
  "sp42-wiki",
  "tokio",

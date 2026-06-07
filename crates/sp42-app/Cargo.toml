@@ -22,6 +22,7 @@ serde_json.workspace = true
 send_wrapper.workspace = true
 sp42-coordination = { path = "../sp42-coordination" }
 sp42-core = { path = "../sp42-core" }
+sp42-live = { path = "../sp42-live" }
 sp42-reporting = { path = "../sp42-reporting" }
 url.workspace = true
 wasm-bindgen = "0.2.105"

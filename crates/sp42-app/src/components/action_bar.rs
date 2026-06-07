@@ -1,5 +1,6 @@
 use leptos::prelude::*;
-use sp42_core::{DevAuthCapabilityReport, LiveOperatorActionPreflight, SessionActionKind};
+use sp42_core::{DevAuthCapabilityReport, SessionActionKind};
+use sp42_live::{LiveOperatorActionPreflight, LiveOperatorActionRecommendation};
 
 #[component]
 pub fn ActionBar(
@@ -111,7 +112,7 @@ pub fn ActionBar(
 fn find_recommendation(
     preflight: &LiveOperatorActionPreflight,
     kind: SessionActionKind,
-) -> Option<sp42_core::LiveOperatorActionRecommendation> {
+) -> Option<LiveOperatorActionRecommendation> {
     preflight
         .recommendations
         .iter()
@@ -119,9 +120,7 @@ fn find_recommendation(
         .cloned()
 }
 
-fn tooltip_from_reasons(
-    recommendation: Option<&sp42_core::LiveOperatorActionRecommendation>,
-) -> String {
+fn tooltip_from_reasons(recommendation: Option<&LiveOperatorActionRecommendation>) -> String {
     recommendation
         .map(|r| r.reasons.join("; "))
         .unwrap_or_default()
@@ -129,9 +128,9 @@ fn tooltip_from_reasons(
 
 #[cfg(test)]
 mod tests {
-    use sp42_core::{
+    use sp42_core::SessionActionKind;
+    use sp42_live::{
         LiveOperatorActionPreflight, LiveOperatorActionRecommendation, LiveOperatorRetryClass,
-        SessionActionKind,
     };
 
     use super::{find_recommendation, tooltip_from_reasons};

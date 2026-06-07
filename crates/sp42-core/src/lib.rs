@@ -27,27 +27,22 @@
 pub mod action_contracts;
 pub mod action_executor;
 pub mod article_inventory;
-pub mod backlog_runtime;
 pub mod branding;
 pub mod context_builder;
 pub mod dev_auth;
 pub mod diff_engine;
 pub mod errors;
 pub mod liftwing;
-pub mod live_operator;
 pub mod media_diff;
 pub mod oauth;
 pub mod priority_queue;
 pub mod public_documents;
 pub mod queue_builder;
-pub mod recent_changes;
 pub mod review_workbench;
 pub mod routes;
 pub mod scoring_engine;
 pub mod scoring_evaluation;
 pub mod scoring_policy;
-pub mod stream_ingestor;
-pub mod stream_runtime;
 #[cfg(test)]
 pub(crate) mod test_fixtures;
 pub mod training_data;
@@ -69,7 +64,6 @@ pub use action_executor::{
 pub use article_inventory::{
     ArticleInventory, ArticleReference, article_inventory_notes, build_article_inventory,
 };
-pub use backlog_runtime::{BacklogRuntime, BacklogRuntimeConfig, BacklogRuntimeStatus};
 pub use context_builder::{ContextInputs, build_scoring_context};
 pub use dev_auth::{
     ActionExecutionHistoryReport, ActionExecutionLogEntry, ActionExecutionStatusReport,
@@ -97,14 +91,6 @@ pub use liftwing::{
     LiftWingRequest, build_liftwing_score_request, execute_liftwing_score,
     parse_liftwing_score_response,
 };
-pub use live_operator::{
-    DEFAULT_LIVE_OPERATOR_LIMIT, LiveIngestionSupervisorStatus, LiveOperatorActionPreflight,
-    LiveOperatorActionRecommendation, LiveOperatorBackendStatus, LiveOperatorHeuristicProvenance,
-    LiveOperatorPhaseTiming, LiveOperatorPublicDocuments, LiveOperatorQuery,
-    LiveOperatorRetryClass, LiveOperatorTelemetry, MAX_LIVE_OPERATOR_LIMIT,
-    build_live_operator_action_preflight, classify_retry, filter_live_operator_queue,
-    live_operator_query_matches,
-};
 pub use media_diff::{
     MediaDiffEntry, MediaDiffKind, MediaDiffReport, MediaReference, build_media_diff,
     extract_media_references,
@@ -125,10 +111,6 @@ pub use public_documents::{
 };
 pub use queue_builder::{
     build_ranked_queue, build_ranked_queue_with_contexts, build_ranked_queue_with_policy,
-};
-pub use recent_changes::{
-    RecentChangesBatch, RecentChangesQuery, build_recent_changes_request, execute_recent_changes,
-    parse_recent_changes_response,
 };
 pub use review_workbench::{
     PreparedRequestPreview, ReviewWorkbench, build_review_workbench,
@@ -151,8 +133,6 @@ pub use scoring_policy::{
     load_embedded_compiled_scoring_policy, parse_scoring_evaluation_profile, parse_scoring_policy,
     validate_scoring_evaluation_profile, validate_scoring_policy,
 };
-pub use stream_ingestor::StreamIngestor;
-pub use stream_runtime::{StreamRuntime, StreamRuntimeStatus};
 pub use training_data::{
     TrainingLabel, encode_csv, encode_json, encode_json_line, encode_json_lines,
 };

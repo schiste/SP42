@@ -2,14 +2,13 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::errors::BacklogRuntimeError;
-use crate::errors::StorageError;
 use crate::recent_changes::{
     RecentChangesBatch, RecentChangesQuery, build_recent_changes_request, execute_recent_changes,
     normalize_continue_token,
 };
-use crate::traits::{HttpClient, Storage};
-use crate::types::{FlagState, HttpRequest, WikiConfig};
+use sp42_core::errors::{BacklogRuntimeError, StorageError};
+use sp42_core::traits::{HttpClient, Storage};
+use sp42_core::{FlagState, HttpRequest, WikiConfig};
 
 const DEFAULT_BACKLOG_KEY_PREFIX: &str = "recentchanges.rccontinue";
 
@@ -216,11 +215,11 @@ mod tests {
     use futures::executor::block_on;
 
     use super::{BacklogRuntime, BacklogRuntimeConfig};
-    use crate::errors::StorageError;
     use crate::recent_changes::RecentChangesBatch;
     use crate::test_fixtures::fixture_wiki_config;
-    use crate::traits::{MemoryStorage, Storage, StubHttpClient};
-    use crate::types::{EditEvent, EditorIdentity, HttpResponse};
+    use sp42_core::errors::StorageError;
+    use sp42_core::{EditEvent, EditorIdentity, HttpResponse};
+    use sp42_core::{MemoryStorage, Storage, StubHttpClient};
 
     #[test]
     fn initializes_from_persisted_rccontinue() {

@@ -2,12 +2,12 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::{
-    ActionExecutionStatusReport, BacklogRuntimeStatus, DevAuthCapabilityReport,
-    DevAuthSessionStatus, EditorIdentity, FlagState, LocalOAuthConfigStatus,
-    LocalOAuthSourceReport, PublicRuleSetDocument, PublicTeamDefinitionDocument,
-    PublicTeamRegistryDocument, PublicUserPreferencesDocument, QueuedEdit, ScoringSignal,
-    SessionActionExecutionRequest, SessionActionKind, StreamRuntimeStatus,
+use crate::{BacklogRuntimeStatus, StreamRuntimeStatus};
+use sp42_core::{
+    ActionExecutionStatusReport, DevAuthCapabilityReport, DevAuthSessionStatus, EditorIdentity,
+    FlagState, LocalOAuthConfigStatus, LocalOAuthSourceReport, PublicRuleSetDocument,
+    PublicTeamDefinitionDocument, PublicTeamRegistryDocument, PublicUserPreferencesDocument,
+    QueuedEdit, ScoringSignal, SessionActionExecutionRequest, SessionActionKind,
     build_session_action_execution_requests,
 };
 
@@ -620,7 +620,7 @@ mod tests {
         LiveOperatorBackendStatus, LiveOperatorQuery, LiveOperatorRetryClass,
         build_live_operator_action_preflight, classify_retry, filter_live_operator_queue,
     };
-    use crate::{
+    use sp42_core::{
         ActionExecutionStatusReport, CompositeScore, DevAuthActionTokenAvailability,
         DevAuthCapabilityReadiness, DevAuthCapabilityReport, DevAuthDerivedCapabilities,
         DevAuthEditCapabilities, DevAuthModerationCapabilities, DevAuthProbeAcceptance,
@@ -897,7 +897,7 @@ mod tests {
 
         assert_eq!(
             preflight.recommended_kind,
-            Some(crate::SessionActionKind::Rollback)
+            Some(sp42_core::SessionActionKind::Rollback)
         );
         assert!(
             preflight
@@ -932,7 +932,7 @@ mod tests {
         let rollback = preflight
             .recommendations
             .iter()
-            .find(|entry| matches!(entry.kind, crate::SessionActionKind::Rollback))
+            .find(|entry| matches!(entry.kind, sp42_core::SessionActionKind::Rollback))
             .expect("rollback recommendation should exist");
         assert!(!rollback.available);
         assert_eq!(

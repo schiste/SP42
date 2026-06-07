@@ -1,10 +1,10 @@
 //! Shared stream runtime around `EventSource` checkpointing and ingestion.
 
-use crate::errors::{StorageError, StreamRuntimeError};
 use crate::stream_ingestor::StreamIngestor;
-use crate::traits::{EventSource, Storage};
-use crate::types::{EditEvent, WikiConfig};
 use serde::{Deserialize, Serialize};
+use sp42_core::errors::{StorageError, StreamRuntimeError};
+use sp42_core::traits::{EventSource, Storage};
+use sp42_core::{EditEvent, WikiConfig};
 
 const DEFAULT_CURSOR_KEY_PREFIX: &str = "stream.last_event_id";
 
@@ -213,10 +213,9 @@ mod tests {
     use futures::executor::block_on;
 
     use super::StreamRuntime;
-    use crate::errors::{EventSourceError, StorageError};
     use crate::test_fixtures::fixture_wiki_config;
-    use crate::traits::{EventSource, MemoryStorage, ReplayEventSource, Storage};
-    use crate::types::ServerSentEvent;
+    use sp42_core::errors::{EventSourceError, StorageError};
+    use sp42_core::{EventSource, MemoryStorage, ReplayEventSource, ServerSentEvent, Storage};
     const SAMPLE_EVENT: &str = include_str!("../../../fixtures/frwiki_recentchange_edit.json");
 
     #[test]

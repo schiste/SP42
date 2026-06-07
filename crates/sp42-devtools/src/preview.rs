@@ -7,12 +7,13 @@ use sp42_coordination::{
     EditClaim, FlaggedEdit, PresenceHeartbeat, RaceResolution, ScoreDelta, decode_message,
     encode_message,
 };
-use sp42_core::backlog_runtime::{BacklogRuntime, BacklogRuntimeConfig, BacklogRuntimeStatus};
 use sp42_core::errors::{BacklogRuntimeError, StreamRuntimeError};
-use sp42_core::recent_changes::RecentChangesBatch;
-use sp42_core::stream_runtime::{StreamRuntime, StreamRuntimeStatus};
 use sp42_core::traits::{MemoryStorage, ReplayEventSource, StubHttpClient};
 use sp42_core::types::{Action, EditEvent, HttpRequest, HttpResponse, ServerSentEvent, WikiConfig};
+use sp42_live::{
+    BacklogRuntime, BacklogRuntimeConfig, BacklogRuntimeStatus, RecentChangesBatch, StreamRuntime,
+    StreamRuntimeStatus,
+};
 use sp42_wiki::ConfigError;
 
 pub const DEV_PREVIEW_WIKI_ID: &str = "frwiki";

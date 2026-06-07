@@ -1,5 +1,6 @@
 use leptos::prelude::*;
-use sp42_core::{FlagState, LiveOperatorQuery};
+use sp42_core::FlagState;
+use sp42_live::LiveOperatorQuery;
 
 /// Filter parameters sent as query string to `/operator/live/{wiki_id}`.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -365,7 +366,8 @@ fn event_target_input_value(_ev: &leptos::ev::Event) -> String {
 #[cfg(test)]
 mod tests {
     use super::PatrolFilterParams;
-    use sp42_core::{FlagState, LiveOperatorQuery};
+    use sp42_core::FlagState;
+    use sp42_live::LiveOperatorQuery;
 
     #[test]
     fn default_query_string_contains_limit() {

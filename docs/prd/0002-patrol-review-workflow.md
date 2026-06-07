@@ -101,11 +101,12 @@ Items the workflow merely *consumes* but does not *own* (the score itself; the
 score-gated recommendation, bound in PRD-0003) are deliberately not listed. (Internal
 assembly/classification helpers behind the loop — the operator summary, the per-edit
 prepared-action previews, inspector-lane classification, and the wikitext article
-inventory — are additionally unit-tested in `crates/sp42-core` /
-`crates/sp42-app` (`operator_summary.rs::builds_operator_summary_from_report`,
-`review_workbench.rs::builds_request_and_training_previews`,
-`inspector_feed.rs::classifies_known_prefixes`,
-`article_inventory.rs::inventories_article_references_and_categories`), but they are
+inventory — are additionally unit-tested across `crates/sp42-reporting`,
+`crates/sp42-core`, and `crates/sp42-app`
+(`operator_summary.rs::builds_operator_summary_from_report` in sp42-reporting;
+`review_workbench.rs::builds_request_and_training_previews` and
+`article_inventory.rs::inventories_article_references_and_categories` in sp42-core;
+`inspector_feed.rs::classifies_known_prefixes` in sp42-app), but they are
 assembly mechanism, not operator-observable loop outcomes.)
 
 - [x] A single `recentchanges`-feed event is ingested and normalized into a queued
@@ -199,7 +200,8 @@ assembly mechanism, not operator-observable loop outcomes.)
   (queue/diff/action panes, the keyboard handler, the selection-vs-stream invariant in
   `crates/sp42-app/src/pages/patrol.rs`) is exercised only indirectly; the app-layer
   Leptos controllers (`revision_artifacts`, `action_controller`, `queue_controller`,
-  `keyboard_controller`) carry no `#[cfg(test)]` module. The end-to-end coverage of the
+  `keyboard_controller`, `eventstream_controller`, `load_controller`, `view_components`)
+  carry no `#[cfg(test)]` module. The end-to-end coverage of the
   loop lives in the server test (`operator_live.rs`) and the core-crate unit tests, not
   in the WASM UI layer. The DoD above is bound only to surfaces that do have tests.
 - **`Action` vs `SessionActionKind` are two disposition vocabularies.** The review
@@ -210,12 +212,12 @@ assembly mechanism, not operator-observable loop outcomes.)
   (e.g. `Warn`/`Report` exist only in `Action`; `Undo`/`Patrol`/tagging only in
   `SessionActionKind`). This is undocumented and a likely source of confusion for a
   maintainer.
-- **`skip` (`s`) has two code paths.** The keyboard handler raises a skip trigger
-  (`crates/sp42-app/src/pages/patrol/keyboard_controller.rs` → `install_skip_effect`,
-  `crates/sp42-app/src/pages/patrol/action_controller.rs`), which advances selection
-  to `idx + 1`, while `ArrowDown` advances via a separate branch in the keyboard handler
-  (`crates/sp42-app/src/pages/patrol/keyboard_controller.rs`). Both move to `idx + 1`
-  but are not unified.
+- **`skip` (`s`) has two code paths.** The keyboard handler sets a skip trigger
+  (`crates/sp42-app/src/pages/patrol/keyboard_controller.rs`) that `install_skip_effect`
+  (defined entirely in `crates/sp42-app/src/pages/patrol/action_controller.rs`) reacts to,
+  advancing selection to `idx + 1`, while `ArrowDown` advances via a separate branch in the
+  keyboard handler (`crates/sp42-app/src/pages/patrol/keyboard_controller.rs`). Both move to
+  `idx + 1` but are not unified.
 - **Two `recentchanges` timestamp parsers coexist.** `stream_ingestor.rs` and
   `recent_changes.rs` each carry a near-identical hand-rolled RFC-3339/`days_from_civil`
   implementation (`parse_rfc3339_utc` returning seconds+nanos,
@@ -246,6 +248,7 @@ assembly mechanism, not operator-observable loop outcomes.)
 - **Anonymous-vs-temporary editor classification differs subtly across ingestors.** Both
   `classify_editor` implementations (`crates/sp42-live/src/stream_ingestor.rs` and
   `crates/sp42-live/src/recent_changes.rs`) classify a `~`-prefixed user as Temporary
-  and an IP as Anonymous, but they are separate implementations; the live filter
-  (`crates/sp42-app/src/pages/patrol/queue_controller.rs`) trusts whichever produced
-  the event.
+  and an IP as Anonymous, but they are separate implementations; the live filter — now
+  centralized in `crates/sp42-live/src/live_operator.rs` (`live_operator_query_matches`)
+  and shared by the server and the `queue_controller.rs` client path — trusts whichever
+  classification produced the event.

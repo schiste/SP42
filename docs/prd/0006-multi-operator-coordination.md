@@ -243,10 +243,10 @@ Factual observations from reverse-engineering the shipped code; these replace
   unit tests. So claiming an item or emitting presence is **not reachable through
   the shipped GUI**; only the server relay and the client protocol library are
   built and tested.
-- **CLI / desktop "coordination" previews are fixtures.** Both replay a hardcoded
-  `coordination_preview_messages()` set (`crates/sp42-cli/src/main.rs`;
-  `build_coordination_snapshot`, `crates/sp42-desktop/src/main.rs`) to
-  demonstrate the codec and reducer, not live room data.
+- **CLI / desktop "coordination" previews are fixtures.** Both surface a hardcoded
+  fixture set (`dev_coordination_preview_messages`, `crates/sp42-devtools/src/preview.rs`)
+  through the shared devtools surface builder rather than from either shell's `main.rs`
+  directly, to demonstrate the codec and reducer, not live room data.
 - **No explicit claim release / un-claim.** `CoordinationMessage`
   (`crates/sp42-coordination/src/messages.rs`) has no release variant. A claim changes
   hands only via a later `EditClaim` (last-writer-wins) or a `RaceResolution`, and

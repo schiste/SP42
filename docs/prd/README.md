@@ -25,15 +25,17 @@ triggers in `GOVERNANCE.md`.
 
 ## Overlap with ADR triggers
 
-Two ADR triggers are dual-natured and require **both** artifacts:
+Some ADR triggers can also need a PRD:
 
 - *scoring policy, ranking behavior, or Wikimedia action semantics*
-- *public contracts or APIs*
+- *public contracts or APIs* that change operator/editor behavior or external
+  integration behavior
 
-For these, the PRD owns the user-facing intent and the definition of done; the
-ADR owns the structural decision. Open the PRD first; it links the ADR(s) it
-spawns. The remaining ADR triggers (crate boundaries, runtime/deploy,
-auth/token/CSRF, desktop packaging, storage formats) stay ADR-only.
+For these, the PRD owns the user-facing intent and definition of done; the ADR
+owns the structural decision. Purely internal crate boundaries, runtime/deploy
+mechanics, auth/token/CSRF implementation details, desktop packaging mechanics,
+storage formats, and Rust API reshaping stay ADR-only unless they change
+operator/editor behavior or external integration behavior.
 
 ## Lifecycle
 

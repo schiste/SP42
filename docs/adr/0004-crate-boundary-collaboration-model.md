@@ -25,8 +25,8 @@ boundaries; it does not change operator-facing behavior, so no PRD is required.
 
 ## Decision
 
-SP42 will use Rust crates as bounded-context and maintainer-ownership boundaries
-for large feature areas. A crate split is justified when it improves ownership,
+SP42 will use Rust crates as bounded-context and review boundaries for large
+feature areas. A crate split is justified when it improves ownership,
 reviewability, dependency direction, and API stability. A split is not justified
 when it only renames modules.
 
@@ -80,30 +80,29 @@ crates/
 ```
 
 This is the target shape. The project should split early when a contract is
-clear, but it should not split a domain before the public API would survive real
-use by at least two callers.
+clear, but it should not split a domain before the public API is useful to
+current callers and likely to survive the next real caller.
 
 `sp42-core` is transitional. It may re-export stable APIs while callers migrate,
 but it should stop accumulating new domain ownership once a target crate exists.
 
-## Contract Stabilization Plan
+## Contract Stabilization Checklist
 
-Before a domain becomes its own crate, stabilize its contract in this order:
+Before a domain becomes its own crate, check the contract:
 
-1. **Name the boundary:** define what the crate owns and what it must not own.
-2. **Name the consumers:** list the shell crates or runtimes that will depend on
-   it.
-3. **Freeze the public types:** identify request/response structs, errors,
-   traits, and feature flags that callers will use.
-4. **Move tests with the contract:** include deterministic fixtures or doubles
-   that prove the crate can be tested without production I/O.
-5. **Prove one-way dependencies:** confirm the crate does not depend on shell
-   crates, deployment adapters, or UI frameworks.
-6. **Extract without behavior change:** land file moves and import rewrites
-   before feature changes.
+1. **Boundary:** define what the crate owns and what it must not own.
+2. **Consumers:** name current callers and the likely next caller.
+3. **Public contract:** identify request/response structs, errors, traits, and
+   feature flags that callers will use.
+4. **Tests:** move deterministic fixtures or doubles with the contract.
+5. **Dependency direction:** confirm the crate does not depend on shell crates,
+   deployment adapters, or UI frameworks.
+6. **Behavior:** land extraction before behavior changes.
 
 When a contract is still unclear, keep the code in `sp42-core` behind module
 boundaries and stabilize the API there first.
+
+This is a PR-description checklist, not a separate approval process.
 
 ## Split Decisions
 
@@ -131,7 +130,7 @@ Initial split decisions:
 Create a new domain crate only when most of these are true:
 
 - its public API is stable, or an ADR/PRD records the intended contract
-- at least two shell crates or runtime paths consume the code
+- the code has current callers and a credible next caller
 - the split removes duplication or reduces review blast radius
 - tests move with the crate and remain deterministic
 - the new crate does not create dependency cycles
@@ -153,18 +152,17 @@ Preferred extraction order:
 `sp42-core` may re-export stable APIs during migration so callers can move in
 small steps. New code should depend on the extracted crate once it exists.
 
-## Pull Request Rules
+## Pull Request Notes
 
-Crate-boundary PRs must include:
+Crate-boundary PR descriptions should include only what applies:
 
-- an ADR link or ADR update when creating a new domain crate
+- an ADR/PRD link when one records the contract
 - dependency-direction notes
 - validation notes for the extracted crate and affected shell crates
-- a compatibility plan for moved public APIs
-- no unrelated refactors in the same commit
+- a compatibility note when public APIs or re-exports move
 
-Reviewers should reject splits that only create a new place for duplicated
-logic.
+Keep unrelated refactors in separate commits. Review should push back on splits
+that only create a new place for duplicated logic.
 
 ## Alternatives Considered
 

@@ -3,10 +3,10 @@
 use serde::{Deserialize, Serialize};
 use url::Url;
 
-use crate::action_executor::{
+use crate::action_contracts::{
     PatrolRequest, RollbackRequest, SessionActionExecutionRequest, SessionActionKind, UndoRequest,
-    build_patrol_request, build_rollback_request, build_undo_request,
 };
+use crate::action_executor::{build_patrol_request, build_rollback_request, build_undo_request};
 use crate::errors::ReviewWorkbenchError;
 use crate::training_data::{TrainingLabel, encode_csv, encode_json_line};
 use crate::types::{Action, EditorIdentity, HttpMethod, QueuedEdit, WikiConfig};

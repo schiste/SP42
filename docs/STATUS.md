@@ -9,6 +9,7 @@ Foundations are complete:
 - Cargo workspace and toolchain policy are in place
 - `sp42-core` owns shared contracts, traits, scoring primitives, and runtime logic
 - `sp42-wiki` owns wiki config parsing, registry/default selection, fixtures, and capability profiles
+- action contracts are split from MediaWiki execution and server session adapters; a future `sp42-actions` crate should wait until shared neutral types avoid a crate cycle
 - CI enforces formatting, linting, tests, coverage, and dependency checks
 - ADR-0001 records the foundational architecture decisions
 

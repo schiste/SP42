@@ -5,7 +5,7 @@ use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
 use url::Url;
 
-use crate::action_executor::SessionActionKind;
+use crate::action_contracts::SessionActionKind;
 use crate::errors::DevAuthError;
 pub use crate::routes::{
     DEV_AUTH_ACTION_HISTORY_PATH, DEV_AUTH_ACTION_STATUS_PATH, DEV_AUTH_BOOTSTRAP_SESSION_PATH,
@@ -270,7 +270,7 @@ mod tests {
         build_dev_auth_clear_request, parse_action_execution_history,
         parse_action_execution_status, parse_dev_auth_status,
     };
-    use crate::action_executor::SessionActionKind;
+    use crate::action_contracts::SessionActionKind;
     use crate::types::HttpMethod;
 
     #[test]

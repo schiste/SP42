@@ -26,6 +26,21 @@ Patrol scenarios are currently reported through shared action and reporting path
 - the browser dashboard reuses the same shared reporting surface and shared shell-state model
 - the desktop shell now renders the same shared shell-state and scenario/digest summaries as the other targets
 
+## Action Boundary
+
+Action request, response, token-kind, and retryability contracts live in
+`sp42-core::action_contracts`. MediaWiki request builders, response parsing, and
+HTTP-client execution live in `sp42-core::action_executor`. Server-side
+session lookup, CSRF validation, capability checks, token fetching, content-edit
+adapters, and action history writes stay in `sp42-server`.
+
+This is the stabilization step before a future `sp42-actions` crate. The split
+should wait until the shared type boundary avoids a crate cycle with
+`sp42-core`, or until the remaining core callers move to their target domain
+crates. Current validation is deterministic and local-first; authenticated live
+Wikimedia write validation still requires real credentials and should be called
+out in PR notes when action execution changes.
+
 ## Local Operator Smoke Flow
 
 The repo includes a single local operator smoke entrypoint:

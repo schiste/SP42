@@ -1,15 +1,19 @@
-//! `MediaWiki` API action orchestration lives here.
+//! `MediaWiki` action request building and execution.
 
 use std::collections::BTreeMap;
 
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use serde_json::Value;
 use url::Url;
 use url::form_urlencoded::Serializer;
 
+use crate::action_contracts::{
+    ActionResponseSummary, PatrolRequest, RollbackRequest, TokenKind, UndoRequest,
+    WikiPageSaveRequest, is_retryable_action_api_error,
+};
 use crate::errors::ActionError;
 use crate::traits::HttpClient;
-use crate::types::{FlagState, HttpMethod, HttpRequest, HttpResponse, WikiConfig};
+use crate::types::{HttpMethod, HttpRequest, HttpResponse, WikiConfig};
 
 fn action_error(message: impl Into<String>) -> ActionError {
     ActionError::Execution {
@@ -31,116 +35,6 @@ fn api_action_error(
         code,
         http_status,
         retryable,
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct RollbackRequest {
-    pub title: String,
-    pub user: String,
-    pub token: String,
-    pub summary: Option<String>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct PatrolRequest {
-    pub rev_id: u64,
-    pub token: String,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct UndoRequest {
-    pub title: String,
-    pub undo_rev_id: u64,
-    pub undo_after_rev_id: u64,
-    pub token: String,
-    pub summary: Option<String>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct WikiPageSaveRequest {
-    pub title: String,
-    pub text: String,
-    pub token: String,
-    pub summary: Option<String>,
-    pub baserevid: Option<u64>,
-    pub tags: Vec<String>,
-    pub watchlist: Option<String>,
-    pub create_only: FlagState,
-    pub minor: FlagState,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum TokenKind {
-    Rollback,
-    Patrol,
-    Csrf,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum SessionActionKind {
-    Rollback,
-    Patrol,
-    Undo,
-    TagCitationNeeded,
-    InlineEdit,
-}
-
-impl SessionActionKind {
-    #[must_use]
-    pub const fn label(self) -> &'static str {
-        match self {
-            Self::Rollback => "rollback",
-            Self::Patrol => "patrol",
-            Self::Undo => "undo",
-            Self::TagCitationNeeded => "tag-citation-needed",
-            Self::InlineEdit => "inline-edit",
-        }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct SessionActionExecutionRequest {
-    pub wiki_id: String,
-    pub kind: SessionActionKind,
-    pub rev_id: u64,
-    pub title: Option<String>,
-    pub target_user: Option<String>,
-    pub undo_after_rev_id: Option<u64>,
-    pub summary: Option<String>,
-    #[serde(default)]
-    pub selected_text: Option<String>,
-    #[serde(default)]
-    pub batch_rev_ids: Option<Vec<u64>>,
-    #[serde(default)]
-    pub replacement_text: Option<String>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct SessionActionExecutionResponse {
-    pub wiki_id: String,
-    pub kind: SessionActionKind,
-    pub rev_id: u64,
-    pub accepted: bool,
-    pub actor: Option<String>,
-    pub http_status: Option<u16>,
-    pub api_code: Option<String>,
-    #[serde(default)]
-    pub retryable: bool,
-    #[serde(default)]
-    pub warnings: Vec<String>,
-    pub result: Option<String>,
-    pub message: Option<String>,
-}
-
-impl TokenKind {
-    #[must_use]
-    pub const fn api_value(self) -> &'static str {
-        match self {
-            Self::Rollback => "rollback",
-            Self::Patrol => "patrol",
-            Self::Csrf => "csrf",
-        }
     }
 }
 
@@ -574,7 +468,7 @@ pub fn parse_action_response_summary(
     let retryable = parsed
         .error
         .as_ref()
-        .is_some_and(|error| is_retryable_api_error(error.code.as_str()));
+        .is_some_and(|error| is_retryable_action_api_error(error.code.as_str()));
     let api_code = parsed.error.as_ref().map(|error| error.code.clone());
     let error = parsed.error.map(|error| {
         let MediaWikiApiError {
@@ -644,30 +538,6 @@ fn parse_warning_lines(value: &Value) -> Vec<String> {
         Value::Object(map) => map.values().flat_map(parse_warning_lines).collect(),
         _ => vec![value.to_string()],
     }
-}
-
-fn is_retryable_api_error(code: &str) -> bool {
-    matches!(
-        code,
-        "maxlag"
-            | "readonly"
-            | "ratelimited"
-            | "internal_api_error_DBQueryError"
-            | "internal_api_error_DBConnectionError"
-            | "internal_api_error_Exception"
-            | "failed-save"
-    )
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ActionResponseSummary {
-    pub status: u16,
-    pub warnings: Vec<String>,
-    pub result: Option<String>,
-    pub error: Option<String>,
-    pub api_code: Option<String>,
-    pub retryable: bool,
-    pub nochange: bool,
 }
 
 const fn token_field_name(token_kind: TokenKind) -> &'static str {
@@ -740,12 +610,12 @@ mod tests {
     use futures::executor::block_on;
 
     use super::{
-        PatrolRequest, RollbackRequest, SessionActionExecutionRequest,
-        SessionActionExecutionResponse, SessionActionKind, TokenKind, UndoRequest,
-        WikiPageSaveRequest, build_patrol_request, build_rollback_request, build_token_request,
-        build_undo_request, build_wiki_page_save_request, execute_fetch_token, execute_patrol,
-        execute_rollback, execute_undo, execute_wiki_page_save, parse_action_response_summary,
-        parse_token_response,
+        build_patrol_request, build_rollback_request, build_token_request, build_undo_request,
+        build_wiki_page_save_request, execute_fetch_token, execute_patrol, execute_rollback,
+        execute_undo, execute_wiki_page_save, parse_action_response_summary, parse_token_response,
+    };
+    use crate::action_contracts::{
+        PatrolRequest, RollbackRequest, TokenKind, UndoRequest, WikiPageSaveRequest,
     };
     use crate::test_fixtures::fixture_wiki_config;
     use crate::traits::StubHttpClient;
@@ -801,42 +671,6 @@ mod tests {
         assert!(request.url.as_str().contains("action=query"));
         assert!(request.url.as_str().contains("meta=tokens"));
         assert!(request.url.as_str().contains("type=rollback"));
-    }
-
-    #[test]
-    fn session_action_contract_serializes_without_token_material() {
-        let request = SessionActionExecutionRequest {
-            wiki_id: "frwiki".to_string(),
-            kind: SessionActionKind::Rollback,
-            rev_id: 123_456,
-            title: Some("Example".to_string()),
-            target_user: Some("ExampleUser".to_string()),
-            selected_text: None,
-            undo_after_rev_id: None,
-            summary: Some("test note".to_string()),
-            batch_rev_ids: None,
-            replacement_text: None,
-        };
-        let response = SessionActionExecutionResponse {
-            wiki_id: "frwiki".to_string(),
-            kind: SessionActionKind::Rollback,
-            rev_id: 123_456,
-            accepted: true,
-            actor: Some("Schiste".to_string()),
-            http_status: Some(200),
-            api_code: None,
-            retryable: false,
-            warnings: Vec::new(),
-            result: Some("rollback=true".to_string()),
-            message: Some("queued".to_string()),
-        };
-
-        let request_json = serde_json::to_string(&request).expect("request should serialize");
-        let response_json = serde_json::to_string(&response).expect("response should serialize");
-
-        assert!(request_json.contains("\"wiki_id\":\"frwiki\""));
-        assert!(!request_json.contains("token"));
-        assert!(response_json.contains("\"accepted\":true"));
     }
 
     #[test]

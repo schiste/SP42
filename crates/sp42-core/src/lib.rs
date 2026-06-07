@@ -24,6 +24,7 @@
 //! assert_eq!(config.wiki_id, "frwiki");
 //! ```
 
+pub mod action_contracts;
 pub mod action_executor;
 pub mod article_inventory;
 pub mod backlog_runtime;
@@ -55,9 +56,12 @@ pub mod types;
 pub mod user_analyzer;
 pub mod wiki_storage;
 
-pub use action_executor::{
+pub use action_contracts::{
     ActionResponseSummary, PatrolRequest, RollbackRequest, SessionActionExecutionRequest,
     SessionActionExecutionResponse, SessionActionKind, TokenKind, UndoRequest, WikiPageSaveRequest,
+    is_retryable_action_api_error,
+};
+pub use action_executor::{
     build_patrol_request, build_rollback_request, build_token_request, build_undo_request,
     build_wiki_page_save_request, execute_fetch_token, execute_patrol, execute_rollback,
     execute_undo, execute_wiki_page_save, parse_action_response_summary, parse_token_response,

@@ -16,3 +16,4 @@ sp42-core = { path = "../sp42-core" }
 [dev-dependencies]
 proptest = "1.9.0"
 serde_json.workspace = true
+sp42-wiki = { path = "../sp42-wiki" }

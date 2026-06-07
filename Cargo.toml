@@ -8,6 +8,7 @@ members = [
     "crates/sp42-desktop",
     "crates/sp42-reporting",
     "crates/sp42-server",
+    "crates/sp42-wiki",
     "xtask",
 ]
 resolver = "3"

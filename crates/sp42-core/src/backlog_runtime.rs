@@ -216,17 +216,15 @@ mod tests {
     use futures::executor::block_on;
 
     use super::{BacklogRuntime, BacklogRuntimeConfig};
-    use crate::config_parser::parse_wiki_config;
     use crate::errors::StorageError;
     use crate::recent_changes::RecentChangesBatch;
+    use crate::test_fixtures::fixture_wiki_config;
     use crate::traits::{MemoryStorage, Storage, StubHttpClient};
     use crate::types::{EditEvent, EditorIdentity, HttpResponse};
 
-    const CONFIG: &str = include_str!("../../../configs/frwiki.yaml");
-
     #[test]
     fn initializes_from_persisted_rccontinue() {
-        let config = parse_wiki_config(CONFIG).expect("config should parse");
+        let config = fixture_wiki_config();
         let storage = MemoryStorage::default();
         block_on(storage.set(
             "recentchanges.rccontinue.frwiki".to_string(),
@@ -256,7 +254,7 @@ mod tests {
 
     #[test]
     fn initialize_rejects_invalid_utf8_checkpoint() {
-        let config = parse_wiki_config(CONFIG).expect("config should parse");
+        let config = fixture_wiki_config();
         let storage = MemoryStorage::default();
         block_on(storage.set(
             "recentchanges.rccontinue.frwiki".to_string(),
@@ -284,7 +282,7 @@ mod tests {
 
     #[test]
     fn initialize_rejects_blank_persisted_checkpoint() {
-        let config = parse_wiki_config(CONFIG).expect("config should parse");
+        let config = fixture_wiki_config();
         let storage = MemoryStorage::default();
         block_on(storage.set(
             "recentchanges.rccontinue.frwiki".to_string(),
@@ -308,7 +306,7 @@ mod tests {
 
     #[test]
     fn poll_updates_checkpoint_and_metrics() {
-        let config = parse_wiki_config(CONFIG).expect("config should parse");
+        let config = fixture_wiki_config();
         let storage = MemoryStorage::default();
         let client = StubHttpClient::new([Ok(HttpResponse {
             status: 200,
@@ -363,7 +361,7 @@ mod tests {
 
     #[test]
     fn apply_batch_does_not_mutate_state_when_storage_set_fails() {
-        let config = parse_wiki_config(CONFIG).expect("config should parse");
+        let config = fixture_wiki_config();
         let storage = FailingStorage::fail_set();
         let mut runtime = BacklogRuntime::from_config(
             &config,
@@ -393,7 +391,7 @@ mod tests {
 
     #[test]
     fn apply_batch_does_not_mutate_state_when_storage_remove_fails() {
-        let config = parse_wiki_config(CONFIG).expect("config should parse");
+        let config = fixture_wiki_config();
         let storage = FailingStorage::fail_remove();
         let mut runtime = BacklogRuntime::from_config(
             &config,
@@ -418,7 +416,7 @@ mod tests {
 
     #[test]
     fn reset_checkpoint_clears_state() {
-        let config = parse_wiki_config(CONFIG).expect("config should parse");
+        let config = fixture_wiki_config();
         let storage = MemoryStorage::default();
         let mut runtime = BacklogRuntime::from_config(
             &config,
@@ -446,7 +444,7 @@ mod tests {
 
     #[test]
     fn load_checkpoint_rejects_invalid_utf8() {
-        let config = parse_wiki_config(CONFIG).expect("config should parse");
+        let config = fixture_wiki_config();
         let storage = MemoryStorage::default();
         block_on(storage.set(
             "recentchanges.rccontinue.frwiki".to_string(),
@@ -474,7 +472,7 @@ mod tests {
 
     #[test]
     fn query_reflects_current_checkpoint_state() {
-        let config = parse_wiki_config(CONFIG).expect("config should parse");
+        let config = fixture_wiki_config();
         let storage = MemoryStorage::default();
         let mut runtime = BacklogRuntime::from_config(
             &config,
@@ -501,7 +499,7 @@ mod tests {
 
     #[test]
     fn poll_does_not_mutate_state_when_recentchanges_execution_fails() {
-        let config = parse_wiki_config(CONFIG).expect("config should parse");
+        let config = fixture_wiki_config();
         let storage = MemoryStorage::default();
         let client = StubHttpClient::new([Ok(HttpResponse {
             status: 200,
@@ -527,7 +525,7 @@ mod tests {
 
     #[test]
     fn batch_without_continue_clears_stale_checkpoint_and_updates_metrics() {
-        let config = parse_wiki_config(CONFIG).expect("config should parse");
+        let config = fixture_wiki_config();
         let storage = MemoryStorage::default();
         block_on(storage.set(
             "recentchanges.rccontinue.frwiki".to_string(),

@@ -22,9 +22,9 @@ use super::{
 use crate::coordination::CoordinationRegistry;
 use crate::deployment::{DeploymentConfig, DeploymentMode};
 use crate::local_env::LocalOAuthConfig;
-use crate::wiki_registry::WikiRegistry;
 use crate::wikimedia_capabilities::CapabilityProbeTargets;
 use futures::{SinkExt, StreamExt};
+use sp42_wiki::WikiRegistry;
 use tokio::net::TcpListener;
 use tokio_tungstenite::{
     connect_async,

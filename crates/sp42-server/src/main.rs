@@ -15,7 +15,6 @@ mod session_runtime;
 mod state;
 mod static_assets;
 mod storage_routes;
-mod wiki_registry;
 mod wikimedia_capabilities;
 
 use std::collections::HashMap;
@@ -59,6 +58,7 @@ use sp42_core::{
     resolve_wiki_storage_document, save_wiki_storage_document,
 };
 use sp42_reporting::LiveOperatorView;
+use sp42_wiki::WikiRegistry;
 
 #[cfg(test)]
 use crate::coordination::CoordinationRoomInspection;
@@ -98,7 +98,6 @@ pub(crate) use crate::session_runtime::{install_session, session_cookie_header, 
 use crate::state::{
     AppState, CachedCapabilityReport, PendingOAuthLogin, SessionSnapshot, StoredSession,
 };
-use crate::wiki_registry::WikiRegistry;
 use crate::wikimedia_capabilities::{CapabilityProbeTargets, probe_with_targets};
 #[cfg(test)]
 pub(crate) use sp42_core::routes::{
@@ -1505,7 +1504,10 @@ fn config_for_state_wiki(
 }
 
 fn resolved_wiki_config(state: &AppState, wiki_id: &str) -> Result<sp42_core::WikiConfig, String> {
-    let mut config = state.wiki_registry.config(wiki_id)?;
+    let mut config = state
+        .wiki_registry
+        .config(wiki_id)
+        .map_err(|error| error.to_string())?;
     if let Some(api_url) = &state.capability_targets.api_url {
         config.api_url = reqwest::Url::parse(api_url)
             .map_err(|error| format!("api_url override was invalid: {error}"))?;

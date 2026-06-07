@@ -213,17 +213,15 @@ mod tests {
     use futures::executor::block_on;
 
     use super::StreamRuntime;
-    use crate::config_parser::parse_wiki_config;
     use crate::errors::{EventSourceError, StorageError};
+    use crate::test_fixtures::fixture_wiki_config;
     use crate::traits::{EventSource, MemoryStorage, ReplayEventSource, Storage};
     use crate::types::ServerSentEvent;
-
-    const CONFIG: &str = include_str!("../../../configs/frwiki.yaml");
     const SAMPLE_EVENT: &str = include_str!("../../../fixtures/frwiki_recentchange_edit.json");
 
     #[test]
     fn initializes_from_stored_checkpoint() {
-        let config = parse_wiki_config(CONFIG).expect("config should parse");
+        let config = fixture_wiki_config();
         let source = ReplayEventSource::new([]);
         let storage = MemoryStorage::default();
         block_on(storage.set(
@@ -244,7 +242,7 @@ mod tests {
 
     #[test]
     fn streams_until_actionable_event_and_persists_cursor() {
-        let config = parse_wiki_config(CONFIG).expect("config should parse");
+        let config = fixture_wiki_config();
         let unrelated = SAMPLE_EVENT.replace("\"frwiki\"", "\"enwiki\"");
         let source = ReplayEventSource::new([
             ServerSentEvent {
@@ -280,7 +278,7 @@ mod tests {
 
     #[test]
     fn reconnects_from_latest_checkpoint() {
-        let config = parse_wiki_config(CONFIG).expect("config should parse");
+        let config = fixture_wiki_config();
         let source = ReplayEventSource::new([ServerSentEvent {
             event_type: Some("message".to_string()),
             id: Some("event-9".to_string()),
@@ -299,7 +297,7 @@ mod tests {
 
     #[test]
     fn drains_actionable_events_up_to_limit() {
-        let config = parse_wiki_config(CONFIG).expect("config should parse");
+        let config = fixture_wiki_config();
         let source = ReplayEventSource::new([
             ServerSentEvent {
                 event_type: Some("message".to_string()),
@@ -338,7 +336,7 @@ mod tests {
 
     #[test]
     fn restore_checkpoint_tracks_persisted_state_without_reconnect() {
-        let config = parse_wiki_config(CONFIG).expect("config should parse");
+        let config = fixture_wiki_config();
         let source = ReplayEventSource::new([]);
         let storage = MemoryStorage::default();
         block_on(storage.set(
@@ -357,7 +355,7 @@ mod tests {
 
     #[test]
     fn invalid_payload_does_not_advance_checkpoint() {
-        let config = parse_wiki_config(CONFIG).expect("config should parse");
+        let config = fixture_wiki_config();
         let source = ReplayEventSource::new([ServerSentEvent {
             event_type: Some("message".to_string()),
             id: Some("event-bad".to_string()),
@@ -393,7 +391,7 @@ mod tests {
 
     #[test]
     fn load_checkpoint_rejects_invalid_utf8() {
-        let config = parse_wiki_config(CONFIG).expect("config should parse");
+        let config = fixture_wiki_config();
         let source = ReplayEventSource::new([]);
         let storage = MemoryStorage::default();
         block_on(storage.set("stream.last_event_id.frwiki".to_string(), vec![0xff, 0xfe]))
@@ -412,7 +410,7 @@ mod tests {
 
     #[test]
     fn reconnect_from_checkpoint_uses_storage_when_runtime_state_is_empty() {
-        let config = parse_wiki_config(CONFIG).expect("config should parse");
+        let config = fixture_wiki_config();
         let source = ReplayEventSource::new([]);
         let storage = MemoryStorage::default();
         block_on(storage.set(
@@ -433,7 +431,7 @@ mod tests {
 
     #[test]
     fn reconnect_attempts_only_increment_on_success() {
-        let config = parse_wiki_config(CONFIG).expect("config should parse");
+        let config = fixture_wiki_config();
         let source = FailingReconnectEventSource::default();
         let storage = MemoryStorage::default();
         block_on(storage.set(
@@ -453,7 +451,7 @@ mod tests {
 
     #[test]
     fn actionable_event_without_id_preserves_existing_checkpoint() {
-        let config = parse_wiki_config(CONFIG).expect("config should parse");
+        let config = fixture_wiki_config();
         let source = ReplayEventSource::new([ServerSentEvent {
             event_type: Some("message".to_string()),
             id: None,
@@ -484,7 +482,7 @@ mod tests {
 
     #[test]
     fn storage_write_failure_keeps_runtime_state_unadvanced() {
-        let config = parse_wiki_config(CONFIG).expect("config should parse");
+        let config = fixture_wiki_config();
         let source = ReplayEventSource::new([ServerSentEvent {
             event_type: Some("message".to_string()),
             id: Some("event-1".to_string()),

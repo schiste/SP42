@@ -274,7 +274,7 @@ mod tests {
 
     #[test]
     fn builds_snapshot_from_available_inputs() {
-        let config = sp42_core::parse_wiki_config(include_str!("../../../configs/frwiki.yaml"))
+        let config = sp42_wiki::parse_wiki_config(include_str!("../../../configs/frwiki.yaml"))
             .expect("config should parse");
         let event = EditEvent {
             wiki_id: "frwiki".to_string(),

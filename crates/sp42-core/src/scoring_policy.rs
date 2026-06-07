@@ -13,6 +13,8 @@ use crate::types::{
 
 const ACTIVE_FRWIKI_VANDALISM_POLICY_YAML: &str =
     include_str!("../../../configs/scoring/active/frwiki-vandalism.yaml");
+const ACTIVE_TESTWIKI_VANDALISM_POLICY_YAML: &str =
+    include_str!("../../../configs/scoring/active/testwiki-vandalism.yaml");
 const CANDIDATE_FRWIKI_TIGHTEN_IDENTITY_CAP_YAML: &str =
     include_str!("../../../configs/scoring/candidate/frwiki-vandalism-tighten-identity-cap.yaml");
 
@@ -506,6 +508,7 @@ fn rule_weight(document: &ScoringPolicyDocument, slug: &'static str) -> i32 {
 fn embedded_policy_source(reference: &str) -> Option<&'static str> {
     match reference {
         "active/frwiki-vandalism" => Some(ACTIVE_FRWIKI_VANDALISM_POLICY_YAML),
+        "active/testwiki-vandalism" => Some(ACTIVE_TESTWIKI_VANDALISM_POLICY_YAML),
         "candidate/frwiki-vandalism-tighten-identity-cap" => {
             Some(CANDIDATE_FRWIKI_TIGHTEN_IDENTITY_CAP_YAML)
         }

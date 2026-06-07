@@ -747,15 +747,13 @@ mod tests {
         execute_rollback, execute_undo, execute_wiki_page_save, parse_action_response_summary,
         parse_token_response,
     };
-    use crate::config_parser::parse_wiki_config;
+    use crate::test_fixtures::fixture_wiki_config;
     use crate::traits::StubHttpClient;
     use crate::types::{FlagState, HttpMethod, HttpResponse};
 
-    const CONFIG: &str = include_str!("../../../configs/frwiki.yaml");
-
     #[test]
     fn builds_rollback_request_body() {
-        let config = parse_wiki_config(CONFIG).expect("config should parse");
+        let config = fixture_wiki_config();
         let request = build_rollback_request(
             &config,
             &RollbackRequest {
@@ -777,7 +775,7 @@ mod tests {
 
     #[test]
     fn builds_patrol_request_body() {
-        let config = parse_wiki_config(CONFIG).expect("config should parse");
+        let config = fixture_wiki_config();
         let request = build_patrol_request(
             &config,
             &PatrolRequest {
@@ -796,7 +794,7 @@ mod tests {
 
     #[test]
     fn builds_token_query_request() {
-        let config = parse_wiki_config(CONFIG).expect("config should parse");
+        let config = fixture_wiki_config();
         let request = build_token_request(&config, TokenKind::Rollback);
 
         assert_eq!(request.method, HttpMethod::Get);
@@ -843,7 +841,7 @@ mod tests {
 
     #[test]
     fn builds_undo_request_body() {
-        let config = parse_wiki_config(CONFIG).expect("config should parse");
+        let config = fixture_wiki_config();
         let request = build_undo_request(
             &config,
             &UndoRequest {
@@ -866,7 +864,7 @@ mod tests {
 
     #[test]
     fn builds_wiki_page_save_request_body() {
-        let config = parse_wiki_config(CONFIG).expect("config should parse");
+        let config = fixture_wiki_config();
         let request = build_wiki_page_save_request(
             &config,
             &WikiPageSaveRequest {
@@ -908,7 +906,7 @@ mod tests {
 
     #[test]
     fn executes_rollback_through_http_trait() {
-        let config = parse_wiki_config(CONFIG).expect("config should parse");
+        let config = fixture_wiki_config();
         let client = StubHttpClient::new([Ok(HttpResponse {
             status: 200,
             headers: BTreeMap::new(),
@@ -932,7 +930,7 @@ mod tests {
 
     #[test]
     fn executes_patrol_through_http_trait() {
-        let config = parse_wiki_config(CONFIG).expect("config should parse");
+        let config = fixture_wiki_config();
         let client = StubHttpClient::new([Ok(HttpResponse {
             status: 200,
             headers: BTreeMap::new(),
@@ -954,7 +952,7 @@ mod tests {
 
     #[test]
     fn fetches_token_through_http_trait() {
-        let config = parse_wiki_config(CONFIG).expect("config should parse");
+        let config = fixture_wiki_config();
         let client = StubHttpClient::new([Ok(HttpResponse {
             status: 200,
             headers: BTreeMap::new(),
@@ -969,7 +967,7 @@ mod tests {
 
     #[test]
     fn executes_undo_through_http_trait() {
-        let config = parse_wiki_config(CONFIG).expect("config should parse");
+        let config = fixture_wiki_config();
         let client = StubHttpClient::new([Ok(HttpResponse {
             status: 200,
             headers: BTreeMap::new(),
@@ -994,7 +992,7 @@ mod tests {
 
     #[test]
     fn executes_page_save_through_http_trait() {
-        let config = parse_wiki_config(CONFIG).expect("config should parse");
+        let config = fixture_wiki_config();
         let client = StubHttpClient::new([Ok(HttpResponse {
             status: 200,
             headers: BTreeMap::new(),
@@ -1023,7 +1021,7 @@ mod tests {
 
     #[test]
     fn rejects_non_success_http_status() {
-        let config = parse_wiki_config(CONFIG).expect("config should parse");
+        let config = fixture_wiki_config();
         let client = StubHttpClient::new([Ok(HttpResponse {
             status: 429,
             headers: BTreeMap::new(),
@@ -1114,7 +1112,7 @@ mod tests {
 
     #[test]
     fn rejects_action_response_with_api_error_even_on_2xx() {
-        let config = parse_wiki_config(CONFIG).expect("config should parse");
+        let config = fixture_wiki_config();
         let client = StubHttpClient::new([Ok(HttpResponse {
             status: 200,
             headers: BTreeMap::new(),

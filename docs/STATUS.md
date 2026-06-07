@@ -7,7 +7,8 @@ This document tracks the current implementation state by phase. It is meant to b
 Foundations are complete:
 
 - Cargo workspace and toolchain policy are in place
-- `sp42-core` owns shared contracts, traits, errors, and pure logic
+- `sp42-core` owns shared contracts, traits, scoring primitives, and runtime logic
+- `sp42-wiki` owns wiki config parsing, registry/default selection, fixtures, and capability profiles
 - CI enforces formatting, linting, tests, coverage, and dependency checks
 - ADR-0001 records the foundational architecture decisions
 

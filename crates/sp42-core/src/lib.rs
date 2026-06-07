@@ -3,21 +3,22 @@
 //! Shared SP42 domain contracts and pure platform-independent logic.
 //!
 //! ```
-//! use sp42_core::{parse_wiki_config, branding::PROJECT_NAME};
+//! use sp42_core::{WikiConfig, branding::PROJECT_NAME};
 //!
-//! let config = parse_wiki_config(
-//!     r#"
-//! wiki_id: frwiki
-//! display_name: French Wikipedia
-//! api_url: https://fr.wikipedia.org/w/api.php
-//! eventstreams_url: https://stream.wikimedia.org/v2/stream/recentchange
-//! oauth_authorize_url: https://meta.wikimedia.org/w/rest.php/oauth2/authorize
-//! oauth_token_url: https://meta.wikimedia.org/w/rest.php/oauth2/access_token
-//! namespace_allowlist: [0]
-//! scoring_policy_ref: active/frwiki-vandalism
-//! "#,
-//! )
-//! .expect("the inline fixture is valid");
+//! let config = WikiConfig {
+//!     wiki_id: "frwiki".to_string(),
+//!     display_name: "French Wikipedia".to_string(),
+//!     api_url: "https://fr.wikipedia.org/w/api.php".parse().unwrap(),
+//!     eventstreams_url: "https://stream.wikimedia.org/v2/stream/recentchange".parse().unwrap(),
+//!     oauth_authorize_url: "https://meta.wikimedia.org/w/rest.php/oauth2/authorize".parse().unwrap(),
+//!     oauth_token_url: "https://meta.wikimedia.org/w/rest.php/oauth2/access_token".parse().unwrap(),
+//!     liftwing_url: None,
+//!     coordination_url: None,
+//!     namespace_allowlist: vec![0],
+//!     scoring_policy_ref: "active/frwiki-vandalism".to_string(),
+//!     scoring: Default::default(),
+//!     templates: Default::default(),
+//! };
 //!
 //! assert_eq!(PROJECT_NAME, "SP42");
 //! assert_eq!(config.wiki_id, "frwiki");
@@ -27,7 +28,6 @@ pub mod action_executor;
 pub mod article_inventory;
 pub mod backlog_runtime;
 pub mod branding;
-pub mod config_parser;
 pub mod context_builder;
 pub mod dev_auth;
 pub mod diff_engine;
@@ -47,6 +47,8 @@ pub mod scoring_evaluation;
 pub mod scoring_policy;
 pub mod stream_ingestor;
 pub mod stream_runtime;
+#[cfg(test)]
+pub(crate) mod test_fixtures;
 pub mod training_data;
 pub mod traits;
 pub mod types;
@@ -64,7 +66,6 @@ pub use article_inventory::{
     ArticleInventory, ArticleReference, article_inventory_notes, build_article_inventory,
 };
 pub use backlog_runtime::{BacklogRuntime, BacklogRuntimeConfig, BacklogRuntimeStatus};
-pub use config_parser::parse_wiki_config;
 pub use context_builder::{ContextInputs, build_scoring_context};
 pub use dev_auth::{
     ActionExecutionHistoryReport, ActionExecutionLogEntry, ActionExecutionStatusReport,
@@ -83,11 +84,10 @@ pub use diff_engine::{
     diff_chars, diff_lines,
 };
 pub use errors::{
-    ActionError, BacklogRuntimeError, ConfigError, DevAuthError, DiffError, EventSourceError,
-    HttpClientError, LiftWingError, OAuthError, PublicDocumentError, RecentChangesError,
-    ReviewWorkbenchError, ScoringError, ScoringEvaluationError, ScoringPolicyError, StorageError,
-    StreamIngestorError, StreamRuntimeError, TrainingDataError, UserAnalysisError, WebSocketError,
-    WikiStorageError,
+    ActionError, BacklogRuntimeError, DevAuthError, DiffError, EventSourceError, HttpClientError,
+    LiftWingError, OAuthError, PublicDocumentError, RecentChangesError, ReviewWorkbenchError,
+    ScoringError, ScoringEvaluationError, ScoringPolicyError, StorageError, StreamIngestorError,
+    StreamRuntimeError, TrainingDataError, UserAnalysisError, WebSocketError, WikiStorageError,
 };
 pub use liftwing::{
     LiftWingRequest, build_liftwing_score_request, execute_liftwing_score,

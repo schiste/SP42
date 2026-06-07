@@ -847,7 +847,7 @@ mod tests {
         parse_wiki_storage_payload_envelope, render_wiki_storage_document_page,
         render_wiki_storage_index_page, resolve_wiki_storage_document, save_wiki_storage_document,
     };
-    use crate::config_parser::parse_wiki_config;
+    use crate::test_fixtures::fixture_wiki_config;
     use crate::traits::StubHttpClient;
     use crate::{FlagState, HttpResponse, WikiStorageDocumentKind, WikiStorageError};
 
@@ -989,8 +989,7 @@ mod tests {
 
     #[test]
     fn load_document_reads_revision_and_payload() {
-        let config = parse_wiki_config(include_str!("../../../configs/frwiki.yaml"))
-            .expect("fixture should parse");
+        let config = fixture_wiki_config();
         let client = StubHttpClient::new([Ok(HttpResponse {
             status: 200,
             headers: BTreeMap::default(),
@@ -1020,8 +1019,7 @@ mod tests {
 
     #[test]
     fn save_document_maps_edit_conflicts() {
-        let config = parse_wiki_config(include_str!("../../../configs/frwiki.yaml"))
-            .expect("fixture should parse");
+        let config = fixture_wiki_config();
         let plan = build_wiki_storage_plan(&WikiStorageConfig::default(), &sample_input());
         let client = StubHttpClient::new([Ok(HttpResponse {
             status: 200,

@@ -360,16 +360,14 @@ mod tests {
     use super::{
         StreamIngestor, StreamIngestorOptions, normalize_unix_timestamp_ms, parse_timestamp_text,
     };
-    use crate::config_parser::parse_wiki_config;
+    use crate::test_fixtures::fixture_wiki_config;
     use crate::types::EditorIdentity;
-
-    const CONFIG: &str = include_str!("../../../configs/frwiki.yaml");
     const SAMPLE_EVENT: &str = include_str!("../../../fixtures/frwiki_recentchange_edit.json");
     const SAMPLE_BATCH: &str = include_str!("../../../fixtures/frwiki_recentchanges_batch.jsonl");
 
     #[test]
     fn ingests_supported_recentchange_event() {
-        let config = parse_wiki_config(CONFIG).expect("config should parse");
+        let config = fixture_wiki_config();
         let ingestor = StreamIngestor::from_config(&config);
 
         let event = ingestor
@@ -384,7 +382,7 @@ mod tests {
 
     #[test]
     fn filters_out_unrelated_wikis() {
-        let config = parse_wiki_config(CONFIG).expect("config should parse");
+        let config = fixture_wiki_config();
         let ingestor = StreamIngestor::from_config(&config);
         let payload = SAMPLE_EVENT.replace("\"frwiki\"", "\"enwiki\"");
 
@@ -395,7 +393,7 @@ mod tests {
 
     #[test]
     fn filters_out_bot_edits() {
-        let config = parse_wiki_config(CONFIG).expect("config should parse");
+        let config = fixture_wiki_config();
         let ingestor = StreamIngestor::from_config(&config);
         let payload = SAMPLE_EVENT.replace("\"bot\": false", "\"bot\": true");
 
@@ -406,7 +404,7 @@ mod tests {
 
     #[test]
     fn ingests_json_lines_batch() {
-        let config = parse_wiki_config(CONFIG).expect("config should parse");
+        let config = fixture_wiki_config();
         let ingestor = StreamIngestor::from_config(&config);
 
         let events = ingestor
@@ -419,7 +417,7 @@ mod tests {
 
     #[test]
     fn accepts_timestamp_strings_and_millisecond_values() {
-        let config = parse_wiki_config(CONFIG).expect("config should parse");
+        let config = fixture_wiki_config();
         let ingestor = StreamIngestor::from_config(&config);
 
         let string_payload = SAMPLE_EVENT.replace(
@@ -445,7 +443,7 @@ mod tests {
 
     #[test]
     fn can_ignore_minor_edits_with_explicit_options() {
-        let config = parse_wiki_config(CONFIG).expect("config should parse");
+        let config = fixture_wiki_config();
         let ingestor = StreamIngestor::with_options(
             &config,
             StreamIngestorOptions {
@@ -463,7 +461,7 @@ mod tests {
 
     #[test]
     fn classifies_temporary_and_ipv6_editors() {
-        let config = parse_wiki_config(CONFIG).expect("config should parse");
+        let config = fixture_wiki_config();
         let ingestor = StreamIngestor::from_config(&config);
 
         let temporary = ingestor
@@ -484,7 +482,7 @@ mod tests {
 
     #[test]
     fn classifies_registered_editors_and_saturates_byte_delta() {
-        let config = parse_wiki_config(CONFIG).expect("config should parse");
+        let config = fixture_wiki_config();
         let ingestor = StreamIngestor::from_config(&config);
         let payload = SAMPLE_EVENT
             .replace("\"user\": \"192.0.2.44\"", "\"user\": \"ExampleUser\"")
@@ -505,7 +503,7 @@ mod tests {
 
     #[test]
     fn honors_explicit_allowed_change_type_subset() {
-        let config = parse_wiki_config(CONFIG).expect("config should parse");
+        let config = fixture_wiki_config();
         let ingestor = StreamIngestor::with_options(
             &config,
             StreamIngestorOptions {
@@ -524,7 +522,7 @@ mod tests {
 
     #[test]
     fn normalizes_empty_comment_and_missing_old_length() {
-        let config = parse_wiki_config(CONFIG).expect("config should parse");
+        let config = fixture_wiki_config();
         let ingestor = StreamIngestor::from_config(&config);
         let payload = SAMPLE_EVENT
             .replace(
@@ -544,7 +542,7 @@ mod tests {
 
     #[test]
     fn rejects_impossible_calendar_dates_and_fractional_junk() {
-        let config = parse_wiki_config(CONFIG).expect("config should parse");
+        let config = fixture_wiki_config();
         let ingestor = StreamIngestor::from_config(&config);
 
         let impossible_date = SAMPLE_EVENT.replace(
@@ -577,7 +575,7 @@ mod tests {
 
     #[test]
     fn accepts_fractional_rfc3339_timestamps() {
-        let config = parse_wiki_config(CONFIG).expect("config should parse");
+        let config = fixture_wiki_config();
         let ingestor = StreamIngestor::from_config(&config);
         let payload = SAMPLE_EVENT.replace(
             "\"timestamp\": 1710000000",

@@ -600,7 +600,6 @@ mod tests {
         ActionBroadcast, EditClaim, FlaggedEdit, PresenceHeartbeat, RaceResolution, ScoreDelta,
     };
     use sp42_core::backlog_runtime::BacklogRuntimeStatus;
-    use sp42_core::config_parser::parse_wiki_config;
     use sp42_core::diff_engine::diff_lines;
     use sp42_core::review_workbench::build_review_workbench;
     use sp42_core::scoring_engine::score_edit;
@@ -609,6 +608,7 @@ mod tests {
         Action, EditEvent, EditorIdentity, QueuedEdit, ScoringConfig, ScoringContext,
         UserRiskProfile, WarningLevel,
     };
+    use sp42_wiki::parse_wiki_config;
 
     use super::{
         PatrolScenarioReadiness, PatrolScenarioReportInputs, ReportSeverity,

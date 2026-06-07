@@ -288,7 +288,7 @@ pub fn stream_request_from_steps(steps: &str) -> StreamPreviewRequest {
 
 #[cfg(test)]
 mod tests {
-    use sp42_core::parse_wiki_config;
+    use sp42_wiki::parse_wiki_config;
 
     use super::{
         backlog_request_from_limit, render_backlog_preview_lines,

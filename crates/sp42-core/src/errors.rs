@@ -120,21 +120,6 @@ pub enum ReviewWorkbenchError {
 }
 
 #[derive(Debug, Error)]
-pub enum ConfigError {
-    #[error("configuration is not valid YAML: {0}")]
-    InvalidYaml(#[from] serde_yaml::Error),
-    #[error(transparent)]
-    ScoringPolicy(#[from] ScoringPolicyError),
-    #[error("configuration field `{field}` is invalid: {message}")]
-    InvalidField {
-        field: &'static str,
-        message: String,
-    },
-    #[error("configuration namespace_allowlist contains duplicate namespace {namespace}")]
-    DuplicateNamespace { namespace: i32 },
-}
-
-#[derive(Debug, Error)]
 pub enum OAuthError {
     #[error("oauth configuration is invalid: {message}")]
     InvalidConfig { message: String },

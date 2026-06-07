@@ -279,7 +279,6 @@ fn format_finding_text(finding: &PatrolScenarioFinding) -> String {
 
 #[cfg(test)]
 mod tests {
-    use sp42_core::config_parser::parse_wiki_config;
     use sp42_core::context_builder::{ContextInputs, build_scoring_context};
     use sp42_core::diff_engine::diff_lines;
     use sp42_core::review_workbench::build_review_workbench;
@@ -288,6 +287,7 @@ mod tests {
         EditEvent, EditorIdentity, QueuedEdit, ScoringConfig, ScoringContext, UserRiskProfile,
         WarningLevel,
     };
+    use sp42_wiki::parse_wiki_config;
 
     use super::{
         PatrolSessionDigestInputs, build_patrol_session_digest,

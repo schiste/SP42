@@ -2113,6 +2113,7 @@ dependencies = [
  "sp42-coordination",
  "sp42-core",
  "sp42-reporting",
+ "sp42-wiki",
  "url",
  "wasm-bindgen",
  "wasm-bindgen-futures",
@@ -2183,6 +2184,7 @@ dependencies = [
  "sp42-coordination",
  "sp42-core",
  "sp42-reporting",
+ "sp42-wiki",
  "thiserror 2.0.18",
 ]
 
@@ -2195,6 +2197,7 @@ dependencies = [
  "serde_json",
  "sp42-coordination",
  "sp42-core",
+ "sp42-wiki",
 ]
 
 [[package]]
@@ -2211,12 +2214,24 @@ dependencies = [
  "sp42-coordination",
  "sp42-core",
  "sp42-reporting",
+ "sp42-wiki",
  "tokio",
  "tokio-tungstenite",
  "tower",
  "tower-http",
  "tracing",
  "tracing-subscriber",
+ "url",
+]
+
+[[package]]
+name = "sp42-wiki"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_yaml",
+ "sp42-core",
+ "thiserror 2.0.18",
  "url",
 ]
 

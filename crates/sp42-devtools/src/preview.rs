@@ -8,11 +8,12 @@ use sp42_coordination::{
     encode_message,
 };
 use sp42_core::backlog_runtime::{BacklogRuntime, BacklogRuntimeConfig, BacklogRuntimeStatus};
-use sp42_core::errors::{BacklogRuntimeError, ConfigError, StreamRuntimeError};
+use sp42_core::errors::{BacklogRuntimeError, StreamRuntimeError};
 use sp42_core::recent_changes::RecentChangesBatch;
 use sp42_core::stream_runtime::{StreamRuntime, StreamRuntimeStatus};
 use sp42_core::traits::{MemoryStorage, ReplayEventSource, StubHttpClient};
 use sp42_core::types::{Action, EditEvent, HttpRequest, HttpResponse, ServerSentEvent, WikiConfig};
+use sp42_wiki::ConfigError;
 
 pub const DEV_PREVIEW_WIKI_ID: &str = "frwiki";
 pub const DEV_PREVIEW_ACTOR: &str = "LocalUser";
@@ -69,7 +70,7 @@ pub struct DevCoordinationPreview {
 ///
 /// Returns [`ConfigError`] when the embedded fixture is invalid.
 pub fn parse_default_dev_wiki_config() -> Result<WikiConfig, ConfigError> {
-    sp42_core::parse_wiki_config(DEV_PREVIEW_DEFAULT_CONFIG)
+    sp42_wiki::parse_wiki_config(DEV_PREVIEW_DEFAULT_CONFIG)
 }
 
 /// Build a stream runtime preview from JSONL recentchanges events.

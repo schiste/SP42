@@ -24,12 +24,15 @@ re-derives values that drift apart.
 This is an ADR-only change to internal architecture; no operator-facing behaviour
 changes, so no PRD.
 
-**Contract reconciliation.** Two points are clarified, not rewritten (Article-12
-applies if maintainers deem either substantive): (1) Rule 16.2's "no external CSS"
-means *network-external* — one in-repo, Trunk-bundled stylesheet makes no extra
-request and is allowed; (2) §17's `<40` custom-property cap predates the mandatory
-scales and is raised to a concrete asserted number (Enforcement); the ≤20 colour
-cap is kept.
+**Contract amendments.** This ADR carries two substantive amendments to the
+binding `FRONTEND_DESIGN_CONTRACT.md`, made in this PR under its Article-12
+process (Rule 19.4): (1) Rule 16.2 is amended to permit exactly one
+network-internal, Trunk-bundled token stylesheet (`tokens.css`), with "external"
+defined as network-external; (2) §17's custom-property cap is raised from `<40`
+to `<=52` (the asserted total for the now-mandatory scales and diff tokens). The
+≤20 colour cap is unchanged. Both are recorded as dated amendment notes in the
+contract and gate on the same approval that accepts this ADR; until then this ADR
+and the amendments are Proposed together.
 
 ## Decision
 

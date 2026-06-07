@@ -1,0 +1,18 @@
+[package]
+name = "sp42-types"
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+version.workspace = true
+
+[dependencies]
+async-trait.workspace = true
+serde.workspace = true
+thiserror.workspace = true
+url.workspace = true
+
+[dev-dependencies]
+futures.workspace = true
+
+[lints]
+workspace = true

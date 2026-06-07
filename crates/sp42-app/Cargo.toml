@@ -24,6 +24,7 @@ sp42-coordination = { path = "../sp42-coordination" }
 sp42-core = { path = "../sp42-core" }
 sp42-live = { path = "../sp42-live" }
 sp42-reporting = { path = "../sp42-reporting" }
+sp42-types = { path = "../sp42-types" }
 url.workspace = true
 wasm-bindgen = "0.2.105"
 wasm-bindgen-futures = "0.4.55"

@@ -6,7 +6,12 @@ minify = "on_release"
 public_url = "/"
 
 [watch]
-watch = ["crates/sp42-app/src", "crates/sp42-app/static", "crates/sp42-core/src"]
+watch = [
+  "crates/sp42-app/src",
+  "crates/sp42-app/static",
+  "crates/sp42-core/src",
+  "crates/sp42-types/src",
+]
 
 [serve]
 addresses = ["127.0.0.1"]

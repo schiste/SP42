@@ -6,7 +6,8 @@
 
 **Implementation note:** Accepted after PR #15 landed the initial crate-boundary
 batch and closed issues #6-#13. Follow-up work should use this ADR as the
-contract for future crate splits.
+contract for future crate splits. The first `sp42-types` slice now owns
+transport, storage, and platform dependency contracts.
 
 ## Context
 
@@ -125,17 +126,15 @@ Initial split decisions:
   filtering, and multiwiki defaults should settle together.
 - **Stabilize then split: `sp42-actions`.** MediaWiki action contracts should
   wait for authenticated validation and the content-editing ADR outcome.
-- **Defer broad extraction: `sp42-types`.** A shared types crate is useful only
-  for narrow neutral slices with multiple real consumers. Do not create a broad
-  bucket for every struct in `sp42-core`.
+- **Split narrowly: `sp42-types`.** The first slice owns transport, storage, and
+  platform dependency contracts. Broad shared-type extraction remains deferred.
 
 ## `sp42-types` Strategy
 
-Do not extract a catch-all `sp42-types` crate now. The current extracted crates
-can depend one-way on `sp42-core` without cycles, so there is no architectural
-pressure that justifies a broad move.
+`sp42-types` is a narrow contract crate, not a catch-all replacement for
+`sp42-core`.
 
-The first extraction should be slice-based and behavior-preserving:
+The first extraction is slice-based and behavior-preserving:
 
 1. **Transport and storage contracts first:** `HttpMethod`, `HttpRequest`,
    `HttpResponse`, `ServerSentEvent`, `WebSocketFrame`, the I/O traits, and the
@@ -150,19 +149,17 @@ The first extraction should be slice-based and behavior-preserving:
 4. **Branding last:** branding constants should move only if multiple crates
    need them without also needing `sp42-core`.
 
-Current blockers:
+Current guardrails:
 
 - several scoring structs in `sp42-core::types` get defaults from
   `sp42-core::scoring_policy`, so moving them as-is would make `sp42-types`
   depend back on core policy behavior
-- `sp42-core::traits` includes deterministic test doubles; move the traits and
-  reusable doubles together, or keep doubles in dev/test support
 - domain-specific errors should move with their owning crate, not into a global
   error bucket, unless they are transport/storage primitives
 
-`sp42-core` remains the compatibility facade while these slices are prepared.
-New extracted crates should depend directly on existing domain crates when a
-crate exists, and only on `sp42-core` for contracts that have not moved yet.
+`sp42-core` remains the compatibility facade while callers migrate. New code
+should depend on `sp42-types` for moved contracts and on the owning domain crate
+for everything else.
 
 ## Extraction Rules
 
@@ -186,7 +183,7 @@ Preferred extraction order:
 4. `sp42-coordination`
 5. `sp42-live`
 6. `sp42-actions`
-7. `sp42-types` slices, starting with transport/storage contracts
+7. further `sp42-types` slices only when they satisfy the strategy above
 
 `sp42-core` may re-export stable APIs during migration so callers can move in
 small steps. New code should depend on the extracted crate once it exists.

@@ -1,5 +1,6 @@
 //! Coordination-specific error types.
 
+use sp42_types::WebSocketError;
 use thiserror::Error;
 
 #[derive(Debug, Error)]
@@ -7,7 +8,7 @@ pub enum CoordinationError {
     #[error(transparent)]
     Codec(#[from] CodecError),
     #[error(transparent)]
-    WebSocket(#[from] sp42_core::WebSocketError),
+    WebSocket(#[from] WebSocketError),
     #[error("unexpected websocket frame: {message}")]
     InvalidFrame { message: String },
 }

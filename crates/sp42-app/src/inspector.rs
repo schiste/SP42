@@ -2,9 +2,9 @@ use std::collections::BTreeMap;
 
 use futures::executor::block_on;
 use sp42_coordination::{CoordinationSnapshot, CoordinationStateSummary};
-use sp42_core::traits::{MemoryStorage, ReplayEventSource, StubHttpClient};
-use sp42_core::{HttpResponse, ReviewWorkbench, WikiConfig};
+use sp42_core::{ReviewWorkbench, WikiConfig};
 use sp42_live::{BacklogRuntime, BacklogRuntimeConfig, StreamRuntime};
+use sp42_types::{HttpResponse, MemoryStorage, ReplayEventSource, StubHttpClient};
 
 const SAMPLE_STREAM_EVENTS: &str =
     include_str!("../../../fixtures/frwiki_recentchanges_batch.jsonl");

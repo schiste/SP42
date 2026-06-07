@@ -20,6 +20,7 @@ sp42-coordination = { path = "../sp42-coordination" }
 sp42-core = { path = "../sp42-core" }
 sp42-live = { path = "../sp42-live" }
 sp42-reporting = { path = "../sp42-reporting" }
+sp42-types = { path = "../sp42-types" }
 sp42-wiki = { path = "../sp42-wiki" }
 tokio.workspace = true
 tower-http = { workspace = true, features = ["cors", "fs"] }

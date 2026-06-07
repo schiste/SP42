@@ -7,12 +7,13 @@ use sp42_coordination::{
     EditClaim, FlaggedEdit, PresenceHeartbeat, RaceResolution, ScoreDelta, decode_message,
     encode_message,
 };
-use sp42_core::errors::{BacklogRuntimeError, StreamRuntimeError};
-use sp42_core::traits::{MemoryStorage, ReplayEventSource, StubHttpClient};
-use sp42_core::types::{Action, EditEvent, HttpRequest, HttpResponse, ServerSentEvent, WikiConfig};
+use sp42_core::{Action, BacklogRuntimeError, EditEvent, StreamRuntimeError, WikiConfig};
 use sp42_live::{
     BacklogRuntime, BacklogRuntimeConfig, BacklogRuntimeStatus, RecentChangesBatch, StreamRuntime,
     StreamRuntimeStatus,
+};
+use sp42_types::{
+    HttpRequest, HttpResponse, MemoryStorage, ReplayEventSource, ServerSentEvent, StubHttpClient,
 };
 use sp42_wiki::ConfigError;
 

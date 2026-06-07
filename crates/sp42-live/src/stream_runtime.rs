@@ -2,9 +2,8 @@
 
 use crate::stream_ingestor::StreamIngestor;
 use serde::{Deserialize, Serialize};
-use sp42_core::errors::{StorageError, StreamRuntimeError};
-use sp42_core::traits::{EventSource, Storage};
-use sp42_core::{EditEvent, WikiConfig};
+use sp42_core::{EditEvent, StreamRuntimeError, WikiConfig};
+use sp42_types::{EventSource, Storage, StorageError};
 
 const DEFAULT_CURSOR_KEY_PREFIX: &str = "stream.last_event_id";
 
@@ -214,8 +213,10 @@ mod tests {
 
     use super::StreamRuntime;
     use crate::test_fixtures::fixture_wiki_config;
-    use sp42_core::errors::{EventSourceError, StorageError};
-    use sp42_core::{EventSource, MemoryStorage, ReplayEventSource, ServerSentEvent, Storage};
+    use sp42_types::{
+        EventSource, EventSourceError, MemoryStorage, ReplayEventSource, ServerSentEvent, Storage,
+        StorageError,
+    };
     const SAMPLE_EVENT: &str = include_str!("../../../fixtures/frwiki_recentchange_edit.json");
 
     #[test]

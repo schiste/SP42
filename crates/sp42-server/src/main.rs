@@ -35,7 +35,9 @@ use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Redirect, Response};
 use futures::{SinkExt, StreamExt};
 use rand::Rng as _;
-use sp42_core::traits::HttpClient;
+use sp42_types::{
+    Clock, HttpClient, HttpClientError, HttpMethod, HttpRequest, HttpResponse, SystemClock,
+};
 use tokio::net::TcpListener;
 use tokio::sync::RwLock;
 use tracing::{info, warn};
@@ -44,13 +46,13 @@ use tracing_subscriber::EnvFilter;
 use sp42_coordination::CoordinationSnapshot;
 use sp42_core::{
     ActionExecutionHistoryReport, ActionExecutionLogEntry, ActionExecutionStatusReport,
-    ArticleInventory, Clock, DevAuthBootstrapRequest, DevAuthCapabilityReport,
-    DevAuthSessionStatus, FlagState, OAuthCallback, OAuthClientConfig, OAuthTokenResponse,
-    PublicAuditLedgerEntry, PublicStorageDocumentData, SessionActionExecutionRequest,
-    SessionActionExecutionResponse, SessionActionKind, SystemClock, TokenKind, WikiConfig,
-    WikiStorageConfig, WikiStorageDocument, WikiStorageDocumentKind, WikiStorageLoadedDocument,
-    WikiStoragePlan, WikiStoragePlanInput, WikiStorageWriteOutcome, WikiStorageWriteRequest,
-    build_article_inventory, build_authorization_url, build_media_diff, build_wiki_storage_plan,
+    ArticleInventory, DevAuthBootstrapRequest, DevAuthCapabilityReport, DevAuthSessionStatus,
+    FlagState, OAuthCallback, OAuthClientConfig, OAuthTokenResponse, PublicAuditLedgerEntry,
+    PublicStorageDocumentData, SessionActionExecutionRequest, SessionActionExecutionResponse,
+    SessionActionKind, TokenKind, WikiConfig, WikiStorageConfig, WikiStorageDocument,
+    WikiStorageDocumentKind, WikiStorageLoadedDocument, WikiStoragePlan, WikiStoragePlanInput,
+    WikiStorageWriteOutcome, WikiStorageWriteRequest, build_article_inventory,
+    build_authorization_url, build_media_diff, build_wiki_storage_plan,
     default_public_storage_document, diff_lines, execute_fetch_token, generate_oauth_state,
     generate_pkce_verifier, load_wiki_storage_document, parse_callback_query,
     render_wiki_storage_document_page, render_wiki_storage_index_page,
@@ -166,7 +168,7 @@ struct OAuthProfileResponse {
 
 struct ServerRng;
 
-impl sp42_core::Rng for ServerRng {
+impl sp42_types::Rng for ServerRng {
     fn next_u64(&mut self) -> u64 {
         rand::rng().random()
     }
@@ -1029,7 +1031,7 @@ pub(crate) async fn fetch_page_wikitext(
     config: &WikiConfig,
     title: &str,
 ) -> Result<String, sp42_core::ActionError> {
-    use sp42_core::{ActionError, HttpMethod, HttpRequest};
+    use sp42_core::ActionError;
 
     let mut url = config.api_url.clone();
     url.query_pairs_mut()
@@ -1562,16 +1564,13 @@ impl BearerHttpClient {
 
 #[async_trait]
 impl HttpClient for BearerHttpClient {
-    async fn execute(
-        &self,
-        request: sp42_core::HttpRequest,
-    ) -> Result<sp42_core::HttpResponse, sp42_core::HttpClientError> {
+    async fn execute(&self, request: HttpRequest) -> Result<HttpResponse, HttpClientError> {
         let mut builder = match request.method {
-            sp42_core::HttpMethod::Get => self.client.get(request.url),
-            sp42_core::HttpMethod::Post => self.client.post(request.url),
-            sp42_core::HttpMethod::Put => self.client.put(request.url),
-            sp42_core::HttpMethod::Patch => self.client.patch(request.url),
-            sp42_core::HttpMethod::Delete => self.client.delete(request.url),
+            HttpMethod::Get => self.client.get(request.url),
+            HttpMethod::Post => self.client.post(request.url),
+            HttpMethod::Put => self.client.put(request.url),
+            HttpMethod::Patch => self.client.patch(request.url),
+            HttpMethod::Delete => self.client.delete(request.url),
         }
         .bearer_auth(&self.access_token);
 
@@ -1584,7 +1583,7 @@ impl HttpClient for BearerHttpClient {
         } else {
             builder.body(request.body).send().await
         }
-        .map_err(|error| sp42_core::HttpClientError::Transport {
+        .map_err(|error| HttpClientError::Transport {
             message: error.to_string(),
         })?;
 
@@ -1595,13 +1594,14 @@ impl HttpClient for BearerHttpClient {
                 headers.insert(key.to_string(), value.to_string());
             }
         }
-        let body = response.bytes().await.map_err(|error| {
-            sp42_core::HttpClientError::InvalidResponse {
+        let body = response
+            .bytes()
+            .await
+            .map_err(|error| HttpClientError::InvalidResponse {
                 message: error.to_string(),
-            }
-        })?;
+            })?;
 
-        Ok(sp42_core::HttpResponse {
+        Ok(HttpResponse {
             status,
             headers: headers.into_iter().collect(),
             body: body.to_vec(),

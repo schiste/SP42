@@ -2964,8 +2964,19 @@ dependencies = [
  "serde_yaml",
  "sha2",
  "similar",
+ "sp42-types",
  "thiserror 2.0.18",
  "tracing",
+ "url",
+]
+
+[[package]]
+name = "sp42-types"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "serde",
+ "thiserror 2.0.18",
  "url",
 ]
 

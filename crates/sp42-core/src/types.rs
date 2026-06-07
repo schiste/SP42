@@ -1,9 +1,9 @@
 //! Shared types used across all SP42 targets.
 
-use std::collections::BTreeMap;
 use std::fmt;
 
 use serde::{Deserialize, Serialize};
+pub use sp42_types::{HttpMethod, HttpRequest, HttpResponse, ServerSentEvent, WebSocketFrame};
 use url::Url;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -432,49 +432,6 @@ impl Default for WikiTemplates {
 
 fn default_citation_needed() -> String {
     "Référence nécessaire".to_string()
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub enum HttpMethod {
-    Get,
-    Post,
-    Put,
-    Patch,
-    Delete,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct HttpRequest {
-    pub method: HttpMethod,
-    pub url: Url,
-    #[serde(default)]
-    pub headers: BTreeMap<String, String>,
-    #[serde(default)]
-    pub body: Vec<u8>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct HttpResponse {
-    pub status: u16,
-    #[serde(default)]
-    pub headers: BTreeMap<String, String>,
-    #[serde(default)]
-    pub body: Vec<u8>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ServerSentEvent {
-    pub event_type: Option<String>,
-    pub id: Option<String>,
-    pub data: String,
-    pub retry_ms: Option<u64>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub enum WebSocketFrame {
-    Text(String),
-    Binary(Vec<u8>),
-    Close,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]

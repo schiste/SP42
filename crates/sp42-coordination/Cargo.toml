@@ -12,6 +12,7 @@ workspace = true
 rmp-serde.workspace = true
 serde.workspace = true
 sp42-core = { path = "../sp42-core" }
+sp42-types = { path = "../sp42-types" }
 thiserror.workspace = true
 tracing.workspace = true
 

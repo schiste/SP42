@@ -169,6 +169,7 @@ Optional shared compiler cache:
 - [docs/adr/0002-local-dev-auth-bridge.md](docs/adr/0002-local-dev-auth-bridge.md): local auth bridge decision
 - [docs/adr/0003-node-anchored-wikitext-editing.md](docs/adr/0003-node-anchored-wikitext-editing.md): node-anchored wikitext editing proposal
 - [docs/adr/0004-crate-boundary-collaboration-model.md](docs/adr/0004-crate-boundary-collaboration-model.md): crate-boundary collaboration model
+- [docs/adr/0005-design-system-shared-component-layer.md](docs/adr/0005-design-system-shared-component-layer.md): design system and shared component layer (sp42-ui)
 
 ## License
 

@@ -7,17 +7,20 @@ use reqwest::header::COOKIE;
 use serde_json::Value;
 use sp42_core::routes as route_contracts;
 use sp42_core::{
-    DevAuthBootstrapRequest, DevAuthSessionStatus, PatrolScenarioReportInputs, QueuedEdit,
-    SessionActionExecutionRequest, SessionActionExecutionResponse, SessionActionKind,
-    ShellStateInputs, build_dev_auth_bootstrap_request, build_patrol_scenario_report,
-    build_shell_state_model, parse_dev_auth_status, render_patrol_scenario_markdown,
-    render_patrol_scenario_text, render_shell_state_markdown, render_shell_state_text,
+    DevAuthBootstrapRequest, DevAuthSessionStatus, QueuedEdit, SessionActionExecutionRequest,
+    SessionActionExecutionResponse, SessionActionKind, build_dev_auth_bootstrap_request,
+    parse_dev_auth_status,
 };
 use sp42_devtools::{
     DEV_PREVIEW_SAMPLE_EVENTS, DEV_PREVIEW_WIKI_ID, DevContextOptions, DevWorkbenchOptions,
     build_dev_action_requests, build_dev_backlog_preview, build_dev_context,
     build_dev_context_preview, build_dev_coordination_preview, build_dev_queue,
     build_dev_stream_preview, build_dev_workbench, parse_default_dev_wiki_config,
+};
+use sp42_reporting::{
+    PatrolScenarioReportInputs, ShellStateInputs, build_patrol_scenario_report,
+    build_shell_state_model, render_patrol_scenario_markdown, render_patrol_scenario_text,
+    render_shell_state_markdown, render_shell_state_text,
 };
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -1141,8 +1144,8 @@ fn build_cli_session_workbench(
 
 #[derive(Debug, Clone, Copy)]
 struct SessionDigestArtifacts<'a> {
-    shell_state: &'a sp42_core::ShellStateModel,
-    scenario: &'a sp42_core::PatrolScenarioReport,
+    shell_state: &'a sp42_reporting::ShellStateModel,
+    scenario: &'a sp42_reporting::PatrolScenarioReport,
 }
 
 fn render_session_digest_json(

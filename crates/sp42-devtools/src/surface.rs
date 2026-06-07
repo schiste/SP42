@@ -1,14 +1,17 @@
 //! Deterministic operator-surface builders for local demos and shell previews.
 
 use sp42_core::{
-    CompositeScore, ContextInputs, HttpRequest, PatrolOperatorSummary, PatrolOperatorSummaryInputs,
-    PatrolScenarioReport, PatrolScenarioReportInputs, PatrolSessionDigest,
-    PatrolSessionDigestInputs, QueuedEdit, RecentChangesQuery, ReviewWorkbench, ScoringContext,
-    SessionActionExecutionRequest, ShellStateInputs, ShellStateModel, StreamIngestor, WikiConfig,
-    build_liftwing_score_request, build_patrol_operator_summary, build_patrol_scenario_report,
-    build_patrol_session_digest, build_ranked_queue, build_recent_changes_request,
+    CompositeScore, ContextInputs, HttpRequest, QueuedEdit, RecentChangesQuery, ReviewWorkbench,
+    ScoringContext, SessionActionExecutionRequest, StreamIngestor, WikiConfig,
+    build_liftwing_score_request, build_ranked_queue, build_recent_changes_request,
     build_review_workbench, build_scoring_context, build_session_action_execution_requests,
-    build_shell_state_model, diff_lines, score_edit_with_context,
+    diff_lines, score_edit_with_context,
+};
+use sp42_reporting::{
+    PatrolOperatorSummary, PatrolOperatorSummaryInputs, PatrolScenarioReport,
+    PatrolScenarioReportInputs, PatrolSessionDigest, PatrolSessionDigestInputs, ShellStateInputs,
+    ShellStateModel, build_patrol_operator_summary, build_patrol_scenario_report,
+    build_patrol_session_digest, build_shell_state_model,
 };
 
 use crate::preview::{
@@ -196,7 +199,7 @@ pub fn build_dev_recentchanges_request(config: &WikiConfig) -> Result<HttpReques
     )?)
 }
 
-/// Build the deterministic LiftWing request used by shell previews.
+/// Build the deterministic `LiftWing` request used by shell previews.
 ///
 /// # Errors
 ///

@@ -1,4 +1,5 @@
-use sp42_core::{LiveOperatorView, MediaDiffReport, RenderedHunkPreview, StructuredDiff, routes};
+use sp42_core::{MediaDiffReport, RenderedHunkPreview, StructuredDiff, routes};
+use sp42_reporting::LiveOperatorView;
 
 use crate::components::filter_bar::PatrolFilterParams;
 

@@ -1,5 +1,5 @@
 use leptos::prelude::*;
-use sp42_core::{PatrolScenarioReadiness, ShellStateModel, ShellTimelineStage};
+use sp42_reporting::{PatrolScenarioReadiness, ShellStateModel, ShellTimelineStage};
 
 use super::{InspectorFeed, StatusBadge, StatusTone, inspector_entries_from_lines};
 

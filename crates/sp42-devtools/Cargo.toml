@@ -10,6 +10,7 @@ workspace = true
 
 [dependencies]
 sp42-core = { path = "../sp42-core" }
+sp42-reporting = { path = "../sp42-reporting" }
 thiserror.workspace = true
 
 [dev-dependencies]

@@ -17,6 +17,7 @@ reqwest.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 sp42-core = { path = "../sp42-core" }
+sp42-reporting = { path = "../sp42-reporting" }
 tokio.workspace = true
 tower-http = { workspace = true, features = ["cors", "fs"] }
 tracing.workspace = true

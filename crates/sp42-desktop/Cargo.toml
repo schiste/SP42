@@ -13,4 +13,5 @@ futures.workspace = true
 serde_json.workspace = true
 sp42-core = { path = "../sp42-core" }
 sp42-devtools = { path = "../sp42-devtools" }
+sp42-reporting = { path = "../sp42-reporting" }
 url.workspace = true

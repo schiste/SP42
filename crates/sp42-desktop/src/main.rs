@@ -1,15 +1,15 @@
 use std::process::ExitCode;
 
 use futures::executor::block_on;
-use sp42_core::{
+use sp42_devtools::{
+    DevContextOptions, DevOperatorSurface, DevOperatorSurfaceOptions, DevWorkbenchOptions,
+    build_default_dev_operator_surface, render_dev_transport_lines,
+};
+use sp42_reporting::{
     PatrolOperatorSummary, PatrolSessionDigest, render_patrol_operator_summary_markdown,
     render_patrol_operator_summary_text, render_patrol_scenario_markdown,
     render_patrol_scenario_text, render_patrol_session_digest_markdown,
     render_patrol_session_digest_text, render_shell_state_markdown, render_shell_state_text,
-};
-use sp42_devtools::{
-    DevContextOptions, DevOperatorSurface, DevOperatorSurfaceOptions, DevWorkbenchOptions,
-    build_default_dev_operator_surface, render_dev_transport_lines,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

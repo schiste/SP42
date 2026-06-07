@@ -2,16 +2,16 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::backlog_runtime::BacklogRuntimeStatus;
-use crate::coordination_state::CoordinationStateSummary;
-use crate::debug_snapshot::{DebugSnapshot, DebugSnapshotInputs, build_debug_snapshot};
-use crate::diff_engine::StructuredDiff;
 use crate::report_document::{
     ReportDocument, ReportSection, render_report_document_markdown, render_report_document_text,
 };
-use crate::review_workbench::ReviewWorkbench;
-use crate::stream_runtime::StreamRuntimeStatus;
-use crate::types::{QueuedEdit, ScoringContext};
+use sp42_core::backlog_runtime::BacklogRuntimeStatus;
+use sp42_core::coordination_state::CoordinationStateSummary;
+use sp42_core::debug_snapshot::{DebugSnapshot, DebugSnapshotInputs, build_debug_snapshot};
+use sp42_core::diff_engine::StructuredDiff;
+use sp42_core::review_workbench::ReviewWorkbench;
+use sp42_core::stream_runtime::StreamRuntimeStatus;
+use sp42_core::types::{QueuedEdit, ScoringContext};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ReportSeverity {
@@ -595,14 +595,14 @@ mod tests {
     use proptest::strategy::ValueTree;
     use proptest::test_runner::TestRunner;
 
-    use crate::backlog_runtime::BacklogRuntimeStatus;
-    use crate::config_parser::parse_wiki_config;
-    use crate::coordination_state::CoordinationStateSummary;
-    use crate::diff_engine::diff_lines;
-    use crate::review_workbench::build_review_workbench;
-    use crate::scoring_engine::score_edit;
-    use crate::stream_runtime::StreamRuntimeStatus;
-    use crate::types::{
+    use sp42_core::backlog_runtime::BacklogRuntimeStatus;
+    use sp42_core::config_parser::parse_wiki_config;
+    use sp42_core::coordination_state::CoordinationStateSummary;
+    use sp42_core::diff_engine::diff_lines;
+    use sp42_core::review_workbench::build_review_workbench;
+    use sp42_core::scoring_engine::score_edit;
+    use sp42_core::stream_runtime::StreamRuntimeStatus;
+    use sp42_core::types::{
         Action, ActionBroadcast, EditEvent, EditorIdentity, FlaggedEdit, PresenceHeartbeat,
         QueuedEdit, RaceResolution, ScoreDelta, ScoringConfig, ScoringContext, UserRiskProfile,
         WarningLevel,
@@ -688,7 +688,7 @@ mod tests {
         };
         let coordination = CoordinationStateSummary {
             wiki_id: "frwiki".to_string(),
-            claims: vec![crate::types::EditClaim {
+            claims: vec![sp42_core::types::EditClaim {
                 wiki_id: "frwiki".to_string(),
                 rev_id: 123_456,
                 actor: "Reviewer".to_string(),

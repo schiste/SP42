@@ -11,7 +11,7 @@ use crate::patrol_session_digest::PatrolSessionSelectedSummary;
 use crate::report_document::{
     ReportDocument, ReportSection, render_report_document_markdown, render_report_document_text,
 };
-use crate::review_workbench::ReviewWorkbench;
+use sp42_core::review_workbench::ReviewWorkbench;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ShellTimelineStage {
@@ -439,12 +439,12 @@ fn panel_line(panel: &ShellPanelSummary) -> String {
 
 #[cfg(test)]
 mod tests {
-    use crate::config_parser::parse_wiki_config;
-    use crate::context_builder::{ContextInputs, build_scoring_context};
-    use crate::diff_engine::diff_lines;
-    use crate::review_workbench::build_review_workbench;
-    use crate::scoring_engine::score_edit;
-    use crate::types::{EditEvent, EditorIdentity, QueuedEdit, ScoringConfig};
+    use sp42_core::config_parser::parse_wiki_config;
+    use sp42_core::context_builder::{ContextInputs, build_scoring_context};
+    use sp42_core::diff_engine::diff_lines;
+    use sp42_core::review_workbench::build_review_workbench;
+    use sp42_core::scoring_engine::score_edit;
+    use sp42_core::types::{EditEvent, EditorIdentity, QueuedEdit, ScoringConfig};
 
     use super::{
         ShellStateInputs, build_shell_state_model, render_shell_state_markdown,

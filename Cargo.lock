@@ -2111,6 +2111,7 @@ dependencies = [
  "send_wrapper",
  "serde_json",
  "sp42-core",
+ "sp42-reporting",
  "url",
  "wasm-bindgen",
  "wasm-bindgen-futures",
@@ -2127,6 +2128,7 @@ dependencies = [
  "serde_json",
  "sp42-core",
  "sp42-devtools",
+ "sp42-reporting",
 ]
 
 [[package]]
@@ -2156,6 +2158,7 @@ dependencies = [
  "serde_json",
  "sp42-core",
  "sp42-devtools",
+ "sp42-reporting",
  "url",
 ]
 
@@ -2165,7 +2168,18 @@ version = "0.1.0"
 dependencies = [
  "futures",
  "sp42-core",
+ "sp42-reporting",
  "thiserror 2.0.18",
+]
+
+[[package]]
+name = "sp42-reporting"
+version = "0.1.0"
+dependencies = [
+ "proptest",
+ "serde",
+ "serde_json",
+ "sp42-core",
 ]
 
 [[package]]
@@ -2180,6 +2194,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sp42-core",
+ "sp42-reporting",
  "tokio",
  "tokio-tungstenite",
  "tower",

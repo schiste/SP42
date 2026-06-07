@@ -41,20 +41,15 @@ pub mod liftwing;
 pub mod live_operator;
 pub mod media_diff;
 pub mod oauth;
-pub mod operator_summary;
-pub mod patrol_scenario_report;
-pub mod patrol_session_digest;
 pub mod priority_queue;
 pub mod public_documents;
 pub mod queue_builder;
 pub mod recent_changes;
-pub mod report_document;
 pub mod review_workbench;
 pub mod routes;
 pub mod scoring_engine;
 pub mod scoring_evaluation;
 pub mod scoring_policy;
-pub mod shell_state;
 pub mod stream_ingestor;
 pub mod stream_runtime;
 pub mod training_data;
@@ -115,7 +110,7 @@ pub use live_operator::{
     DEFAULT_LIVE_OPERATOR_LIMIT, LiveIngestionSupervisorStatus, LiveOperatorActionPreflight,
     LiveOperatorActionRecommendation, LiveOperatorBackendStatus, LiveOperatorHeuristicProvenance,
     LiveOperatorPhaseTiming, LiveOperatorPublicDocuments, LiveOperatorQuery,
-    LiveOperatorRetryClass, LiveOperatorTelemetry, LiveOperatorView, MAX_LIVE_OPERATOR_LIMIT,
+    LiveOperatorRetryClass, LiveOperatorTelemetry, MAX_LIVE_OPERATOR_LIMIT,
     build_live_operator_action_preflight, classify_retry, filter_live_operator_queue,
     live_operator_query_matches,
 };
@@ -128,22 +123,6 @@ pub use oauth::{
     build_access_token_request, build_authorization_url, code_challenge_from_verifier,
     generate_oauth_state, generate_pkce_verifier, parse_callback_query, prepare_oauth_launch,
     prepare_token_exchange_from_callback, validate_code_verifier,
-};
-pub use operator_summary::{
-    PatrolOperatorSectionSummary, PatrolOperatorSummary, PatrolOperatorSummaryInputs,
-    build_patrol_operator_summary, render_patrol_operator_summary_markdown,
-    render_patrol_operator_summary_text,
-};
-pub use patrol_scenario_report::{
-    PatrolScenarioFinding, PatrolScenarioReadiness, PatrolScenarioReport,
-    PatrolScenarioReportInputs, PatrolScenarioSection, PatrolScenarioSelectedEdit, ReportSeverity,
-    build_patrol_scenario_report, render_patrol_scenario_markdown, render_patrol_scenario_text,
-};
-pub use patrol_session_digest::{
-    PatrolSessionDigest, PatrolSessionDigestInputs, PatrolSessionSectionSummary,
-    PatrolSessionSelectedSummary, PatrolSessionSeverityCount, PatrolSessionWorkbenchSummary,
-    build_patrol_session_digest, render_patrol_session_digest_markdown,
-    render_patrol_session_digest_text,
 };
 pub use priority_queue::{PriorityQueue, QueueEntry};
 pub use public_documents::{
@@ -159,9 +138,6 @@ pub use queue_builder::{
 pub use recent_changes::{
     RecentChangesBatch, RecentChangesQuery, build_recent_changes_request, execute_recent_changes,
     parse_recent_changes_response,
-};
-pub use report_document::{
-    ReportDocument, ReportSection, render_report_document_markdown, render_report_document_text,
 };
 pub use review_workbench::{
     PreparedRequestPreview, ReviewWorkbench, build_review_workbench,
@@ -183,10 +159,6 @@ pub use scoring_policy::{
     compile_scoring_policy, default_active_compiled_scoring_policy,
     load_embedded_compiled_scoring_policy, parse_scoring_evaluation_profile, parse_scoring_policy,
     validate_scoring_evaluation_profile, validate_scoring_policy,
-};
-pub use shell_state::{
-    ShellPanelSummary, ShellStateInputs, ShellStateModel, ShellTimelineEntry, ShellTimelineStage,
-    build_shell_state_model, render_shell_state_markdown, render_shell_state_text,
 };
 pub use stream_ingestor::StreamIngestor;
 pub use stream_runtime::{StreamRuntime, StreamRuntimeStatus};

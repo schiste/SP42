@@ -25,15 +25,17 @@ triggers in `GOVERNANCE.md`.
 
 ## Overlap with ADR triggers
 
-Two ADR triggers are dual-natured and require **both** artifacts:
+Some ADR triggers can also need a PRD:
 
 - *scoring policy, ranking behavior, or Wikimedia action semantics*
-- *public contracts or APIs*
+- *public contracts or APIs* that change operator/editor behavior or external
+  integration behavior
 
-For these, the PRD owns the user-facing intent and the definition of done; the
-ADR owns the structural decision. Open the PRD first; it links the ADR(s) it
-spawns. The remaining ADR triggers (crate boundaries, runtime/deploy,
-auth/token/CSRF, desktop packaging, storage formats) stay ADR-only.
+For these, the PRD owns the user-facing intent and definition of done; the ADR
+owns the structural decision. Purely internal crate boundaries, runtime/deploy
+mechanics, auth/token/CSRF implementation details, desktop packaging mechanics,
+storage formats, and Rust API reshaping stay ADR-only unless they change
+operator/editor behavior or external integration behavior.
 
 ## Lifecycle
 
@@ -56,16 +58,3 @@ auth/token/CSRF, desktop packaging, storage formats) stay ADR-only.
 
 - `0000-template.md` — the PRD template.
 - `NNNN-title.md` — one file per PRD, sequential, zero-padded.
-
-## Proposed `GOVERNANCE.md` addition
-
-Insert under `## Decision Making`, after the ADR trigger list:
-
-```markdown
-A change also requires a Product Requirements Document (PRD) when it introduces
-or changes an operator- or editor-facing capability, an operator workflow, what
-a user sees or decides, or scoring/ranking/Wikimedia action *semantics* (as
-distinct from implementation). PRDs record user-facing intent and a definition
-of done; they live in `docs/prd/` and link the ADRs they spawn. See
-`docs/prd/README.md`.
-```

@@ -164,8 +164,11 @@ Optional shared compiler cache:
 - [docs/scoring/SCORING_CONSTITUTION.md](docs/scoring/SCORING_CONSTITUTION.md): scoring system principles and technical rules
 - [docs/scoring/POLICY_LAYOUT.md](docs/scoring/POLICY_LAYOUT.md): scoring policy and evaluation directory layout
 - [docs/FRONTEND_DESIGN_CONTRACT.md](docs/FRONTEND_DESIGN_CONTRACT.md): frontend contract
+- [docs/prd/README.md](docs/prd/README.md): PRD protocol for user-facing changes
 - [docs/adr/0001-foundational-decisions.md](docs/adr/0001-foundational-decisions.md): foundational architecture decisions
 - [docs/adr/0002-local-dev-auth-bridge.md](docs/adr/0002-local-dev-auth-bridge.md): local auth bridge decision
+- [docs/adr/0003-node-anchored-wikitext-editing.md](docs/adr/0003-node-anchored-wikitext-editing.md): node-anchored wikitext editing proposal
+- [docs/adr/0004-crate-boundary-collaboration-model.md](docs/adr/0004-crate-boundary-collaboration-model.md): crate-boundary collaboration model
 
 ## License
 

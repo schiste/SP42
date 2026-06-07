@@ -42,6 +42,12 @@ sets `core.hooksPath=.husky`, so the hooks run automatically:
   docs consistency, release-tree audit, and `./scripts/check-focused.sh`.
 - `pre-push`: release-tree audit and `./scripts/ci-all.sh`.
 
+Documentation-only changes (every modified file is `.md`, `.log`, or `.txt`)
+skip the compile-heavy steps: `pre-commit` still runs the whitespace and docs
+consistency checks and `pre-push` runs the docs consistency check, but the
+focused build, release-tree audit, and `ci-all` are skipped. Any non-docs file
+in the change runs the full checks.
+
 For an emergency one-off bypass, set `SP42_SKIP_GIT_HOOKS=1`.
 
 Run the focused local check before opening a pull request:

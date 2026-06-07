@@ -9,17 +9,43 @@ if [[ "${SP42_SKIP_GIT_HOOKS:-0}" == "1" ]]; then
   exit 0
 fi
 
+# A change is "docs-only" when every modified path ends in .md/.log/.txt; such
+# changes skip the compile-heavy steps. Anything else, or an empty/undetectable
+# set, runs the full checks (fail safe).
+all_docs() {
+  [[ -n "$1" ]] || return 1
+  local f
+  while IFS= read -r f; do
+    [[ -n "$f" ]] || continue
+    case "$f" in
+      *.md|*.log|*.txt) ;;
+      *) return 1 ;;
+    esac
+  done <<< "$1"
+  return 0
+}
+
+staged="$(git diff --cached --name-only --diff-filter=ACMR)"
+docs_only=0
+if all_docs "$staged"; then docs_only=1; fi
+
 printf '\n== SP42 pre-commit: staged whitespace ==\n'
 git diff --cached --check
 
 printf '\n== SP42 pre-commit: working-tree whitespace ==\n'
 git diff --check
 
-printf '\n== SP42 pre-commit: rustfmt ==\n'
-cargo fmt --all -- --check
-
 printf '\n== SP42 pre-commit: docs consistency ==\n'
 bash scripts/check-doc-consistency.sh
+
+if [[ "$docs_only" == "1" ]]; then
+  printf '\nSP42 pre-commit: docs-only change (.md/.log/.txt) — skipping rustfmt, release-tree audit, and focused build.\n'
+  printf 'SP42 pre-commit checks passed.\n'
+  exit 0
+fi
+
+printf '\n== SP42 pre-commit: rustfmt ==\n'
+cargo fmt --all -- --check
 
 printf '\n== SP42 pre-commit: release tree audit ==\n'
 ./scripts/audit-release-tree.sh

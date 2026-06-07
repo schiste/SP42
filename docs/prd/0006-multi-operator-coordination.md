@@ -4,7 +4,7 @@
 **Date:** 2026-06-05
 **State:** Implemented
 **As-built:** retroactive characterization of an already-shipped feature (no forward "closing PR").
-**Related ADRs:** ADR-0001 (foundational decisions — §5 the Toolforge hosting posture, whose persistent-WebSocket support is still an open question; §7 the trait-isolated I/O posture). The coordination *contract* itself has **no ADR yet** — see Scope boundary and Known gaps.
+**Related ADRs:** ADR-0001 (foundational decisions — §5 the Toolforge hosting posture, whose persistent-WebSocket support is still an open question; §7 the trait-isolated I/O posture). The coordination *contract* itself has **no ADR yet** — tracked in #21.
 **Discussion:** (PR link added on filing)
 
 > **As-built note.** This PRD documents coordination behavior that already ships
@@ -31,7 +31,7 @@ deliberately excludes the *mechanism* that carries that picture:
   it. There is **no coordination ADR**: the coordination contract (the message
   kinds, the relay/fan-out semantics, the shared room-state reducer, and the
   REST inspection surface) is a public-contract concern that, per
-  `docs/prd/README.md`, warrants its own ADR, but none exists (see Known gaps).
+  `docs/prd/README.md`, warrants its own ADR, but none exists yet — tracked in #21.
 - **What a relayed action, score, or flag *means*** is owned by its sibling PRD,
   not here. The dispositions whose on-wiki meaning coordination relays are
   **PRD-0004**; the scoring/flag semantics of a relayed score delta or flagged
@@ -107,8 +107,8 @@ Known gaps).
 Each item is an operator-observable behavior that is **already true**, bound to an
 existing test. *(The wire codec round-trip and the room-state reducer are
 additionally unit-tested as pure mechanism — `crates/sp42-coordination/src/codec.rs`
-and `…/coordination_state.rs` — but that mechanism is owned by the not-yet-written
-coordination ADR; see Known gaps.)*
+and `…/state.rs` — but that mechanism is owned by the coordination contract
+(no ADR yet — tracked in #21).)*
 
 - [x] Operator messages fan out to every *other* operator in the same room, and
   claim, presence, action, and race-resolution all round-trip across three
@@ -166,34 +166,11 @@ coordination ADR; see Known gaps.)*
   `crates/sp42-app/src/platform/coordination.rs::coordination_room_narrative_lines_surface_collaboration_details`
   and `::room_inspection_lines_cover_presence_and_state`.
 
-## Alternatives
-
-- **Persistent / cross-instance room state.** Room state is held in memory in a
-  single server process; the shipped shape trades durability for simplicity,
-  matching the local-development posture (multi-user production auth is not
-  implemented yet). A shared store (Redis, a database) was not built; the design
-  implies it was deferred until coordination graduates beyond local dev. *(The
-  in-memory registry is implementation; the operator-visible consequence is in
-  Risks.)*
-- **Replaying the backlog to new sockets.** A late joiner could have been caught
-  up by replaying the room's message history over the socket. Instead the design
-  keeps the socket replay-free and exposes accumulated state over REST, so
-  catch-up is a single read rather than a stream the client must reconcile. The
-  fresh-client test asserts no replay is sent.
-- **Trusting the client-supplied actor.** A naive relay would trust the name a
-  client puts on the wire. The shipped server attributes from the authenticated
-  session instead, so attribution cannot be spoofed on an authenticated
-  connection — at the cost of trusting the actor verbatim on *anonymous*
-  connections (the intended local-dev behavior; see Risks).
-- **Explicit claim release.** A dedicated "release my claim" message was not
-  added; the design relies on claim hand-off (a newer claim or a race resolution)
-  and whole-room idle eviction to clear stale claims. This keeps the message set
-  small at the cost of stale-claim lifetime (see Known gaps).
-
 ## Risks
 
-(User-facing consequences as shipped; the code mechanisms behind them are
-implementation.)
+*(Retroactive PRD — residual risks of the shipped behavior, with mitigations as
+built; not a pre-implementation risk forecast. The code mechanisms behind them are
+implementation.)*
 
 - **Stale claims mislead operators.** Because there is no claim-release message,
   a reviewer who claims a revision and then leaves can keep that revision marked
@@ -223,15 +200,6 @@ implementation.)
 Factual observations from reverse-engineering the shipped code; these replace
 "Open questions."
 
-- **The coordination contract has no ADR.** The message kinds, the relay/fan-out
-  semantics (sender excluded, actor attributed from the session), the shared
-  room-state reducer, and the REST inspection surface are a public-contract
-  concern that, per `docs/prd/README.md`, warrants its own ADR, but none exists;
-  its structural decisions live only in code. ADR-0001 §7 governs the
-  trait-isolated I/O posture and §5 flags the still-open Toolforge
-  persistent-WebSocket hosting question, but neither governs this contract.
-  *(This PRD owns the picture's user-facing meaning; the contract's structure
-  should become an ADR this PRD links.)*
 - **The live socket client is not wired into the interactive patrol UI.** The
   browser app fetches only a read-only bootstrap snapshot
   (`crates/sp42-app/src/platform/bootstrap.rs`); the in-app fetch helpers are

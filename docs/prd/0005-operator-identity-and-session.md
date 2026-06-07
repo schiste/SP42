@@ -51,16 +51,11 @@ Each item is an operator-observable behavior that is **already true**, bound to 
 
 *(Which dispositions a capability gates — rollback / undo / patrol and the content edits — is owned by **PRD-0004**; the review workflow those affordances live in is **PRD-0002**; what a score MEANS, as distinct from this PRD's identity surface, is **PRD-0003**.)*
 
-## Alternatives
-
-- **Token in the browser.** Rejected by ADR-0002: the browser is an interface, not a credential store. The operator-facing surface reports only that a token is present, never its value.
-- **Browser-asserted identity, scopes, and expiry.** An earlier shape let the client install a session by asserting a username/scopes/expiry. The shipped design removed it — bootstrap is canonically empty and any self-asserted identity field is rejected — so the action surface is gated on what Wikimedia grants, never on a self-report. *(The contract change is **ADR-0002**.)*
-- **Trusting OAuth grants alone for capability.** A token carrying the `rollback`/`patrol` grant does not mean the account holds that right on a given wiki. The shipped capability requires grant **and** wiki right **and** a live action token, and explains the gap when a grant is present but the right is missing.
-- **One auth path everywhere.** The local-env-token bootstrap is a single-operator local convenience confined to `local` mode; the browser OAuth login path covers other deployments.
-
 ## Risks
 
-(User-facing consequences as shipped; the mechanisms behind them are ADR-0002 / implementation.)
+*(Retroactive PRD — residual risks of the shipped behavior, with mitigations as
+built; not a pre-implementation risk forecast. The mechanisms behind them are
+ADR-0002 / implementation.)*
 
 - **Stale capability vs. live wiki rights.** The action surface is derived from a capability probe; if an account's rights changed since the probe, the UI could briefly show a stale affordance. *Mitigation:* the server re-validates every action request against a capability report at execution time and refuses with a specific reason, so the gate holds server-side regardless of UI state.
 - **Session left open.** A session persists until the operator logs out or it expires (the expiry policy is implementation, governed by ADR-0002). *Mitigation:* logout clears it immediately. *(The expiry timer itself is not directly tested — see Known gaps.)*

@@ -4,7 +4,7 @@
 **Date:** 2026-06-05
 **State:** Implemented
 **As-built:** retroactive characterization of an already-shipped feature (no forward "closing PR").
-**Related ADRs:** ADR-0003 (node-anchored wikitext editing — governs the *mechanism* of the content-edit dispositions; the action contract itself has no ADR yet, see Known gaps)
+**Related ADRs:** ADR-0003 (node-anchored wikitext editing — governs the *mechanism* of the content-edit dispositions; the action contract itself has no ADR yet — tracked in #20)
 **Discussion:** https://github.com/schiste/SP42/pull/4
 
 ## Scope boundary
@@ -12,7 +12,7 @@
 This PRD characterizes **what each reviewer disposition means on the wiki** and **how the operator knows it landed** — the user-facing semantics of acting on a reviewed revision. It deliberately excludes two adjacent concerns:
 
 - **Choosing a disposition** — the action toolbar, the one-key shortcuts, and the remove-from-queue-and-advance cadence — is the review *workflow*, characterized in **PRD-0002**. This PRD picks up at "the operator has decided" and describes what the decision does.
-- **How a disposition is carried out** — the action contract (`SessionActionKind` and the execute-action route), token acquisition, the CSRF/`baserevid` enforcement, request building, and the content-edit text replacement — is *implementation*, not user-facing meaning. The content-edit *editing mechanism* is governed by **ADR-0003**; the broader action contract has **no ADR of its own yet** (see Known gaps). This PRD references that mechanism, it does not specify it.
+- **How a disposition is carried out** — the action contract (`SessionActionKind` and the execute-action route), token acquisition, the CSRF/`baserevid` enforcement, request building, and the content-edit text replacement — is *implementation*, not user-facing meaning. The content-edit *editing mechanism* is governed by **ADR-0003**; the broader action contract has **no ADR of its own yet** (tracked in #20). This PRD references that mechanism, it does not specify it.
 
 ## Problem
 
@@ -36,7 +36,7 @@ The operator can dispose of the selected revision in five ways. Each has a disti
 
 ## Definition of Done
 
-Each item is an operator-observable behavior that is **already true**, bound to an existing test. (The underlying action-execution *contract* — request construction, token acquisition, payload serialization — is additionally unit-tested in `crates/sp42-core/src/action_executor.rs`, but is mechanism owned by the not-yet-written action-contract ADR; see Known gaps.)
+Each item is an operator-observable behavior that is **already true**, bound to an existing test. (The underlying action-execution *contract* — request construction, token acquisition, payload serialization — is additionally unit-tested in `crates/sp42-core/src/action_executor.rs`, but is mechanism owned by the action contract (no ADR yet — tracked in #20).)
 
 - [x] A chosen disposition (rollback, undo, patrol, page-save) actually executes against the wiki and a success body is accepted — verified by `crates/sp42-core/src/action_executor.rs::executes_rollback_through_http_trait`, `::executes_patrol_through_http_trait`, `::executes_undo_through_http_trait`, `::executes_page_save_through_http_trait`.
 - [x] A non-success HTTP status is surfaced to the operator as a failure, not a silent accept — verified by `…action_executor.rs::rejects_non_success_http_status`.
@@ -50,14 +50,11 @@ Each item is an operator-observable behavior that is **already true**, bound to 
 
 *(The score-gated **recommendation** of a disposition — e.g. suggesting rollback for a high-score edit — is scoring semantics owned by **PRD-0003**; the toolbar and keys that **choose** a disposition are workflow owned by **PRD-0002**. This PRD owns only what the chosen disposition does and how its outcome is reported.)*
 
-## Alternatives
-
-- **One generic "edit" verb instead of five dispositions.** The shipped shape gives each disposition its own on-wiki meaning and its own entitlement gate, so the operator's intent maps onto the right outcome — mass-revert vs single-undo vs mark-reviewed vs annotate vs fix — rather than collapsing onto a generic edit. The cost is a richer action contract, whose *structure* is implementation (and wants an ADR it does not yet have — see Known gaps).
-- **Node-anchored content editing from day one.** A parser-anchored editor was the right end state for the content dispositions, but the shipped patrol mission only needed literal replacement; the design deferred the fidelity question to **ADR-0003** (Parsoid vs WASM `wikiparser-node` vs pure-Rust, plus the licensing decision). The operator-visible cost of the interim is in Risks.
-
 ## Risks
 
-(User-facing consequences as shipped; the code mechanisms behind them are ADR-0003 / implementation.)
+*(Retroactive PRD — residual risks of the shipped behavior, with mitigations as
+built; not a pre-implementation risk forecast. The code mechanisms behind them are
+ADR-0003 / implementation.)*
 
 - **Wrong-target content edit on recurrence.** A content disposition changes the *first* literal match of the selected span; if that span recurs earlier in the article, the wrong occurrence is changed. *Mitigation today:* none — there is no occurrence guard. ADR-0003's interim ambiguity guard is not yet implemented (Known gaps).
 - **Edit-conflict window on content edits.** SP42 locates the span in the *current* page text but saves against the *patrolled* revision as the base, so a concurrent edit between review and save is possible. *Mitigation:* MediaWiki's own base-revision conflict detection on save, which SP42 surfaces as a failure; the window itself is not closed in SP42.
@@ -67,7 +64,6 @@ Each item is an operator-observable behavior that is **already true**, bound to 
 
 ## Known gaps / drift
 
-- **The action contract has no ADR.** ADR-0003 governs only the content-edit *editing mechanism*. The broader action contract — the set of dispositions (`SessionActionKind`), the execute-action route, token acquisition, and the CSRF/`baserevid` enforcement — is a public-contract concern that, per `docs/prd/README.md`, warrants its own ADR, but none exists; its structural decisions live only in code. *(This PRD owns the dispositions' user-facing meaning; the contract's structure should become an ADR this PRD links.)*
 - **The per-disposition entitlement re-check is untested at the unit level.** The server's per-verb required-field and capability gate (`validate_action_request`, `action_routes.rs`), which now covers all five dispositions, is exercised only through the live route; no unit test asserts that a missing field or unmet entitlement yields `400`/`403`.
 - **No forged-request rejection test on the execute-action route.** The route requires an authenticated session and a same-session CSRF header, but no test POSTs a missing/forged header to *this* endpoint (the only such test covers the session-delete route). *(The CSRF mechanism itself is PRD-0005 / implementation.)*
 - **The two content dispositions have no tests.** The inline-fix and citation-flag paths (`action_routes.rs`), including the "text not found" rejection, are entirely uncovered.

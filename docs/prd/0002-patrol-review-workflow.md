@@ -4,7 +4,7 @@
 **Date:** 2026-06-05
 **State:** Implemented
 **As-built:** retroactive characterization of an already-shipped feature (no forward "closing PR").
-**Related ADRs:** ADR-0001 (foundational decisions), ADR-0002 (local dev-auth bridge contract — but operator identity/capabilities are owned by PRD-0005)
+**Related ADRs:** ADR-0001 (foundational decisions), ADR-0002 (local dev-auth bridge contract — but operator identity/capabilities are owned by PRD-0005). The assembled live-operator-view contract has no ADR yet — tracked in #18.
 **Discussion:** (PR link added on filing)
 
 ## Scope boundary
@@ -15,7 +15,7 @@ This PRD characterizes **the operator's main review loop** — what a reviewer d
 - **What a chosen disposition DOES on the wiki, and how the operator knows it landed** — the on-wiki meaning of rollback / undo / patrol / tag / inline-fix and its reported outcome — is owned by **PRD-0004**. This PRD picks the disposition and ends the loop; PRD-0004 picks up at "the operator has decided."
 - **Who the operator is acting as, and which dispositions their identity may perform** — the server-owned session, the per-wiki capability report, and login — is owned by **PRD-0005**. This workflow *relies on* that surface to know which actions to offer and which to mark available.
 - **How a disposition is carried out** — the action contract, token acquisition, request building, and execution — is *implementation* (the content-edit editing mechanism is governed by ADR-0003). This PRD references that mechanism, it does not specify it.
-- **How the live view and the per-selection action preflight are *assembled*** — the `GET /operator/live/{wiki_id}` payload shape and the preflight's construction — is *implementation*; that contract has no ADR of its own yet (see Known gaps).
+- **How the live view and the per-selection action preflight are *assembled*** — the `GET /operator/live/{wiki_id}` payload shape and the preflight's construction — is *implementation*; that contract has no ADR of its own yet (tracked in #18).
 
 The one split worth stating explicitly is inside the per-selection **action preflight**, because it straddles two PRDs:
 
@@ -143,27 +143,10 @@ assembly mechanism, not operator-observable loop outcomes.)
   (The *recommendation* half of the preflight — the score gate — is bound in PRD-0003's
   DoD, not here.)
 
-## Alternatives
-
-- **Background auto-advancing selection.** The queue could re-point the operator to a
-  newer/higher-scoring edit as the stream delivers it. The shipped design deliberately
-  rejects this: the selected revision is updated only by explicit human action, never by
-  a stream insert. The operator's place in the queue is theirs; new edits accumulate
-  without yanking the current inspection.
-- **Server-side filtering of the queue.** Bot/minor/editor-class/tag/min-score filters
-  could be a server query. They are applied client-side over the already-fetched edits
-  so toggling a filter is instant and does not spend a round trip or disturb the
-  checkpoint; the server-side `rcshow` filter is reserved for the coarse
-  bot/unpatrolled/minor/anon cut at ingestion.
-- **Two separate ingestion features (stream vs. backlog).** Instead, both the live
-  `EventStreams` feed and the `recentchanges` poll normalize into the same edit shape
-  and share the same checkpoint discipline, so the queue and the rest of the loop are
-  source-agnostic.
-- **Numeric-only ranking.** The queue could surface only a score. Instead each edit
-  carries its per-signal reasons so the rank is explainable in the operator's own
-  vocabulary, not an opaque number. (The score and its decomposition are PRD-0003.)
-
 ## Risks
+
+*(Retroactive PRD — residual risks of the shipped behavior, with mitigations as
+built; not a pre-implementation risk forecast.)*
 
 - **Stale or duplicated queue items on reconnect.** A reconnect that didn't checkpoint
   correctly could re-show handled edits. Mitigation: the cursor is only advanced when an
@@ -188,14 +171,6 @@ assembly mechanism, not operator-observable loop outcomes.)
 
 ## Known gaps / drift
 
-- **The assembled live-operator-view contract has no ADR.** The `GET /operator/live/{wiki_id}`
-  payload that bundles the ranked queue, the selected diff, the scoring context, the
-  per-selection action preflight, and backlog/session state into one response is a
-  public-contract concern that, per `docs/prd/README.md`, warrants its own ADR, but none
-  exists; its structure lives only in code and is pinned only by the end-to-end
-  `operator_live` test. *(This PRD owns the loop's user-facing intent; the assembled
-  view's structure should become an ADR this PRD links. The disposition-execution
-  contract gap is owned by PRD-0004.)*
 - **No standalone test for the `patrol.rs` surface wiring.** The page-level component
   (queue/diff/action panes, the keyboard handler, the selection-vs-stream invariant in
   `crates/sp42-app/src/pages/patrol.rs`) is exercised only indirectly; the app-layer

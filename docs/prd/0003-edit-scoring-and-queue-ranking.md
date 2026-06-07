@@ -4,14 +4,14 @@
 **Date:** 2026-06-05
 **State:** Implemented
 **As-built:** retroactive characterization of an already-shipped feature (no forward "closing PR").
-**Related ADRs:** ADR-0001 (foundational decisions — §9 LiftWing as supplementary ML scoring provider). The scoring/ranking *contract* itself (the composite-score shape, the policy-file schema, the compile-to-runtime step) has no ADR yet — its governance lives in `docs/scoring/SCORING_CONSTITUTION.md`; see Known gaps.
+**Related ADRs:** ADR-0001 (foundational decisions — §9 LiftWing as supplementary ML scoring provider). The scoring/ranking *contract* itself (the composite-score shape, the policy-file schema, the compile-to-runtime step) has no ADR yet — its governance lives in `docs/scoring/SCORING_CONSTITUTION.md`; the ADR is tracked in #19.
 **Discussion:** (PR link added on filing)
 
 ## Scope boundary
 
 This PRD characterizes **what a score, a signal, and a rank MEAN to the operator** — the user-facing semantics of how SP42 decides what to look at first, why an edit surfaced where it did, and what action might fit. Scoring/ranking semantics are themselves a PRD trigger (`docs/prd/README.md`). It deliberately excludes two adjacent concerns:
 
-- **How the score is computed** — the signal catalogue and its weights, the base/accumulate/clamp arithmetic, the composite-score and signal-contribution internal types, the priority-queue mechanism, the queue-policy override pass, and the way a human-readable policy file is parsed and compiled into the runtime config — is *implementation*, governed by the scoring charter (`docs/scoring/SCORING_CONSTITUTION.md`) and, for the LiftWing input, ADR-0001 §9. This PRD references those mechanisms; it does not specify them. (There is no ADR for the scoring *contract* itself yet — see Known gaps.)
+- **How the score is computed** — the signal catalogue and its weights, the base/accumulate/clamp arithmetic, the composite-score and signal-contribution internal types, the priority-queue mechanism, the queue-policy override pass, and the way a human-readable policy file is parsed and compiled into the runtime config — is *implementation*, governed by the scoring charter (`docs/scoring/SCORING_CONSTITUTION.md`) and, for the LiftWing input, ADR-0001 §9. This PRD references those mechanisms; it does not specify them. (There is no ADR for the scoring *contract* itself yet — tracked in #19.)
 - **What the operator does with the ranked queue** — opening the live view, walking it one revision at a time, and choosing a disposition — is the review *workflow*, owned by **PRD-0002**. What a chosen disposition then does on the wiki is owned by **PRD-0004**. This PRD owns only the meaning of the numbers and reasons that drive those decisions, including the score-gated *suggestion* of a disposition.
 
 ## Problem
@@ -39,7 +39,7 @@ What the shipped feature lets an operator understand and do. *(How each is compu
 
 ## Definition of Done
 
-Re-framed as characterization. Each item is an operator-observable behavior that is already true and bound to an existing test. *(The pure scoring **mechanism** — weight compilation, clamp arithmetic, policy parsing, queue internals — is additionally unit- and property-tested in `scoring_engine.rs`, `scoring_policy.rs`, `queue_builder.rs`, and `priority_queue.rs`; those mechanism tests back the contract the not-yet-written scoring-contract ADR should own — see Known gaps. The items below are the operator-facing outcomes.)*
+Re-framed as characterization. Each item is an operator-observable behavior that is already true and bound to an existing test. *(The pure scoring **mechanism** — weight compilation, clamp arithmetic, policy parsing, queue internals — is additionally unit- and property-tested in `scoring_engine.rs`, `scoring_policy.rs`, `queue_builder.rs`, and `priority_queue.rs`; those mechanism tests back the scoring contract (no ADR yet — tracked in #19). The items below are the operator-facing outcomes.)*
 
 - [x] An edit accumulates multiple weighted signals into one composite score with itemized reasons the operator can read — verified by `scoring_engine.rs::scores_multiple_positive_signals`.
 - [x] A bot-like (maintenance-shaped) edit sinks via a strong negative weight that reduces the total — verified by `scoring_engine.rs::bot_signal_reduces_total`.
@@ -60,19 +60,11 @@ Re-framed as characterization. Each item is an operator-observable behavior that
 - [x] The score maps to the operator-visible colour tiers at the 70 / 30 / 0 thresholds — verified by `components/style.rs::score_tier_maps_thresholds`.
 - [x] A high-scoring edit yields a rollback suggestion in the live-operator preflight — verified by `live_operator.rs::preflight_recommends_rollback_for_high_score_edit`.
 
-## Alternatives
-
-The shipped shape implies several considered-and-rejected directions:
-
-- **A single opaque ML score (LiftWing alone).** Rejected in favour of a deterministic local engine with LiftWing folded in only as one *supporting* signal that is never required (ADR-0001 §9; charter §9). This keeps the queue interpretable and resilient when the ML service is unavailable, and keeps the operator's trust anchored in readable reasons rather than a probability.
-- **Letting identity drive rank directly.** Rejected: identity is admitted as a bounded modifier only, behind per-modifier enable flags and a hard contribution cap that emits its own audit line (charter §7). The design deliberately separates actor-risk suspicion from content suspicion so a fresh account making a good edit isn't buried.
-- **A floating-point or model-emitted "confidence" total.** Rejected in favour of an integer composite of named, individually-tunable reasons, so every point in the total is attributable to something the operator can read.
-- **Re-sorting the queue in the view layer.** Rejected: ordering is produced once, deterministically, and the UI only filters and limits an already-ranked list. *(The ranking mechanism is implementation.)*
-- **Hard-coding weights and thresholds in Rust.** Rejected in favour of human-readable, lifecycle-staged policy files (charter §10/§12; `docs/scoring/POLICY_LAYOUT.md`), so scoring/ranking semantics can be reviewed and evolved as policy rather than code.
-
 ## Risks
 
-(User-facing consequences as shipped; the code mechanisms behind them are implementation / the scoring charter.)
+*(Retroactive PRD — residual risks of the shipped behavior, with mitigations as
+built; not a pre-implementation risk forecast. The code mechanisms behind them are
+implementation / the scoring charter.)*
 
 - **The operator over-trusts the rank and skips reading the diff.** *Mitigation:* the score is advisory and always decomposed into reasons the operator is meant to read; action recommendations are suggestions, not auto-actions. There is no autonomous action path gated on score alone.
 - **Identity weighting unfairly buries good newcomer edits.** *Mitigation:* identity contributes only behind enable flags and a hard ±cap with a visible adjustment line; constructive-maintenance signals carry negative weight to pull good edits down the queue. *Residual risk:* the cap is a *policy* number — a misconfigured policy could raise it (see Known gaps on the missing fairness/ranking regression test wired to the live engine).
@@ -84,7 +76,6 @@ The shipped shape implies several considered-and-rejected directions:
 
 Factual observations noticed while reverse-engineering; not design proposals.
 
-- **The scoring/ranking contract has no ADR.** Per `docs/prd/README.md`, scoring policy / ranking behavior is dual-natured and warrants **both** a PRD and an ADR. ADR-0001 §9 covers only the LiftWing-as-supplementary decision; the scoring charter (`docs/scoring/SCORING_CONSTITUTION.md`) is a governance constitution, not an ADR. The *structural* decisions — the composite-score / signal-contribution public shape, the scoring-policy file schema, and the compile-to-runtime contract — live only in code plus the charter. This PRD owns the scoring semantics' user-facing meaning; the contract's structure should become an ADR this PRD links.
 - **`min_score_cutoff` policy field is not enforced at runtime.** The active policy and the compiled queue config carry `min_score_cutoff`, but no scoring or queue-build code consumes it. The only score-based queue trimming is the *operator-set* `min_score` UI filter, which is a separate, unrelated value. The policy cutoff is effectively documentation.
 - **`account_age_modifier_enabled` is plumbed but unused.** It exists in policy and config (set `false`) but no scoring code reads it — there is no account-age signal in the engine. It is a reserved knob with no behaviour.
 - **The LiftWing contribution clamp has no dedicated unit test.** The configured LiftWing weight is clamped to `±max_contribution`, and the active policy's weight (35) equals its `max_contribution` (35) so the clamp is a no-op in practice. No test exercises a configured weight *exceeding* the ceiling, so the clamp itself is uncovered.

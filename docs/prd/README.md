@@ -59,12 +59,22 @@ operator/editor behavior or external integration behavior.
 Most PRDs are written before code. A feature that already shipped without one can
 be documented retroactively, so future changes to it have an intent to amend
 rather than reconstruct. An as-built PRD characterizes the *existing* user-facing
-surface and follows the template with four adjustments:
+surface and follows the template with these adjustments:
 
 - **State** is `Implemented` from the start, with an `**As-built:**` marker line
   noting it is a retroactive characterization — there is no forward "closing PR".
 - **Related ADRs** replaces *Spawned ADRs*: an as-built PRD links the ADRs that
-  already govern the feature; it did not spawn them.
+  already govern the feature; it did not spawn them. A structural contract the
+  feature implements but that has **no ADR yet** is recorded here as a linked
+  tracked issue (e.g. `no ADR yet — tracked in #N`), not lamented as prose in the
+  body — writing that ADR is backlog, not part of this document.
+- **Alternatives** is omitted. A retroactive PRD has no record of the options
+  actually weighed before implementation, and inventing a considered-and-rejected
+  list would be fiction; where a shipped choice needs justifying, put the rationale
+  in Proposal.
+- **Risks** is kept but reframed as the *residual risks of the shipped behavior*,
+  with mitigations as built — not a pre-implementation forecast — under a one-line
+  retroactive note.
 - **Definition of Done** is a *characterization* — each item is a behavior that is
   already true, bound to an existing test or observable. These existing bindings
   stand in for the closing-PR check the lifecycle otherwise requires of

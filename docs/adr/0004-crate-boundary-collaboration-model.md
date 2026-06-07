@@ -130,8 +130,7 @@ Initial split decisions:
 
 Create a new domain crate only when most of these are true:
 
-- the domain has a clear maintainer or reviewer group
-- its public API is stable, or an ADR records the intended contract
+- its public API is stable, or an ADR/PRD records the intended contract
 - at least two shell crates or runtime paths consume the code
 - the split removes duplication or reduces review blast radius
 - tests move with the crate and remain deterministic

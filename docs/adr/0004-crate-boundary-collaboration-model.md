@@ -1,8 +1,12 @@
 # ADR-0004: Crate boundaries for collaborative feature ownership
 
-**Status:** Proposed
+**Status:** Accepted
 **Date:** 2026-06-06
 **Author:** SP42
+
+**Implementation note:** Accepted after PR #15 landed the initial crate-boundary
+batch and closed issues #6-#13. Follow-up work should use this ADR as the
+contract for future crate splits.
 
 ## Context
 

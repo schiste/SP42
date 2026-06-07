@@ -8,14 +8,9 @@
 **Related ADRs:** ADR-0001 (foundational decisions — §5 the Toolforge hosting posture, whose persistent-WebSocket support is still an open question; §7 the trait-isolated I/O posture). The coordination *contract* itself has **no ADR yet** — tracked in #21.
 **Discussion:** (PR link added on filing)
 
-> **As-built note.** This PRD documents coordination behavior that already ships
-> and is covered by tests; it is not a forward requirement. The Definition of
-> Done is re-framed as *characterization*: every checked item is a behavior that
-> is already true and bound to an existing test. Things that are absent,
-> inconsistent, or only partly wired are recorded under **Known gaps / drift**,
-> not papered over. In particular, read that section first for the boundary
-> between what the *server relay and protocol* do (fully built and tested) and
-> what the *interactive patrol UI* does (display-only today).
+> **Orientation.** Read **Known gaps / drift** first for the boundary between what
+> the *server relay and protocol* do (fully built and tested) and what the
+> *interactive patrol UI* does (display-only today).
 
 ## Scope boundary
 

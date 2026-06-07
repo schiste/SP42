@@ -448,17 +448,22 @@ mod tests {
     use reqwest::Client;
     use serde::Deserialize;
     use sp42_core::LocalOAuthConfigStatus;
-    use sp42_wiki::parse_wiki_config;
+    use sp42_wiki::WikiRegistry;
 
     use super::{
         CapabilityProbeTargets, OAuthProfile, TokenPayload, UserInfoPayload, derive_report,
         probe_with_targets,
     };
 
+    fn default_wiki_config() -> sp42_core::WikiConfig {
+        WikiRegistry::embedded_default()
+            .expect("embedded wiki registry should load")
+            .default_config()
+    }
+
     #[test]
     fn derives_rollback_as_unavailable_without_wiki_right() {
-        let config = parse_wiki_config(include_str!("../../../configs/frwiki.yaml"))
-            .expect("config should parse");
+        let config = default_wiki_config();
         let report = derive_report(
             &config,
             OAuthProfile {
@@ -566,8 +571,7 @@ mod tests {
                 .expect("mock capability server should run");
         });
 
-        let config = parse_wiki_config(include_str!("../../../configs/frwiki.yaml"))
-            .expect("fixture should parse");
+        let config = default_wiki_config();
         let report = probe_with_targets(
             &Client::new(),
             Some("token"),

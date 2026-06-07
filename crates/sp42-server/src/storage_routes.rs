@@ -941,12 +941,17 @@ mod tests {
     };
     use crate::FlagState;
     use sp42_core::{PublicStorageDocumentData, WikiStorageDocumentKind};
-    use sp42_wiki::parse_wiki_config;
+    use sp42_wiki::WikiRegistry;
+
+    fn default_wiki_config() -> sp42_core::WikiConfig {
+        WikiRegistry::embedded_default()
+            .expect("embedded wiki registry should load")
+            .default_config()
+    }
 
     #[test]
     fn bootstrap_rule_set_uses_config_and_actor_defaults() {
-        let config = parse_wiki_config(include_str!("../../../configs/frwiki.yaml"))
-            .expect("config should parse");
+        let config = default_wiki_config();
 
         let payload = bootstrap_public_storage_document(
             &WikiStorageDocumentKind::SharedRuleSet {
@@ -971,8 +976,7 @@ mod tests {
 
     #[test]
     fn bootstrap_team_populates_owner_as_member_and_trusted_user() {
-        let config = parse_wiki_config(include_str!("../../../configs/frwiki.yaml"))
-            .expect("config should parse");
+        let config = default_wiki_config();
 
         let payload = bootstrap_public_storage_document(
             &WikiStorageDocumentKind::SharedTeam {

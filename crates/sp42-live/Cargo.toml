@@ -18,3 +18,4 @@ sp42-types = { path = "../sp42-types" }
 async-trait.workspace = true
 futures.workspace = true
 proptest = "1.9.0"
+sp42-wiki = { path = "../sp42-wiki", features = ["test-fixtures"] }

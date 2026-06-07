@@ -2206,6 +2206,7 @@ dependencies = [
  "serde_json",
  "sp42-core",
  "sp42-types",
+ "sp42-wiki",
 ]
 
 [[package]]

@@ -693,9 +693,20 @@ network requests are for live data (EventStreams, API calls, WebSocket).
 
 ### 16.2 CSS Architecture
 
-**Rule 16.2** All CSS is authored as inline styles or `<style>` blocks
-within Leptos components. No external CSS files, no CSS-in-JS runtime, no
-PostCSS build step. This eliminates render-blocking stylesheet requests.
+**Rule 16.2** All CSS is authored as inline styles, `<style>` blocks within
+Leptos components, or a single build-bundled design-token stylesheet
+(`tokens.css`, owned by `sp42-ui`). "External" here means *network-external*:
+no CSS fetched over the network, no CDN, no `@import`, no CSS-in-JS runtime, no
+PostCSS build step. The one permitted stylesheet is inlined by Trunk into the
+served bundle, so it adds zero render-blocking requests; it exists only to
+declare the `:root` design tokens (Rule 16.3) in one place. No second stylesheet
+is permitted.
+
+> **Amendment (2026-06-07, ADR-0005, pending Article-12 approval — Rule 19.4).**
+> Originally read "No external CSS files." Amended to permit exactly one
+> network-internal, build-bundled token stylesheet so design tokens have a
+> single authoritative home. The zero-network-request guarantee (Rule 16.1) is
+> unchanged.
 
 **Rule 16.3** Design tokens (Section 4, 8) are defined once in a root
 component as CSS custom properties on `:root`. Components reference tokens
@@ -736,8 +747,15 @@ These supplement CONSTITUTION.md Article 11:
 | Action bar paint | < 200ms | Time to interactive buttons |
 | Queue list render (50 items) | < 100ms | Leptos signal update |
 | External requests for UI rendering | 0 | Fonts, icons, CSS, JS libs |
-| CSS custom properties (total) | < 40 | Counted at `:root` level |
+| CSS custom properties (total) | <= 52 | Counted at `:root` level |
 | Distinct color values (patrol surface) | <= 20 | All surfaces + text + accent |
+
+> **Amendment (2026-06-07, ADR-0005, pending Article-12 approval — Rule 19.4).**
+> The CSS-custom-properties cap was raised from `< 40` to `<= 52`. The original
+> `< 40` predated the now-mandatory golden-ratio scales (Rule 4.1, 9.3) and diff
+> tokens (Section 8); `<= 52` is the asserted total (31 base + 9 space + 3 type +
+> 6 diff) enforced by `check-design-system.sh`. The `<= 20` distinct-colour cap
+> is unchanged.
 
 **Rule 17.1** Performance budgets are tested in CI when the E2E test
 harness is in place (Playwright, per Constitution Article 1.2).

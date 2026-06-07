@@ -1,6 +1,7 @@
 # PRD-0005: Operator identity and session
 
-**Author:** Luis Villa
+**Drafter:** Claude Code Opus 4.8
+**Editor:** Luis Villa
 **Date:** 2026-06-05
 **State:** Implemented
 **As-built:** retroactive characterization of an already-shipped feature (no forward "closing PR").

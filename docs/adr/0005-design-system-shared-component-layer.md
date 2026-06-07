@@ -38,7 +38,11 @@ and the amendments are Proposed together.
 
 Create **`sp42-ui`**, a presentation-only crate that is the single source of
 visual truth, structured as **atoms → primitives → patterns**. Every shell
-(`sp42-app`, `sp42-desktop`) renders only through it.
+(`sp42-app`, `sp42-desktop`) renders only through it. `sp42-ui` is a *web*
+source of truth, not a universal one: `sp42-cli` is deliberately not a Leptos
+consumer and shares only the medium-independent semantic layer (`Tier` /
+`StatusTone`, which lives below `sp42-ui`), rendering it as ANSI — so one
+threshold definition serves every shell.
 
 ### Design principles
 
@@ -103,7 +107,8 @@ view! { <Button variant=ButtonVariant::Danger>"R Rollback"</Button> }
 ```
 
 Catalog: `Button`, `Badge`/`StatusBadge`, `Panel`, `Card`, `ScoreDisplay`
-(`score_tier` now returns `Color`+`Icon`), `Field`/`TextInput`/`Select`,
+(consumes a domain `Tier`; `sp42-ui` maps `Tier` → `Color`+`Icon`),
+`Field`/`TextInput`/`Select`,
 `SectionHeader`, `Spinner`, `Modal`, `ContextMenu`. Each encodes the contract
 (focus ring, logical properties, no decorative animation — replacing the
 contract-violating `.btn-recommended` pulse).
@@ -142,8 +147,15 @@ legacy debt only shrinks, and no one is blocked by code they did not touch.
 
 Small commits, no behaviour change per slice; enforcement live from slice 1 via
 the ratchet. (1) Scaffold `sp42-ui`, move `style.css` in (aliased), wire the
-check + baseline. (2) Add the space/type/diff tokens. (3) Move `score_tier`,
-`tone_colors`, `wiki_base_url` with their tests; fix `StatusBadge` and
+check + baseline. (2) Add the space/type/diff tokens. (3) Land the
+score→severity *semantic* in a Leptos-free home, not in `sp42-ui`: add `Tier`,
+`score_tier(score) -> Tier`, and `StatusTone` (with their tests) to the
+scoring/domain layer (`sp42-core` now, a `sp42-types`/scoring-policy slice later)
+so the Leptos-free `sp42-cli` shares one definition — a tier threshold is scoring
+policy, not a widget (Scoring Constitution §14.3). `sp42-ui` then maps `Tier` →
+`Color`+`Icon` and `sp42-cli` maps `Tier` → ANSI/glyph. Move `tone_colors` into
+`sp42-ui`; route `wiki_base_url` to `sp42-wiki` (not `sp42-ui` — it is a domain
+concern, and `sp42-ui` takes no domain deps). Fix `StatusBadge` and
 `--font-sans`. (4) Land primitives one at a time, deleting superseded CSS/inline
 and lowering the baseline, until baselines hit zero and aliases are removed.
 

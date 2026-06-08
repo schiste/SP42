@@ -5,7 +5,7 @@
 **Date:** 2026-06-04
 **State:** Draft
 **Discussion:** <PR link>
-**Spawned ADRs:** ADR-0006, ADR-0007, ADR-0008, ADR-0009 (see below)
+**Spawned ADRs:** ADR-0006, ADR-0007, ADR-0008, ADR-0009, ADR-0010 (see below)
 
 ## Problem
 
@@ -99,7 +99,7 @@ CI-green. The criteria below are specific to this feature:
 
 ## Spawned ADRs
 
-This PRD touches two dual-natured ADR triggers and spawned the four ADRs below,
+This PRD touches two dual-natured ADR triggers and spawned the five ADRs below,
 drafted alongside it and submitted for review together:
 
 - **Verdict & action semantics** — the categorical verdict set and the
@@ -112,6 +112,9 @@ drafted alongside it and submitted for review together:
 - **Source-snapshot storage** — how fetched source snapshots and verdict records
   are persisted for reproducibility and audit (*persistent storage formats*) →
   **ADR-0009**.
+- **Multi-model verification** — a single model is not reliable enough alone, so
+  the verdict is a panel decided by vote, with measured agreement surfaced as the
+  honest signal → **ADR-0010**.
 
 ## Open questions
 

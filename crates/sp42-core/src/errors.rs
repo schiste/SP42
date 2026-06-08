@@ -1,5 +1,6 @@
 //! Domain-specific error types used across the core library.
 
+pub use sp42_types::{EventSourceError, HttpClientError, StorageError, WebSocketError};
 use thiserror::Error;
 
 #[derive(Debug, Error)]
@@ -139,40 +140,6 @@ pub enum DevAuthError {
     InvalidConfig { message: String },
     #[error("dev auth payload is invalid: {message}")]
     InvalidPayload { message: String },
-}
-
-#[derive(Debug, Error, Clone, PartialEq, Eq)]
-pub enum HttpClientError {
-    #[error("transport failed: {message}")]
-    Transport { message: String },
-    #[error("response was invalid: {message}")]
-    InvalidResponse { message: String },
-    #[error("stub state is poisoned: {resource}")]
-    StatePoisoned { resource: &'static str },
-}
-
-#[derive(Debug, Error, Clone, PartialEq, Eq)]
-pub enum EventSourceError {
-    #[error("event source disconnected: {message}")]
-    Disconnected { message: String },
-    #[error("stub state is poisoned: {resource}")]
-    StatePoisoned { resource: &'static str },
-}
-
-#[derive(Debug, Error, Clone, PartialEq, Eq)]
-pub enum StorageError {
-    #[error("storage failed: {message}")]
-    Operation { message: String },
-    #[error("stub state is poisoned: {resource}")]
-    StatePoisoned { resource: &'static str },
-}
-
-#[derive(Debug, Error, Clone, PartialEq, Eq)]
-pub enum WebSocketError {
-    #[error("websocket failed: {message}")]
-    Transport { message: String },
-    #[error("stub state is poisoned: {resource}")]
-    StatePoisoned { resource: &'static str },
 }
 
 #[derive(Debug, Error)]

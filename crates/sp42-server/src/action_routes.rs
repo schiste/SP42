@@ -7,20 +7,30 @@ use axum::{
 use tracing::info;
 
 use sp42_core::{
-    ActionError, ActionResponseSummary, FlagState, HttpResponse, PatrolRequest, RollbackRequest,
-    TokenKind, UndoRequest, WikiPageSaveRequest, execute_patrol, execute_rollback, execute_undo,
-    execute_wiki_page_save, parse_action_response_summary,
+    ActionError, ActionExecutionHistoryReport, ActionExecutionLogEntry,
+    ActionExecutionStatusReport, ActionResponseSummary, DevAuthCapabilityReport, FlagState,
+    PatrolRequest, RollbackRequest, SessionActionExecutionRequest, SessionActionExecutionResponse,
+    SessionActionKind, TokenKind, UndoRequest, WikiPageSaveRequest, execute_fetch_token,
+    execute_patrol, execute_rollback, execute_undo, execute_wiki_page_save,
+    parse_action_response_summary,
 };
+use sp42_types::HttpResponse;
 
-use crate::session_runtime::{current_session_snapshot, prune_expired_sessions};
-use crate::{
-    ACTION_HISTORY_LIMIT, ActionExecutionHistoryReport, ActionExecutionLogEntry,
-    ActionExecutionStatusReport, ActionHistoryQuery, AppState, BearerHttpClient,
-    DevAuthCapabilityReport, RESPONSE_BODY_PREVIEW_LIMIT, SessionActionExecutionRequest,
-    SessionActionExecutionResponse, SessionActionKind, SessionSnapshot,
-    capability_report_for_session, config_for_state_wiki, execute_fetch_token, forbidden_error,
-    invalid_payload, storage_routes, unauthorized_error, validate_csrf_header,
+use crate::http_errors::{forbidden_error, invalid_payload, unauthorized_error};
+use crate::runtime_adapters::BearerHttpClient;
+use crate::session_runtime::{
+    current_session_snapshot, prune_expired_sessions, validate_csrf_header,
 };
+use crate::state::{AppState, SessionSnapshot};
+use crate::{capability_report_for_session, config_for_state_wiki, storage_routes};
+
+const ACTION_HISTORY_LIMIT: usize = 50;
+const RESPONSE_BODY_PREVIEW_LIMIT: usize = 1_000;
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Deserialize, serde::Serialize)]
+pub(crate) struct ActionHistoryQuery {
+    limit: Option<usize>,
+}
 
 pub(crate) async fn get_action_status(
     State(state): State<AppState>,
@@ -883,11 +893,11 @@ fn action_error_message(body: &Json<serde_json::Value>) -> String {
 #[cfg(test)]
 mod tests {
     use super::action_feedback_for_entry;
-    use sp42_core::SessionActionKind;
+    use sp42_core::{ActionExecutionLogEntry, SessionActionKind};
 
     #[test]
     fn action_feedback_includes_rationale_summary() {
-        let entry = crate::ActionExecutionLogEntry {
+        let entry = ActionExecutionLogEntry {
             executed_at_ms: 1_710_000_000_000,
             wiki_id: "frwiki".to_string(),
             kind: SessionActionKind::Rollback,

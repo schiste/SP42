@@ -1,19 +1,18 @@
 [package]
-name = "sp42-wiki"
-version.workspace = true
+name = "sp42-types"
 edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
+version.workspace = true
+
+[dependencies]
+async-trait.workspace = true
+serde.workspace = true
+thiserror.workspace = true
+url.workspace = true
+
+[dev-dependencies]
+futures.workspace = true
 
 [lints]
 workspace = true
-
-[features]
-test-fixtures = []
-
-[dependencies]
-serde.workspace = true
-serde_yaml.workspace = true
-sp42-core = { path = "../sp42-core" }
-thiserror.workspace = true
-url.workspace = true

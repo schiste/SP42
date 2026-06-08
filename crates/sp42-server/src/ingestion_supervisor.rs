@@ -5,11 +5,13 @@ use sp42_live::{
     BacklogRuntime, BacklogRuntimeConfig, BacklogRuntimeStatus, DEFAULT_LIVE_OPERATOR_LIMIT,
     LiveIngestionSupervisorStatus, RecentChangesBatch, StreamRuntimeStatus,
 };
+use sp42_types::StorageError;
 
-use crate::{
-    AppState, BearerHttpClient, IngestionSupervisorSnapshot, persisted_stream_status,
-    resolved_wiki_config, runtime_storage_for,
-};
+use crate::live_queue::IngestionSupervisorSnapshot;
+use crate::resolved_wiki_config;
+use crate::runtime_adapters::BearerHttpClient;
+use crate::runtime_status::{persisted_stream_status, runtime_storage_for};
+use crate::state::AppState;
 
 pub(crate) fn supervisor_poll_interval_ms() -> u64 {
     std::env::var("SP42_INGESTION_POLL_MS")
@@ -208,10 +210,10 @@ pub(crate) async fn perform_supervisor_poll(
     let stream_status = persisted_stream_status(state, wiki_id)
         .await
         .map_err(|message| {
-            sp42_core::BacklogRuntimeError::Storage(sp42_core::StorageError::Operation { message })
+            sp42_core::BacklogRuntimeError::Storage(StorageError::Operation { message })
         })?;
     let queue = build_ranked_queue(batch.events.clone(), &config.scoring).map_err(|error| {
-        sp42_core::BacklogRuntimeError::Storage(sp42_core::StorageError::Operation {
+        sp42_core::BacklogRuntimeError::Storage(StorageError::Operation {
             message: error.to_string(),
         })
     })?;

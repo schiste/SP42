@@ -5,9 +5,11 @@ use std::sync::{Arc, Mutex};
 use async_trait::async_trait;
 use base64::Engine as _;
 use futures::channel::oneshot;
-use sp42_core::errors::{EventSourceError, HttpClientError, StorageError, WebSocketError};
-use sp42_core::traits::{Clock, EventSource, HttpClient, Rng, Storage, WebSocket};
-use sp42_core::types::{HttpMethod, HttpRequest, HttpResponse, ServerSentEvent, WebSocketFrame};
+use sp42_types::{
+    Clock, EventSource, EventSourceError, HttpClient, HttpClientError, HttpMethod, HttpRequest,
+    HttpResponse, Rng, ServerSentEvent, Storage, StorageError, WebSocket, WebSocketError,
+    WebSocketFrame,
+};
 use url::Url;
 use wasm_bindgen::closure::Closure;
 use wasm_bindgen::{JsCast, JsValue};
@@ -604,7 +606,7 @@ fn stringify_js_value(value: &JsValue) -> String {
 #[cfg(test)]
 mod tests {
     use futures::executor::block_on;
-    use sp42_core::traits::{Clock, Rng, Storage};
+    use sp42_types::{Clock, Rng, Storage};
 
     use super::{
         BrowserClock, BrowserRng, LocalStorageBrowserStorage, VolatileBrowserStorage,

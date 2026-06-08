@@ -1,10 +1,19 @@
 use axum::Json;
 use axum::http::{HeaderMap, StatusCode, header::HOST};
-
-use crate::{
-    AUTH_CALLBACK_PATH, AppState, DevAuthBootstrapRequest, LocalOAuthConfig, OAuthClientConfig,
-    OAuthProfileResponse, OAuthTokenResponse, PendingOAuthLogin, invalid_payload,
+use sp42_core::{
+    DevAuthBootstrapRequest, OAuthClientConfig, OAuthTokenResponse, routes::AUTH_CALLBACK_PATH,
 };
+
+use crate::http_errors::invalid_payload;
+use crate::local_env::LocalOAuthConfig;
+use crate::state::{AppState, PendingOAuthLogin};
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize)]
+pub(crate) struct OAuthProfileResponse {
+    pub(crate) username: String,
+    #[serde(default)]
+    pub(crate) grants: Vec<String>,
+}
 
 pub(crate) fn internal_error(message: &str) -> (StatusCode, Json<serde_json::Value>) {
     (

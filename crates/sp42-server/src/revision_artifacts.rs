@@ -6,15 +6,21 @@ use axum::{
     extract::{Path, State},
     http::{HeaderMap, StatusCode},
 };
-use sp42_core::{QueuedEdit, RenderedHunkPreview, RenderedHunkSide, StructuredDiff, WikiConfig};
+use sp42_core::{
+    QueuedEdit, RenderedHunkPreview, RenderedHunkSide, StructuredDiff, WikiConfig,
+    build_media_diff, diff_lines,
+};
 use tracing::warn;
 
-use crate::{
-    AppState, RENDERED_HUNK_CACHE_TTL_MS, REVISION_ARTIFACT_CACHE_TTL_MS,
-    WIKIMEDIA_API_RETRY_ATTEMPTS, WIKIMEDIA_API_RETRY_DELAY_MS, access_token_for_request,
-    build_media_diff, config_for_state_wiki, diff_lines, gateway_error, truncate_response_body,
-    unauthorized_error,
-};
+use crate::action_routes::truncate_response_body;
+use crate::http_errors::{gateway_error, unauthorized_error};
+use crate::state::AppState;
+use crate::{access_token_for_request, config_for_state_wiki};
+
+const REVISION_ARTIFACT_CACHE_TTL_MS: i64 = 5 * 60 * 1000;
+const RENDERED_HUNK_CACHE_TTL_MS: i64 = 5 * 60 * 1000;
+const WIKIMEDIA_API_RETRY_ATTEMPTS: usize = 3;
+const WIKIMEDIA_API_RETRY_DELAY_MS: u64 = 150;
 
 #[derive(Debug, Clone)]
 pub(crate) struct RevisionArtifacts {

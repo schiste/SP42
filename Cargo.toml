@@ -9,6 +9,7 @@ members = [
     "crates/sp42-live",
     "crates/sp42-reporting",
     "crates/sp42-server",
+    "crates/sp42-types",
     "crates/sp42-wiki",
     "xtask",
 ]

@@ -1,13 +1,40 @@
 use std::{collections::HashMap, sync::atomic::Ordering};
 
-use axum::http::{HeaderMap, HeaderValue, header::COOKIE};
-
-use crate::{
-    AUTH_LOGIN_PATH, AUTH_LOGOUT_PATH, AppState, DevAuthBootstrapStatus, DevAuthCapabilityReport,
-    DevAuthSessionStatus, FlagState, LocalOAuthConfig, OAuthSessionView, PendingOAuthLogin,
-    SESSION_ABSOLUTE_TIMEOUT_MS, SESSION_COOKIE_MAX_AGE_SECONDS, SESSION_COOKIE_NAME,
-    SESSION_IDLE_TIMEOUT_MS, SessionSnapshot, StoredSession,
+use axum::{
+    Json,
+    http::{HeaderMap, HeaderValue, StatusCode, header::COOKIE},
 };
+use sp42_core::{
+    DevAuthCapabilityReport, DevAuthSessionStatus, FlagState,
+    routes::{AUTH_LOGIN_PATH, AUTH_LOGOUT_PATH},
+};
+
+use crate::http_errors::{forbidden_error, unauthorized_error};
+use crate::local_env::LocalOAuthConfig;
+use crate::runtime_status::DevAuthBootstrapStatus;
+use crate::state::{AppState, PendingOAuthLogin, SessionSnapshot, StoredSession};
+
+pub(crate) const SESSION_COOKIE_NAME: &str = "sp42_dev_session";
+pub(crate) const CSRF_HEADER_NAME: &str = "x-sp42-csrf-token";
+pub(crate) const SESSION_IDLE_TIMEOUT_MS: i64 = 30 * 60 * 1000;
+const SESSION_ABSOLUTE_TIMEOUT_MS: i64 = 8 * 60 * 60 * 1000;
+const SESSION_COOKIE_MAX_AGE_SECONDS: i64 = SESSION_IDLE_TIMEOUT_MS / 1000;
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub(crate) struct OAuthSessionView {
+    pub(crate) authenticated: FlagState,
+    pub(crate) username: Option<String>,
+    pub(crate) scopes: Vec<String>,
+    pub(crate) expires_at_ms: Option<i64>,
+    pub(crate) upstream_access_expires_at_ms: Option<i64>,
+    pub(crate) refresh_available: FlagState,
+    pub(crate) bridge_mode: String,
+    pub(crate) csrf_token: Option<String>,
+    pub(crate) local_token_available: FlagState,
+    pub(crate) oauth_client_ready: FlagState,
+    pub(crate) login_path: String,
+    pub(crate) logout_path: String,
+}
 
 pub(crate) fn effective_session_scopes(report: &DevAuthCapabilityReport) -> Vec<String> {
     let mut scopes = Vec::new();
@@ -26,6 +53,36 @@ pub(crate) fn effective_session_scopes(report: &DevAuthCapabilityReport) -> Vec<
     }
 
     scopes
+}
+
+pub(crate) fn validate_csrf_header(
+    headers: &HeaderMap,
+    session: &SessionSnapshot,
+) -> Result<(), (StatusCode, Json<serde_json::Value>)> {
+    let Some(header_value) = headers
+        .get(CSRF_HEADER_NAME)
+        .and_then(|value| value.to_str().ok())
+    else {
+        return Err(forbidden_error("Missing CSRF token header."));
+    };
+
+    if header_value == session.csrf_token {
+        Ok(())
+    } else {
+        Err(forbidden_error("Invalid CSRF token header."))
+    }
+}
+
+pub(crate) async fn require_session_csrf(
+    state: &AppState,
+    headers: &HeaderMap,
+) -> Result<(), (StatusCode, Json<serde_json::Value>)> {
+    let Some(session) = current_session_snapshot(state, headers, false).await else {
+        return Err(unauthorized_error(
+            "No authenticated bridge session is active.",
+        ));
+    };
+    validate_csrf_header(headers, &session)
 }
 
 pub(crate) fn auth_session_view_without_session(state: &AppState) -> OAuthSessionView {

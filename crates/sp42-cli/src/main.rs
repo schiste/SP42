@@ -22,6 +22,7 @@ use sp42_reporting::{
     build_shell_state_model, render_patrol_scenario_markdown, render_patrol_scenario_text,
     render_shell_state_markdown, render_shell_state_text,
 };
+use sp42_types::{HttpMethod, HttpRequest, HttpResponse};
 use std::collections::{BTreeMap, BTreeSet};
 
 const LOCAL_SERVER_BASE_URL: &str = "http://127.0.0.1:8788";
@@ -568,8 +569,8 @@ fn render_context_preview(
 
 fn render_context_preview_text(
     item: &QueuedEdit,
-    recentchanges_request: &sp42_core::HttpRequest,
-    liftwing_request: &sp42_core::HttpRequest,
+    recentchanges_request: &HttpRequest,
+    liftwing_request: &HttpRequest,
     context: &sp42_core::ScoringContext,
     score: &sp42_core::CompositeScore,
     options: &ContextPreviewOptions,
@@ -607,8 +608,8 @@ fn render_context_preview_text(
 
 fn render_context_preview_markdown(
     item: &QueuedEdit,
-    recentchanges_request: &sp42_core::HttpRequest,
-    liftwing_request: &sp42_core::HttpRequest,
+    recentchanges_request: &HttpRequest,
+    liftwing_request: &HttpRequest,
     context: &sp42_core::ScoringContext,
     score: &sp42_core::CompositeScore,
     options: &ContextPreviewOptions,
@@ -650,8 +651,8 @@ fn render_context_preview_markdown(
 
 fn render_context_preview_json(
     item: &QueuedEdit,
-    recentchanges_request: &sp42_core::HttpRequest,
-    liftwing_request: &sp42_core::HttpRequest,
+    recentchanges_request: &HttpRequest,
+    liftwing_request: &HttpRequest,
     context: &sp42_core::ScoringContext,
     score: &sp42_core::CompositeScore,
     options: &ContextPreviewOptions,
@@ -1527,14 +1528,14 @@ async fn execute_bridge_action(
 
 async fn execute_local_http_request(
     client: &reqwest::Client,
-    request: sp42_core::HttpRequest,
-) -> Result<sp42_core::HttpResponse, String> {
+    request: HttpRequest,
+) -> Result<HttpResponse, String> {
     let mut builder = match request.method {
-        sp42_core::HttpMethod::Get => client.get(request.url),
-        sp42_core::HttpMethod::Post => client.post(request.url),
-        sp42_core::HttpMethod::Put => client.put(request.url),
-        sp42_core::HttpMethod::Patch => client.patch(request.url),
-        sp42_core::HttpMethod::Delete => client.delete(request.url),
+        HttpMethod::Get => client.get(request.url),
+        HttpMethod::Post => client.post(request.url),
+        HttpMethod::Put => client.put(request.url),
+        HttpMethod::Patch => client.patch(request.url),
+        HttpMethod::Delete => client.delete(request.url),
     };
 
     for (key, value) in request.headers {
@@ -1563,7 +1564,7 @@ async fn execute_local_http_request(
         .map_err(|error| format!("bridge response body could not be read: {error}"))?
         .to_vec();
 
-    Ok(sp42_core::HttpResponse {
+    Ok(HttpResponse {
         status,
         headers,
         body,

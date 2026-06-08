@@ -7,21 +7,21 @@ use axum::{
 };
 use sp42_coordination::{CoordinationRoomSummary, CoordinationSnapshot, CoordinationState};
 use sp42_core::{
-    DevAuthCapabilityReport, DevAuthSessionStatus, FileStorage, LocalOAuthConfigStatus,
-    LocalOAuthSourceReport, Storage, routes as route_contracts,
+    DevAuthCapabilityReport, DevAuthSessionStatus, LocalOAuthConfigStatus, LocalOAuthSourceReport,
+    routes as route_contracts,
 };
 use sp42_live::{BacklogRuntime, BacklogRuntimeConfig, BacklogRuntimeStatus, StreamRuntimeStatus};
 use sp42_reporting::ServerDebugSummary;
+use sp42_types::{FileStorage, Storage};
 
 use crate::coordination::{
     CoordinationRegistry, CoordinationRoomInspection, CoordinationRoomMetrics,
 };
 use crate::endpoint_manifest::{OperatorEndpointDescriptor, operator_endpoint_manifest};
+use crate::live_queue::supervisor_snapshot_for_wiki;
 use crate::session_runtime::{bootstrap_status, current_status, prune_expired_sessions};
-use crate::{
-    AppState, OPERATOR_REPORT_PATH, cache_is_fresh, capability_report_for_request,
-    resolved_wiki_config, supervisor_snapshot_for_wiki,
-};
+use crate::state::AppState;
+use crate::{cache_is_fresh, capability_report_for_request, resolved_wiki_config};
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub(crate) struct DevAuthBootstrapStatus {
@@ -208,7 +208,7 @@ pub(crate) async fn server_readiness(state: &AppState, headers: &HeaderMap) -> S
         bootstrap,
         capability_probe,
         capability_cache,
-        operator_report_path: OPERATOR_REPORT_PATH.to_string(),
+        operator_report_path: route_contracts::OPERATOR_REPORT_PATH.to_string(),
         coordination: coordination_snapshot,
     }
 }
@@ -231,7 +231,7 @@ pub(crate) async fn runtime_debug(state: &AppState, headers: &HeaderMap) -> Runt
         oauth: state.local_oauth.status(),
         capabilities,
         capability_cache,
-        operator_report_path: OPERATOR_REPORT_PATH.to_string(),
+        operator_report_path: route_contracts::OPERATOR_REPORT_PATH.to_string(),
         coordination,
     }
 }

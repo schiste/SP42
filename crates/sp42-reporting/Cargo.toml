@@ -17,4 +17,4 @@ sp42-live = { path = "../sp42-live" }
 [dev-dependencies]
 proptest = "1.9.0"
 serde_json.workspace = true
-sp42-wiki = { path = "../sp42-wiki" }
+sp42-wiki = { path = "../sp42-wiki", features = ["test-fixtures"] }

@@ -14,8 +14,9 @@ use axum::{Json, Router};
 use futures::future::join_all;
 use reqwest::Client;
 use serde::Deserialize;
-use sp42_core::{FileStorage, Storage, branding};
+use sp42_core::branding;
 use sp42_reporting::LiveOperatorView;
+use sp42_types::{FileStorage, Storage};
 use tokio::net::TcpListener as TokioTcpListener;
 
 #[derive(Clone)]

@@ -287,7 +287,7 @@ mod tests {
         EditEvent, EditorIdentity, QueuedEdit, ScoringConfig, ScoringContext, UserRiskProfile,
         WarningLevel,
     };
-    use sp42_wiki::parse_wiki_config;
+    use sp42_wiki::test_fixtures::frwiki_config;
 
     use super::{
         PatrolSessionDigestInputs, build_patrol_session_digest,
@@ -300,8 +300,7 @@ mod tests {
 
     #[test]
     fn builds_digest_from_scenario_report() {
-        let config = parse_wiki_config(include_str!("../../../configs/frwiki.yaml"))
-            .expect("config should parse");
+        let config = frwiki_config();
         let event = EditEvent {
             wiki_id: "frwiki".to_string(),
             title: "Example".to_string(),
@@ -384,8 +383,7 @@ mod tests {
 
     #[test]
     fn renders_digest_in_text_and_markdown() {
-        let config = parse_wiki_config(include_str!("../../../configs/frwiki.yaml"))
-            .expect("config should parse");
+        let config = frwiki_config();
         let event = EditEvent {
             wiki_id: "frwiki".to_string(),
             title: "Example".to_string(),

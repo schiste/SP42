@@ -263,7 +263,7 @@ mod tests {
     use sp42_core::review_workbench::build_review_workbench;
     use sp42_core::scoring_engine::score_edit;
     use sp42_core::types::{EditEvent, EditorIdentity, QueuedEdit, ScoringConfig};
-    use sp42_wiki::parse_wiki_config;
+    use sp42_wiki::test_fixtures::frwiki_config;
 
     use super::{
         PatrolOperatorSummaryInputs, build_patrol_operator_summary,
@@ -273,8 +273,7 @@ mod tests {
 
     #[test]
     fn builds_operator_summary_from_report() {
-        let config = parse_wiki_config(include_str!("../../../configs/frwiki.yaml"))
-            .expect("config should parse");
+        let config = frwiki_config();
         let event = EditEvent {
             wiki_id: "frwiki".to_string(),
             title: "Exemple".to_string(),

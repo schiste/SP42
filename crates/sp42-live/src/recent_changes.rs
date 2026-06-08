@@ -4,11 +4,8 @@ use std::collections::BTreeMap;
 
 use serde::Deserialize;
 
-use sp42_core::errors::RecentChangesError;
-use sp42_core::traits::HttpClient;
-use sp42_core::{
-    EditEvent, EditorIdentity, FlagState, HttpMethod, HttpRequest, HttpResponse, WikiConfig,
-};
+use sp42_core::{EditEvent, EditorIdentity, FlagState, RecentChangesError, WikiConfig};
+use sp42_types::{HttpClient, HttpMethod, HttpRequest, HttpResponse};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RecentChangesQuery {
@@ -466,7 +463,7 @@ mod tests {
         execute_recent_changes, parse_recent_changes_response, parse_rfc3339_utc_to_ms,
     };
     use crate::test_fixtures::fixture_wiki_config;
-    use sp42_core::{HttpResponse, StubHttpClient};
+    use sp42_types::{HttpResponse, StubHttpClient};
 
     #[test]
     fn builds_recentchanges_request() {

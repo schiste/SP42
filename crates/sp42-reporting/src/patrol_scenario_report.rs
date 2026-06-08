@@ -606,7 +606,7 @@ mod tests {
         UserRiskProfile, WarningLevel,
     };
     use sp42_live::{BacklogRuntimeStatus, StreamRuntimeStatus};
-    use sp42_wiki::parse_wiki_config;
+    use sp42_wiki::test_fixtures::frwiki_config;
 
     use super::{
         PatrolScenarioReadiness, PatrolScenarioReportInputs, ReportSeverity,
@@ -749,8 +749,7 @@ mod tests {
 
     #[test]
     fn builds_full_report_from_available_inputs() {
-        let config = parse_wiki_config(include_str!("../../../configs/frwiki.yaml"))
-            .expect("config should parse");
+        let config = frwiki_config();
         let queue = vec![
             queue_item_strategy()
                 .new_tree(&mut TestRunner::default())
@@ -807,8 +806,7 @@ mod tests {
 
     #[test]
     fn serializes_and_deserializes_report() {
-        let config = parse_wiki_config(include_str!("../../../configs/frwiki.yaml"))
-            .expect("config should parse");
+        let config = frwiki_config();
         let queue = vec![
             queue_item_strategy()
                 .new_tree(&mut TestRunner::default())
@@ -851,8 +849,7 @@ mod tests {
         #[test]
         fn report_preserves_queue_depth_and_selection(queue in prop::collection::vec(queue_item_strategy(), 1..5)) {
             let diff = diff_lines("alpha\n", "alpha\nbeta\n");
-            let config = parse_wiki_config(include_str!("../../../configs/frwiki.yaml"))
-                .expect("config should parse");
+            let config = frwiki_config();
             let workbench = build_review_workbench(
                 &config,
                 &queue[0],

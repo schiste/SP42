@@ -226,7 +226,7 @@ mod tests {
     use std::fs;
     use std::path::PathBuf;
 
-    use crate::parse_wiki_config;
+    use crate::test_fixtures::frwiki_config;
 
     use super::WikiRegistry;
 
@@ -252,8 +252,7 @@ mod tests {
 
     #[test]
     fn rejects_duplicate_wiki_ids() {
-        let config = parse_wiki_config(include_str!("../../../configs/frwiki.yaml"))
-            .expect("fixture should parse");
+        let config = frwiki_config();
         let error = WikiRegistry::from_configs(
             [config.clone(), config],
             Some("frwiki".to_string()),
@@ -266,8 +265,7 @@ mod tests {
 
     #[test]
     fn rejects_unknown_default_wiki_id() {
-        let config = parse_wiki_config(include_str!("../../../configs/frwiki.yaml"))
-            .expect("fixture should parse");
+        let config = frwiki_config();
         let error =
             WikiRegistry::from_configs([config], Some("enwiki".to_string()), "test".to_string())
                 .expect_err("unknown default should fail");

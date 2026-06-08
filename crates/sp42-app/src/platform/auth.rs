@@ -1,5 +1,4 @@
 use serde_json::Value;
-use sp42_core::traits::Rng;
 use sp42_core::{
     ActionExecutionHistoryReport, ActionExecutionStatusReport, DEV_AUTH_ACTION_HISTORY_PATH,
     DEV_AUTH_ACTION_STATUS_PATH, DEV_AUTH_BOOTSTRAP_SESSION_PATH, DEV_AUTH_SESSION_PATH,
@@ -8,6 +7,7 @@ use sp42_core::{
     parse_action_execution_status, parse_callback_query, parse_dev_auth_status,
     prepare_oauth_launch, routes,
 };
+use sp42_types::Rng;
 use url::Url;
 
 use super::config::api_url;

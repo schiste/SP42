@@ -7,7 +7,8 @@ use crate::messages::{
     RaceResolution, ScoreDelta,
 };
 use crate::{CoordinationState, CoordinationStateSummary};
-use sp42_core::{Action, WebSocket};
+use sp42_core::Action;
+use sp42_types::WebSocket;
 use tracing::warn;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -329,7 +330,8 @@ mod tests {
     use super::CoordinationRuntime;
     use crate::encode_message;
     use crate::messages::{CoordinationMessage, EditClaim};
-    use sp42_core::{Action, LoopbackWebSocket, WebSocketFrame};
+    use sp42_core::Action;
+    use sp42_types::{LoopbackWebSocket, WebSocketFrame};
 
     #[test]
     fn optimistic_claim_updates_state_and_status() {

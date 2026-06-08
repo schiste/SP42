@@ -6,9 +6,8 @@ use crate::recent_changes::{
     RecentChangesBatch, RecentChangesQuery, build_recent_changes_request, execute_recent_changes,
     normalize_continue_token,
 };
-use sp42_core::errors::{BacklogRuntimeError, StorageError};
-use sp42_core::traits::{HttpClient, Storage};
-use sp42_core::{FlagState, HttpRequest, WikiConfig};
+use sp42_core::{BacklogRuntimeError, FlagState, WikiConfig};
+use sp42_types::{HttpClient, HttpRequest, Storage, StorageError};
 
 const DEFAULT_BACKLOG_KEY_PREFIX: &str = "recentchanges.rccontinue";
 
@@ -217,9 +216,8 @@ mod tests {
     use super::{BacklogRuntime, BacklogRuntimeConfig};
     use crate::recent_changes::RecentChangesBatch;
     use crate::test_fixtures::fixture_wiki_config;
-    use sp42_core::errors::StorageError;
-    use sp42_core::{EditEvent, EditorIdentity, HttpResponse};
-    use sp42_core::{MemoryStorage, Storage, StubHttpClient};
+    use sp42_core::{EditEvent, EditorIdentity};
+    use sp42_types::{HttpResponse, MemoryStorage, Storage, StorageError, StubHttpClient};
 
     #[test]
     fn initializes_from_persisted_rccontinue() {

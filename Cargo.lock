@@ -2114,6 +2114,7 @@ dependencies = [
  "sp42-core",
  "sp42-live",
  "sp42-reporting",
+ "sp42-types",
  "sp42-wiki",
  "url",
  "wasm-bindgen",
@@ -2132,6 +2133,7 @@ dependencies = [
  "sp42-core",
  "sp42-devtools",
  "sp42-reporting",
+ "sp42-types",
 ]
 
 [[package]]
@@ -2143,6 +2145,7 @@ dependencies = [
  "rmp-serde",
  "serde",
  "sp42-core",
+ "sp42-types",
  "thiserror 2.0.18",
  "tracing",
 ]
@@ -2160,6 +2163,7 @@ dependencies = [
  "serde_yaml",
  "sha2",
  "similar",
+ "sp42-types",
  "thiserror 2.0.18",
  "tracing",
  "url",
@@ -2186,6 +2190,7 @@ dependencies = [
  "sp42-core",
  "sp42-live",
  "sp42-reporting",
+ "sp42-types",
  "sp42-wiki",
  "thiserror 2.0.18",
 ]
@@ -2200,6 +2205,8 @@ dependencies = [
  "serde",
  "serde_json",
  "sp42-core",
+ "sp42-types",
+ "sp42-wiki",
 ]
 
 [[package]]
@@ -2230,6 +2237,7 @@ dependencies = [
  "sp42-core",
  "sp42-live",
  "sp42-reporting",
+ "sp42-types",
  "sp42-wiki",
  "tokio",
  "tokio-tungstenite",
@@ -2237,6 +2245,17 @@ dependencies = [
  "tower-http",
  "tracing",
  "tracing-subscriber",
+ "url",
+]
+
+[[package]]
+name = "sp42-types"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "futures",
+ "serde",
+ "thiserror 2.0.18",
  "url",
 ]
 

@@ -180,5 +180,5 @@ here as the agreed scope of the first cut.
 - **Wiki scope — resolved.** The first cut targets **English Wikipedia (enwiki)
   only** — the wiki the underlying approach has been systematically tested on.
   Other-language wikis (e.g. French Wikipedia) are **deferred**: extending there is
-  gated on a testing strategy for citations in another language, tracked as a
-  separate follow-up.
+  gated on a testing strategy for citations in another language, tracked in
+  [issue #23](https://github.com/schiste/SP42/issues/23).

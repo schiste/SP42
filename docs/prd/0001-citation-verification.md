@@ -161,8 +161,8 @@ mechanics. The other four are the dual-natured ADR triggers PRD-0001 names.
 
 ## Scope decisions
 
-The two questions raised in drafting are now resolved; they are recorded here as
-the agreed scope of the first cut.
+The questions raised in drafting and design are now resolved; they are recorded
+here as the agreed scope of the first cut.
 
 - **Source types — resolved.** The first cut covers **HTML pages and existing
   archived snapshots (archive.org) only**. **PDFs** and **The Wikipedia Library**
@@ -177,3 +177,8 @@ the agreed scope of the first cut.
   yet in the revision-review flow. Being standalone, it does not
   feed SP42's scoring at all; whether an integrated version ever would is a later,
   post-testing step. *(This subsumes the earlier scoring-coupling question.)*
+- **Wiki scope — resolved.** The first cut targets **English Wikipedia (enwiki)
+  only** — the wiki the underlying approach has been systematically tested on.
+  Other-language wikis (e.g. French Wikipedia) are **deferred**: extending there is
+  gated on a testing strategy for citations in another language, tracked as a
+  separate follow-up.

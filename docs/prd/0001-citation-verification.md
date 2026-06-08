@@ -28,11 +28,12 @@ operator can confirm at a glance.
   *supported*, *partial*, *not supported*, *source unavailable*). No
   model-reported confidence number is ever shown — a fabricated percentage is
   false precision.
-- The verdict is decided by a **panel of independent models**, and the operator
-  is shown a **measured agreement** signal — how much of the panel backed the
-  verdict. That is an observed vote count, not a model's self-assessment: the one
-  honest quantitative signal. (A single state-of-the-art model can be run for
-  comparison; the production verdict is the panel.)
+- The **default** is a **panel of independent models** combined by vote, with the
+  operator shown a **measured agreement** signal — how much of the panel backed the
+  verdict (an observed vote count, not a model's self-assessment: the one honest
+  quantitative signal). Voting is the default because open-weight models are best
+  ensembled, but a **single model is also first-class** — a single open model where
+  it is good enough, or a single SOTA model an operator chooses to use or test.
 - The tool **abstains** (*source unavailable*) only when the source cannot be
   fetched or read; a usable source always yields a support judgment. There is no
   "couldn't determine" verdict — model uncertainty instead surfaces as **low
@@ -53,10 +54,10 @@ CI-green. The criteria below are specific to this feature:
 - [ ] A verdict is exactly one value from the fixed categorical set, and no
       numeric confidence is ever surfaced — verified by unit tests on the
       verdict type and a surface/contract test.
-- [ ] The verdict is the panel's voted result, and a **measured agreement**
-      signal (computed from independent model votes, never a model-reported
-      number) is surfaced with it — verified by unit tests on the vote
-      aggregation and a surface test.
+- [ ] When a panel is used (the default), the verdict is its voted result and a
+      **measured agreement** signal (computed from independent model votes, never a
+      model-reported number) is surfaced with it — verified by unit tests on the
+      vote aggregation and a surface test.
 - [ ] The tool never reports *supported* unless the supporting passage is
       locatable **verbatim** in a source SP42 actually fetched this session —
       verified by a property test: a claim with no matching source text never
@@ -104,11 +105,12 @@ and how SP42 uses LLMs at all — is the foundational one and is meant to be rev
 first**: it settles the platform model posture before the citation-specific
 mechanics. The other four are the dual-natured ADR triggers PRD-0001 names.
 
-- **Using LLMs** — a single model is not reliable enough alone, so the verdict is a
-  panel decided by vote with **measured agreement** as the honest signal, reached
-  through a config-driven inference endpoint (a local model, a direct provider, or a
-  sponsor proxy that holds the keys and budget; the browser shell can hold no
-  provider key). SP42's platform posture for model use → **ADR-0006**.
+- **Using LLMs** — open-weight models are best ensembled, so multi-model voting is
+  the **default** (with **measured agreement** as the honest signal), while a single
+  open or SOTA model is **also first-class**; reached through a config-driven
+  inference endpoint (local, direct, or a sponsor/hosted proxy) whose keys and budget
+  may be a third party's (e.g. WMF via HuggingFace); the browser shell holds no
+  provider key. SP42's platform posture for model use → **ADR-0006**.
 - **Verdict & action semantics** — the categorical verdict set and the
   "no support without a verbatim, in-session locatable passage" rule
   (*Wikimedia action semantics*) → **ADR-0007**.

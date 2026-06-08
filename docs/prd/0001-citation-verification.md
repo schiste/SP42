@@ -46,6 +46,37 @@ operator can confirm at a glance.
 The capability is informational: it helps an operator decide, it does not decide
 for them.
 
+## Surface: the CLI (first cut)
+
+The first cut is delivered **CLI-first**, as a read-only command in `sp42-cli` (a web
+surface can follow). What matters at this altitude is the interaction model — the
+exact flag spelling is an implementation detail:
+
+- **What it checks — one of:**
+  - **a whole article** — every citation it contains;
+  - **a revision** — the citation(s) that revision adds or changes;
+  - **a single citation** within an article or revision — selected by a **snippet of
+    the claim it backs** (the cold path: copy a few words of the sentence) or by the
+    **index the article report assigns** (the drill-down after a full run); selecting
+    a named source checks every place that source is used; or
+  - **an ad-hoc claim + source URL** supplied directly — for a source not yet on a
+    wiki, and for smoke-testing the verifier in isolation.
+- **The unit is a (claim, source) pair, not a footnote.** A source cited in several
+  places backs a *different* claim at each use, so each **use-site** is checked
+  independently and may receive a different verdict; a whole-article run reports one
+  result per use-site, in document order, and assigns each the index the
+  single-citation drill-down refers to. (Verdict semantics → ADR-0007.)
+- **What it returns — per use-site checked:** the **verdict** (*supported / partial /
+  not supported / source unavailable*), the **located supporting passage** (or a note
+  that none was found), the **source** checked, and — when a panel is used — the
+  **measured agreement**. Output is human-readable by default, with a
+  **machine-readable JSON** option in the first cut and a terse **verdict-only** mode
+  for a quick scan.
+
+The CLI changes none of the verdict semantics above; it is only how an operator runs
+the check standalone. Where it sits in the workflow — standalone, off-queue, and
+off-score for now — is covered under *Scope decisions* below.
+
 ## Definition of Done
 
 The Constitution already guarantees these are tested, deterministic, and
@@ -75,6 +106,12 @@ CI-green. The criteria below are specific to this feature:
 - [ ] Each verification emits an observable showing the fetched source, the
       located passage (or its absence), and the verdict (Constitution Art. 3) —
       checkable in the operator/debug surface.
+- [ ] The `sp42-cli` citation-verification command accepts a whole article, a
+      revision, a single selected citation, or an ad-hoc claim + source URL, and
+      prints **one result per citation use-site** — verdict, located passage (or its
+      absence), and source — in the default human format, a machine-readable JSON
+      format, and a terse verdict-only format — verified by a CLI integration test
+      against a recorded source snapshot.
 
 ## Alternatives
 
@@ -135,8 +172,8 @@ the agreed scope of the first cut.
   source access are separate costs that stay out of the first cut.
 - **Workflow placement — resolved.** Verification is **built standalone first**
   and wired into revision review only **after it is tested**. The first cut is
-  invoked on demand against a specified target — a particular citation, or an
-  article for which the operator requests a whole-article report — not a separate
-  queue, and not yet in the revision-review flow. Being standalone, it does not
+  invoked on demand against a specified target — a revision that adds or changes a
+  citation, or a whole article (see *Surface* above) — not a separate queue, and not
+  yet in the revision-review flow. Being standalone, it does not
   feed SP42's scoring at all; whether an integrated version ever would is a later,
   post-testing step. *(This subsumes the earlier scoring-coupling question.)*

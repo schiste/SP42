@@ -166,7 +166,7 @@ Other:
   reqwest-backed `HttpClient`; a future model SDK is documented per Art. 7.2 and
   license-checked per Art. 5.2 in its own PR.
 - **No scoring coupling** — measured agreement does not feed SP42's composite damage
-  score in the first cut (PRD-0001 open question 2).
+  score in the first cut, which is standalone (PRD-0001).
 
 ## Non-Goals
 

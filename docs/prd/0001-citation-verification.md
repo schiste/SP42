@@ -130,12 +130,14 @@ Each carries a proposed answer to react to, not a commitment.
   *Proposed:* HTML pages and existing archived snapshots only; PDFs deferred to a
   follow-up PRD. *Rationale:* covers the large majority of citations while
   page-level PDF text extraction — a separate cost — stays out of the first cut.
-- **Does a verdict feed SP42's existing scoring?**
-  *Proposed:* no — strictly informational for the first cut. *Rationale:* coupling
-  an unproven signal into scoring would put the scoring policy at risk before the
-  verdict's reliability is established, and keeps this PRD off the scoring-policy
-  ADR surface for now.
 - **Where does verification sit in the operator workflow?**
-  *Proposed:* inline in revision review, triggered on demand by the operator
-  against a citation — not a separate queue. *Rationale:* it lands at the moment
-  the operator is already deciding, and avoids building new queue infrastructure.
+  *Proposed:* build it **outside the revision cycle first**, and wire it into
+  revision review only **after it is tested**. The first cut is invoked on demand
+  against a specified target — a particular citation, or an article for which the
+  operator requests a whole-article report — not necessarily a separate queue, and
+  not yet in the revision-review flow. *Rationale:* the capability can be built and
+  validated standalone before it touches the live patrol path; revision-cycle
+  integration is a later step, once the verdict's reliability is established. Being
+  standalone, the first cut does not feed SP42's scoring at all — and whether an
+  integrated version ever would is part of that later, post-testing step. (This
+  subsumes the earlier open question on scoring coupling.)

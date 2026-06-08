@@ -122,22 +122,21 @@ mechanics. The other four are the dual-natured ADR triggers PRD-0001 names.
   are persisted for reproducibility and audit (*persistent storage formats*) →
   **ADR-0010**.
 
-## Open questions
+## Scope decisions
 
-Each carries a proposed answer to react to, not a commitment.
+The two questions raised in drafting are now resolved; they are recorded here as
+the agreed scope of the first cut.
 
-- **Which source types are in scope for the first cut?**
-  *Proposed:* HTML pages and existing archived snapshots only; PDFs deferred to a
-  follow-up PRD. *Rationale:* covers the large majority of citations while
-  page-level PDF text extraction — a separate cost — stays out of the first cut.
-- **Where does verification sit in the operator workflow?**
-  *Proposed:* build it **outside the revision cycle first**, and wire it into
-  revision review only **after it is tested**. The first cut is invoked on demand
-  against a specified target — a particular citation, or an article for which the
-  operator requests a whole-article report — not necessarily a separate queue, and
-  not yet in the revision-review flow. *Rationale:* the capability can be built and
-  validated standalone before it touches the live patrol path; revision-cycle
-  integration is a later step, once the verdict's reliability is established. Being
-  standalone, the first cut does not feed SP42's scoring at all — and whether an
-  integrated version ever would is part of that later, post-testing step. (This
-  subsumes the earlier open question on scoring coupling.)
+- **Source types — resolved.** The first cut covers **HTML pages and existing
+  archived snapshots (archive.org) only**. **PDFs** and **The Wikipedia Library**
+  (paywalled / credentialed sources) are **out of scope for now** — each deferred
+  to a follow-up. *Rationale:* HTML plus archived snapshots covers the large
+  majority of citations, while page-level PDF text extraction and credentialed
+  source access are separate costs that stay out of the first cut.
+- **Workflow placement — resolved.** Verification is **built standalone first**
+  and wired into revision review only **after it is tested**. The first cut is
+  invoked on demand against a specified target — a particular citation, or an
+  article for which the operator requests a whole-article report — not a separate
+  queue, and not yet in the revision-review flow. Being standalone, it does not
+  feed SP42's scoring at all; whether an integrated version ever would is a later,
+  post-testing step. *(This subsumes the earlier scoring-coupling question.)*

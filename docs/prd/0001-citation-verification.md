@@ -1,4 +1,4 @@
-# PRD-0001: Citation verification for revision review
+# PRD-0001: Citation verification — initial implementation
 
 **Drafter:** Claude Code Opus 4.8
 **Editor:** Luis Villa

@@ -5,7 +5,7 @@
 **Date:** 2026-06-04
 **State:** Draft
 **Discussion:** <PR link>
-**Spawned ADRs:** none yet (see *Spawned ADRs* below)
+**Spawned ADRs:** ADR-0006, ADR-0007, ADR-0008, ADR-0009 (see below)
 
 ## Problem
 
@@ -24,11 +24,12 @@ fetches the source read-only and reports a **categorical verdict** on whether
 the source supports the claim, with the supporting passage shown inline so the
 operator can confirm at a glance.
 
-- The verdict is one of a fixed set (e.g. *supported*, *partially supported*,
-  *not supported*, *source unusable*, *unclear*). No numeric confidence is ever
-  shown — a fabricated percentage is false precision.
-- The tool **abstains** (*unclear* / *source unusable*) rather than guess when
-  the source cannot be fetched or read.
+- The verdict is one of a fixed categorical set (defined in ADR-0006:
+  *supported*, *partial*, *not supported*, *source unavailable*). No numeric
+  confidence is ever shown — a fabricated percentage is false precision.
+- The tool **abstains** (*source unavailable*) rather than guess only when the
+  source cannot be fetched or read; a usable source always yields a support
+  judgment, so there is no separate "couldn't determine" outcome (ADR-0006).
 - Verification is **read-only and never writes**. If review leads to an edit,
   that edit goes through SP42's existing operator-confirmed action path
   unchanged.
@@ -49,8 +50,8 @@ CI-green. The criteria below are specific to this feature:
       verified by a property test: a claim with no matching source text never
       yields *supported*. (This is the load-bearing anti-fabrication invariant.)
 - [ ] When the source cannot be fetched or read, the verdict is *source
-      unusable* / *unclear*, never a support judgment — verified by an
-      integration test against an unreachable / unusable source.
+      unavailable*, never a support judgment — verified by an integration test
+      against an unreachable / unusable source.
 - [ ] Verification performs **no wiki writes**; any resulting edit flows only
       through the existing operator-confirmed action path — verified by an
       integration test asserting zero autonomous writes on the verification
@@ -79,23 +80,25 @@ CI-green. The criteria below are specific to this feature:
   really-fetched source, and the passage is shown for operator confirmation.
 - **Source fetch etiquette / rate limits.** Mitigated by read-only fetching with
   standard backoff; covered at ADR/implementation altitude.
-- **Operator over-trust.** Mitigated by abstention on uncertainty and by keeping
-  the capability informational, never an action.
+- **Operator over-trust.** Mitigated by abstaining when the source cannot be used
+  (never guessing), by the verbatim-locatability invariant, and by keeping the
+  capability informational, never an action.
 
 ## Spawned ADRs
 
-This PRD touches two dual-natured ADR triggers and so will spawn ADRs before
-implementation:
+This PRD touches two dual-natured ADR triggers and spawned the four ADRs below,
+drafted alongside it and submitted for review together:
 
 - **Verdict & action semantics** — the categorical verdict set and the
   "no support without a verbatim, in-session locatable passage" rule
-  (*Wikimedia action semantics*).
+  (*Wikimedia action semantics*) → **ADR-0006**.
 - **Verification contract** — the request/response surface a verification result
-  is exposed through (*public contracts or APIs*).
+  is exposed through (*public contracts or APIs*) → **ADR-0007**.
 - **Crate boundary** — where verification logic lives (`sp42-core` vs. a new
-  crate) (*crate boundaries*).
+  crate) (*crate boundaries*) → **ADR-0008**.
 - **Source-snapshot storage** — how fetched source snapshots and verdict records
-  are persisted for reproducibility and audit (*persistent storage formats*).
+  are persisted for reproducibility and audit (*persistent storage formats*) →
+  **ADR-0009**.
 
 ## Open questions
 

@@ -25,11 +25,19 @@ the source supports the claim, with the supporting passage shown inline so the
 operator can confirm at a glance.
 
 - The verdict is one of a fixed categorical set (defined in ADR-0006:
-  *supported*, *partial*, *not supported*, *source unavailable*). No numeric
-  confidence is ever shown — a fabricated percentage is false precision.
-- The tool **abstains** (*source unavailable*) rather than guess only when the
-  source cannot be fetched or read; a usable source always yields a support
-  judgment, so there is no separate "couldn't determine" outcome (ADR-0006).
+  *supported*, *partial*, *not supported*, *source unavailable*). No
+  model-reported confidence number is ever shown — a fabricated percentage is
+  false precision.
+- The verdict is decided by a **panel of independent models**, and the operator
+  is shown a **measured agreement** signal — how much of the panel backed the
+  verdict. That is an observed vote count, not a model's self-assessment: the one
+  honest quantitative signal. (A single state-of-the-art model can be run for
+  comparison; the production verdict is the panel.)
+- The tool **abstains** (*source unavailable*) only when the source cannot be
+  fetched or read; a usable source always yields a support judgment. There is no
+  "couldn't determine" verdict — model uncertainty instead surfaces as **low
+  panel agreement**, a *borderline — review* signal rather than false certainty
+  (ADR-0006).
 - Verification is **read-only and never writes**. If review leads to an edit,
   that edit goes through SP42's existing operator-confirmed action path
   unchanged.
@@ -45,6 +53,10 @@ CI-green. The criteria below are specific to this feature:
 - [ ] A verdict is exactly one value from the fixed categorical set, and no
       numeric confidence is ever surfaced — verified by unit tests on the
       verdict type and a surface/contract test.
+- [ ] The verdict is the panel's voted result, and a **measured agreement**
+      signal (computed from independent model votes, never a model-reported
+      number) is surfaced with it — verified by unit tests on the vote
+      aggregation and a surface test.
 - [ ] The tool never reports *supported* unless the supporting passage is
       locatable **verbatim** in a source SP42 actually fetched this session —
       verified by a property test: a claim with no matching source text never
@@ -81,7 +93,8 @@ CI-green. The criteria below are specific to this feature:
 - **Source fetch etiquette / rate limits.** Mitigated by read-only fetching with
   standard backoff; covered at ADR/implementation altitude.
 - **Operator over-trust.** Mitigated by abstaining when the source cannot be used
-  (never guessing), by the verbatim-locatability invariant, and by keeping the
+  (never guessing), by the verbatim-locatability invariant, by surfacing low
+  panel agreement as a *borderline — review* signal, and by keeping the
   capability informational, never an action.
 
 ## Spawned ADRs

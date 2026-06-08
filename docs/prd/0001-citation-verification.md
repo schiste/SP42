@@ -5,7 +5,7 @@
 **Date:** 2026-06-04
 **State:** Draft
 **Discussion:** <PR link>
-**Spawned ADRs:** ADR-0006, ADR-0007, ADR-0008, ADR-0009, ADR-0010, ADR-0011 (see below)
+**Spawned ADRs:** ADR-0006, ADR-0007, ADR-0008, ADR-0009, ADR-0010 (see below)
 
 ## Problem
 
@@ -24,7 +24,7 @@ fetches the source read-only and reports a **categorical verdict** on whether
 the source supports the claim, with the supporting passage shown inline so the
 operator can confirm at a glance.
 
-- The verdict is one of a fixed categorical set (defined in ADR-0006:
+- The verdict is one of a fixed categorical set (defined in ADR-0007:
   *supported*, *partial*, *not supported*, *source unavailable*). No
   model-reported confidence number is ever shown — a fabricated percentage is
   false precision.
@@ -99,25 +99,26 @@ CI-green. The criteria below are specific to this feature:
 
 ## Spawned ADRs
 
-This PRD touches two dual-natured ADR triggers and spawned the six ADRs below,
-drafted alongside it and submitted for review together:
+This PRD spawned the five ADRs below, drafted alongside it. **ADR-0006 — whether
+and how SP42 uses LLMs at all — is the foundational one and is meant to be reviewed
+first**: it settles the platform model posture before the citation-specific
+mechanics. The other four are the dual-natured ADR triggers PRD-0001 names.
 
+- **Using LLMs** — a single model is not reliable enough alone, so the verdict is a
+  panel decided by vote with **measured agreement** as the honest signal, reached
+  through a config-driven inference endpoint (a local model, a direct provider, or a
+  sponsor proxy that holds the keys and budget; the browser shell can hold no
+  provider key). SP42's platform posture for model use → **ADR-0006**.
 - **Verdict & action semantics** — the categorical verdict set and the
   "no support without a verbatim, in-session locatable passage" rule
-  (*Wikimedia action semantics*) → **ADR-0006**.
+  (*Wikimedia action semantics*) → **ADR-0007**.
 - **Verification contract** — the request/response surface a verification result
-  is exposed through (*public contracts or APIs*) → **ADR-0007**.
+  is exposed through (*public contracts or APIs*) → **ADR-0008**.
 - **Crate boundary** — where verification logic lives (`sp42-core` vs. a new
-  crate) (*crate boundaries*) → **ADR-0008**.
+  crate) (*crate boundaries*) → **ADR-0009**.
 - **Source-snapshot storage** — how fetched source snapshots and verdict records
   are persisted for reproducibility and audit (*persistent storage formats*) →
-  **ADR-0009**.
-- **Multi-model verification** — a single model is not reliable enough alone, so
-  the verdict is a panel decided by vote, with measured agreement surfaced as the
-  honest signal → **ADR-0010**.
-- **Model inference endpoint** — where the model runs (a local model, a direct
-  provider, or a sponsor proxy that holds the keys and budget) and who holds the
-  credentials; the browser shell can hold no provider key → **ADR-0011**.
+  **ADR-0010**.
 
 ## Open questions
 

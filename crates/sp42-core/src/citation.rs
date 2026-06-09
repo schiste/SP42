@@ -16,6 +16,8 @@
 //! panel + measured agreement → ADR-0006; source-snapshot storage → ADR-0009.
 
 pub mod body_classifier;
+pub mod citoid;
 pub mod locate_quote;
+pub mod prompts;
 pub mod verdict;
 pub mod voting;

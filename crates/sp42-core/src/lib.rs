@@ -66,7 +66,11 @@ pub use article_inventory::{
     ArticleInventory, ArticleReference, article_inventory_notes, build_article_inventory,
 };
 pub use citation::body_classifier::{BodyUsability, BodyUsabilityReason, classify_body_usability};
+pub use citation::citoid::{
+    CitoidMetadata, build_citoid_header, build_citoid_request, parse_citoid_response,
+};
 pub use citation::locate_quote::locate_quote;
+pub use citation::prompts::{PromptMessage, PromptRole, build_verify_prompt};
 pub use citation::verdict::{CitationFindingKind, CitationVerdict, SupportLevel, Verdict};
 pub use citation::voting::{BinaryVote, NClassVote, PanelAgreement, binary_vote, n_class_vote};
 pub use context_builder::{ContextInputs, build_scoring_context};

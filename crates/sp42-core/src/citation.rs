@@ -18,6 +18,7 @@
 pub mod body_classifier;
 pub mod citoid;
 pub mod locate_quote;
+pub mod parsing;
 pub mod prompts;
 pub mod verdict;
 pub mod voting;

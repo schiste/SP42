@@ -70,6 +70,7 @@ pub use citation::citoid::{
     CitoidMetadata, build_citoid_header, build_citoid_request, parse_citoid_response,
 };
 pub use citation::locate_quote::locate_quote;
+pub use citation::parsing::{ParsedVerdict, canonicalize_verdict, parse_verdict_response};
 pub use citation::prompts::{PromptMessage, PromptRole, build_verify_prompt};
 pub use citation::verdict::{CitationFindingKind, CitationVerdict, SupportLevel, Verdict};
 pub use citation::voting::{BinaryVote, NClassVote, PanelAgreement, binary_vote, n_class_vote};

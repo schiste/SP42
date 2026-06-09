@@ -97,14 +97,16 @@ first cut). Breaking changes increment the version with one release cycle of bac
 ```rust
 // SnapshotEnvelope { version, source_url, fetched_at_ms, content_hash, body_text }
 // VerdictEnvelope  { version, claim, snapshot_hash, verdict, located_passage: Option<...>,
-//                    panel_votes: Vec<{ model: ModelRef, verdict, located_passage: Option<...> }>,
+//                    panel_votes: Vec<{ invocation: ModelInvocation, verdict, located_passage: Option<...> }>,
 //                    agreement: PanelAgreement { panel_size, winner_votes }, panel_ref: Vec<ModelRef> }
+// ModelInvocation { model: ModelRef, quant: Option<..>, params, prompt_hash }  // per-call fingerprint (ADR-0006 D8)
 // ModelRef { provider, model, version }  // version = the pinned model id used; never a key/token
 ```
 
 The verdict record persists the **whole panel**, not just the surfaced answer: the N per-model
-votes (each tagged with the `ModelRef { provider, model, version }` of the model that cast it, its
-returned verdict, and its located passage) **and** the measured
+votes (each tagged with the **`ModelInvocation` fingerprint** — `model` / `quant` / `params` /
+`prompt_hash` (ADR-0006 Decision 8) — of the call that cast it, its returned verdict, and its
+located passage) **and** the measured
 `PanelAgreement { panel_size, winner_votes }`, alongside the `verdict` that the vote elected. **Persisting** these is storage's job; what the vote, the tiebreaker, and the agreement
 *mean* is owned by **ADR-0006**. The panel is captured because the voted verdict is only meaningful
 if the inputs that produced it and the observed agreement among them are recoverable from the
@@ -113,11 +115,14 @@ fraction `winner_votes / panel_size` is *derived*, not stored), an observed coun
 votes — never a model-reported number, and meaningful only for `panel_size >= 2` (semantics:
 ADR-0006). `panel_ref` records the configured panel members (each a
 `ModelRef { provider, model, version }`) only — **never a key or token** (Art. 10.1). Recording the
-**version** keeps a verdict attributable to the exact model that produced it (reproducibility +
-audit); `version` is the pinned model id the panel was configured with. The `ModelRef` concept — and
-the working assumption that the endpoint serves the requested version, with the revisit trigger if it
-ever drifts — is owned by **ADR-0006 (Decision 8)**; which models form the panel is ADR-0006's call,
-and persisting their identity is storage's.
+full **`ModelInvocation` fingerprint** per vote (not just the model id) keeps a verdict attributable
+to the exact *call* that produced it and lets a recorded run be replayed and matched: `model.version`
+is the pinned model id, `quant`/`params` capture how it was run, and `prompt_hash` is a **digest of
+the exact prompt+input** — never the raw prompt text or any PII (the prompt and source bytes live in
+the content-addressed snapshot, Decision 2). The `ModelInvocation` / `ModelRef` concepts — and the
+working assumption that the endpoint serves the requested version, with the revisit trigger if it
+ever drifts — are owned by **ADR-0006 (Decision 8)**; which models form the panel is ADR-0006's call,
+and persisting each invocation's fingerprint is storage's.
 
 `fetched_at_ms` comes from the injected `Clock` (`now_ms`, `sp42-types/src/traits.rs`), **never a
 direct wall-clock call** — fixed in tests via `FixedClock`, per Art. 2 and PRD-0001's reference
@@ -243,10 +248,11 @@ Testable invariants this binds (each maps to a PRD-0001 DoD item):
 - **No model-confidence field anywhere in either envelope; measured agreement is present** — a
   unit/serde test that the persisted schema has no model-emitted-confidence field but **does** carry
   the observed `PanelAgreement` (DoD item 1; pairs with ADR-0007's verdict-type test).
-- **Every panel vote is attributable to an exact model** — a unit/serde test that each persisted
-  `panel_vote` carries a `ModelRef { provider, model, version }` (and `panel_ref` the configured
-  members), with no key/token present (Art. 10.1) — so a verdict is reproducible and auditable
-  against the exact model (provider/model/version) that produced it.
+- **Every panel vote is attributable to an exact invocation** — a unit/serde test that each
+  persisted `panel_vote` carries a `ModelInvocation` fingerprint (`model` / `quant` / `params` /
+  `prompt_hash`; ADR-0006 Decision 8) (and `panel_ref` the configured members), with no key/token
+  and no raw prompt text present — `prompt_hash` is a digest (Art. 10.1) — so a verdict is
+  reproducible and auditable against the exact call (model, quant, params, prompt) that produced it.
 - **A snapshot of an unusable/unreachable source replays to abstention** — an integration test
   that such a snapshot yields `source_unavailable`, never `supported` (DoD item 3).
 - **A metadata-only quote does not ground** — a test that a passage present only in the sidecar
@@ -282,8 +288,9 @@ Cross-cutting effects:
   responses → stable voted verdict + agreement** (voting owned by ADR-0006), with the
   snapshot-codec round-trip still its precondition. The recorded-source corpus is a maintained
   artifact: the per-panel-member bytes must be re-recorded when the upstream verify contract or the
-  panel composition changes — and a **model-version change is one such drift, detectable**
-  because each vote's `ModelRef.version` is recorded.
+  panel composition changes — and a **model-version (or quant/params/prompt) change is one such
+  drift, detectable** because each vote's `ModelInvocation` fingerprint
+  (`model.version` / `quant` / `params` / `prompt_hash`) is recorded.
 
 ## Non-Goals
 

@@ -88,6 +88,17 @@ identity-blind rule; nothing on this struct can carry account age / edit count /
 anon / group / IP into a verdict). The request is panel-agnostic: which models
 verify it is a config concern (ADR-0006), not a request field.
 
+Per-call **sponsor-proxy authorization** (ADR-0006 Decision 6 — a funder paying for
+only certain calls) does **not** reshape this contract: the optional capability tag a
+proxy authorizes on (e.g. `citation-verify`) rides as **transport-level authorization
+metadata** alongside the model call, never a typed field on this request and never part
+of the model input. A denied call returns an error the edge already handles — defaulting
+to `SourceUnavailable` (Decision 3 / ADR-0007) — so the contract surface is unchanged.
+The per-invocation fingerprint that identifies each model call (`ModelInvocation`:
+`model` / `quant` / `params` / `prompt_hash`, ADR-0006 Decision 8) is **not** carried on
+this read surface either; it is persisted with the verdict record (ADR-0009), keeping
+this contract a thin claim+source request.
+
 ### 2. The response — a Finding, never an action
 
 ```rust

@@ -5,7 +5,7 @@
 **Date:** 2026-06-04
 **State:** Draft
 **Discussion:** <PR link>
-**Spawned ADRs:** ADR-0006, ADR-0007, ADR-0008, ADR-0009, ADR-0010 (see below)
+**Spawned ADRs:** ADR-0006, ADR-0007, ADR-0008, ADR-0009 (see below)
 
 ## Problem
 
@@ -137,10 +137,11 @@ CI-green. The criteria below are specific to this feature:
 
 ## Spawned ADRs
 
-This PRD spawned the five ADRs below, drafted alongside it. **ADR-0006 — whether
+This PRD spawned the four ADRs below, drafted alongside it. **ADR-0006 — whether
 and how SP42 uses LLMs at all — is the foundational one and is meant to be reviewed
 first**: it settles the platform model posture before the citation-specific
-mechanics. The other four are the dual-natured ADR triggers PRD-0001 names.
+mechanics. The other three cover the dual-natured ADR triggers PRD-0001 names — with
+ADR-0008 covering two (the public-API contract and the crate boundary).
 
 - **Using LLMs** — open-weight models are best ensembled, so multi-model voting is
   the **default** (with **measured agreement** as the honest signal), while a single
@@ -151,13 +152,13 @@ mechanics. The other four are the dual-natured ADR triggers PRD-0001 names.
 - **Verdict & action semantics** — the categorical verdict set and the
   "no support without a verbatim, in-session locatable passage" rule
   (*Wikimedia action semantics*) → **ADR-0007**.
-- **Verification contract** — the request/response surface a verification result
-  is exposed through (*public contracts or APIs*) → **ADR-0008**.
-- **Crate boundary** — where verification logic lives (`sp42-core` vs. a new
-  crate) (*crate boundaries*) → **ADR-0009**.
+- **Verification contract & crate placement** — the request/response surface a
+  verification result is exposed through, and where the verification logic lives
+  (`sp42-core` modules, not a new crate) (*public contracts or APIs*; *crate
+  boundaries*) → **ADR-0008** (the crate placement is its Decision 7).
 - **Source-snapshot storage** — how fetched source snapshots and verdict records
   are persisted for reproducibility and audit (*persistent storage formats*) →
-  **ADR-0010**.
+  **ADR-0009**.
 
 ## Scope decisions
 

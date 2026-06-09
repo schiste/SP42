@@ -7,8 +7,8 @@
 ## Context
 
 This decision should be settled **before** the citation-verification mechanics that
-follow it (ADR-0007 verdict semantics, ADR-0008 contract, ADR-0009 crate boundary,
-ADR-0010 source-snapshot storage): **whether and how SP42 uses large language models
+follow it (ADR-0007 verdict semantics, ADR-0008 contract + crate placement,
+ADR-0009 source-snapshot storage): **whether and how SP42 uses large language models
 at all.**
 
 SP42 is **ML-integrated** today — it consumes ORES-successor damage scores from
@@ -99,7 +99,7 @@ A provider key exists inside SP42 **only in Direct mode**, held in the shell ada
 never persisted. **Local** holds no credential; **Proxy** holds at most a proxy
 token, the provider keys living in the proxy. Local and Proxy thus keep provider keys
 out of SP42 entirely — which is what makes the browser shell viable. (The concrete
-Direct-mode adapter is a shell, never `sp42-core` — ADR-0009.)
+Direct-mode adapter is a shell, never `sp42-core` — ADR-0008, Decision 7.)
 
 ### 6. The proxy carries transport and budget, never a feature's judgment
 
@@ -158,7 +158,7 @@ Testable invariants (Art. 1):
   not locate in the fetched bytes is suppressed (property test; gate in ADR-0007).
 - **determinism over the panel** — replaying the N recorded model responses through
   the pure vote yields the same voted value and the same `PanelAgreement`; network-free
-  via `StubHttpClient` (storage in ADR-0010).
+  via `StubHttpClient` (storage in ADR-0009).
 
 Other:
 

@@ -99,8 +99,7 @@ first cut). Breaking changes increment the version with one release cycle of bac
 // VerdictEnvelope  { version, claim, snapshot_hash, verdict, located_passage: Option<...>,
 //                    panel_votes: Vec<{ model: ModelRef, verdict, located_passage: Option<...> }>,
 //                    agreement: PanelAgreement { panel_size, winner_votes }, panel_ref: Vec<ModelRef> }
-// ModelRef { provider, model, version }  // version = the served/resolved id the response reports
-//                                        // when given, else the pinned requested id; never a key/token
+// ModelRef { provider, model, version }  // version = the pinned model id used; never a key/token
 ```
 
 The verdict record persists the **whole panel**, not just the surfaced answer: the N per-model
@@ -114,11 +113,11 @@ fraction `winner_votes / panel_size` is *derived*, not stored), an observed coun
 votes — never a model-reported number, and meaningful only for `panel_size >= 2` (semantics:
 ADR-0006). `panel_ref` records the configured panel members (each a
 `ModelRef { provider, model, version }`) only — **never a key or token** (Art. 10.1). Recording the
-**version** is load-bearing for an audit/reproducibility record: a bare provider+model name can
-silently change behind an endpoint, so each vote captures the **served model identity the response
-reports** (a dated or revision-pinned id) when the provider returns one, falling back to the pinned
-requested id — the gap between *requested* and *served* model is exactly what an audit record must
-not lose. Which models form the panel is ADR-0006's call; persisting their identity is storage's.
+**version** keeps a verdict attributable to the exact model that produced it (reproducibility +
+audit); `version` is the pinned model id the panel was configured with. The `ModelRef` concept — and
+the working assumption that the endpoint serves the requested version, with the revisit trigger if it
+ever drifts — is owned by **ADR-0006 (Decision 8)**; which models form the panel is ADR-0006's call,
+and persisting their identity is storage's.
 
 `fetched_at_ms` comes from the injected `Clock` (`now_ms`, `sp42-types/src/traits.rs`), **never a
 direct wall-clock call** — fixed in tests via `FixedClock`, per Art. 2 and PRD-0001's reference
@@ -247,7 +246,7 @@ Testable invariants this binds (each maps to a PRD-0001 DoD item):
 - **Every panel vote is attributable to an exact model** — a unit/serde test that each persisted
   `panel_vote` carries a `ModelRef { provider, model, version }` (and `panel_ref` the configured
   members), with no key/token present (Art. 10.1) — so a verdict is reproducible and auditable
-  against the precise models, including served version, that produced it.
+  against the exact model (provider/model/version) that produced it.
 - **A snapshot of an unusable/unreachable source replays to abstention** — an integration test
   that such a snapshot yields `source_unavailable`, never `supported` (DoD item 3).
 - **A metadata-only quote does not ground** — a test that a passage present only in the sidecar
@@ -283,7 +282,7 @@ Cross-cutting effects:
   responses → stable voted verdict + agreement** (voting owned by ADR-0006), with the
   snapshot-codec round-trip still its precondition. The recorded-source corpus is a maintained
   artifact: the per-panel-member bytes must be re-recorded when the upstream verify contract or the
-  panel composition changes — and a **served model-version change is one such drift, now detectable**
+  panel composition changes — and a **model-version change is one such drift, detectable**
   because each vote's `ModelRef.version` is recorded.
 
 ## Non-Goals

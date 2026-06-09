@@ -114,6 +114,25 @@ bytes (ADR-0007), a non-editing discovery pass is confined to suggestions, a con
 change is human-confirmed and diff-bounded. The only universal is that **no LLM output
 autonomously acts** — not that every capability grounds in citation's sense.
 
+**Per-call authorization (a sponsor may pay for only *certain* calls).** A funder will
+not always want to pay for every call — only certain capabilities/prompts, against an
+allowlisted set of models, within caps. The proxy may therefore **authorize each call
+deterministically** before forwarding: by model allowlist, token/size caps, rate, and an
+optional **capability tag** the caller sends (e.g. `citation-verify`) so spend can be
+scoped to a capability. This is still the transport + budget boundary — a *policy
+enforcement point*, not a judgment point. The decision is deterministic (allow/deny on
+request metadata; never an LLM reading the prompt to decide), the proxy still never
+inspects the source bytes or runs the feature's gate, and a denied call simply returns
+an error the caller treats as a no-result (for citation, `SourceUnavailable`, ADR-0007) —
+so the sponsor still **cannot tilt a result**. The capability tag and any audit metadata
+(capability name, session id) are **authorization metadata only**: carried for the proxy,
+never added to the model input, and never a credential. The config that carries this is
+`{ mode: local | direct | sponsor-proxy, base_url, proxy_token?, capability_tag? }` (the
+modes are Decision 4); the browser sends a session-scoped **proxy token**, never a
+provider key. This shape is already proven in the alex-citation-checker `public-ai-proxy`
+(a WMF-funded HuggingFace endpoint enforcing a model allowlist, a per-call token cap, and
+`X-HF-Bill-To` attribution) — cited as evidence the pattern holds, not as SP42 scope.
+
 ### 7. One shared edge today; richer interaction is the future trigger
 
 The modes above serve a **single request/response** per call — the shape most
@@ -125,18 +144,33 @@ unchanged by it, only the per-call interface grows. A **heterogeneous** panel (m
 provider formats) is the same trigger. The proxy's budget spans **all** capabilities
 at once — which matters most for high-volume consumers like a discovery review.
 
-### 8. Model outputs are attributable to a `ModelRef { provider, model, version }`
+### 8. Every model invocation is fingerprinted for audit and replay
 
-Every model output records the model that produced it — its `provider`, `model`, and
-`version` (the pinned model id) — so any capability's result is reproducible and
-auditable against the exact model used. This is shared terminology across capabilities;
-**persisting** it is each capability's storage concern (e.g. citation verification's
-verdict record, ADR-0009). Never a key or token (Art. 10).
+Every model output records the **invocation** that produced it — not just the model
+name — so a result is reproducible and auditable against the exact call. The fingerprint
+is `ModelInvocation { model, quant, params, prompt_hash }`:
 
-**Working assumption:** the configured endpoint (Decision 4) serves the version
+- `model` — `ModelRef { provider, model, version }`, the model identity (`version` = the
+  pinned model id);
+- `quant` — quantization when known (e.g. `Q4_K_M`); usually absent for hosted models;
+- `params` — the sampling / reasoning parameters actually used (temperature, top_p,
+  max_tokens, seed, …), normalized to a stable form;
+- `prompt_hash` — a hash of the exact prompt + input sent to the model, so a recorded
+  call can be matched and replayed.
+
+This is shared terminology across capabilities; **persisting** it is each capability's
+storage concern (e.g. citation verification's verdict record, ADR-0009). It is never a
+key or token (Art. 10), and never PII — `prompt_hash` is a digest, not the prompt text
+(the prompt and source bytes live in the capability's own content-addressed snapshot
+store, ADR-0009).
+
+**Working assumption:** the configured endpoint (Decision 4) serves the `version`
 requested — requested-vs-served drift has not been observed in the prior
 citation-checker work, so the two are treated as one identity, recorded once. If such
-drift is ever observed, revisit this and record the served id distinctly.
+drift is ever observed, revisit this and record the served id distinctly. (Expanding the
+attribution from a bare `ModelRef` to the full invocation fingerprint above — provider,
+model id, quant, sampling params, and a prompt+input hash — follows PR-#17 review
+feedback, so that every turn is auditable and replayable.)
 
 ## Alternatives Considered
 
@@ -172,6 +206,10 @@ Testable invariants (Art. 1):
 - **determinism over the panel** — replaying the N recorded model responses through
   the pure vote yields the same voted value and the same `PanelAgreement`; network-free
   via `StubHttpClient` (storage in ADR-0009).
+- **every invocation is fingerprinted** — each recorded model output carries a
+  `ModelInvocation` (`model` / `quant` / `params` / `prompt_hash`); serde/contract test
+  that the fingerprint is present and carries no key, token, or raw prompt text
+  (`prompt_hash` is a digest) — persistence owned by ADR-0009.
 
 Other:
 

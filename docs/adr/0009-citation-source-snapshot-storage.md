@@ -1,4 +1,4 @@
-# ADR-0010: Source-snapshot storage for verification reproducibility
+# ADR-0009: Source-snapshot storage for verification reproducibility
 
 **Status:** Proposed
 **Date:** 2026-06-07
@@ -14,11 +14,12 @@ observable showing the fetched source, the located passage (or its absence), and
 does not yet have: a persisted record of **the exact bytes a verdict was grounded against**,
 plus the verdict it produced.
 
-This ADR is one of PRD-0001's five spawned ADRs. Its siblings settle adjacent surfaces:
+This ADR is one of PRD-0001's four spawned ADRs. Its siblings settle adjacent surfaces:
 **ADR-0006 (using LLMs — model panel, measured agreement, and the inference
-endpoint)**, ADR-0007 (verdict & anti-fabrication semantics), ADR-0008
-(request/response contract), and ADR-0009 (crate boundary). This one settles
-**persistent storage formats** — the GOVERNANCE trigger PRD-0001 names for it.
+endpoint)**, ADR-0007 (verdict & anti-fabrication semantics), and ADR-0008
+(request/response contract — which also carries the crate placement, its Decision 7).
+This one settles **persistent storage formats** — the GOVERNANCE trigger PRD-0001
+names for it.
 
 There is a tension to resolve head-on. PRD-0001's verdict producer is an LLM, and an LLM is
 **not bit-deterministic**: the same prompt can yield different tokens on different runs. That
@@ -83,7 +84,7 @@ Persistence goes through the existing `Storage` trait (`sp42-types/src/traits.rs
 is the in-crate deterministic double; `FileStorage` (or a server-side store) is the production
 adapter — exactly the `wiki_storage.rs` pattern of a pure build/parse split plus an injected
 store. `sp42-core` names no concrete store. The verification logic lands as a module inside
-`sp42-core` per ADR-0009 (no new crate until a second caller and a stable API exist), so the
+`sp42-core` per ADR-0008's Decision 7 (no new crate until a second caller and a stable API exist), so the
 snapshot codec lives there beside the verdict type.
 
 ### 3. Versioned schema; only the body is grounded; the panel is persisted
@@ -217,7 +218,7 @@ codec carries no PDF-specific fields yet (a later version bump adds them under A
   decision; the storage record captures whatever panel ADR-0006 configures, including a 1-element
   comparison panel where `agreement` is uninformative.)
 - **(h) Extract a `sp42-verification` crate now to own the storage codec.** **Deferred** to
-  ADR-0009's call: the contract is CLI-first and unproven and has no credible second caller, so
+  ADR-0008's Decision 7: the contract is CLI-first and unproven and has no credible second caller, so
   ADR-0004's extraction rules say keep it in `sp42-core` behind module boundaries and stabilize
   the API there first.
 

@@ -10,11 +10,11 @@ PRD-0001 (citation verification — initial implementation, open as PR #17 on th
 `prd-0001-citation-verification` branch) adds an operator-facing capability: for
 a claim and its cited source, SP42 fetches the source read-only and reports a
 categorical verdict, with the supporting passage shown inline. PRD-0001 names
-*public contracts or APIs* as a dual-natured trigger and spawns five ADRs —
+*public contracts or APIs* as a dual-natured trigger and spawns four ADRs —
 **ADR-0006** (using LLMs: the model panel, measured agreement, and the inference
 endpoint), **ADR-0007** (verdict + anti-fabrication semantics), **ADR-0008 (this
-ADR)** (the request/response surface), **ADR-0009** (the crate boundary), and
-**ADR-0010** (source-snapshot storage).
+ADR)** (the request/response surface **and the crate placement**, Decision 7), and
+**ADR-0009** (source-snapshot storage).
 
 This ADR settles **only** the contract surface: the typed request a single
 verification takes, and the typed result it returns. GOVERNANCE lists *public
@@ -129,7 +129,7 @@ The response is a **`CitationFinding`** carrying:
   support this".
 - **Provenance of the really-fetched source.** `SourceProvenance { url: Url,
   content_hash: String, fetched_at: i64 }` — the source actually fetched this
-  session, content-addressed (the hash is owned by ADR-0010's snapshot store);
+  session, content-addressed (the hash is owned by ADR-0009's snapshot store);
   `fetched_at` comes from the injected `Clock` (`Clock::now_ms`,
   `sp42-types/src/traits.rs:37`), never wall-clock, per Constitution Art. 2. The
   source is fetched **once** per verification and shared across the panel — every
@@ -291,6 +291,39 @@ the display layer, not stored on the wire, so the surface carries no
 model-emitted or precomputed numeric-confidence value (count semantics owned by
 ADR-0006).
 
+### 7. Crate placement and the model-client / credential boundary
+
+Where this logic lives, and where the LLM's credential lives, are part of the same
+contract decision (GOVERNANCE lists *crate boundaries or shared contracts* as one
+trigger; ADR-0004 governs the crate rules):
+
+- **Land verification as modules inside `sp42-core`; do not pre-split a
+  `sp42-verification` crate.** Applying ADR-0004's "Extraction Rules," the conditions
+  are only partly met — a recorded contract (this ADR + PRD-0001) and deterministic
+  doubles exist, but the API is unproven (CLI-first, first cut) with no credible
+  second caller — so ADR-0004's default holds: improve module boundaries inside
+  `sp42-core` first. **This ADR capturing the contract is itself the ADR-0004
+  precondition that later justifies extraction** — once a second real caller appears
+  and the API has survived it, an `sp42-verification` crate becomes the right move.
+- **Pure logic in core, concrete client in a shell.** All deterministic, I/O-free
+  logic — the verdict type and locatability check (ADR-0007), the GIGO body gate
+  (ADR-0007), the pure vote and the bounded-concurrency fan-out (ADR-0006) — lands in
+  `sp42-core`. The **concrete model client** — the thing that holds an HTTP client, a
+  credential, and any vendor SDK — lives in a **shell**, never in `sp42-core`
+  (ADR-0004's one-way dependency law: domain crates must not depend on shell crates).
+  `sp42-core` names no concrete model client; it only builds an `HttpRequest` per
+  panel member and parses the response over the `HttpClient` edge (Decision 3).
+- **Credential hygiene is born here.** The model endpoint introduces SP42's first
+  model-API credential, but **only in Direct mode** (server / CLI / desktop): per
+  Constitution Art. 10.1 it is held in the shell adapter in memory only — never
+  persisted, logged, or carried into `sp42-core`. In Local mode no key exists; in
+  Sponsor-proxy mode the keys live in the proxy and SP42 holds at most a proxy token;
+  the browser shell holds no provider key at all. The three endpoint modes are owned
+  by ADR-0006. Per Art. 10.4 each model call sends **only** the fetched source text
+  and the claim — no editor identity, session token, or audit metadata (ADR-0007's
+  identity-blind rule). Dependency flow stays one-way and verification owns no write
+  path (Decision 5).
+
 ## Alternatives Considered
 
 - **(a) A numeric confidence / citation score instead of a category.**
@@ -307,7 +340,7 @@ ADR-0006).
   the producer is the untrusted LLM, and trusting its self-report re-opens the
   fabrication hole. The contract instead carries a machine-checkable
   `GroundingAssertion` re-verified by an independent gate against the
-  content-addressed fetched bytes (ADR-0007 / ADR-0010): grounded by
+  content-addressed fetched bytes (ADR-0007 / ADR-0009): grounded by
   re-verification, not by trust. This holds per-model and for the voted result —
   the winning verdict's quote is re-checked, not taken on the panel's word.
 
@@ -339,8 +372,8 @@ ADR-0006).
   endpoint (the `liftwing.rs` shape, no new abstraction, ADR-0004). The concrete
   trigger to adopt a `ModelClient` trait — a **heterogeneous panel** that one
   transport cannot serve uniformly — is owned by **ADR-0006**; until then the
-  `HttpClient` edge suffices, and when it is needed the trait's shape is owned by
-  ADR-0009 §4.
+  `HttpClient` edge suffices, and when it is needed the trait's shape is a future
+  decision whose trigger — a heterogeneous panel — is owned by ADR-0006.
 
 ## Consequences
 
@@ -384,10 +417,10 @@ Definition-of-Done item:
   the unchanged action lane (ADR-0003).
 
 - **Deterministic replay (DoD 5).** `build_* / parse_*` are pure (Art. 2.1);
-  given the same fetched-source snapshot (ADR-0010) and the same recorded model
+  given the same fetched-source snapshot (ADR-0009) and the same recorded model
   response, `execute_citation_verify` yields the same parsed verdict.
   *Recorded-source replay test* via `StubHttpClient`, network-free per Art. 1.3
-  (the determinism story for the LLM is owned by ADR-0010; determinism over the
+  (the determinism story for the LLM is owned by ADR-0009; determinism over the
   full panel + vote is owned by ADR-0006).
 
 - **Observable (DoD 6).** A `CitationFinding` makes the fetched source
@@ -435,17 +468,16 @@ Cross-cutting effects:
 
 - **No telemetry, tokens in memory only (Art. 10); informational scope.** The
   contract carries no token of any kind. The three-way Art. 10 split is deliberate
-  and non-overlapping: model-endpoint credential hygiene is owned by ADR-0009 (the
-  API key lives in the shell `HttpClient` adapter, in memory only), persisted-
-  artifact hygiene — no token or PII in any stored snapshot — by ADR-0010, and this
-  contract persists neither. First-cut source types are HTML pages
+  and non-overlapping: model-endpoint credential hygiene is owned **here**
+  (Decision 7 — the API key lives in the shell `HttpClient` adapter, in memory only),
+  persisted-artifact hygiene — no token or PII in any stored snapshot — by ADR-0009,
+  and this contract persists neither. First-cut source types are HTML pages
   and existing archived snapshots only (PDFs deferred); the verdict is **strictly
   informational and does NOT feed scoring** (no scoring-policy ADR is triggered),
   keeping verification off the composite damage score until its reliability is
-  established. Crate placement is deferred to ADR-0009 — this ADR fixes the
-  contract *shape*; ADR-0009 decides whether it lands as a module in `sp42-core`
-  (the ADR-0004 Contract-Stabilization default for an unproven, single-caller,
-  CLI-first contract) or a new crate.
+  established. Crate placement is settled in **Decision 7**: verification lands as
+  modules in `sp42-core` (the ADR-0004 Contract-Stabilization default for an
+  unproven, single-caller, CLI-first contract), not a new crate.
 
 ## Non-Goals
 
@@ -455,9 +487,8 @@ Cross-cutting effects:
   execution are owned by ADR-0006. This ADR carries the `agreement` field on the
   contract; ADR-0006 defines what it means.
 - **No source-snapshot storage format or LLM-determinism mechanism** — owned by
-  ADR-0010. This ADR references the content hash and the snapshot; it does not
+  ADR-0009. This ADR references the content hash and the snapshot; it does not
   define how they are persisted.
-- **No crate-boundary decision** — owned by ADR-0009.
 - **No change to the operator-confirmed action path** (ADR-0003) — verification
   produces a candidate the operator confirms, never a write.
 - **No PDF source types and no scoring integration in the first cut** (PRD-0001).

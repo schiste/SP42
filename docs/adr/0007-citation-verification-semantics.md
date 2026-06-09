@@ -22,9 +22,9 @@ that follow are the citation-specific mechanics, of which this is the first:
   and the rule that there is *no support without a verbatim, in-session-locatable
   passage*.
 - **ADR-0008 — verification contract:** the request/response surface a verdict is
-  exposed through.
-- **ADR-0009 — crate boundary:** where verification logic lives.
-- **ADR-0010 — source-snapshot storage:** how fetched sources and verdict records
+  exposed through, and where the verification logic lives (the crate placement,
+  folded in as Decision 7).
+- **ADR-0009 — source-snapshot storage:** how fetched sources and verdict records
   persist for reproducibility and audit.
 
 The verdict rule is the load-bearing one. It governs whether an LLM-derived
@@ -203,7 +203,7 @@ does not depend on what those categories are named). The mechanism has two parts
 - **An independent re-check, not the model's self-report.** The producing step
   (model call + verdict parse) is *untrusted*. A separate, tool-agnostic
   grounding check re-runs `locate_quote` against the **bytes SP42 actually
-  fetched** (content-addressed; see ADR-0010) before any verdict is surfaced. If
+  fetched** (content-addressed; see ADR-0009) before any verdict is surfaced. If
   a `Supported` / `Partial` verdict's quote does not locate in those
   fetched bytes — or the source was never fetched this session, or a claimed
   offset is forged — the support claim is **suppressed pre-operator**. The
@@ -412,7 +412,7 @@ PRD-0001 Definition-of-Done item.
   *informational, not an action*.
 
 - **Determinism on replay** (DoD 6) and **observability** (DoD 7) are owned by
-  ADR-0010 (source-snapshot storage) and ADR-0008 (the observable surface)
+  ADR-0009 (source-snapshot storage) and ADR-0008 (the observable surface)
   respectively; this ADR's pure verdict type, locatability primitive, and
   body-usability gate are the deterministic core they depend on — same fetched
   source yields the same verdict category (Art. 2.1). Panel voting and measured
@@ -432,9 +432,9 @@ Cross-cutting:
   unbroken. The model is *never* the final authority on `Supported` — the
   deterministic grounding re-check (Decision 5) is. No LLM dependency enters the
   permissive-licensed dependency graph without a `cargo-deny` clearance (Art. 5.2),
-  and no source body or token is exported (Art. 10.4 — no telemetry; ADR-0010
+  and no source body or token is exported (Art. 10.4 — no telemetry; ADR-0009
   governs what a snapshot may contain). The crate boundary that holds this is
-  ADR-0009; the panel that produces the verdict is ADR-0006.
+  ADR-0008 (Decision 7); the panel that produces the verdict is ADR-0006.
 
 - **The no-number rule constrains any future routing.** If a verdict is ever
   allowed to influence triage, the gate must be *measured agreement + explicit

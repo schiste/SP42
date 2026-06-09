@@ -73,6 +73,7 @@ pub use citation::concurrency::map_with_concurrency;
 pub use citation::locate_quote::locate_quote;
 pub use citation::parsing::{ParsedVerdict, canonicalize_verdict, parse_verdict_response};
 pub use citation::prompts::{PromptMessage, PromptRole, build_verify_prompt};
+pub use citation::source_fetch::{html_to_text, looks_like_html, recover_wayback_body};
 pub use citation::urls::{
     ResolvedUrl, build_article_html_url, is_archive_url, is_valid_wiki_code,
     parse_revision_from_etag, resolve_citation_url, rewrite_wayback_url,

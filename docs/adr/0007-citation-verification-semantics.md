@@ -144,10 +144,16 @@ pair — not a footnote. A source cited at several places in an article (a reuse
 ref) backs a *different* claim at each use, so each use-site is verified
 **independently** and may receive a different verdict; the footnote number identifies
 a *source*, not a claim. An article-level report consequently enumerates **use-sites
-in document order** — one result per use-site — and that document-order position is
-the stable handle by which a single use-site is addressed. (The request/response shape
-is ADR-0008's; this ADR fixes only that the verdict's subject is a use-site, not a
-footnote.) How the claim text at each use-site is derived is **Decision 7**.
+in document order** — one result per use-site — and that document-order position,
+the **use-site ordinal**, is the stable handle by which a single use-site is
+addressed: it is what the *Surface*'s `--ref` drill-down and report rows reference,
+and — being the document-order position of the use-site's `<ref>` node — the
+article-side anchor a future node-anchored repair (ADR-0003) would resolve an edit
+on. The verification result therefore **carries this ordinal** rather than
+recomputing it (the field shape is ADR-0008's; this ADR fixes only that the
+verdict's subject is a use-site, not a footnote, and that a use-site has a stable
+document-order ordinal). How the claim text at each use-site is derived is
+**Decision 7**.
 
 ### 3. Abstain rather than guess
 

@@ -98,6 +98,7 @@ pub struct CitationFinding {
     pub passage: Option<LocatedPassage>,// the winning verdict's located passage, or None
     pub provenance: SourceProvenance,   // the really-fetched source
     pub grounding: GroundingAssertion,  // the machine-checkable assertion
+    pub use_site_ordinal: u32,          // document-order position of this use-site (ADR-0007)
     pub schema_version: u32,            // versioned per Art. 9.1
 }
 ```
@@ -156,6 +157,20 @@ The response is a **`CitationFinding`** carrying:
   (composition owned by ADR-0006). (The enum is left open to additional variants —
   e.g. an in-article-span grounding for future codified-rule findings; only these
   two are in scope for the first cut.)
+
+- **The use-site's document-order ordinal.** `use_site_ordinal: u32` — the
+  position of this (claim, source) use-site among the article's citation markers
+  in document order; the use-site unit and its ordering are owned by **ADR-0007**
+  (Decision 2). It is a **positional index, not a measurement** (like `rev_id`):
+  never a verdict input and never an editor-identity signal — a position in the
+  text, not a property of a person — so it does not weaken the
+  no-numeric-confidence rule. It is the stable handle the *Surface*'s `--ref`
+  drill-down and the whole-article report rows refer to (PRD-0001), and — being the
+  document-order position of the use-site's `<ref>` node — the article-side anchor a
+  future node-anchored repair would resolve an edit on (Decision 5; Consequences).
+  Verification already computes it to locate the claim; the contract **carries it
+  rather than discarding it**, since it is not re-derivable from the rest of the
+  finding.
 
 `CitationFindingKind` is a single-value enum today (`citation_verdict`); it is an
 enum, not a bare marker, so the read-only Finding channel can carry future
@@ -254,7 +269,11 @@ the action path. There is **no POST counterpart** to the read surface and **no
 decide affordance** on it. If the verification motivates a repair, the operator
 confirms it the normal way: it becomes a `SessionActionExecutionRequest { kind:
 InlineEdit, selected_text, replacement_text }` on the **unchanged** write lane
-(ADR-0003), where session + CSRF + capability + audit gates apply. Verification
+(ADR-0003), where session + CSRF + capability + audit gates apply. That repair,
+when built, resolves its `selected_text` by anchoring the finding's retained
+`use_site_ordinal` to its `<ref>` node (the node-anchored target, ADR-0003) and
+supplies its `replacement_text` from a separate repair step — the verdict
+`CitationFinding` provides the *anchor* but never authors the edit. Verification
 itself owns no write path and cannot reach `execute_wiki_page_save`.
 
 ### 6. Versioned serde schema, per Constitution Art. 9.1
@@ -381,6 +400,18 @@ Definition-of-Done item:
   no swallowed errors (Art. 3.3).
 
 Cross-cutting effects:
+
+- **The use-site ordinal is retained for a future repair channel
+  (forward-compatibility).** A verdict `CitationFinding` deliberately does **not**
+  map to a write — coercing a read result onto the write enum is Alternative (e),
+  rejected. The one piece of article-side state worth keeping is the
+  `use_site_ordinal`: retaining it lets a later repair channel — a distinct
+  repair-*proposal* type carrying this ordinal as its node anchor (ADR-0003) plus an
+  authored `replacement_text`, the confirmation-gated edit-proposal shape built and
+  validated in Luis Villa's wikiharness — produce an operator-confirmed `InlineEdit`
+  without re-resolving the use-site. The finding stays purely informational (no
+  anchor-to-write path of its own, Decision 5); it simply stops discarding the
+  ordinal. Cost: one `u32` on the wire, no new behavior, no scoring impact.
 
 - **First LLM in SP42, behind one `HttpClient` edge — and no new dependency
   (Constitution Art. 7).** This is the first place an LLM enters SP42 — an

@@ -17,3 +17,4 @@
 
 pub mod locate_quote;
 pub mod verdict;
+pub mod voting;

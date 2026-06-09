@@ -67,6 +67,7 @@ pub use article_inventory::{
 };
 pub use citation::locate_quote::locate_quote;
 pub use citation::verdict::{CitationFindingKind, CitationVerdict, SupportLevel, Verdict};
+pub use citation::voting::{BinaryVote, NClassVote, PanelAgreement, binary_vote, n_class_vote};
 pub use context_builder::{ContextInputs, build_scoring_context};
 pub use dev_auth::{
     ActionExecutionHistoryReport, ActionExecutionLogEntry, ActionExecutionStatusReport,

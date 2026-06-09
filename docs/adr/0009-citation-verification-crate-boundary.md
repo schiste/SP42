@@ -105,7 +105,7 @@ mirroring `LiftWingError` / `WikiStorageError`.
 ### 3. Source fetching is an injected edge (already exists)
 
 Reading a cited source is I/O and goes through the existing `HttpClient` trait
-(`sp42-core/src/traits.rs:16`), exactly as `liftwing.rs` and `wiki_storage.rs`
+(`sp42-types/src/traits.rs:19`), exactly as `liftwing.rs` and `wiki_storage.rs`
 do — a pure `build_*_request`, a generic `execute_*<C: HttpClient + ?Sized>`,
 and a pure `parse_*_response` with a `validate_*` gate. No new fetch edge is
 needed.
@@ -115,7 +115,8 @@ needed.
 The model judgment step is the one genuinely new behavior, but it needs **no new
 trait** for the v1 panel. It follows SP42's established external-ML precedent —
 LiftWing in `sp42-core/src/liftwing.rs` — exactly, and Constitution Art. 1.3 /
-6.2 (all external dependencies behind traits in `sp42-core/src/traits.rs`; *core
+6.2 (all external dependencies behind traits in `sp42-types/src/traits.rs`,
+re-exported by `sp42-core`'s facade; *core
 never names a concrete implementation* — the network is already behind
 `HttpClient`):
 
@@ -123,9 +124,9 @@ never names a concrete implementation* — the network is already behind
   the model endpoint, with the panel-member model name varied per request) and a
   pure `parse_verdict_response` (`&[u8]` → `Verdict`, tolerant, with ADR-0007's
   conservative-default-to-not-supported rule), driven in tests by the
-  deterministic `StubHttpClient` (`traits.rs:48`), network-free per Art. 1.3;
+  deterministic `StubHttpClient` (`sp42-types/src/traits.rs:51`), network-free per Art. 1.3;
 - a generic per-model `execute_*<C: HttpClient + ?Sized>` over the existing
-  `HttpClient` trait (`traits.rs:16`), exactly as `liftwing.rs` and
+  `HttpClient` trait (`sp42-types/src/traits.rs:19`), exactly as `liftwing.rs` and
   `wiki_storage.rs` reach their services — each panel model is just one more HTTP
   request behind the trait SP42 already abstracts external I/O through, so the
   "first LLM" adds no new edge type;
@@ -172,7 +173,7 @@ duty) plus ADR-0004's dependency-direction law (`:59-60`, *"domain crates must
 not depend on `sp42-server`, `sp42-app`, `sp42-cli`, `sp42-desktop`"*) mean the
 **concrete** model client — the thing that holds an HTTP client and credentials
 and pulls in a vendor SDK — lives in a shell, exactly as `BearerHttpClient`
-(`sp42-server/src/main.rs:1549`) and `BrowserHttpClient`
+(`sp42-server/src/runtime_adapters.rs:51`) and `BrowserHttpClient`
 (`sp42-app/src/platform/runtime.rs:18`) implement `HttpClient` today. `sp42-core`
 names no concrete model client; it only builds an `HttpRequest` for each panel
 member and parses the response, reaching the network through the `HttpClient`
@@ -195,7 +196,7 @@ is owned **here**, where the credential is born, per Constitution Art. 10:
 
 - **Art. 10.1 — in memory only, never persisted.** The credential is held in the
   shell adapter only (loaded from env/config at startup), mirroring the
-  `BearerHttpClient` `access_token` precedent (`sp42-server/src/main.rs:1549`); it
+  `BearerHttpClient` `access_token` precedent (`sp42-server/src/runtime_adapters.rs:51`); it
   is never written to disk, logged, or carried into `sp42-core`, which names no
   concrete model client (only the pure `build_*` / `parse_*` over `HttpClient`).
 - **Art. 10.4 — no telemetry, data stays local.** Each model call sends **only** the

@@ -131,7 +131,7 @@ The response is a **`CitationFinding`** carrying:
   content_hash: String, fetched_at: i64 }` — the source actually fetched this
   session, content-addressed (the hash is owned by ADR-0010's snapshot store);
   `fetched_at` comes from the injected `Clock` (`Clock::now_ms`,
-  `sp42-core/src/traits.rs:34`), never wall-clock, per Constitution Art. 2. The
+  `sp42-types/src/traits.rs:37`), never wall-clock, per Constitution Art. 2. The
   source is fetched **once** per verification and shared across the panel — every
   panel model verifies against the same content-addressed bytes.
 - **A machine-checkable grounding assertion.** `grounding: GroundingAssertion` is
@@ -210,15 +210,15 @@ pub fn parse_citation_verify_response(
 its bounded-concurrency fan-out, the pure vote applied to the N results, and the
 panel config shape); this contract's per-model edge `execute_citation_verify` is
 the unit it calls. The model endpoint reaches the network **only** through the
-`HttpClient` trait (`sp42-core/src/traits.rs:16`); the model endpoint is an
+`HttpClient` trait (`sp42-types/src/traits.rs:19`); the model endpoint is an
 optional, config-driven, default-absent per-wiki field, exactly like
 `liftwing_url: Option<Url>` (`sp42-core/src/types.rs:401`) — the panel
 generalization of that config is owned by ADR-0006, and *where* the endpoint runs
 (local model, direct provider, or sponsor proxy) plus who holds the keys are owned
 by ADR-0006; this contract is identical in every mode. Core never names a concrete
 model client; the production adapter lives in a shell (`BearerHttpClient`,
-`sp42-server/src/main.rs:1549`), the deterministic double `StubHttpClient`
-(`traits.rs:48`) drives tests — for a panel, a queue of N recorded
+`sp42-server/src/runtime_adapters.rs:51`), the deterministic double `StubHttpClient`
+(`sp42-types/src/traits.rs:51`) drives tests — for a panel, a queue of N recorded
 `HttpResponse`. The pure parser ends in a `validate_*` gate that defaults an
 unrecoverable model response to *not supported*, never to a support judgment.
 

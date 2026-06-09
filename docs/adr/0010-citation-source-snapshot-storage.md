@@ -32,7 +32,7 @@ matters *here* is that the persisted records must capture the panel (the N per-m
 agreement), not just one model's answer.
 
 The design follows directly from SP42's own seams. SP42 already has the matching infrastructure:
-the `Storage` trait and its `MemoryStorage` / `FileStorage` doubles (`sp42-core/src/traits.rs`),
+the `Storage` trait and its `MemoryStorage` / `FileStorage` doubles (`sp42-types/src/traits.rs`),
 the versioned persistence-envelope precedent `WikiStoragePayloadEnvelope` (`wiki_storage.rs:112`),
 content-hash provenance via the workspace `sha2` dependency, and the immutable-by-id cache
 precedent from ADR-0001 §9 (scores cached by `rev_id`, immutable per revision). The storage
@@ -78,7 +78,7 @@ SHA-256 hex of its UTF-8 bytes (`sha2` is already a workspace dependency). Conte
 gives free dedup and tamper-evidence: the same address always names the same bytes, and the
 anti-fabrication gate (ADR-0007) locates passages against bytes retrieved by that exact address.
 
-Persistence goes through the existing `Storage` trait (`sp42-core/src/traits.rs`), per Art. 6.2
+Persistence goes through the existing `Storage` trait (`sp42-types/src/traits.rs`), per Art. 6.2
 ("all external dependencies via traits") and Art. 2.3 (side effects at the edges). `MemoryStorage`
 is the in-crate deterministic double; `FileStorage` (or a server-side store) is the production
 adapter — exactly the `wiki_storage.rs` pattern of a pure build/parse split plus an injected
@@ -112,7 +112,7 @@ votes — never a model-reported number, and meaningful only for `panel_size >= 
 ADR-0006). `panel_ref` records the panel members (`{ provider, model }` each) only — **never a key
 or token** (Art. 10.1).
 
-`fetched_at_ms` comes from the injected `Clock` (`now_ms`, `sp42-core/src/traits.rs`), **never a
+`fetched_at_ms` comes from the injected `Clock` (`now_ms`, `sp42-types/src/traits.rs`), **never a
 direct wall-clock call** — fixed in tests via `FixedClock`, per Art. 2 and PRD-0001's reference
 to the Clock-injected fetch time.
 

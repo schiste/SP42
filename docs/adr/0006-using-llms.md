@@ -146,16 +146,19 @@ modes (Decision 4), credential ownership (Decision 5), the proxy role (Decision 
 the invocation fingerprint (Decision 8) the *same* contract for every capability, and
 lets the backend be swapped without touching feature code.
 
-**The boundary — the trait contract feature crates call — is settled now; only the
-*backend behind it* is an open choice.** That **concrete adapter** lives in a shell (never
-in pure domain code — ADR-0004's one-way dependency law) and is a deliberately-deferred
-implementation choice: a **hand-rolled OpenAI-compatible** adapter over the existing reqwest /
-`HttpClient` edge (covers OpenRouter, the HuggingFace router, and a sponsor proxy — all
-OpenAI-compatible — with zero new dependencies), **or** a vendored/adopted multi-provider
-Rust crate behind the same trait (`rust-genai` is the leading candidate — pluggable
-per-request auth + custom endpoint + native Gemini / Claude / OpenRouter adapters;
-`graniet/llm` and `rig` were evaluated and not chosen). Because the trait *is* the
-boundary, this choice is reversible and invisible to capabilities.
+**The boundary — the trait contract feature crates call — is settled now; the *backend
+behind it* is the concrete adapter.** That adapter is **`rust-genai`** (jeremychone's
+`genai` crate), adopted as an **external, version-pinned dependency — not vendored**
+(we revisit vendoring only if we ever need to tweak it). It gives native multi-provider
+reach (OpenAI-compatible gateways, Gemini, Claude, OpenRouter) plus the sponsor-proxy
+shape (pluggable per-request auth + custom endpoint + arbitrary headers), so feature
+crates never touch a provider wire format and v1 is not limited to one wire shape.
+(`graniet/llm` and `rig` were evaluated and not chosen — graniet's static per-instance
+auth + heavier deps, rig's agent-framework coupling.) The adapter lives in a **shell**
+(never pure domain code — ADR-0004's one-way dependency law), so `sp42-core` depends only
+on the `ModelClient` trait and gains no vendor dependency. Because the trait *is* the
+boundary, the backend stays swappable and invisible to capabilities, and **pinning
+contains `genai`'s pre-1.0 churn to the one adapter file**.
 
 The **v1 interaction shape is a single request/response** — what every current capability
 needs, served identically in all three endpoint modes. A **multi-turn, tool-using
@@ -234,9 +237,13 @@ Testable invariants (Art. 1):
 
 Other:
 
-- **No new runtime dependency** for the homogeneous panel — it rides the existing
-  reqwest-backed `HttpClient`; a future model SDK is documented per Art. 7.2 and
-  license-checked per Art. 5.2 in its own PR.
+- **One new runtime dependency, pinned, in the shell only** — the model adapter is
+  `rust-genai` (the `genai` crate; MIT/Apache-2.0, ~30 transitive crates — under the
+  Art. 7.2 >50 lead-approval threshold), adopted as an **external, version-pinned**
+  dependency in the shell adapter (not vendored), documented per Art. 7.2 and
+  license-checked per Art. 5.2 in its adopting PR. `sp42-core` stays vendor-free,
+  depending only on the `ModelClient` trait; the `genai` dependency never enters a domain
+  crate.
 - **No scoring coupling** — measured agreement does not feed SP42's composite damage
   score in the first cut, which is standalone (PRD-0001).
 

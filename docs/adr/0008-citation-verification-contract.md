@@ -405,10 +405,10 @@ code:
   Decision 7).** Settling it up front gives a clean LLM-integration surface from the
   beginning and keeps feature crates off any provider wire format. The per-model
   `build_* / parse_*` edge of Decision 3 is the per-call unit the boundary's *adapter*
-  implements; the concrete adapter (hand-rolled OpenAI-compatible over `HttpClient`, or a
-  vendored multi-provider crate) sits in a shell behind the trait and is ADR-0006's
-  contained choice. The earlier reason to *defer* — a heterogeneous panel — instead
-  becomes just one thing an adapter handles, not a reason to withhold the boundary.
+  implements; the concrete adapter is **`rust-genai`** (an external, version-pinned
+  dependency, not vendored — ADR-0006 Decision 7), in a shell behind the trait. The
+  earlier reason to *defer* — a heterogeneous panel — instead becomes just one thing the
+  adapter handles, not a reason to withhold the boundary.
 
 ## Consequences
 
@@ -482,24 +482,23 @@ Cross-cutting effects:
   ordinal. Cost: one `u32` on the wire, no new behavior, no scoring impact.
 
 - **First LLM in SP42, behind the provider-agnostic `ModelClient` boundary
-  (ADR-0006 Decision 7) — and, for the default adapter, no new dependency
+  (ADR-0006 Decision 7); the one new dependency is pinned and shell-only
   (Constitution Art. 7).** This is the first place an LLM enters SP42 — an
   ML-integrated project (it consumes LiftWing's ORES-successor damage scores,
   ADR-0001 §9) that has used no LLM to date (no `openai`/`anthropic`/`llm`/`ollama`
   dependency exists in the workspace today). The model is reached only through the
-  `ModelClient` boundary; the **default** adapter behind it adds **no new runtime
-  dependency** — it rides the existing reqwest-backed `BearerHttpClient` (workspace
-  `reqwest = "0.12.24"`, `rustls-tls`) as just another `HttpClient` target, no vendor SDK
-  to vet under Art. 7.2. Should the chosen adapter instead be a vendored multi-provider
-  crate (ADR-0006 Decision 7), that PR must satisfy Art. 7 (documented justification,
-  maintenance status, transitive count — >50 needs lead approval) and the Art. 5.2
-  `cargo-deny` GPL-3.0 check in its own right. The edge is confined to a single
-  config-driven boundary (pure `build_*`, pure `parse_*` ending in a `validate_*` gate,
-  the concrete adapter in a shell, endpoint default-absent like `liftwing_url`);
-  `sp42-core` names no model vendor, and the LLM's output is **never trusted on its
-  face** — every verdict is re-grounded against retrieved bytes, so the model's role is
-  judgment over evidence, not generation of truth. Swapping the adapter or resizing the
-  panel is a config/adapter change, no contract change.
+  `ModelClient` boundary; the chosen adapter is **`rust-genai`** (the `genai` crate —
+  external, **version-pinned**, MIT/Apache-2.0, ~30 transitive crates, under the Art. 7.2
+  >50 lead-approval threshold), which lives in a **shell**. So `sp42-core` adds no
+  dependency and names no model vendor — it depends only on the `ModelClient` trait; the
+  `genai` dependency satisfies Art. 7 (documented justification, maintenance status,
+  transitive count) and the Art. 5.2 `cargo-deny` GPL-3.0 check in its adopting PR, and
+  pinning contains its pre-1.0 churn to the one adapter. The edge stays a single
+  config-driven boundary (pure prompt `build_*` + pure response `parse_*` ending in a
+  `validate_*` gate; endpoint default-absent like `liftwing_url`); the LLM's output is
+  **never trusted on its face** — every verdict is re-grounded against retrieved bytes,
+  so the model's role is judgment over evidence, not generation of truth. Swapping the
+  adapter or resizing the panel is a config/adapter change, no contract change.
 
 - **No telemetry, tokens in memory only (Art. 10); informational scope.** The
   contract carries no token of any kind. The three-way Art. 10 split is deliberate

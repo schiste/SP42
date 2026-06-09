@@ -85,18 +85,17 @@ The deterministic, I/O-free heart of verification is pure platform logic and
 belongs in `sp42-core` per Constitution Art. 2.3 (*"`sp42-core` has no dependency
 on web-sys, js-sys, or any I/O crate"*) and Art. 2.1 (same input, same output):
 
-- the categorical verdict type + tiebreak (ADR-0007),
+- the categorical verdict type (ADR-0007),
 - the verbatim-locatability check — the load-bearing anti-fabrication primitive
   (ADR-0007), pure and case-sensitive,
 - the deterministic body-usability ("GIGO") gate that short-circuits to the
   abstain verdict *without calling a model* (ADR-0007),
-- **the pure panel vote and the pure bounded-concurrency panel fan-out are
-  `sp42-core` logic (ADR-0006).** The voting primitive (an `nClassVote`-style
-  tally with a skeptical tiebreaker) and the `mapWithConcurrency`-style worker-pool
-  combinator are deterministic and I/O-free, so by Art. 2.1 / 2.3 they live in
-  `sp42-core` like the rest of the pure platform logic; their semantics (vote,
-  tiebreaker precedence, measured agreement) are owned by ADR-0006. The fan-out is
-  the one worker-pool the panel reuses (Decision 4).
+- **the pure panel vote and the pure bounded-concurrency fan-out** — both
+  *decided* by ADR-0006 (the vote, the skeptical tiebreaker, measured agreement, and
+  the bounded-concurrency execution are owned there) — are deterministic and
+  I/O-free, so by Art. 2.1 / 2.3 their **code lands in `sp42-core`** alongside the
+  rest of the pure platform logic. This ADR only *places* them; it does not define
+  them.
 
 These are `build_* / parse_*`-style pure functions (plus the two pure combinators
 above), with a dedicated `thiserror` domain error enum in
@@ -133,7 +132,7 @@ never names a concrete implementation* — the network is already behind
   request behind the trait SP42 already abstracts external I/O through, so the
   "first LLM" adds no new edge type;
 - **a panel-aware `execute_citation_verify_panel`** that runs the per-model
-  `execute_*` across the panel via the Decision-2 bounded-concurrency worker-pool,
+  `execute_*` across the panel via the Decision-2 bounded-concurrency fan-out,
   collects N verdicts, applies the pure vote, and produces **one** `CitationFinding`
   — the voted verdict plus the winning verdict's located quote (re-grounded by the
   ADR-0007 gate) together with the measured `PanelAgreement`. The panel's

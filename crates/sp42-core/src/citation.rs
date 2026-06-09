@@ -17,6 +17,7 @@
 
 pub mod body_classifier;
 pub mod citoid;
+pub mod concurrency;
 pub mod locate_quote;
 pub mod parsing;
 pub mod prompts;

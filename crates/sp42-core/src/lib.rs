@@ -69,6 +69,7 @@ pub use citation::body_classifier::{BodyUsability, BodyUsabilityReason, classify
 pub use citation::citoid::{
     CitoidMetadata, build_citoid_header, build_citoid_request, parse_citoid_response,
 };
+pub use citation::concurrency::map_with_concurrency;
 pub use citation::locate_quote::locate_quote;
 pub use citation::parsing::{ParsedVerdict, canonicalize_verdict, parse_verdict_response};
 pub use citation::prompts::{PromptMessage, PromptRole, build_verify_prompt};

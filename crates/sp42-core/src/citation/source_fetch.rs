@@ -57,8 +57,8 @@ static WHITESPACE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\s+").expect(
 /// Salvage the inner article from a source whose Wayback banner survived extraction.
 ///
 /// Returns the trimmed remainder after the banner when the banner is far enough in
-/// (>= [`MIN_PREFIX`] chars) and enough content follows (>= [`MIN_REMAINDER`] chars);
-/// otherwise the input unchanged.
+/// (>= 200 chars) and enough content follows (>= 500 chars); otherwise the input
+/// unchanged.
 #[must_use]
 pub fn recover_wayback_body(text: &str) -> String {
     let Some(matched) = WAYBACK_PREAMBLE.find(text) else {

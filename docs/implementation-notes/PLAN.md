@@ -74,3 +74,36 @@ edge (ADR-0006 §4, ADR-0008 Consequences hold).
 
 DoD mapping (PRD-0001): S1/S6 → item 1; S3 → item 2; S2/S11 → item 3 (load-bearing); S4/S11 → item 4;
 S11/S14 → item 5 (no writes); S12 → item 6 (replay); S12/S14 → item 7 (observable); S14 → item 8 (CLI).
+
+## Outcome (overnight run, 2026-06-08)
+
+**Done + committed (TDD, each slice clippy-clean + tests-green):** S0–S12 and S14, S15.
+Full host gate green: `cargo test --workspace`, `cargo clippy --workspace --all-targets
+--all-features -- -D warnings`, `cargo doc --workspace --no-deps`, `cargo fmt --all --check`
+all pass. (~115 new citation tests across the modules; whole workspace 0 failures.) The
+wasm/trunk/tauri steps of `ci-all` target the untouched `sp42-app`/`sp42-desktop` and were
+not run here.
+
+**Deferred — S13 (article parse + between-markers claim extraction):** NOT built. It needs a
+real HTML parser dependency (querySelector / getElementById / ancestor-walk over Parsoid REST
+HTML) which is a heavier dep decision best made with Luis; and the ad-hoc (claim + source-URL)
+CLI path already exercises the entire verification spine end-to-end (the "smoke-test the
+verifier in isolation" mode PRD-0001 calls out). Building S13 unlocks the whole-article /
+revision / by-index CLI selectors (the rest of DoD item 8). See ADR-CHANGE-NOTES for the
+between-markers rule + the two ADR-0007 deviations (SHARE bundled markers, strip maintenance
+tags) to implement, and the dep decision.
+
+**DoD status:** items 1, 2, 3 (load-bearing anti-fabrication), 4, 5, 6 — met (unit/property/
+integration tests). Item 7 (observable) — the finding + provenance + grounding are the durable
+record (storage); a `tracing` span + `LiveOperatorView` wiring is a small additive follow-up.
+Item 8 (CLI) — met for ad-hoc mode; article/revision/index selectors gated on S13.
+
+**How to run the CLI** (ad-hoc verification against a real open-model panel):
+```
+SP42_INFERENCE_URL=https://openrouter.ai/api/v1/chat/completions \
+SP42_INFERENCE_MODELS=meta-llama/llama-3.3-70b-instruct,qwen/qwen-2.5-72b-instruct \
+SP42_INFERENCE_TOKEN=<key> \
+cargo run -p sp42-cli -- --claim "<claim text>" --source-url "<url>" --format human
+```
+`--format json|markdown`, `--verdict-only`, and `--with-metadata` (Citoid sidecar) are also
+supported. The bearer token is sent only to the inference host, never to source sites.

@@ -54,26 +54,28 @@ boundaries, mirroring the existing external-edge precedent (`liftwing.rs`,
 
 ### 1. Apply ADR-0004's Extraction Rules — the conditions are only partly met
 
-ADR-0004 (`:165-175`) creates a new domain crate only when *most* of these hold;
-its fallback (`:101-103`, `:174-175`): *"When a contract is still unclear, keep
+ADR-0004's "Extraction Rules" create a new domain crate only when *most* of these
+hold; its fallback ("Contract Stabilization Checklist" and "Extraction Rules"):
+*"When a contract is still unclear, keep
 the code in `sp42-core` behind module boundaries and stabilize the API there
 first."* For an unproven, CLI-first verification contract:
 
 - **Met:** an ADR/PRD records the intended contract (this set + PRD-0001,
-  satisfying ADR-0004 `:166-167`); deterministic test doubles already exist to
-  move with any future crate (`StubHttpClient`, ADR-0004 `:170`); `sp42-core` is
+  satisfying ADR-0004's "Extraction Rules"); deterministic test doubles already
+  exist to move with any future crate (`StubHttpClient`, ADR-0004's "Extraction
+  Rules"); `sp42-core` is
   leaf-most, so no dependency cycle is created.
 - **Not met:** the public API is **not yet stable** (CLI-first, first-cut); there
   is a current caller (the CLI / on-demand standalone invocation) but **no
-  credible second caller yet** (ADR-0004 `:167` wants both); a split would not yet
-  "remove duplication or reduce review blast radius" (`:168-169`) — it would only
-  "create a new place" for logic, which ADR-0004 says review must push back on
-  (`:199-200`) and the Decision flags as the not-justified "only renames modules"
-  case (`:30-31`).
+  credible second caller yet** (ADR-0004's "Extraction Rules" wants both); a split
+  would not yet "remove duplication or reduce review blast radius" ("Extraction
+  Rules") — it would only "create a new place" for logic, which ADR-0004 says review
+  must push back on ("Pull Request Notes") and the "Decision" flags as the
+  not-justified "only renames modules" case.
 
 So the conditions fail the ADR-0004 gate. Verification stays in `sp42-core` and
 stabilizes its API there first. **ADR-0008 capturing the contract is itself the
-ADR-0004 precondition (`:166-167`) that would later justify extraction** — once a
+ADR-0004 precondition (its "Extraction Rules") that would later justify extraction** — once a
 second real caller appears and the API has survived it, an `sp42-verification`
 crate becomes the right move, following ADR-0004's preferred slice-based order.
 
@@ -169,7 +171,7 @@ carve-out — is owned by ADR-0006.
 ### 5. The concrete model client stays in a shell, never in `sp42-core`
 
 Constitution Art. 7 (every dependency is a liability; Art. 7.2 PR documentation
-duty) plus ADR-0004's dependency-direction law (`:59-60`, *"domain crates must
+duty) plus ADR-0004's dependency-direction law ("Decision", *"domain crates must
 not depend on `sp42-server`, `sp42-app`, `sp42-cli`, `sp42-desktop`"*) mean the
 **concrete** model client — the thing that holds an HTTP client and credentials
 and pulls in a vendor SDK — lives in a shell, exactly as `BearerHttpClient`
@@ -211,7 +213,7 @@ located passage, voted verdict, and the measured agreement — never the credent
 
 ### 6. Dependency direction is one-way; verification owns no write path
 
-Per ADR-0004 (`:51-60`), verification logic depends only on traits and data
+Per ADR-0004's "Decision" (dependency inversion), verification logic depends only on traits and data
 contracts and never on a shell crate. Verification is **read-only** (PRD-0001):
 it produces a verdict for display, never a wiki write. Any resulting repair flows
 through the *existing* operator-confirmed action path unchanged — the single
@@ -229,11 +231,11 @@ write side effect by construction. Contract details belong to ADR-0008.
 - **(a) Extract `sp42-verification` now.** *Pros:* clean ownership, tests move
   with it. *Cons:* fails ADR-0004's Extraction Rules — unstable API, no second
   caller, no duplication removed — and freezes a first-cut contract prematurely
-  (ADR-0004 `:206-207`, "freezes unstable public APIs"). **Rejected** as
+  (ADR-0004 "Alternatives Considered", "freezes unstable public APIs"). **Rejected** as
   premature; revisit once ADR-0008's contract has survived a second caller.
 
-- **(b) Put the LLM/model concept in the planned `sp42-types` crate.**
-  ADR-0004 (`:124-126`, `:128-147`) explicitly says to **defer** broad
+- **(b) Put the LLM/model concept in the now-extracted `sp42-types` crate.**
+  ADR-0004 ("Split Decisions" and "`sp42-types` Strategy") explicitly says to **defer** broad
   `sp42-types` extraction, starting only with transport/storage slices that have
   multiple real consumers. A model abstraction with one caller does not qualify.
   **Rejected** for now.

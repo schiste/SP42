@@ -21,6 +21,16 @@ pub enum EventSourceError {
 }
 
 #[derive(Debug, Error, Clone, PartialEq, Eq)]
+pub enum ModelClientError {
+    #[error("model transport failed: {message}")]
+    Transport { message: String },
+    #[error("model response was invalid: {message}")]
+    InvalidResponse { message: String },
+    #[error("stub state is poisoned: {resource}")]
+    StatePoisoned { resource: &'static str },
+}
+
+#[derive(Debug, Error, Clone, PartialEq, Eq)]
 pub enum StorageError {
     #[error("storage failed: {message}")]
     Operation { message: String },

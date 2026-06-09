@@ -28,6 +28,7 @@ pub mod action_contracts;
 pub mod action_executor;
 pub mod article_inventory;
 pub mod branding;
+pub mod citation;
 pub mod context_builder;
 pub mod dev_auth;
 pub mod diff_engine;
@@ -64,6 +65,7 @@ pub use action_executor::{
 pub use article_inventory::{
     ArticleInventory, ArticleReference, article_inventory_notes, build_article_inventory,
 };
+pub use citation::verdict::{CitationFindingKind, CitationVerdict, SupportLevel, Verdict};
 pub use context_builder::{ContextInputs, build_scoring_context};
 pub use dev_auth::{
     ActionExecutionHistoryReport, ActionExecutionLogEntry, ActionExecutionStatusReport,
@@ -82,9 +84,10 @@ pub use diff_engine::{
     diff_chars, diff_lines,
 };
 pub use errors::{
-    ActionError, BacklogRuntimeError, DevAuthError, DiffError, EventSourceError, HttpClientError,
-    LiftWingError, OAuthError, PublicDocumentError, RecentChangesError, ReviewWorkbenchError,
-    ScoringError, ScoringEvaluationError, ScoringPolicyError, StorageError, StreamIngestorError,
+    ActionError, BacklogRuntimeError, CitationStorageError, CitationVerificationError,
+    DevAuthError, DiffError, EventSourceError, HttpClientError, LiftWingError, OAuthError,
+    PublicDocumentError, RecentChangesError, ReviewWorkbenchError, ScoringError,
+    ScoringEvaluationError, ScoringPolicyError, StorageError, StreamIngestorError,
     StreamRuntimeError, TrainingDataError, UserAnalysisError, WebSocketError, WikiStorageError,
 };
 pub use liftwing::{

@@ -2,14 +2,16 @@ use std::convert::TryFrom;
 use std::io::{self, Read};
 use std::process::ExitCode;
 
+use async_trait::async_trait;
 use futures::executor::block_on;
 use reqwest::header::COOKIE;
 use serde_json::Value;
 use sp42_core::routes as route_contracts;
 use sp42_core::{
-    DevAuthBootstrapRequest, DevAuthSessionStatus, QueuedEdit, SessionActionExecutionRequest,
-    SessionActionExecutionResponse, SessionActionKind, build_dev_auth_bootstrap_request,
-    parse_dev_auth_status,
+    CitationFinding, CitationVerificationRequest, DevAuthBootstrapRequest, DevAuthSessionStatus,
+    ModelRef, QueuedEdit, SessionActionExecutionRequest, SessionActionExecutionResponse,
+    SessionActionKind, SystemClock, VerifyOptions as CoreVerifyOptions,
+    build_dev_auth_bootstrap_request, parse_dev_auth_status, verify_citation_use_site,
 };
 use sp42_devtools::{
     DEV_PREVIEW_SAMPLE_EVENTS, DEV_PREVIEW_WIKI_ID, DevContextOptions, DevWorkbenchOptions,
@@ -22,7 +24,7 @@ use sp42_reporting::{
     build_shell_state_model, render_patrol_scenario_markdown, render_patrol_scenario_text,
     render_shell_state_markdown, render_shell_state_text,
 };
-use sp42_types::{HttpMethod, HttpRequest, HttpResponse};
+use sp42_types::{HttpClient, HttpClientError, HttpMethod, HttpRequest, HttpResponse};
 use std::collections::{BTreeMap, BTreeSet};
 
 const LOCAL_SERVER_BASE_URL: &str = "http://127.0.0.1:8788";
@@ -44,6 +46,17 @@ struct CliOptions {
     action_note: Option<String>,
     action_kind: SessionActionKind,
     bridge_base_url: String,
+    verify: Option<VerifyCliOptions>,
+    verdict_only: bool,
+}
+
+/// Read-only citation-verification request (PRD-0001). The first cut supports the ad-hoc
+/// (claim + source URL) mode; article/revision/index modes await the article parser.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct VerifyCliOptions {
+    claim: String,
+    source_url: String,
+    include_metadata: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -100,6 +113,12 @@ fn main() -> ExitCode {
 
 fn run() -> Result<String, String> {
     let options = parse_options(std::env::args().skip(1))?;
+
+    // Read-only citation verification is independent of the dev-queue payload.
+    if let Some(verify) = &options.verify {
+        return render_verify(verify, options.format, options.verdict_only);
+    }
+
     let input = read_stdin().map_err(|error| error.to_string())?;
     let payload = if input.trim().is_empty() {
         DEV_PREVIEW_SAMPLE_EVENTS
@@ -182,6 +201,10 @@ fn parse_options(args: impl IntoIterator<Item = String>) -> Result<CliOptions, S
     let mut action_kind = SessionActionKind::Patrol;
     let mut bridge_base_url = LOCAL_SERVER_BASE_URL.to_string();
     let mut preview_modes = BTreeSet::new();
+    let mut verify_claim = None;
+    let mut verify_source_url = None;
+    let mut verify_metadata = false;
+    let mut verdict_only = false;
 
     while let Some(arg) = args.next() {
         let mut state = CliParseState {
@@ -196,9 +219,15 @@ fn parse_options(args: impl IntoIterator<Item = String>) -> Result<CliOptions, S
             action_kind: &mut action_kind,
             bridge_base_url: &mut bridge_base_url,
             preview_modes: &mut preview_modes,
+            verify_claim: &mut verify_claim,
+            verify_source_url: &mut verify_source_url,
+            verify_metadata: &mut verify_metadata,
+            verdict_only: &mut verdict_only,
         };
         apply_cli_argument(&arg, &mut args, &mut state)?;
     }
+
+    let verify = build_verify_options(verify_claim, verify_source_url, verify_metadata)?;
 
     Ok(CliOptions {
         format,
@@ -213,7 +242,26 @@ fn parse_options(args: impl IntoIterator<Item = String>) -> Result<CliOptions, S
         action_note,
         action_kind,
         bridge_base_url,
+        verify,
+        verdict_only,
     })
+}
+
+/// Assemble the verify options, requiring both the claim and the source URL together.
+fn build_verify_options(
+    claim: Option<String>,
+    source_url: Option<String>,
+    include_metadata: bool,
+) -> Result<Option<VerifyCliOptions>, String> {
+    match (claim, source_url) {
+        (Some(claim), Some(source_url)) => Ok(Some(VerifyCliOptions {
+            claim,
+            source_url,
+            include_metadata,
+        })),
+        (None, None) => Ok(None),
+        _ => Err("citation verification requires both --claim and --source-url".to_string()),
+    }
 }
 
 struct CliParseState<'a> {
@@ -228,6 +276,10 @@ struct CliParseState<'a> {
     action_kind: &'a mut SessionActionKind,
     bridge_base_url: &'a mut String,
     preview_modes: &'a mut BTreeSet<PreviewMode>,
+    verify_claim: &'a mut Option<String>,
+    verify_source_url: &'a mut Option<String>,
+    verify_metadata: &'a mut bool,
+    verdict_only: &'a mut bool,
 }
 
 fn apply_cli_argument<I>(
@@ -274,6 +326,18 @@ where
         }
         "--bridge-base-url" => {
             *state.bridge_base_url = next_option_value(args, "--bridge-base-url")?;
+        }
+        "--claim" => {
+            *state.verify_claim = Some(next_option_value(args, "--claim")?);
+        }
+        "--source-url" => {
+            *state.verify_source_url = Some(next_option_value(args, "--source-url")?);
+        }
+        "--with-metadata" => {
+            *state.verify_metadata = true;
+        }
+        "--verdict-only" => {
+            *state.verdict_only = true;
         }
         _ => return Err(format!("unsupported argument: {arg}")),
     }
@@ -327,6 +391,268 @@ fn parse_liftwing_probability(value: &str) -> Result<f32, String> {
     value
         .parse::<f32>()
         .map_err(|_| "--context-liftwing must be a valid float".to_string())
+}
+
+// ----- Read-only citation verification (PRD-0001) -----
+
+/// A reqwest-backed `HttpClient` for the CLI. The inference bearer token is injected
+/// **only** for the configured inference host — never for arbitrary source-fetch hosts,
+/// so an API key can never leak to a third-party source site.
+struct CliHttpClient {
+    client: reqwest::Client,
+    bearer_token: Option<String>,
+    inference_host: Option<String>,
+}
+
+#[async_trait]
+impl HttpClient for CliHttpClient {
+    async fn execute(&self, request: HttpRequest) -> Result<HttpResponse, HttpClientError> {
+        let mut builder = match request.method {
+            HttpMethod::Get => self.client.get(request.url.clone()),
+            HttpMethod::Post => self.client.post(request.url.clone()),
+            HttpMethod::Put => self.client.put(request.url.clone()),
+            HttpMethod::Patch => self.client.patch(request.url.clone()),
+            HttpMethod::Delete => self.client.delete(request.url.clone()),
+        };
+        if let (Some(token), Some(host)) = (&self.bearer_token, &self.inference_host)
+            && request.url.host_str() == Some(host.as_str())
+        {
+            builder = builder.bearer_auth(token);
+        }
+        for (key, value) in request.headers {
+            builder = builder.header(&key, value);
+        }
+        let response = builder.body(request.body).send().await.map_err(|error| {
+            HttpClientError::Transport {
+                message: error.to_string(),
+            }
+        })?;
+        let status = response.status().as_u16();
+        let headers = response
+            .headers()
+            .iter()
+            .filter_map(|(name, value)| {
+                value
+                    .to_str()
+                    .ok()
+                    .map(|value| (name.as_str().to_lowercase(), value.to_string()))
+            })
+            .collect();
+        let body = response
+            .bytes()
+            .await
+            .map_err(|error| HttpClientError::Transport {
+                message: error.to_string(),
+            })?
+            .to_vec();
+        Ok(HttpResponse {
+            status,
+            headers,
+            body,
+        })
+    }
+}
+
+/// Render a citation verdict in the requested format (or terse verdict-only).
+fn render_verify(
+    options: &VerifyCliOptions,
+    format: OutputFormat,
+    verdict_only: bool,
+) -> Result<String, String> {
+    let finding = block_on(run_verify(options))?;
+    if verdict_only {
+        return Ok(finding.verdict.as_wire().to_string());
+    }
+    match format {
+        OutputFormat::Json => serde_json::to_string_pretty(&finding).map_err(|e| e.to_string()),
+        OutputFormat::Markdown => Ok(render_markdown_section(
+            "Citation verdict",
+            &render_verify_text(&finding),
+        )),
+        OutputFormat::Text => Ok(render_verify_text(&finding)),
+    }
+}
+
+/// Execute one ad-hoc (claim, source URL) verification against the configured panel.
+///
+/// Reads the inference endpoint, model panel, and (optional) bearer token from the
+/// environment so no secret is hard-coded; performs only read-only GET/POST requests.
+async fn run_verify(options: &VerifyCliOptions) -> Result<CitationFinding, String> {
+    let inference_url = std::env::var("SP42_INFERENCE_URL")
+        .map_err(|_| "set SP42_INFERENCE_URL to the model chat-completions endpoint".to_string())?;
+    let models = std::env::var("SP42_INFERENCE_MODELS").map_err(|_| {
+        "set SP42_INFERENCE_MODELS to a comma-separated list of model ids".to_string()
+    })?;
+    let provider =
+        std::env::var("SP42_INFERENCE_PROVIDER").unwrap_or_else(|_| "configured".to_string());
+    let panel: Vec<ModelRef> = models
+        .split(',')
+        .map(str::trim)
+        .filter(|model| !model.is_empty())
+        .map(|model| ModelRef::new(provider.clone(), model, model))
+        .collect();
+    if panel.is_empty() {
+        return Err("SP42_INFERENCE_MODELS is empty".to_string());
+    }
+    let bearer_token = std::env::var("SP42_INFERENCE_TOKEN").ok();
+
+    let mut config = parse_default_dev_wiki_config().map_err(|error| error.to_string())?;
+    config.inference_url = Some(
+        inference_url
+            .parse()
+            .map_err(|_| "SP42_INFERENCE_URL is not a valid URL".to_string())?,
+    );
+    let inference_host = config
+        .inference_url
+        .as_ref()
+        .and_then(|url| url.host_str().map(ToString::to_string));
+
+    let source_url = options
+        .source_url
+        .parse()
+        .map_err(|_| format!("invalid --source-url: {}", options.source_url))?;
+    let request = CitationVerificationRequest {
+        wiki_id: config.wiki_id.clone(),
+        rev_id: 0,
+        title: String::new(),
+        claim: options.claim.clone(),
+        source_url,
+    };
+
+    let client = CliHttpClient {
+        client: reqwest::Client::builder()
+            .user_agent(sp42_core::branding::USER_AGENT)
+            .build()
+            .map_err(|error| format!("http client failed to build: {error}"))?,
+        bearer_token,
+        inference_host,
+    };
+    let verify_options = CoreVerifyOptions {
+        include_metadata: options.include_metadata,
+        concurrency: 3,
+    };
+    verify_citation_use_site(
+        &client,
+        &SystemClock,
+        &config,
+        &panel,
+        &request,
+        0,
+        verify_options,
+    )
+    .await
+    .map_err(|error| error.to_string())
+}
+
+/// Human-readable verdict block.
+fn render_verify_text(finding: &CitationFinding) -> String {
+    let mut lines = vec![
+        format!("verdict: {}", finding.verdict.as_wire()),
+        format!("source: {}", finding.provenance.url),
+    ];
+    if finding.agreement.is_meaningful() {
+        lines.push(format!(
+            "agreement: {}/{} models",
+            finding.agreement.winner_votes, finding.agreement.panel_size
+        ));
+    }
+    match &finding.passage {
+        Some(passage) => lines.push(format!("supporting passage: \"{}\"", passage.quote)),
+        None => lines.push("supporting passage: (none located)".to_string()),
+    }
+    lines.push(format!(
+        "source content hash: {}",
+        finding.provenance.content_hash
+    ));
+    lines.join("\n")
+}
+
+#[cfg(test)]
+mod verify_tests {
+    use sp42_core::{
+        CitationFinding, CitationFindingKind, CitationVerdict, GroundingAssertion, LocatedPassage,
+        PanelAgreement, SourceProvenance, SupportLevel,
+    };
+
+    use super::{VerifyCliOptions, parse_options, render_verify_text};
+
+    fn args(items: &[&str]) -> Vec<String> {
+        items.iter().map(ToString::to_string).collect()
+    }
+
+    #[test]
+    fn parses_ad_hoc_verify_flags() {
+        let options = parse_options(args(&[
+            "--claim",
+            "the bridge opened in 1998",
+            "--source-url",
+            "https://example.com/bridge",
+            "--with-metadata",
+        ]))
+        .expect("parses");
+        let verify = options.verify.expect("verify present");
+        assert_eq!(
+            verify,
+            VerifyCliOptions {
+                claim: "the bridge opened in 1998".to_string(),
+                source_url: "https://example.com/bridge".to_string(),
+                include_metadata: true,
+            }
+        );
+        assert!(!options.verdict_only);
+    }
+
+    #[test]
+    fn verdict_only_flag_is_recognized() {
+        let options = parse_options(args(&[
+            "--claim",
+            "c",
+            "--source-url",
+            "https://example.com",
+            "--verdict-only",
+        ]))
+        .expect("parses");
+        assert!(options.verdict_only);
+    }
+
+    #[test]
+    fn verify_requires_both_claim_and_source_url() {
+        assert!(parse_options(args(&["--claim", "only a claim"])).is_err());
+        assert!(parse_options(args(&["--source-url", "https://example.com"])).is_err());
+    }
+
+    fn fixture_finding() -> CitationFinding {
+        CitationFinding {
+            kind: CitationFindingKind::CitationVerdict,
+            verdict: CitationVerdict::Judged(SupportLevel::Supported),
+            agreement: PanelAgreement::new(3, 2),
+            passage: Some(LocatedPassage {
+                quote: "opened in 1998".to_string(),
+                offset: 4,
+            }),
+            provenance: SourceProvenance {
+                url: "https://example.com/bridge".parse().expect("url"),
+                content_hash: "abc123".to_string(),
+                fetched_at: 1,
+            },
+            grounding: GroundingAssertion::LocatedQuote {
+                quote: "opened in 1998".to_string(),
+                source_hash: "abc123".to_string(),
+                offset: 4,
+            },
+            use_site_ordinal: 0,
+            schema_version: 1,
+        }
+    }
+
+    #[test]
+    fn renders_human_verdict_block() {
+        let text = render_verify_text(&fixture_finding());
+        assert!(text.contains("verdict: supported"));
+        assert!(text.contains("agreement: 2/3 models"));
+        assert!(text.contains("opened in 1998"));
+        assert!(text.contains("https://example.com/bridge"));
+    }
 }
 
 fn preview_mode_flag(flag: &str) -> Option<PreviewMode> {
@@ -2056,6 +2382,8 @@ mod tests {
                 action_note: None,
                 action_kind: sp42_core::SessionActionKind::Patrol,
                 bridge_base_url: LOCAL_SERVER_BASE_URL.to_string(),
+                verify: None,
+                verdict_only: false,
             },
             OutputFormat::Text,
         )
@@ -2086,6 +2414,8 @@ mod tests {
                 action_note: None,
                 action_kind: sp42_core::SessionActionKind::Patrol,
                 bridge_base_url: LOCAL_SERVER_BASE_URL.to_string(),
+                verify: None,
+                verdict_only: false,
             },
             OutputFormat::Markdown,
         )
@@ -2114,6 +2444,8 @@ mod tests {
                 action_note: None,
                 action_kind: sp42_core::SessionActionKind::Patrol,
                 bridge_base_url: LOCAL_SERVER_BASE_URL.to_string(),
+                verify: None,
+                verdict_only: false,
             },
             OutputFormat::Json,
         )
@@ -2149,6 +2481,8 @@ mod tests {
             action_note: None,
             action_kind: sp42_core::SessionActionKind::Patrol,
             bridge_base_url: LOCAL_SERVER_BASE_URL.to_string(),
+            verify: None,
+            verdict_only: false,
         };
 
         let text = render_session_digest(&config, &ranked, &options, OutputFormat::Text)
@@ -2187,6 +2521,8 @@ mod tests {
             action_note: Some("inspect".to_string()),
             action_kind: sp42_core::SessionActionKind::Patrol,
             bridge_base_url: "http://127.0.0.1:8788".to_string(),
+            verify: None,
+            verdict_only: false,
         };
 
         let text = render_action_preview(&config, &ranked, &options, OutputFormat::Text)

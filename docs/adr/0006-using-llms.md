@@ -17,8 +17,9 @@ Citation verification (PRD-0001) is the first LLM-assisted capability and will n
 the last (book-scan support-checking, manual-of-style detection, a discovery review,
 Wikidata enrichment, GLAM disambiguation, and copyedit are anticipated — several
 prototyped in Luis Villa's wikiharness as evidence, not committed SP42 scope). So the
-choices here are **platform-level**: how SP42 reaches a model, how it combines model
-outputs into a trustworthy signal, and where keys and budget live. *Per-feature model
+choices here are **platform-level**: the **one provider-agnostic interface** every
+capability reaches a model through (Decision 7), how SP42 combines model outputs into a
+trustworthy signal, and where keys and budget live. *Per-feature model
 selection* — which models, how many, how they vote — stays with each feature.
 
 Three findings shape the posture. **Open-weight models are best ensembled:** in
@@ -133,18 +134,38 @@ provider key. This shape is already proven in the alex-citation-checker `public-
 (a WMF-funded HuggingFace endpoint enforcing a model allowlist, a per-call token cap, and
 `X-HF-Bill-To` attribution) — cited as evidence the pattern holds, not as SP42 scope.
 
-### 7. One shared edge today; richer interaction is the future trigger
+### 7. A provider-agnostic `ModelClient` boundary, adopted now
 
-The modes above serve a **single request/response** per call — the shape most
-capabilities need. A **multi-turn, tool-using investigate→verdict loop** (anticipated
-for Wikidata-style enrichment; prototyped in Luis's wikidata-SIFT) does not fit, and
-is the concrete trigger to adopt a dedicated **`ModelClient` trait** over the bare
-`HttpClient` edge — out of scope here; the endpoint modes and credential ownership are
-unchanged by it, only the per-call interface grows. A **heterogeneous** panel (mixed
-provider formats) is the same trigger. The proxy's budget spans **all** capabilities
-at once — which matters most for high-volume consumers like a discovery review.
+Every model-using capability reaches a model through one **provider-agnostic `ModelClient`
+boundary** — a small trait SP42 owns (`complete(request) -> completion`, over neutral
+chat-message / `SamplingParams` / `ModelInvocation` DTOs) — **never** a provider's wire
+format. This is settled up front so the LLM-integration surface is clean from the
+beginning: a capability builds a neutral request and reads a neutral completion; *which*
+provider answered, and *how*, is the adapter's affair. The boundary makes the endpoint
+modes (Decision 4), credential ownership (Decision 5), the proxy role (Decision 6), and
+the invocation fingerprint (Decision 8) the *same* contract for every capability, and
+lets the backend be swapped without touching feature code.
 
-### 8. Every model invocation is fingerprinted for audit and replay
+**The boundary — the trait contract feature crates call — is settled now; only the
+*backend behind it* is an open choice.** That **concrete adapter** lives in a shell (never
+in pure domain code — ADR-0004's one-way dependency law) and is a deliberately-deferred
+implementation choice: a **hand-rolled OpenAI-compatible** adapter over the existing reqwest /
+`HttpClient` edge (covers OpenRouter, the HuggingFace router, and a sponsor proxy — all
+OpenAI-compatible — with zero new dependencies), **or** a vendored/adopted multi-provider
+Rust crate behind the same trait (`rust-genai` is the leading candidate — pluggable
+per-request auth + custom endpoint + native Gemini / Claude / OpenRouter adapters;
+`graniet/llm` and `rig` were evaluated and not chosen). Because the trait *is* the
+boundary, this choice is reversible and invisible to capabilities.
+
+The **v1 interaction shape is a single request/response** — what every current capability
+needs, served identically in all three endpoint modes. A **multi-turn, tool-using
+investigate→verdict loop** (anticipated for Wikidata-style enrichment) and a
+**heterogeneous panel** (mixed provider formats) are later *growth* that widens the
+trait's method set; they do not change the boundary's existence, only its richness. The
+proxy's budget spans **all** capabilities at once — which matters most for high-volume
+consumers like a discovery review.
+
+### 8. Every model invocation is fingerprinted — for audit and to enable replay
 
 Every model output records the **invocation** that produced it — not just the model
 name — so a result is reproducible and auditable against the exact call. The fingerprint
@@ -221,9 +242,10 @@ Other:
 
 ## Non-Goals
 
-- **No `ModelClient` trait or multi-turn/agentic interface in v1** — single
-  request/response; the deferred trigger is a heterogeneous panel or an
-  investigate→verdict loop (Decision 7).
+- **No multi-turn / agentic interface in v1** — the provider-agnostic `ModelClient`
+  boundary is **adopted now** (Decision 7) and its v1 shape is a single
+  request/response; a heterogeneous panel or an investigate→verdict loop is later
+  *growth* that may extend the interface, not a sign the boundary is unsettled.
 - **No dynamic / auto-tuned panel selection** — the panel is configured.
 - **Not building the reference sponsor proxy** — a separate deployment artifact (the
   alex-cite-checker `public-ai-proxy` analogue); SP42 need only support pointing at one.

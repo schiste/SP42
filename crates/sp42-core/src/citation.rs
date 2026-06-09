@@ -22,6 +22,7 @@ pub mod locate_quote;
 pub mod parsing;
 pub mod prompts;
 pub mod source_fetch;
+pub mod storage;
 pub mod urls;
 pub mod verdict;
 pub mod verify;

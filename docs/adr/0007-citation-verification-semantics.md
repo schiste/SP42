@@ -11,8 +11,8 @@ PRD-0001 (*Citation verification — initial implementation*, open as PR #17 on 
 a claim and its cited source, SP42 fetches the source read-only and reports a
 **categorical verdict** on whether the source supports the claim, with the
 supporting passage shown inline. The PRD names this a dual-natured trigger —
-*Wikimedia action semantics* — and so spawns five ADRs. The foundational one —
-whether and how SP42 uses LLMs at all — is settled first in **ADR-0006**; the four
+*Wikimedia action semantics* — and so spawns four ADRs. The foundational one —
+whether and how SP42 uses LLMs at all — is settled first in **ADR-0006**; the three
 that follow are the citation-specific mechanics, of which this is the first:
 
 - **ADR-0006 — using LLMs:** the model panel, measured agreement, and the inference
@@ -421,20 +421,19 @@ PRD-0001 Definition-of-Done item.
 Cross-cutting:
 
 - **This introduces the first LLM into SP42.** It is confined by construction:
-  the model is reached only through the existing `HttpClient` trait edge against
-  an optional, config-driven model panel (ADR-0006 §4 — mirroring the LiftWing
-  precedent `liftwing.rs` / `liftwing_url`, generalized from one URL to a
-  panel, via pure `build_*` /
-  `execute_*<C: HttpClient + ?Sized>` / `parse_*`; no new trait and no concrete
-  network in core for the homogeneous v1 panel), so the workspace's
-  "no I/O in core" law (Art. 2.3)
-  and the deterministic test-double discipline (Art. 1, `StubHttpClient`) are
-  unbroken. The model is *never* the final authority on `Supported` — the
-  deterministic grounding re-check (Decision 5) is. No LLM dependency enters the
-  permissive-licensed dependency graph without a `cargo-deny` clearance (Art. 5.2),
-  and no source body or token is exported (Art. 10.4 — no telemetry; ADR-0009
-  governs what a snapshot may contain). The crate boundary that holds this is
-  ADR-0008 (Decision 7); the panel that produces the verdict is ADR-0006.
+  the model is reached only through the **provider-agnostic `ModelClient` boundary**
+  (ADR-0006 Decision 7) against an optional, config-driven model panel (ADR-0006 §4) —
+  `sp42-core` depends on the trait, never a concrete client or provider wire format, and
+  the concrete adapter (default: OpenAI-compatible over the `HttpClient` edge, mirroring
+  the LiftWing `liftwing.rs` / `liftwing_url` precedent generalized from one URL to a
+  panel) lives in a shell. So the workspace's "no I/O in core" law (Art. 2.3) and the
+  deterministic test-double discipline (Art. 1, a stub `ModelClient`) are unbroken. The
+  model is *never* the final authority on `Supported` — the deterministic grounding
+  re-check (Decision 5) is. No LLM dependency enters the permissive-licensed dependency
+  graph without a `cargo-deny` clearance (Art. 5.2), and no source body or token is
+  exported (Art. 10.4 — no telemetry; ADR-0009 governs what a snapshot may contain). The
+  model boundary is owned by ADR-0006 (Decision 7); the panel that produces the verdict is
+  ADR-0006; the citation crate placement is ADR-0008 (Decision 7).
 
 - **The no-number rule constrains any future routing.** If a verdict is ever
   allowed to influence triage, the gate must be *measured agreement + explicit

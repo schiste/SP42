@@ -187,13 +187,18 @@ The response is a **`CitationFinding`** carrying:
 enum, not a bare marker, so the read-only Finding channel can carry future
 informational kinds without a breaking change (Art. 9.2).
 
-### 3. Trait-based, per Constitution Art. 6.2; the per-model LLM edge behind an `HttpClient`
+### 3. Trait-based, per Constitution Art. 6.2; the per-model edge behind the ADR-0006 `ModelClient` boundary
 
 Verification is exposed as a pure `build_* / parse_*` split plus an injected
 `execute_*`, mirroring the existing external-service edges
 `sp42-core/src/liftwing.rs` and `sp42-core/src/wiki_storage.rs`. This contract
 owns the **per-model unit** — one model, one verdict — which is the unit the
-panel calls:
+panel calls. That unit sits **behind the provider-agnostic `ModelClient` boundary
+adopted in ADR-0006 (Decision 7)**: a capability calls the boundary, never a provider
+wire format, and the `build_* / parse_*` split below is what the boundary's *default
+OpenAI-compatible adapter* implements (the concrete adapter — hand-rolled vs. a vendored
+multi-provider crate — is ADR-0006's contained choice, in a shell). The signatures are
+illustrative of that adapter:
 
 ```rust
 pub fn build_citation_verify_request(
@@ -220,8 +225,9 @@ pub fn parse_citation_verify_response(
 **Panel execution + voting is owned by ADR-0006** (`execute_citation_verify_panel`,
 its bounded-concurrency fan-out, the pure vote applied to the N results, and the
 panel config shape); this contract's per-model edge `execute_citation_verify` is
-the unit it calls. The model endpoint reaches the network **only** through the
-`HttpClient` trait (`sp42-types/src/traits.rs:19`); the model endpoint is an
+the unit it calls. The model is reached **only** through the ADR-0006 `ModelClient`
+boundary, whose default OpenAI-compatible adapter rides the existing `HttpClient` trait
+(`sp42-types/src/traits.rs:19`); the model endpoint is an
 optional, config-driven, default-absent per-wiki field, exactly like
 `liftwing_url: Option<Url>` (`sp42-core/src/types.rs:401`) — the panel
 generalization of that config is owned by ADR-0006, and *where* the endpoint runs
@@ -302,11 +308,14 @@ the display layer, not stored on the wire, so the surface carries no
 model-emitted or precomputed numeric-confidence value (count semantics owned by
 ADR-0006).
 
-### 7. Crate placement and the model-client / credential boundary
+### 7. Crate placement of the citation code (the model boundary + credentials are ADR-0006's)
 
-Where this logic lives, and where the LLM's credential lives, are part of the same
-contract decision (GOVERNANCE lists *crate boundaries or shared contracts* as one
-trigger; ADR-0004 governs the crate rules):
+Where the *citation-verification* logic lives is a contract decision (GOVERNANCE lists
+*crate boundaries or shared contracts* as one trigger; ADR-0004 governs the crate rules).
+The provider-agnostic **`ModelClient` boundary** itself and the **credential ownership**
+it implies are **platform-level and owned by ADR-0006 (Decisions 5 + 7)** — they are the
+same for every model-using capability; this section only places the citation-specific
+code:
 
 - **Land verification as modules inside `sp42-core`; do not pre-split a
   `sp42-verification` crate.** Applying ADR-0004's "Extraction Rules," the conditions
@@ -331,24 +340,22 @@ trigger; ADR-0004 governs the crate rules):
   Strategy" places domain contracts in a later slice and keeps domain errors
   (`CitationVerificationError`) with their owning crate — so even the light path is a
   future `sp42-types` slice, not a fit for the crate as it stands.
-- **Pure logic in core, concrete client in a shell.** All deterministic, I/O-free
-  logic — the verdict type and locatability check (ADR-0007), the GIGO body gate
-  (ADR-0007), the pure vote and the bounded-concurrency fan-out (ADR-0006) — lands in
-  `sp42-core`. The **concrete model client** — the thing that holds an HTTP client, a
-  credential, and any vendor SDK — lives in a **shell**, never in `sp42-core`
-  (ADR-0004's one-way dependency law: domain crates must not depend on shell crates).
-  `sp42-core` names no concrete model client; it only builds an `HttpRequest` per
-  panel member and parses the response over the `HttpClient` edge (Decision 3).
-- **Credential hygiene is born here.** The model endpoint introduces SP42's first
-  model-API credential, but **only in Direct mode** (server / CLI / desktop): per
-  Constitution Art. 10.1 it is held in the shell adapter in memory only — never
-  persisted, logged, or carried into `sp42-core`. In Local mode no key exists; in
-  Sponsor-proxy mode the keys live in the proxy and SP42 holds at most a proxy token;
-  the browser shell holds no provider key at all. The three endpoint modes are owned
-  by ADR-0006. Per Art. 10.4 each model call sends **only** the fetched source text
-  and the claim — no editor identity, session token, or audit metadata (ADR-0007's
-  identity-blind rule). Dependency flow stays one-way and verification owns no write
-  path (Decision 5).
+- **Pure citation logic in core; the concrete model client is a shell adapter behind
+  the ADR-0006 `ModelClient` boundary.** All deterministic, I/O-free citation logic —
+  the verdict type and locatability check (ADR-0007), the GIGO body gate (ADR-0007), the
+  pure vote and the bounded-concurrency fan-out (ADR-0006) — lands in `sp42-core`.
+  `sp42-core` names no concrete model client and reaches the model only through the
+  ADR-0006 `ModelClient` trait; the concrete adapter (HTTP client + credential + any
+  vendor SDK) lives in a **shell**, never in `sp42-core` (ADR-0004's one-way dependency
+  law: domain crates must not depend on shell crates).
+- **Credential hygiene is ADR-0006's (Decision 5), not re-decided here.** The model-API
+  credential is held in the shell adapter, in memory only, in Direct mode (server / CLI /
+  desktop); none in Local mode; only a proxy token in Sponsor-proxy mode; the browser
+  holds no provider key. Per Art. 10.4 each model call sends **only** the claim + fetched
+  source text — no editor identity, token, or audit metadata (ADR-0007's identity-blind
+  rule). Recorded here only as a constraint the citation code inherits; the boundary,
+  modes, and ownership are owned by ADR-0006 (Decisions 4–7). Verification owns no write
+  path (Decision 5 of this ADR).
 
 ## Alternatives Considered
 
@@ -393,13 +400,15 @@ trigger; ADR-0004 governs the crate rules):
   would invite a verification result onto the write lane. The two surfaces stay
   structurally separate: a Finding for display, an action request for writes.
 
-- **(f) A dedicated `ModelClient` trait/edge for the model call.** **Deferred.**
-  The per-model edge here stays on the existing `HttpClient` trait + a config
-  endpoint (the `liftwing.rs` shape, no new abstraction, ADR-0004). The concrete
-  trigger to adopt a `ModelClient` trait — a **heterogeneous panel** that one
-  transport cannot serve uniformly — is owned by **ADR-0006**; until then the
-  `HttpClient` edge suffices, and when it is needed the trait's shape is a future
-  decision whose trigger — a heterogeneous panel — is owned by ADR-0006.
+- **(f) Defer a dedicated `ModelClient` trait (keep the bare `HttpClient` edge).**
+  **Rejected — the provider-agnostic `ModelClient` boundary is adopted now (ADR-0006
+  Decision 7).** Settling it up front gives a clean LLM-integration surface from the
+  beginning and keeps feature crates off any provider wire format. The per-model
+  `build_* / parse_*` edge of Decision 3 is the per-call unit the boundary's *adapter*
+  implements; the concrete adapter (hand-rolled OpenAI-compatible over `HttpClient`, or a
+  vendored multi-provider crate) sits in a shell behind the trait and is ADR-0006's
+  contained choice. The earlier reason to *defer* — a heterogeneous panel — instead
+  becomes just one thing an adapter handles, not a reason to withhold the boundary.
 
 ## Consequences
 
@@ -472,25 +481,25 @@ Cross-cutting effects:
   anchor-to-write path of its own, Decision 5); it simply stops discarding the
   ordinal. Cost: one `u32` on the wire, no new behavior, no scoring impact.
 
-- **First LLM in SP42, behind one `HttpClient` edge — and no new dependency
+- **First LLM in SP42, behind the provider-agnostic `ModelClient` boundary
+  (ADR-0006 Decision 7) — and, for the default adapter, no new dependency
   (Constitution Art. 7).** This is the first place an LLM enters SP42 — an
   ML-integrated project (it consumes LiftWing's ORES-successor damage scores,
   ADR-0001 §9) that has used no LLM to date (no `openai`/`anthropic`/`llm`/`ollama`
-  dependency exists in the workspace today). The contract adds **no new runtime dependency**: the model
-  endpoint is reached through the existing reqwest-backed `BearerHttpClient`
-  (workspace `reqwest = "0.12.24"`, `rustls-tls`) as just another `HttpClient`
-  target — no vendor SDK, so there is no new crate to vet under Art. 7.2. Should a
-  future heterogeneous-panel provider adapter (ADR-0006) pull in a model-specific
-  crate, that PR must satisfy Art. 7 (documented justification, maintenance status,
-  transitive count — >50 needs lead approval) and the Art. 5.2 `cargo-deny`
-  GPL-3.0 check in its own right. The dependency is confined to a single
-  config-driven edge (pure `build_*`, pure `parse_*` ending in a `validate_*` gate,
-  injected `execute_*<C: HttpClient + ?Sized>`, endpoint default-absent like
-  `liftwing_url`); `sp42-core` names no model vendor, and the LLM's output is
-  **never trusted on its face** — every verdict is re-grounded against retrieved
-  bytes, so the model's role is judgment over evidence, not generation of truth.
-  Swapping providers or resizing the panel is a config/adapter change, no contract
-  change.
+  dependency exists in the workspace today). The model is reached only through the
+  `ModelClient` boundary; the **default** adapter behind it adds **no new runtime
+  dependency** — it rides the existing reqwest-backed `BearerHttpClient` (workspace
+  `reqwest = "0.12.24"`, `rustls-tls`) as just another `HttpClient` target, no vendor SDK
+  to vet under Art. 7.2. Should the chosen adapter instead be a vendored multi-provider
+  crate (ADR-0006 Decision 7), that PR must satisfy Art. 7 (documented justification,
+  maintenance status, transitive count — >50 needs lead approval) and the Art. 5.2
+  `cargo-deny` GPL-3.0 check in its own right. The edge is confined to a single
+  config-driven boundary (pure `build_*`, pure `parse_*` ending in a `validate_*` gate,
+  the concrete adapter in a shell, endpoint default-absent like `liftwing_url`);
+  `sp42-core` names no model vendor, and the LLM's output is **never trusted on its
+  face** — every verdict is re-grounded against retrieved bytes, so the model's role is
+  judgment over evidence, not generation of truth. Swapping the adapter or resizing the
+  panel is a config/adapter change, no contract change.
 
 - **No telemetry, tokens in memory only (Art. 10); informational scope.** The
   contract carries no token of any kind. The three-way Art. 10 split is deliberate

@@ -21,5 +21,6 @@ pub mod concurrency;
 pub mod locate_quote;
 pub mod parsing;
 pub mod prompts;
+pub mod urls;
 pub mod verdict;
 pub mod voting;

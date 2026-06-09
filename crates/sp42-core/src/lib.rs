@@ -73,6 +73,10 @@ pub use citation::concurrency::map_with_concurrency;
 pub use citation::locate_quote::locate_quote;
 pub use citation::parsing::{ParsedVerdict, canonicalize_verdict, parse_verdict_response};
 pub use citation::prompts::{PromptMessage, PromptRole, build_verify_prompt};
+pub use citation::urls::{
+    ResolvedUrl, build_article_html_url, is_archive_url, is_valid_wiki_code,
+    parse_revision_from_etag, resolve_citation_url, rewrite_wayback_url,
+};
 pub use citation::verdict::{CitationFindingKind, CitationVerdict, SupportLevel, Verdict};
 pub use citation::voting::{BinaryVote, NClassVote, PanelAgreement, binary_vote, n_class_vote};
 pub use context_builder::{ContextInputs, build_scoring_context};

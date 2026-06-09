@@ -16,6 +16,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use url::Url;
 
+use super::urls::encode_uri_component;
 use crate::types::{HttpMethod, HttpRequest};
 
 /// The Citoid REST endpoint (Zotero base-fields shape).
@@ -141,33 +142,10 @@ fn format_authors(value: &Value) -> Option<String> {
     }
 }
 
-/// Encode `input` per JavaScript `encodeURIComponent` (unreserved set
-/// `A-Za-z0-9 - _ . ! ~ * ' ( )` pass through; everything else `%XX`).
-fn encode_uri_component(input: &str) -> String {
-    const HEX: &[u8; 16] = b"0123456789ABCDEF";
-    let mut out = String::with_capacity(input.len());
-    for &byte in input.as_bytes() {
-        if byte.is_ascii_alphanumeric()
-            || matches!(
-                byte,
-                b'-' | b'_' | b'.' | b'!' | b'~' | b'*' | b'\'' | b'(' | b')'
-            )
-        {
-            out.push(char::from(byte));
-        } else {
-            out.push('%');
-            out.push(char::from(HEX[usize::from(byte >> 4)]));
-            out.push(char::from(HEX[usize::from(byte & 0x0f)]));
-        }
-    }
-    out
-}
-
 #[cfg(test)]
 mod tests {
-    use super::{
-        build_citoid_header, build_citoid_request, encode_uri_component, parse_citoid_response,
-    };
+    use super::{build_citoid_header, build_citoid_request, parse_citoid_response};
+    use crate::citation::urls::encode_uri_component;
     use crate::types::HttpMethod;
     use serde_json::json;
 

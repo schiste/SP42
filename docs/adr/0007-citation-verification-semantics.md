@@ -147,7 +147,7 @@ a *source*, not a claim. An article-level report consequently enumerates **use-s
 in document order** — one result per use-site — and that document-order position is
 the stable handle by which a single use-site is addressed. (The request/response shape
 is ADR-0008's; this ADR fixes only that the verdict's subject is a use-site, not a
-footnote.)
+footnote.) How the claim text at each use-site is derived is **Decision 7**.
 
 ### 3. Abstain rather than guess
 
@@ -238,6 +238,63 @@ verification-driven repair is just another operator-confirmed
 anchored through ADR-0003's node locator. The verdict path owns no writer. (The
 write-vs-read separation and the exact action path are detailed in ADR-0008.)
 
+### 7. Claim identification: the deterministic prose span a citation backs
+
+A verdict needs a claim, and the claim must be as reproducible and as ungamed as the
+source (Decision 2). So in the article/use-site case the claim is **neither generated
+nor chosen by a model** — it is **extracted deterministically from the parsed
+article**. The rule: the claim a citation backs is the **contiguous run of rendered,
+reader-facing prose from the end of the previous citation marker in the same block up
+to this marker** — the text *between adjacent citations*. The first marker in a block
+takes the run from the block's start; whitespace is collapsed, and footnote numbers
+and maintenance tags (e.g. *[citation needed]*) are stripped. It is a pure function of
+the parsed-article structure — same article in, same claims out — with **no sentence
+segmentation, no NLP, and no model** in the derivation. The model only ever *judges* an
+already-fixed claim; it never selects or writes it.
+
+This *between-markers* rule is chosen over the obvious alternative — *the preceding
+sentence* (Alternatives (h)) — on purpose: it is **structure-based and
+language-agnostic** (no per-language sentence segmenter, which matters as coverage
+grows past the enwiki first cut — issue #23), and it tracks how editors actually place
+a `<ref>` directly after the text it supports. Its imperfections are **coverage
+imperfections, never safety holes**: a span that is a sentence fragment, that crosses a
+sentence boundary, or that runs from a paragraph's start for the first marker can
+change *what is asked* — but it can **never manufacture a `Supported`**, because the
+anti-fabrication gate (Decision 5) still requires a verbatim, in-session-locatable
+quote no matter how the claim was scoped.
+
+Three boundary cases are settled here:
+
+- **Bundled citations** (markers with no prose between them, e.g. `[1][2][3]`) all back
+  the **same** claim: the extractor walks back past the zero-text markers to the real
+  preceding prose, so each bundled marker is its own use-site (Decision 2) verified
+  against that shared claim — not dropped.
+- **Non-prose markers** — in tables and infoboxes — are **not verified** (skipped, not
+  guessed). Citations in list items and captions are not covered by the first cut's
+  paragraph-scoped extraction; widening to them is later work.
+- **No fetchable source** — a use-site whose citation carries no fetchable source URL
+  is **filtered out before any fetch** (there is nothing to fetch or ground), so it
+  produces no verdict. This is distinct from a use-site that *has* a URL whose fetched
+  body is empty or unusable — that is a surfaced `SourceUnavailable` (Decision 4); the
+  never-guess spirit (Decision 3) covers both.
+
+The base between-markers span extraction is built and validated in both Luis Villa's
+wikiharness (over paragraph blocks, against a recorded Parsoid fixture of a real enwiki
+article) and alex-citation-checker (over a wider set of block containers) — concrete
+evidence the rule holds up on real articles. Two refinements above follow
+alex-citation-checker specifically: the **bundled-citation share rule** (wikiharness
+instead *drops* the empty-span bundled marker — SP42 deliberately adopts share so every
+bundled co-citation is verified) and **maintenance-tag stripping**. The rule is taken
+on SP42's own terms, as pure `sp42-core` logic bound to a test (Art. 1, Art. 2.3); the
+share behavior gets its own SP42 test, since wikiharness does not validate it.
+
+The CLI builds on this: PRD-0001's single-citation selectors (by a snippet of the
+claim, by the article report's index, or by naming a source to check every place it is
+used — *Surface*) only *select* a use-site; the verified claim is still this
+deterministic extraction at that site, not the snippet the operator typed. The one case
+where a claim is **supplied** rather than extracted is the ad-hoc claim + source-URL
+mode, where the operator provides both inputs directly.
+
 ## Alternatives Considered
 
 - **(a) Score the citation numerically** (a confidence/probability/percentage).
@@ -294,6 +351,14 @@ write-vs-read separation and the exact action path are detailed in ADR-0008.)
   `SupportLevel` (Decision 1) makes an abstention structurally unable to masquerade
   as a support level, and matches the two-step pipeline the verification already runs.
 
+- **(h) Identify the claim by sentence segmentation, or let the model choose the claim
+  span.** **Rejected.** A per-language sentence segmenter adds a language dependency the
+  structural *between-markers* rule (Decision 7) avoids — material as coverage grows
+  beyond enwiki (issue #23) — and letting the model pick the span it then judges would
+  let it choose an easy-to-support fragment, re-importing the producer-trust hole
+  Decision 5 closes. The claim is a deterministic span extraction; the model only
+  *judges* it.
+
 ## Consequences
 
 The decisions above bind to the following testable invariants. Each maps to a
@@ -324,6 +389,16 @@ PRD-0001 Definition-of-Done item.
 - **No editor identity reaches a verdict.** *Identity-invariance test:* the
   verdict is unchanged when identity metadata is injected alongside the same
   (claim, source). A moved verdict is a failure.
+
+- **Claim identification is deterministic** (Decision 7). *Unit/integration test:* the
+  same parsed article yields the same per-use-site claim spans (the rendered prose
+  between adjacent citation markers within a block, in document order); a non-prose
+  marker (table/infobox) and a use-site whose citation carries no fetchable source URL
+  produce no verdict (**filtered out, not guessed**); and bundled markers with no prose
+  between them **share** the preceding span (each still its own use-site). The base span
+  extraction and the non-prose skip are validated against a recorded Parsoid fixture in
+  Luis's wikiharness; the bundled-marker share rule follows alex-citation-checker
+  (wikiharness drops it) and gets its own SP42 test.
 
 - **Verification performs no writes** (DoD 5). Covered structurally by Decision 6
   and tested at the contract altitude in ADR-0008 (zero autonomous writes on the
@@ -392,7 +467,8 @@ Cross-cutting:
   Library deferred to a follow-up). The body-usability gate and locatability
   primitive are body-format-agnostic, so these extend the input without changing this
   ADR's semantics.
-- **No claim extraction.** This ADR assumes a (claim, source URL) pair is already
-  identified — by the operator naming a specific citation use-site, or by an
-  article-report's parsing of an article's citation use-sites (Decision 2);
-  harvesting claims from arbitrary prose is out of scope.
+- **No claim *discovery*.** Identifying the claim a citation backs is **in scope** — a
+  deterministic span extraction (Decision 7). What stays out of scope is *discovering*
+  which uncited statements ought to have a citation, or harvesting claims from
+  arbitrary prose not anchored to a citation marker; the first cut judges only claims
+  an existing citation already points at.

@@ -125,6 +125,19 @@ unchanged by it, only the per-call interface grows. A **heterogeneous** panel (m
 provider formats) is the same trigger. The proxy's budget spans **all** capabilities
 at once — which matters most for high-volume consumers like a discovery review.
 
+### 8. Model outputs are attributable to a `ModelRef { provider, model, version }`
+
+Every model output records the model that produced it — its `provider`, `model`, and
+`version` (the pinned model id) — so any capability's result is reproducible and
+auditable against the exact model used. This is shared terminology across capabilities;
+**persisting** it is each capability's storage concern (e.g. citation verification's
+verdict record, ADR-0009). Never a key or token (Art. 10).
+
+**Working assumption:** the configured endpoint (Decision 4) serves the version
+requested — requested-vs-served drift has not been observed in the prior
+citation-checker work, so the two are treated as one identity, recorded once. If such
+drift is ever observed, revisit this and record the served id distinctly.
+
 ## Alternatives Considered
 
 - **(a) Forcing one fixed configuration on every run — a single model, or a single

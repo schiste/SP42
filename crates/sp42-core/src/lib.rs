@@ -65,6 +65,7 @@ pub use action_executor::{
 pub use article_inventory::{
     ArticleInventory, ArticleReference, article_inventory_notes, build_article_inventory,
 };
+pub use citation::body_classifier::{BodyUsability, BodyUsabilityReason, classify_body_usability};
 pub use citation::locate_quote::locate_quote;
 pub use citation::verdict::{CitationFindingKind, CitationVerdict, SupportLevel, Verdict};
 pub use citation::voting::{BinaryVote, NClassVote, PanelAgreement, binary_vote, n_class_vote};

@@ -4,28 +4,30 @@
 //! - **Contract types** ([`CitationVerificationRequest`], [`CitationFinding`], …) — the
 //!   read-only Finding surface (ADR-0008 §1/§2). No numeric confidence field; a
 //!   `CitationFinding` derives `Eq`.
-//! - **Per-model edge** ([`build_citation_verify_request`] / [`execute_citation_verify`] /
-//!   [`parse_citation_verify_response`]) — one model, one verdict, over the injected
-//!   `HttpClient` (ADR-0008 §3). The parser ends in a validate gate that defaults an
-//!   unrecoverable response to *not supported*, never to a support judgment.
+//! - **Per-model edge** ([`execute_citation_verify`]) — one model, one verdict, over the
+//!   provider-agnostic [`ModelClient`] boundary (ADR-0006 Decision 7); the response
+//!   parser ends in a validate gate that defaults an unrecoverable response to *not
+//!   supported*, never a support judgment. Each call yields a [`ModelInvocation`]
+//!   fingerprint for audit/replay (ADR-0006 Decision 8).
 //! - **Grounding gate** ([`assemble_citation_finding`]) — pure: votes the panel
 //!   (ADR-0006), then independently re-locates the winning quote in the fetched bytes; a
 //!   `Supported`/`Partial` whose quote does not locate is **suppressed** to not-supported
 //!   pre-surface (ADR-0007 §5). The model is never trusted on its word.
-//! - **Orchestration** ([`verify_citation_use_site`]) — async: fetch the source once,
-//!   run the deterministic body-usability gate (short-circuit to `SourceUnavailable` with
-//!   no model call), then fan the panel out with bounded concurrency and assemble.
+//! - **Orchestration** ([`verify_citation_use_site`]) — async: fetch the source once over
+//!   the injected `HttpClient`, run the deterministic body-usability gate (short-circuit
+//!   to `SourceUnavailable` with no model call), then fan the panel out over the
+//!   `ModelClient` with bounded concurrency and assemble a [`VerificationOutcome`].
 //!
-//! The per-model HTTP request needs the **fetched source body**, which
-//! [`CitationVerificationRequest`] (claim + URL) does not carry; the edge therefore takes
-//! a prepared [`VerifyModelInputs`] — see `docs/implementation-notes/ADR-CHANGE-NOTES.md`.
+//! The per-model edge needs the **fetched source body**, which
+//! [`CitationVerificationRequest`] (claim + URL) does not carry; it therefore takes a
+//! prepared [`VerifyModelInputs`].
 
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
 
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 use sha2::{Digest, Sha256};
+use sp42_types::{ModelClient, ModelCompletionRequest, ModelInvocation, ModelRef, SamplingParams};
 use url::Url;
 
 use super::body_classifier::classify_body_usability;
@@ -42,38 +44,10 @@ use super::verdict::{CitationFindingKind, CitationVerdict, SupportLevel, Verdict
 use super::voting::{PanelAgreement, n_class_vote};
 use crate::errors::CitationVerificationError;
 use crate::traits::{Clock, HttpClient};
-use crate::types::{HttpMethod, HttpRequest, WikiConfig};
+use crate::types::{HttpMethod, HttpRequest};
 
 /// The schema version stamped on a [`CitationFinding`] (ADR-0008 §6).
 pub const SCHEMA_VERSION: u32 = 1;
-
-/// Identity of a model that produced an output — provider, model, and pinned version
-/// (ADR-0006 Decision 8). Never a key or token.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ModelRef {
-    /// The provider (e.g. `openrouter`, `local`).
-    pub provider: String,
-    /// The model id sent in the request.
-    pub model: String,
-    /// The pinned model version recorded for reproducibility (often equal to `model`).
-    pub version: String,
-}
-
-impl ModelRef {
-    /// Construct a model reference.
-    #[must_use]
-    pub fn new(
-        provider: impl Into<String>,
-        model: impl Into<String>,
-        version: impl Into<String>,
-    ) -> Self {
-        Self {
-            provider: provider.into(),
-            model: model.into(),
-            version: version.into(),
-        }
-    }
-}
 
 /// The operator-facing verification request: a claim, its source URL, and revision
 /// context (ADR-0008 §1). Carries no token and no editor identity.
@@ -154,6 +128,38 @@ pub struct CitationFinding {
     pub schema_version: u32,
 }
 
+/// One panel member's parsed verdict plus the fingerprint of the call that produced it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ModelVerdict {
+    /// The fingerprint of the model invocation (ADR-0006 Decision 8).
+    pub invocation: ModelInvocation,
+    /// The parsed verdict (still ungrounded — the gate re-checks the quote).
+    pub parsed: ParsedVerdict,
+}
+
+/// A persisted per-model vote (ADR-0009 §3): the invocation fingerprint, its returned
+/// verdict, and any located passage.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ModelVote {
+    /// The fingerprint of the call that cast this vote.
+    pub invocation: ModelInvocation,
+    /// Its returned verdict.
+    pub verdict: CitationVerdict,
+    /// Its located passage, if any.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub located_passage: Option<LocatedPassage>,
+}
+
+/// The full result of verifying one use-site: the surfaced finding plus the per-model
+/// votes (for the storage record, ADR-0009).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VerificationOutcome {
+    /// The surfaced read-only finding.
+    pub finding: CitationFinding,
+    /// Every per-model vote (with its invocation fingerprint).
+    pub votes: Vec<ModelVote>,
+}
+
 /// Prepared per-model inputs: the claim plus the *fetched* source body, URL, and optional
 /// metadata sidecar. (The fetched body is not on [`CitationVerificationRequest`].)
 #[derive(Debug, Clone, Copy)]
@@ -169,12 +175,14 @@ pub struct VerifyModelInputs<'a> {
 }
 
 /// Options for a verification run.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub struct VerifyOptions {
     /// Whether to fetch the Citoid metadata sidecar (best-effort).
     pub include_metadata: bool,
     /// Maximum concurrent model calls.
     pub concurrency: usize,
+    /// Sampling / reasoning parameters for each model call.
+    pub params: SamplingParams,
 }
 
 impl Default for VerifyOptions {
@@ -182,6 +190,7 @@ impl Default for VerifyOptions {
         Self {
             include_metadata: false,
             concurrency: 3,
+            params: SamplingParams::deterministic(),
         }
     }
 }
@@ -197,17 +206,25 @@ pub fn sha256_hex(bytes: &[u8]) -> String {
     out
 }
 
-/// Build the per-model verification HTTP request (OpenAI-compatible chat completion).
+/// Run one model's verification over the provider-agnostic [`ModelClient`] boundary,
+/// returning its parsed verdict plus the invocation fingerprint.
+///
+/// An unrecoverable model response defaults to *not supported* (the validate gate), never
+/// a support judgment (ADR-0008 §3).
 ///
 /// # Errors
 ///
-/// Returns [`CitationVerificationError::InvalidRequest`] if the claim/source text is
-/// empty or `config.inference_url` is unset, or a serialization error.
-pub fn build_citation_verify_request(
-    config: &WikiConfig,
+/// Returns [`CitationVerificationError`] if the claim/source text is empty, a
+/// serialization error, or the model client fails.
+pub async fn execute_citation_verify<M>(
+    model_client: &M,
     model: &ModelRef,
+    params: &SamplingParams,
     inputs: VerifyModelInputs<'_>,
-) -> Result<HttpRequest, CitationVerificationError> {
+) -> Result<ModelVerdict, CitationVerificationError>
+where
+    M: ModelClient + ?Sized,
+{
     if inputs.claim.trim().is_empty() {
         return Err(CitationVerificationError::InvalidRequest {
             message: "claim is empty".to_string(),
@@ -218,90 +235,39 @@ pub fn build_citation_verify_request(
             message: "source text is empty".to_string(),
         });
     }
-    let url =
-        config
-            .inference_url
-            .clone()
-            .ok_or_else(|| CitationVerificationError::InvalidRequest {
-                message: "inference_url is not configured".to_string(),
-            })?;
+
     let messages = build_verify_prompt(
         inputs.claim,
         inputs.source_text,
         inputs.source_url,
         inputs.metadata,
-    );
-    let body = serde_json::to_vec(&serde_json::json!({
-        "model": model.model,
-        "messages": messages,
-        "temperature": 0,
-    }))?;
-    Ok(HttpRequest {
-        method: HttpMethod::Post,
-        url,
-        headers: BTreeMap::from([("content-type".to_string(), "application/json".to_string())]),
-        body,
-    })
-}
-
-/// Parse a model chat-completion response into a [`ParsedVerdict`].
-///
-/// An unrecoverable verdict in an otherwise-valid envelope defaults to *not supported*
-/// (the validate gate), never a support judgment (ADR-0008 §3).
-///
-/// # Errors
-///
-/// Returns [`CitationVerificationError::InvalidResponse`] if the envelope has no
-/// `choices[0].message.content`, or a JSON parse error.
-pub fn parse_citation_verify_response(
-    body: &[u8],
-) -> Result<ParsedVerdict, CitationVerificationError> {
-    let parsed: Value = serde_json::from_slice(body)?;
-    let content = parsed
-        .get("choices")
-        .and_then(Value::as_array)
-        .and_then(|choices| choices.first())
-        .and_then(|choice| choice.get("message"))
-        .and_then(|message| message.get("content"))
-        .and_then(Value::as_str)
-        .ok_or_else(|| CitationVerificationError::InvalidResponse {
-            message: "response has no choices[0].message.content".to_string(),
-        })?;
-    Ok(parse_verdict_response(content).unwrap_or(ParsedVerdict {
-        verdict: Verdict::NotSupported,
-        quote: None,
-    }))
-}
-
-/// Run one model's verification over the injected `HttpClient`.
-///
-/// # Errors
-///
-/// Returns [`CitationVerificationError`] on a build, transport, non-2xx, or parse error.
-pub async fn execute_citation_verify<C>(
-    client: &C,
-    config: &WikiConfig,
-    model: &ModelRef,
-    inputs: VerifyModelInputs<'_>,
-) -> Result<ParsedVerdict, CitationVerificationError>
-where
-    C: HttpClient + ?Sized,
-{
-    let request = build_citation_verify_request(config, model, inputs)?;
-    let response = client.execute(request).await.map_err(|error| {
+    )
+    .to_vec();
+    let prompt_hash = sha256_hex(&serde_json::to_vec(&messages)?);
+    let request = ModelCompletionRequest {
+        model: model.clone(),
+        messages,
+        params: params.clone(),
+    };
+    let completion = model_client.complete(&request).await.map_err(|error| {
         CitationVerificationError::InvalidResponse {
             message: error.to_string(),
         }
     })?;
-    if !(200..300).contains(&response.status) {
-        return Err(CitationVerificationError::InvalidResponse {
-            message: format!("unexpected HTTP status {}", response.status),
-        });
-    }
-    parse_citation_verify_response(&response.body)
+    let parsed = parse_verdict_response(&completion.text).unwrap_or(ParsedVerdict {
+        verdict: Verdict::NotSupported,
+        quote: None,
+    });
+    let invocation = ModelInvocation {
+        model: model.clone(),
+        quant: None,
+        params: params.fingerprint(),
+        prompt_hash,
+    };
+    Ok(ModelVerdict { invocation, parsed })
 }
 
-/// Assemble the final [`CitationFinding`] from the panel's parsed votes — the
+/// Assemble the final [`CitationFinding`] from the panel's model verdicts — the
 /// anti-fabrication grounding gate (ADR-0007 §5).
 ///
 /// Votes the panel, then for a `Supported`/`Partial` winner re-locates a winning-class
@@ -311,10 +277,10 @@ where
 pub fn assemble_citation_finding(
     source_text: &str,
     provenance: &SourceProvenance,
-    votes: &[ParsedVerdict],
+    votes: &[ModelVerdict],
     use_site_ordinal: u32,
 ) -> CitationFinding {
-    let verdicts: Vec<Verdict> = votes.iter().map(|vote| vote.verdict).collect();
+    let verdicts: Vec<Verdict> = votes.iter().map(|vote| vote.parsed.verdict).collect();
     let Some(vote) = n_class_vote(&verdicts) else {
         return no_quote_finding(
             CitationVerdict::SourceUnavailable,
@@ -327,9 +293,9 @@ pub fn assemble_citation_finding(
     if vote.winner.is_support_class() {
         let located = votes
             .iter()
-            .filter(|candidate| candidate.verdict == vote.winner)
+            .filter(|candidate| candidate.parsed.verdict == vote.winner)
             .find_map(|candidate| {
-                let quote = candidate.quote.as_ref()?;
+                let quote = candidate.parsed.quote.as_ref()?;
                 let offset = locate_quote(quote, source_text)?;
                 Some((quote.clone(), offset))
             });
@@ -368,6 +334,33 @@ pub fn assemble_citation_finding(
         provenance,
         use_site_ordinal,
     )
+}
+
+/// Build the per-model vote records for the verdict store (ADR-0009): each vote's
+/// invocation fingerprint, its verdict, and — for a support-class vote whose quote
+/// locates — its located passage.
+#[must_use]
+pub fn build_model_votes(votes: &[ModelVerdict], source_text: &str) -> Vec<ModelVote> {
+    votes
+        .iter()
+        .map(|vote| {
+            let located_passage = if vote.parsed.verdict.is_support_class() {
+                vote.parsed.quote.as_ref().and_then(|quote| {
+                    locate_quote(quote, source_text).map(|offset| LocatedPassage {
+                        quote: quote.clone(),
+                        offset,
+                    })
+                })
+            } else {
+                None
+            };
+            ModelVote {
+                invocation: vote.invocation.clone(),
+                verdict: CitationVerdict::from(vote.parsed.verdict),
+                located_passage,
+            }
+        })
+        .collect()
 }
 
 /// A finding with no located passage, grounded on "the source was fetched".
@@ -465,25 +458,27 @@ where
 
 /// Verify one (claim, source) use-site end-to-end (ADR-0008 §3, ADR-0007).
 ///
-/// Fetches the source once, runs the deterministic body-usability gate (short-circuiting
-/// to `SourceUnavailable` with **no model call**), then fans the panel out with bounded
-/// concurrency and assembles the grounded finding. Performs only GET requests — no writes.
+/// Fetches the source once over the injected `HttpClient`, runs the deterministic
+/// body-usability gate (short-circuiting to `SourceUnavailable` with **no model call**),
+/// then fans the panel out over the [`ModelClient`] with bounded concurrency and assembles
+/// the grounded finding plus the per-model votes. Performs only read-only requests.
 ///
 /// # Errors
 ///
 /// Returns [`CitationVerificationError`] for an empty panel, an unfetchable source URL, or
 /// when every panel model fails.
-pub async fn verify_citation_use_site<C>(
-    client: &C,
+pub async fn verify_citation_use_site<C, M>(
+    fetch_client: &C,
+    model_client: &M,
     clock: &dyn Clock,
-    config: &WikiConfig,
     panel: &[ModelRef],
     request: &CitationVerificationRequest,
     use_site_ordinal: u32,
     options: VerifyOptions,
-) -> Result<CitationFinding, CitationVerificationError>
+) -> Result<VerificationOutcome, CitationVerificationError>
 where
     C: HttpClient + ?Sized,
+    M: ModelClient + ?Sized,
 {
     if panel.is_empty() {
         return Err(CitationVerificationError::InvalidRequest {
@@ -491,7 +486,7 @@ where
         });
     }
 
-    let fetched = fetch_source(client, request.source_url.as_str()).await?;
+    let fetched = fetch_source(fetch_client, request.source_url.as_str()).await?;
     let provenance = SourceProvenance {
         url: request.source_url.clone(),
         content_hash: sha256_hex(fetched.text.as_bytes()),
@@ -504,16 +499,19 @@ where
         Some(fetched.text.as_str())
     };
     if !classify_body_usability(body).usable {
-        return Ok(no_quote_finding(
-            CitationVerdict::SourceUnavailable,
-            PanelAgreement::new(0, 0),
-            &provenance,
-            use_site_ordinal,
-        ));
+        return Ok(VerificationOutcome {
+            finding: no_quote_finding(
+                CitationVerdict::SourceUnavailable,
+                PanelAgreement::new(0, 0),
+                &provenance,
+                use_site_ordinal,
+            ),
+            votes: Vec::new(),
+        });
     }
 
     let metadata = if options.include_metadata {
-        fetch_metadata(client, request.source_url.as_str()).await
+        fetch_metadata(fetch_client, request.source_url.as_str()).await
     } else {
         None
     };
@@ -524,24 +522,27 @@ where
         metadata: metadata.as_ref(),
     };
 
+    let params = &options.params;
     let concurrency = options.concurrency.max(1);
     let results = map_with_concurrency(panel.to_vec(), concurrency, |model, _index| async move {
-        execute_citation_verify(client, config, &model, inputs).await
+        execute_citation_verify(model_client, &model, params, inputs).await
     })
     .await;
-    let votes: Vec<ParsedVerdict> = results.into_iter().filter_map(Result::ok).collect();
-    if votes.is_empty() {
+    let model_verdicts: Vec<ModelVerdict> = results.into_iter().filter_map(Result::ok).collect();
+    if model_verdicts.is_empty() {
         return Err(CitationVerificationError::InvalidResponse {
             message: "all panel models failed".to_string(),
         });
     }
 
-    Ok(assemble_citation_finding(
+    let finding = assemble_citation_finding(
         &fetched.text,
         &provenance,
-        &votes,
+        &model_verdicts,
         use_site_ordinal,
-    ))
+    );
+    let votes = build_model_votes(&model_verdicts, &fetched.text);
+    Ok(VerificationOutcome { finding, votes })
 }
 
 #[cfg(test)]
@@ -550,30 +551,24 @@ mod tests {
 
     use futures::executor::block_on;
     use proptest::prelude::*;
+    use sp42_types::{ModelCompletion, ModelInvocation, ModelRef, SamplingParams, StubModelClient};
 
     use super::{
-        CitationFinding, CitationVerificationRequest, GroundingAssertion, ModelRef,
-        SourceProvenance, VerifyModelInputs, VerifyOptions, assemble_citation_finding,
-        build_citation_verify_request, execute_citation_verify, parse_citation_verify_response,
-        verify_citation_use_site,
+        CitationVerificationRequest, GroundingAssertion, ModelVerdict, SourceProvenance,
+        VerifyModelInputs, VerifyOptions, assemble_citation_finding, build_model_votes,
+        execute_citation_verify, verify_citation_use_site,
     };
     use crate::citation::parsing::ParsedVerdict;
     use crate::citation::verdict::{CitationVerdict, SupportLevel, Verdict};
     use crate::traits::{FixedClock, StubHttpClient};
-    use crate::types::{HttpMethod, HttpResponse, WikiConfig};
-
-    fn config_with_inference() -> WikiConfig {
-        let mut config = crate::test_fixtures::fixture_wiki_config();
-        config.inference_url = Some(
-            "https://inference.example/v1/chat/completions"
-                .parse()
-                .expect("valid url"),
-        );
-        config
-    }
+    use crate::types::HttpResponse;
 
     fn model() -> ModelRef {
         ModelRef::new("openrouter", "test-model", "test-model")
+    }
+
+    fn params() -> SamplingParams {
+        SamplingParams::deterministic()
     }
 
     fn inputs<'a>(claim: &'a str, source: &'a str) -> VerifyModelInputs<'a> {
@@ -585,11 +580,11 @@ mod tests {
         }
     }
 
-    fn openai_response(content: &str) -> Vec<u8> {
-        serde_json::to_vec(&serde_json::json!({
-            "choices": [ { "message": { "content": content } } ]
-        }))
-        .expect("serialize")
+    fn completion(text: &str) -> ModelCompletion {
+        ModelCompletion {
+            text: text.to_string(),
+            served_model: None,
+        }
     }
 
     fn provenance() -> SourceProvenance {
@@ -600,76 +595,81 @@ mod tests {
         }
     }
 
-    fn vote(verdict: Verdict, quote: Option<&str>) -> ParsedVerdict {
-        ParsedVerdict {
-            verdict,
-            quote: quote.map(ToString::to_string),
+    fn model_verdict(verdict: Verdict, quote: Option<&str>) -> ModelVerdict {
+        ModelVerdict {
+            invocation: ModelInvocation {
+                model: model(),
+                quant: None,
+                params: BTreeMap::new(),
+                prompt_hash: "test".to_string(),
+            },
+            parsed: ParsedVerdict {
+                verdict,
+                quote: quote.map(ToString::to_string),
+            },
         }
     }
 
     #[test]
-    fn build_request_targets_inference_url() {
-        let config = config_with_inference();
-        let request = build_citation_verify_request(&config, &model(), inputs("a claim", "a body"))
-            .expect("builds");
-        assert_eq!(request.method, HttpMethod::Post);
-        assert_eq!(
-            request.url.as_str(),
-            "https://inference.example/v1/chat/completions"
-        );
-        let body = String::from_utf8(request.body).expect("utf8");
-        assert!(body.contains("test-model"));
-        assert!(body.contains("two-step process"));
-    }
-
-    #[test]
-    fn build_request_requires_inference_url() {
-        let config = crate::test_fixtures::fixture_wiki_config(); // no inference_url
-        let error = build_citation_verify_request(&config, &model(), inputs("c", "b"))
-            .expect_err("should fail");
-        assert!(error.to_string().contains("inference_url"));
-    }
-
-    #[test]
-    fn parse_extracts_verdict_from_openai_envelope() {
-        let body = openai_response(r#"{"verdict": "SUPPORTED", "quote": "x"}"#);
-        let parsed = parse_citation_verify_response(&body).expect("parses");
-        assert_eq!(parsed.verdict, Verdict::Supported);
-        assert_eq!(parsed.quote.as_deref(), Some("x"));
-    }
-
-    #[test]
-    fn parse_defaults_unrecoverable_content_to_not_supported() {
-        let body = openai_response("i could not tell you, honestly");
-        let parsed = parse_citation_verify_response(&body).expect("parses");
-        assert_eq!(parsed.verdict, Verdict::NotSupported);
-        assert_eq!(parsed.quote, None);
-    }
-
-    #[test]
-    fn parse_rejects_a_malformed_envelope() {
-        assert!(parse_citation_verify_response(b"{}").is_err());
-    }
-
-    #[test]
-    fn execute_runs_through_the_http_trait() {
-        let config = config_with_inference();
-        let client = StubHttpClient::new([Ok(HttpResponse {
-            status: 200,
-            headers: BTreeMap::new(),
-            body: openai_response(r#"{"verdict": "PARTIAL", "quote": "it is believed"}"#),
-        })]);
-        let parsed = block_on(execute_citation_verify(
+    fn execute_runs_through_the_model_client_and_fingerprints() {
+        let client = StubModelClient::new([Ok(completion(
+            r#"{"verdict": "PARTIAL", "quote": "it is believed"}"#,
+        ))]);
+        let verdict = block_on(execute_citation_verify(
             &client,
-            &config,
             &model(),
+            &params(),
             inputs(
                 "the treaty was signed in Paris",
                 "It is believed the treaty was signed in Paris.",
             ),
         ))
         .expect("executes");
-        assert_eq!(parsed.verdict, Verdict::Partial);
+        assert_eq!(verdict.parsed.verdict, Verdict::Partial);
+        // The invocation is fingerprinted: a sha256 prompt hash + the sampling params.
+        assert_eq!(verdict.invocation.prompt_hash.len(), 64);
+        assert!(
+            verdict
+                .invocation
+                .prompt_hash
+                .bytes()
+                .all(|b| b.is_ascii_hexdigit())
+        );
+        assert_eq!(
+            verdict
+                .invocation
+                .params
+                .get("temperature")
+                .map(String::as_str),
+            Some("0")
+        );
+        assert_eq!(verdict.invocation.model, model());
+    }
+
+    #[test]
+    fn execute_defaults_unrecoverable_content_to_not_supported() {
+        let client = StubModelClient::new([Ok(completion("i could not tell you, honestly"))]);
+        let verdict = block_on(execute_citation_verify(
+            &client,
+            &model(),
+            &params(),
+            inputs("a claim", "a usable source body"),
+        ))
+        .expect("executes");
+        assert_eq!(verdict.parsed.verdict, Verdict::NotSupported);
+        assert_eq!(verdict.parsed.quote, None);
+    }
+
+    #[test]
+    fn execute_propagates_a_model_client_failure() {
+        let client = StubModelClient::new([]); // empty queue -> the stub errors
+        let result = block_on(execute_citation_verify(
+            &client,
+            &model(),
+            &params(),
+            inputs("a claim", "a usable source body"),
+        ));
+        assert!(result.is_err());
     }
 
     #[test]
@@ -678,7 +678,10 @@ mod tests {
         let finding = assemble_citation_finding(
             source,
             &provenance(),
-            &[vote(Verdict::Supported, Some("established in 1985"))],
+            &[model_verdict(
+                Verdict::Supported,
+                Some("established in 1985"),
+            )],
             7,
         );
         assert_eq!(
@@ -695,12 +698,12 @@ mod tests {
 
     #[test]
     fn assemble_suppresses_a_supported_verdict_whose_quote_is_absent() {
-        // THE anti-fabrication gate: a fabricated quote that is not in the source.
+        // THE anti-fabrication gate: a fabricated quote not in the source.
         let source = "Acme Corp was established in 1985.";
         let finding = assemble_citation_finding(
             source,
             &provenance(),
-            &[vote(
+            &[model_verdict(
                 Verdict::Supported,
                 Some("founded in 1772 by Napoleon"),
             )],
@@ -718,40 +721,37 @@ mod tests {
     }
 
     #[test]
-    fn assemble_not_supported_grounds_on_source_fetched() {
-        let finding = assemble_citation_finding(
-            "a body",
-            &provenance(),
-            &[vote(Verdict::NotSupported, None)],
-            0,
-        );
-        assert_eq!(
-            finding.verdict,
-            CitationVerdict::Judged(SupportLevel::NotSupported)
-        );
-        assert!(matches!(
-            finding.grounding,
-            GroundingAssertion::SourceFetched { .. }
-        ));
-    }
-
-    #[test]
     fn assemble_breaks_ties_skeptically() {
         let source = "Acme Corp was established in 1985.";
         let finding = assemble_citation_finding(
             source,
             &provenance(),
             &[
-                vote(Verdict::Supported, Some("established in 1985")),
-                vote(Verdict::NotSupported, None),
+                model_verdict(Verdict::Supported, Some("established in 1985")),
+                model_verdict(Verdict::NotSupported, None),
             ],
             0,
         );
-        // Tie Supported vs NotSupported -> NotSupported (never up to Supported).
         assert_eq!(
             finding.verdict,
             CitationVerdict::Judged(SupportLevel::NotSupported)
         );
+    }
+
+    #[test]
+    fn build_model_votes_carries_fingerprint_and_located_passage() {
+        let source = "Acme Corp was established in 1985.";
+        let votes = build_model_votes(
+            &[
+                model_verdict(Verdict::Supported, Some("established in 1985")),
+                model_verdict(Verdict::NotSupported, None),
+            ],
+            source,
+        );
+        assert_eq!(votes.len(), 2);
+        assert_eq!(votes[0].invocation.prompt_hash, "test");
+        assert!(votes[0].located_passage.is_some());
+        assert!(votes[1].located_passage.is_none());
     }
 
     fn long_html_with(quote: &str) -> Vec<u8> {
@@ -760,120 +760,95 @@ mod tests {
         format!("<html><body><p>{padding}{quote}. {padding}</p></body></html>").into_bytes()
     }
 
-    #[test]
-    fn end_to_end_supported_finding() {
-        let config = config_with_inference();
-        let clock = FixedClock::new(1000);
-        let client = StubHttpClient::new([
-            Ok(HttpResponse {
-                status: 200,
-                headers: BTreeMap::from([("content-type".to_string(), "text/html".to_string())]),
-                body: long_html_with("the bridge opened in 1998"),
-            }),
-            Ok(HttpResponse {
-                status: 200,
-                headers: BTreeMap::new(),
-                body: openai_response(
-                    r#"{"verdict": "SUPPORTED", "quote": "the bridge opened in 1998"}"#,
-                ),
-            }),
-        ]);
-        let request = CitationVerificationRequest {
+    fn request(claim: &str, url: &str) -> CitationVerificationRequest {
+        CitationVerificationRequest {
             wiki_id: "enwiki".to_string(),
             rev_id: 1,
-            title: "Bridge".to_string(),
-            claim: "The bridge opened in 1998".to_string(),
-            source_url: "https://example.com/bridge".parse().expect("url"),
-        };
-        let finding: CitationFinding = block_on(verify_citation_use_site(
-            &client,
-            &clock,
-            &config,
+            title: "X".to_string(),
+            claim: claim.to_string(),
+            source_url: url.parse().expect("url"),
+        }
+    }
+
+    #[test]
+    fn end_to_end_supported_outcome_with_votes() {
+        let fetch = StubHttpClient::new([Ok(HttpResponse {
+            status: 200,
+            headers: BTreeMap::from([("content-type".to_string(), "text/html".to_string())]),
+            body: long_html_with("the bridge opened in 1998"),
+        })]);
+        let model_client = StubModelClient::new([Ok(completion(
+            r#"{"verdict": "SUPPORTED", "quote": "the bridge opened in 1998"}"#,
+        ))]);
+        let outcome = block_on(verify_citation_use_site(
+            &fetch,
+            &model_client,
+            &FixedClock::new(1000),
             &[model()],
-            &request,
+            &request("The bridge opened in 1998", "https://example.com/bridge"),
             3,
             VerifyOptions::default(),
         ))
         .expect("verifies");
         assert_eq!(
-            finding.verdict,
+            outcome.finding.verdict,
             CitationVerdict::Judged(SupportLevel::Supported)
         );
-        assert_eq!(finding.provenance.fetched_at, 1000);
-        assert_eq!(finding.use_site_ordinal, 3);
+        assert_eq!(outcome.finding.provenance.fetched_at, 1000);
+        assert_eq!(outcome.finding.use_site_ordinal, 3);
+        assert_eq!(outcome.votes.len(), 1);
+        assert_eq!(outcome.votes[0].invocation.prompt_hash.len(), 64);
     }
 
     #[test]
     fn end_to_end_unreachable_source_is_source_unavailable_with_no_model_call() {
-        let config = config_with_inference();
-        let clock = FixedClock::new(1);
-        // Only the source-fetch response is queued; a model call would error (no response).
-        let client = StubHttpClient::new([Ok(HttpResponse {
+        // Only a failing fetch is queued; the model stub is empty — a model call would error.
+        let fetch = StubHttpClient::new([Ok(HttpResponse {
             status: 404,
             headers: BTreeMap::new(),
             body: Vec::new(),
         })]);
-        let request = CitationVerificationRequest {
-            wiki_id: "enwiki".to_string(),
-            rev_id: 1,
-            title: "X".to_string(),
-            claim: "some claim".to_string(),
-            source_url: "https://example.com/missing".parse().expect("url"),
-        };
-        let finding = block_on(verify_citation_use_site(
-            &client,
-            &clock,
-            &config,
+        let model_client = StubModelClient::new([]);
+        let outcome = block_on(verify_citation_use_site(
+            &fetch,
+            &model_client,
+            &FixedClock::new(1),
             &[model()],
-            &request,
+            &request("some claim", "https://example.com/missing"),
             0,
             VerifyOptions::default(),
         ))
         .expect("verifies");
-        assert_eq!(finding.verdict, CitationVerdict::SourceUnavailable);
-        assert!(finding.passage.is_none());
+        assert_eq!(outcome.finding.verdict, CitationVerdict::SourceUnavailable);
+        assert!(outcome.finding.passage.is_none());
+        assert!(outcome.votes.is_empty());
     }
 
     #[test]
     fn end_to_end_fabricated_quote_is_suppressed() {
-        let config = config_with_inference();
-        let clock = FixedClock::new(1);
-        let client = StubHttpClient::new([
-            Ok(HttpResponse {
-                status: 200,
-                headers: BTreeMap::from([("content-type".to_string(), "text/html".to_string())]),
-                body: long_html_with("the museum was founded in 1850"),
-            }),
-            Ok(HttpResponse {
-                status: 200,
-                headers: BTreeMap::new(),
-                body: openai_response(
-                    r#"{"verdict": "SUPPORTED", "quote": "a quote that is nowhere in the body"}"#,
-                ),
-            }),
-        ]);
-        let request = CitationVerificationRequest {
-            wiki_id: "enwiki".to_string(),
-            rev_id: 1,
-            title: "Museum".to_string(),
-            claim: "The museum opened in 1850".to_string(),
-            source_url: "https://example.com/museum".parse().expect("url"),
-        };
-        let finding = block_on(verify_citation_use_site(
-            &client,
-            &clock,
-            &config,
+        let fetch = StubHttpClient::new([Ok(HttpResponse {
+            status: 200,
+            headers: BTreeMap::from([("content-type".to_string(), "text/html".to_string())]),
+            body: long_html_with("the museum was founded in 1850"),
+        })]);
+        let model_client = StubModelClient::new([Ok(completion(
+            r#"{"verdict": "SUPPORTED", "quote": "a quote that is nowhere in the body"}"#,
+        ))]);
+        let outcome = block_on(verify_citation_use_site(
+            &fetch,
+            &model_client,
+            &FixedClock::new(1),
             &[model()],
-            &request,
+            &request("The museum opened in 1850", "https://example.com/museum"),
             0,
             VerifyOptions::default(),
         ))
         .expect("verifies");
         assert_eq!(
-            finding.verdict,
+            outcome.finding.verdict,
             CitationVerdict::Judged(SupportLevel::NotSupported)
         );
-        assert!(finding.passage.is_none());
+        assert!(outcome.finding.passage.is_none());
     }
 
     proptest! {
@@ -882,11 +857,11 @@ mod tests {
             source in "[a-m ]{0,200}",
             quote in "[n-z]{3,40}",
         ) {
-            // quote uses only n-z; source uses only a-m + space => quote can never be a substring.
+            // quote uses only n-z; source only a-m + space => quote can never be a substring.
             let finding = assemble_citation_finding(
                 &source,
                 &provenance(),
-                &[vote(Verdict::Supported, Some(&quote))],
+                &[model_verdict(Verdict::Supported, Some(&quote))],
                 0,
             );
             prop_assert_ne!(finding.verdict, CitationVerdict::Judged(SupportLevel::Supported));

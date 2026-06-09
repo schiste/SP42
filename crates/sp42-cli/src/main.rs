@@ -4,14 +4,21 @@ use std::process::ExitCode;
 
 use async_trait::async_trait;
 use futures::executor::block_on;
+use genai::Client;
+use genai::adapter::AdapterKind;
+use genai::chat::{ChatMessage as GenaiChatMessage, ChatOptions, ChatRequest};
+use genai::resolver::{AuthData, Endpoint};
+use genai::{ModelIden, ServiceTarget};
 use reqwest::header::COOKIE;
 use serde_json::Value;
 use sp42_core::routes as route_contracts;
 use sp42_core::{
-    CitationFinding, CitationVerificationRequest, DevAuthBootstrapRequest, DevAuthSessionStatus,
-    ModelRef, QueuedEdit, SessionActionExecutionRequest, SessionActionExecutionResponse,
-    SessionActionKind, SystemClock, VerifyOptions as CoreVerifyOptions,
-    build_dev_auth_bootstrap_request, parse_dev_auth_status, verify_citation_use_site,
+    ChatRole, CitationFinding, CitationVerificationRequest, DevAuthBootstrapRequest,
+    DevAuthSessionStatus, EndpointMode, ModelClient, ModelClientError, ModelCompletion,
+    ModelCompletionRequest, ModelEndpointConfig, ModelRef, QueuedEdit, SamplingParams,
+    SessionActionExecutionRequest, SessionActionExecutionResponse, SessionActionKind, SystemClock,
+    VerifyOptions as CoreVerifyOptions, build_dev_auth_bootstrap_request, parse_dev_auth_status,
+    verify_citation_use_site,
 };
 use sp42_devtools::{
     DEV_PREVIEW_SAMPLE_EVENTS, DEV_PREVIEW_WIKI_ID, DevContextOptions, DevWorkbenchOptions,
@@ -395,13 +402,11 @@ fn parse_liftwing_probability(value: &str) -> Result<f32, String> {
 
 // ----- Read-only citation verification (PRD-0001) -----
 
-/// A reqwest-backed `HttpClient` for the CLI. The inference bearer token is injected
-/// **only** for the configured inference host — never for arbitrary source-fetch hosts,
-/// so an API key can never leak to a third-party source site.
+/// A reqwest-backed `HttpClient` for the CLI's **source fetch** only. It deliberately holds
+/// no inference credential: the model bearer lives solely in [`GenaiModelClient`], so an API
+/// key can never leak to a third-party source site through this client.
 struct CliHttpClient {
     client: reqwest::Client,
-    bearer_token: Option<String>,
-    inference_host: Option<String>,
 }
 
 #[async_trait]
@@ -414,11 +419,6 @@ impl HttpClient for CliHttpClient {
             HttpMethod::Patch => self.client.patch(request.url.clone()),
             HttpMethod::Delete => self.client.delete(request.url.clone()),
         };
-        if let (Some(token), Some(host)) = (&self.bearer_token, &self.inference_host)
-            && request.url.host_str() == Some(host.as_str())
-        {
-            builder = builder.bearer_auth(token);
-        }
         for (key, value) in request.headers {
             builder = builder.header(&key, value);
         }
@@ -453,13 +453,118 @@ impl HttpClient for CliHttpClient {
     }
 }
 
+/// The transport header a sponsor proxy may gate per-call authorization on (ADR-0006
+/// Decision 6). It is authorization metadata only — never part of the model input.
+const CAPABILITY_TAG_HEADER: &str = "X-SP42-Capability";
+
+/// A `genai`-backed [`ModelClient`] adapter (ADR-0006 Decision 7). The concrete provider
+/// wire format lives here in the CLI shell; feature crates only ever see the neutral
+/// boundary, so swapping the adapter touches no domain code.
+///
+/// Per call it builds a `genai` `ServiceTarget` directly (endpoint + auth + model id),
+/// bypassing genai's provider auto-resolution, so the configured OpenAI-compatible endpoint
+/// — a local server, a direct provider, or a sponsor proxy — is used verbatim. The
+/// `capability_tag`, when set, rides as a transport header a sponsor proxy may gate on;
+/// it is never added to the model input.
+struct GenaiModelClient {
+    client: Client,
+    endpoint: ModelEndpointConfig,
+}
+
+impl GenaiModelClient {
+    fn new(endpoint: ModelEndpointConfig) -> Self {
+        Self {
+            client: Client::default(),
+            endpoint,
+        }
+    }
+}
+
+#[async_trait]
+impl ModelClient for GenaiModelClient {
+    async fn complete(
+        &self,
+        request: &ModelCompletionRequest,
+    ) -> Result<ModelCompletion, ModelClientError> {
+        let messages = request
+            .messages
+            .iter()
+            .map(|message| match message.role {
+                ChatRole::System => GenaiChatMessage::system(message.content.clone()),
+                ChatRole::User => GenaiChatMessage::user(message.content.clone()),
+                ChatRole::Assistant => GenaiChatMessage::assistant(message.content.clone()),
+            })
+            .collect::<Vec<_>>();
+        let chat_request = ChatRequest::new(messages);
+
+        let target = ServiceTarget {
+            endpoint: Endpoint::from_owned(normalize_base_url(&self.endpoint.base_url)),
+            auth: AuthData::from_single(self.endpoint.auth_token.clone().unwrap_or_default()),
+            model: ModelIden::new(AdapterKind::OpenAI, request.model.model.clone()),
+        };
+        let options = genai_chat_options(&request.params, self.endpoint.capability_tag.as_deref());
+
+        let response = self
+            .client
+            .exec_chat(target, chat_request, Some(&options))
+            .await
+            .map_err(|error| ModelClientError::Transport {
+                message: error.to_string(),
+            })?;
+
+        let text = response
+            .into_first_text()
+            .ok_or_else(|| ModelClientError::InvalidResponse {
+                message: "model response contained no text".to_string(),
+            })?;
+        Ok(ModelCompletion {
+            text,
+            served_model: None,
+        })
+    }
+}
+
+/// Translate our neutral [`SamplingParams`] into `genai` `ChatOptions`, attaching the
+/// capability tag as a transport header when present.
+fn genai_chat_options(params: &SamplingParams, capability_tag: Option<&str>) -> ChatOptions {
+    let mut options = ChatOptions::default();
+    if let Some(temperature) = params.temperature {
+        options = options.with_temperature(temperature);
+    }
+    if let Some(top_p) = params.top_p {
+        options = options.with_top_p(top_p);
+    }
+    if let Some(max_tokens) = params.max_tokens {
+        options = options.with_max_tokens(max_tokens);
+    }
+    if let Some(tag) = capability_tag {
+        options =
+            options.with_extra_headers([(CAPABILITY_TAG_HEADER.to_string(), tag.to_string())]);
+    }
+    options
+}
+
+/// Normalize an OpenAI-compatible base URL so `genai`'s adapter can join its
+/// `chat/completions` suffix: drop any trailing slash, tolerate a URL that already points at
+/// `.../chat/completions` by stripping that segment, then re-append a single trailing slash
+/// (reqwest's URL join requires the trailing slash to preserve the base path).
+fn normalize_base_url(raw: &str) -> String {
+    let trimmed = raw.trim_end_matches('/');
+    let base = trimmed.strip_suffix("/chat/completions").unwrap_or(trimmed);
+    format!("{base}/")
+}
+
 /// Render a citation verdict in the requested format (or terse verdict-only).
 fn render_verify(
     options: &VerifyCliOptions,
     format: OutputFormat,
     verdict_only: bool,
 ) -> Result<String, String> {
-    let finding = block_on(run_verify(options))?;
+    // genai (and reqwest) require a Tokio reactor, so the verify path runs on its own
+    // runtime rather than the futures executor the dev-preview paths use.
+    let runtime = tokio::runtime::Runtime::new()
+        .map_err(|error| format!("failed to start async runtime: {error}"))?;
+    let finding = runtime.block_on(run_verify(options))?;
     if verdict_only {
         return Ok(finding.verdict.as_wire().to_string());
     }
@@ -478,8 +583,9 @@ fn render_verify(
 /// Reads the inference endpoint, model panel, and (optional) bearer token from the
 /// environment so no secret is hard-coded; performs only read-only GET/POST requests.
 async fn run_verify(options: &VerifyCliOptions) -> Result<CitationFinding, String> {
-    let inference_url = std::env::var("SP42_INFERENCE_URL")
-        .map_err(|_| "set SP42_INFERENCE_URL to the model chat-completions endpoint".to_string())?;
+    let base_url = std::env::var("SP42_INFERENCE_URL").map_err(|_| {
+        "set SP42_INFERENCE_URL to the model's OpenAI-compatible base URL".to_string()
+    })?;
     let models = std::env::var("SP42_INFERENCE_MODELS").map_err(|_| {
         "set SP42_INFERENCE_MODELS to a comma-separated list of model ids".to_string()
     })?;
@@ -494,54 +600,66 @@ async fn run_verify(options: &VerifyCliOptions) -> Result<CitationFinding, Strin
     if panel.is_empty() {
         return Err("SP42_INFERENCE_MODELS is empty".to_string());
     }
-    let bearer_token = std::env::var("SP42_INFERENCE_TOKEN").ok();
-
-    let mut config = parse_default_dev_wiki_config().map_err(|error| error.to_string())?;
-    config.inference_url = Some(
-        inference_url
-            .parse()
-            .map_err(|_| "SP42_INFERENCE_URL is not a valid URL".to_string())?,
-    );
-    let inference_host = config
-        .inference_url
-        .as_ref()
-        .and_then(|url| url.host_str().map(ToString::to_string));
+    let auth_token = std::env::var("SP42_INFERENCE_TOKEN").ok();
+    let capability_tag = std::env::var("SP42_INFERENCE_CAPABILITY").ok();
+    let mode = parse_endpoint_mode(std::env::var("SP42_INFERENCE_MODE").ok().as_deref())?;
 
     let source_url = options
         .source_url
         .parse()
         .map_err(|_| format!("invalid --source-url: {}", options.source_url))?;
     let request = CitationVerificationRequest {
-        wiki_id: config.wiki_id.clone(),
+        wiki_id: String::new(),
         rev_id: 0,
         title: String::new(),
         claim: options.claim.clone(),
         source_url,
     };
 
-    let client = CliHttpClient {
+    // The source-fetch client carries no inference credential; the bearer is held only by
+    // the model adapter, so it can never reach a third-party source host.
+    let fetch_client = CliHttpClient {
         client: reqwest::Client::builder()
             .user_agent(sp42_core::branding::USER_AGENT)
             .build()
             .map_err(|error| format!("http client failed to build: {error}"))?,
-        bearer_token,
-        inference_host,
     };
+    let model_client = GenaiModelClient::new(ModelEndpointConfig {
+        mode,
+        base_url,
+        auth_token,
+        capability_tag,
+    });
+
     let verify_options = CoreVerifyOptions {
         include_metadata: options.include_metadata,
         concurrency: 3,
+        ..Default::default()
     };
-    verify_citation_use_site(
-        &client,
+    let outcome = verify_citation_use_site(
+        &fetch_client,
+        &model_client,
         &SystemClock,
-        &config,
         &panel,
         &request,
         0,
         verify_options,
     )
     .await
-    .map_err(|error| error.to_string())
+    .map_err(|error| error.to_string())?;
+    Ok(outcome.finding)
+}
+
+/// Parse the optional `SP42_INFERENCE_MODE` env value. Defaults to `local`; the mode is
+/// recorded on the endpoint config as advisory metadata (the adapter sends the bearer
+/// whenever a token is present, regardless of mode, in this CLI MVP).
+fn parse_endpoint_mode(value: Option<&str>) -> Result<EndpointMode, String> {
+    match value {
+        None | Some("local") => Ok(EndpointMode::Local),
+        Some("direct") => Ok(EndpointMode::Direct),
+        Some("sponsor_proxy" | "sponsor-proxy") => Ok(EndpointMode::SponsorProxy),
+        Some(other) => Err(format!("unsupported SP42_INFERENCE_MODE: {other}")),
+    }
 }
 
 /// Human-readable verdict block.
@@ -574,10 +692,73 @@ mod verify_tests {
         PanelAgreement, SourceProvenance, SupportLevel,
     };
 
-    use super::{VerifyCliOptions, parse_options, render_verify_text};
+    use super::{
+        EndpointMode, SamplingParams, VerifyCliOptions, genai_chat_options, normalize_base_url,
+        parse_endpoint_mode, parse_options, render_verify_text,
+    };
 
     fn args(items: &[&str]) -> Vec<String> {
         items.iter().map(ToString::to_string).collect()
+    }
+
+    #[test]
+    fn normalize_base_url_ensures_single_trailing_slash() {
+        assert_eq!(
+            normalize_base_url("https://openrouter.ai/api/v1"),
+            "https://openrouter.ai/api/v1/"
+        );
+        assert_eq!(
+            normalize_base_url("https://openrouter.ai/api/v1/"),
+            "https://openrouter.ai/api/v1/"
+        );
+    }
+
+    #[test]
+    fn normalize_base_url_strips_a_chat_completions_suffix() {
+        assert_eq!(
+            normalize_base_url("https://openrouter.ai/api/v1/chat/completions"),
+            "https://openrouter.ai/api/v1/"
+        );
+        assert_eq!(
+            normalize_base_url("http://localhost:8080/v1/chat/completions/"),
+            "http://localhost:8080/v1/"
+        );
+    }
+
+    #[test]
+    fn parse_endpoint_mode_maps_known_values() {
+        assert_eq!(parse_endpoint_mode(None), Ok(EndpointMode::Local));
+        assert_eq!(parse_endpoint_mode(Some("local")), Ok(EndpointMode::Local));
+        assert_eq!(
+            parse_endpoint_mode(Some("direct")),
+            Ok(EndpointMode::Direct)
+        );
+        assert_eq!(
+            parse_endpoint_mode(Some("sponsor_proxy")),
+            Ok(EndpointMode::SponsorProxy)
+        );
+        assert_eq!(
+            parse_endpoint_mode(Some("sponsor-proxy")),
+            Ok(EndpointMode::SponsorProxy)
+        );
+        assert!(parse_endpoint_mode(Some("bogus")).is_err());
+    }
+
+    #[test]
+    fn genai_chat_options_attaches_capability_tag_header() {
+        let params = SamplingParams::deterministic();
+        let options = genai_chat_options(&params, Some("citation-verify"));
+        let headers = options.extra_headers.expect("capability header present");
+        assert!(headers.iter().any(
+            |(name, value)| name.as_str() == super::CAPABILITY_TAG_HEADER
+                && value.as_str() == "citation-verify"
+        ));
+    }
+
+    #[test]
+    fn genai_chat_options_omits_headers_without_a_capability_tag() {
+        let options = genai_chat_options(&SamplingParams::deterministic(), None);
+        assert!(options.extra_headers.is_none());
     }
 
     #[test]

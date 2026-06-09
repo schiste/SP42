@@ -73,11 +73,11 @@ pub use citation::citoid::{
 pub use citation::concurrency::map_with_concurrency;
 pub use citation::locate_quote::locate_quote;
 pub use citation::parsing::{ParsedVerdict, canonicalize_verdict, parse_verdict_response};
-pub use citation::prompts::{PromptMessage, PromptRole, build_verify_prompt};
+pub use citation::prompts::build_verify_prompt;
 pub use citation::source_fetch::{html_to_text, looks_like_html, recover_wayback_body};
 pub use citation::storage::{
-    ModelVote, SnapshotEnvelope, VerdictEnvelope, build_snapshot, build_verdict_envelope,
-    load_snapshot, load_verdict, store_snapshot, store_verdict,
+    SnapshotEnvelope, VerdictEnvelope, build_snapshot, build_verdict_envelope, load_snapshot,
+    load_verdict, store_snapshot, store_verdict,
 };
 pub use citation::urls::{
     ResolvedUrl, build_article_html_url, is_archive_url, is_valid_wiki_code,
@@ -85,10 +85,10 @@ pub use citation::urls::{
 };
 pub use citation::verdict::{CitationFindingKind, CitationVerdict, SupportLevel, Verdict};
 pub use citation::verify::{
-    CitationFinding, CitationVerificationRequest, GroundingAssertion, LocatedPassage, ModelRef,
-    SourceProvenance, VerifyModelInputs, VerifyOptions, assemble_citation_finding,
-    build_citation_verify_request, execute_citation_verify, parse_citation_verify_response,
-    sha256_hex, verify_citation_use_site,
+    CitationFinding, CitationVerificationRequest, GroundingAssertion, LocatedPassage, ModelVerdict,
+    ModelVote, SourceProvenance, VerificationOutcome, VerifyModelInputs, VerifyOptions,
+    assemble_citation_finding, build_model_votes, execute_citation_verify, sha256_hex,
+    verify_citation_use_site,
 };
 pub use citation::voting::{BinaryVote, NClassVote, PanelAgreement, binary_vote, n_class_vote};
 pub use context_builder::{ContextInputs, build_scoring_context};
@@ -160,6 +160,11 @@ pub use scoring_policy::{
     compile_scoring_policy, default_active_compiled_scoring_policy,
     load_embedded_compiled_scoring_policy, parse_scoring_evaluation_profile, parse_scoring_policy,
     validate_scoring_evaluation_profile, validate_scoring_policy,
+};
+pub use sp42_types::{
+    ChatMessage, ChatRole, EndpointMode, ModelClient, ModelClientError, ModelCompletion,
+    ModelCompletionRequest, ModelEndpointConfig, ModelInvocation, ModelRef, SamplingParams,
+    StubModelClient,
 };
 pub use training_data::{
     TrainingLabel, encode_csv, encode_json, encode_json_line, encode_json_lines,

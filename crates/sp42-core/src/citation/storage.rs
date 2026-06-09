@@ -20,11 +20,12 @@ use serde::de::DeserializeOwned;
 use url::Url;
 
 use super::verdict::CitationVerdict;
-use super::verify::{CitationFinding, LocatedPassage, ModelRef, sha256_hex};
+use super::verify::{CitationFinding, LocatedPassage, ModelVote, sha256_hex};
 use super::voting::PanelAgreement;
 use crate::branding::PROJECT_NAME;
 use crate::errors::CitationStorageError;
 use crate::traits::Storage;
+use sp42_types::ModelRef;
 
 /// Snapshot schema version (ADR-0009 §3).
 pub const SNAPSHOT_SCHEMA_VERSION: u32 = 1;
@@ -46,18 +47,6 @@ pub struct SnapshotEnvelope {
     pub content_hash: String,
     /// The extracted source body (the grounded bytes; no headers/secrets).
     pub body_text: String,
-}
-
-/// One panel member's recorded vote (ADR-0009 §3).
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub struct ModelVote {
-    /// The model that cast this vote.
-    pub model: ModelRef,
-    /// Its returned verdict.
-    pub verdict: CitationVerdict,
-    /// Its located passage, if any.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub located_passage: Option<LocatedPassage>,
 }
 
 /// A verdict record persisting the whole panel that produced the voted verdict
@@ -265,17 +254,39 @@ mod tests {
         ModelVote, SnapshotEnvelope, VerdictEnvelope, build_snapshot, build_verdict_envelope,
         load_snapshot, load_verdict, snapshot_storage_key, store_snapshot, store_verdict,
     };
+    use std::collections::BTreeMap;
+
     use crate::citation::parsing::ParsedVerdict;
     use crate::citation::verdict::{CitationFindingKind, CitationVerdict, SupportLevel, Verdict};
     use crate::citation::verify::{
-        CitationFinding, GroundingAssertion, LocatedPassage, ModelRef, SourceProvenance,
+        CitationFinding, GroundingAssertion, LocatedPassage, ModelVerdict, SourceProvenance,
         assemble_citation_finding, sha256_hex,
     };
     use crate::citation::voting::PanelAgreement;
     use crate::traits::MemoryStorage;
+    use sp42_types::{ModelInvocation, ModelRef};
 
     fn url() -> url::Url {
         "https://example.com/source".parse().expect("url")
+    }
+
+    fn invocation() -> ModelInvocation {
+        ModelInvocation {
+            model: ModelRef::new("openrouter", "model-a", "model-a"),
+            quant: None,
+            params: BTreeMap::new(),
+            prompt_hash: "h".to_string(),
+        }
+    }
+
+    fn mv(verdict: Verdict, quote: Option<&str>) -> ModelVerdict {
+        ModelVerdict {
+            invocation: invocation(),
+            parsed: ParsedVerdict {
+                verdict,
+                quote: quote.map(ToString::to_string),
+            },
+        }
     }
 
     #[test]
@@ -343,12 +354,12 @@ mod tests {
         ];
         let votes = vec![
             ModelVote {
-                model: panel[0].clone(),
+                invocation: invocation(),
                 verdict: CitationVerdict::Judged(SupportLevel::Supported),
                 located_passage: finding.passage.clone(),
             },
             ModelVote {
-                model: panel[1].clone(),
+                invocation: invocation(),
                 verdict: CitationVerdict::Judged(SupportLevel::Supported),
                 located_passage: None,
             },
@@ -384,18 +395,9 @@ mod tests {
             fetched_at: snapshot.fetched_at_ms,
         };
         let votes = vec![
-            ParsedVerdict {
-                verdict: Verdict::Supported,
-                quote: Some("established in 1985".to_string()),
-            },
-            ParsedVerdict {
-                verdict: Verdict::Supported,
-                quote: Some("established in 1985".to_string()),
-            },
-            ParsedVerdict {
-                verdict: Verdict::NotSupported,
-                quote: None,
-            },
+            mv(Verdict::Supported, Some("established in 1985")),
+            mv(Verdict::Supported, Some("established in 1985")),
+            mv(Verdict::NotSupported, None),
         ];
         let first = assemble_citation_finding(&snapshot.body_text, &provenance, &votes, 0);
         let second = assemble_citation_finding(&snapshot.body_text, &provenance, &votes, 0);
@@ -417,10 +419,7 @@ mod tests {
             content_hash: snapshot.content_hash.clone(),
             fetched_at: 1,
         };
-        let votes = vec![ParsedVerdict {
-            verdict: Verdict::SourceUnavailable,
-            quote: None,
-        }];
+        let votes = vec![mv(Verdict::SourceUnavailable, None)];
         let finding = assemble_citation_finding(&snapshot.body_text, &provenance, &votes, 0);
         assert_eq!(finding.verdict, CitationVerdict::SourceUnavailable);
     }

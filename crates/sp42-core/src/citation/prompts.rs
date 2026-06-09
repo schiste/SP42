@@ -7,28 +7,9 @@
 //! contents can never pass the grounding gate (the gate hashes/locates only the source
 //! body, never this section — ADR-0007 Alt (e)).
 
-use serde::{Deserialize, Serialize};
+use sp42_types::ChatMessage;
 
 use super::citoid::CitoidMetadata;
-
-/// A chat message role in the verification prompt.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum PromptRole {
-    /// The system instruction.
-    System,
-    /// The user turn carrying the claim and source.
-    User,
-}
-
-/// One message of the verification prompt.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct PromptMessage {
-    /// The message role.
-    pub role: PromptRole,
-    /// The message content.
-    pub content: String,
-}
 
 /// The verbatim two-step verifier system instruction.
 pub const SYSTEM: &str = r#"You verify whether a cited SOURCE supports a CLAIM from a Wikipedia article.
@@ -92,21 +73,12 @@ pub fn build_verify_prompt(
     source_text: &str,
     source_url: &str,
     metadata: Option<&CitoidMetadata>,
-) -> [PromptMessage; 2] {
+) -> [ChatMessage; 2] {
     let section = metadata.map(metadata_section).unwrap_or_default();
     let user = format!(
         "CLAIM:\n{claim}\n\n{section}SOURCE ({source_url}):\n\"\"\"\n{source_text}\n\"\"\"\n\nRespond with the JSON object described in the instructions."
     );
-    [
-        PromptMessage {
-            role: PromptRole::System,
-            content: SYSTEM.to_string(),
-        },
-        PromptMessage {
-            role: PromptRole::User,
-            content: user,
-        },
-    ]
+    [ChatMessage::system(SYSTEM), ChatMessage::user(user)]
 }
 
 /// Render the bibliographic metadata as a context-only section (empty when no field is
@@ -136,15 +108,16 @@ fn metadata_section(meta: &CitoidMetadata) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{PromptRole, SYSTEM, build_verify_prompt};
+    use super::{SYSTEM, build_verify_prompt};
     use crate::citation::citoid::CitoidMetadata;
+    use sp42_types::ChatRole;
 
     #[test]
     fn returns_system_then_user() {
         let prompt =
             build_verify_prompt("a claim", "some source body", "https://example.com", None);
-        assert_eq!(prompt[0].role, PromptRole::System);
-        assert_eq!(prompt[1].role, PromptRole::User);
+        assert_eq!(prompt[0].role, ChatRole::System);
+        assert_eq!(prompt[1].role, ChatRole::User);
         assert_eq!(prompt[0].content, SYSTEM);
     }
 

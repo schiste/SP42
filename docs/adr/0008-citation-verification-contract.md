@@ -303,8 +303,23 @@ trigger; ADR-0004 governs the crate rules):
   doubles exist, but the API is unproven (CLI-first, first cut) with no credible
   second caller — so ADR-0004's default holds: improve module boundaries inside
   `sp42-core` first. **This ADR capturing the contract is itself the ADR-0004
-  precondition that later justifies extraction** — once a second real caller appears
-  and the API has survived it, an `sp42-verification` crate becomes the right move.
+  precondition that later justifies extraction**, by either of two paths gated on
+  different triggers:
+  - a **light** path — move only the wire contract types (`CitationVerdict` /
+    `CitationFinding`) into an `sp42-types` slice, the logic staying in `sp42-core` —
+    warranted once `CitationFinding` is consumed across multiple shells (the
+    `LiveOperatorView` display, the server route, the CLI) and they should not pull
+    all of `sp42-core`. This mirrors ADR-0004's deferred slice-2 contracts
+    (`EditEvent` / `CompositeScore`).
+  - a **heavy** path — extract a full `sp42-verification` crate (logic + contract +
+    storage) — warranted once a second real caller of the *logic* appears and the API
+    has survived it.
+
+  Both stay deferred for v1 (one CLI consumer, unproven API). `sp42-types` today is
+  deliberately transport/storage/platform primitives only; ADR-0004's "`sp42-types`
+  Strategy" places domain contracts in a later slice and keeps domain errors
+  (`CitationVerificationError`) with their owning crate — so even the light path is a
+  future `sp42-types` slice, not a fit for the crate as it stands.
 - **Pure logic in core, concrete client in a shell.** All deterministic, I/O-free
   logic — the verdict type and locatability check (ADR-0007), the GIGO body gate
   (ADR-0007), the pure vote and the bounded-concurrency fan-out (ADR-0006) — lands in

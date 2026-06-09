@@ -14,6 +14,7 @@
 //!     oauth_token_url: "https://meta.wikimedia.org/w/rest.php/oauth2/access_token".parse().unwrap(),
 //!     liftwing_url: None,
 //!     coordination_url: None,
+//!     inference_url: None,
 //!     namespace_allowlist: vec![0],
 //!     scoring_policy_ref: "active/frwiki-vandalism".to_string(),
 //!     scoring: Default::default(),
@@ -79,6 +80,12 @@ pub use citation::urls::{
     parse_revision_from_etag, resolve_citation_url, rewrite_wayback_url,
 };
 pub use citation::verdict::{CitationFindingKind, CitationVerdict, SupportLevel, Verdict};
+pub use citation::verify::{
+    CitationFinding, CitationVerificationRequest, GroundingAssertion, LocatedPassage, ModelRef,
+    SourceProvenance, VerifyModelInputs, VerifyOptions, assemble_citation_finding,
+    build_citation_verify_request, execute_citation_verify, parse_citation_verify_response,
+    sha256_hex, verify_citation_use_site,
+};
 pub use citation::voting::{BinaryVote, NClassVote, PanelAgreement, binary_vote, n_class_vote};
 pub use context_builder::{ContextInputs, build_scoring_context};
 pub use dev_auth::{

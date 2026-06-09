@@ -400,6 +400,11 @@ pub struct WikiConfig {
     pub oauth_token_url: Url,
     pub liftwing_url: Option<Url>,
     pub coordination_url: Option<Url>,
+    /// Optional inference endpoint for citation verification — the model panel's
+    /// OpenAI-compatible chat-completions URL (ADR-0006 §4, ADR-0008 §3). Default-absent,
+    /// exactly like `liftwing_url`; verification is skipped when unset.
+    #[serde(default)]
+    pub inference_url: Option<Url>,
     #[serde(default)]
     pub namespace_allowlist: Vec<i32>,
     #[serde(default = "default_scoring_policy_ref")]

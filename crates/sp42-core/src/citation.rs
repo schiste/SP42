@@ -24,4 +24,5 @@ pub mod prompts;
 pub mod source_fetch;
 pub mod urls;
 pub mod verdict;
+pub mod verify;
 pub mod voting;

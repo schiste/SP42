@@ -80,15 +80,15 @@ pub use citation::storage::{
     load_verdict, store_snapshot, store_verdict,
 };
 pub use citation::urls::{
-    ResolvedUrl, build_article_html_url, is_archive_url, is_valid_wiki_code,
-    parse_revision_from_etag, resolve_citation_url, rewrite_wayback_url,
+    ResolvedUrl, build_article_html_url, check_fetchable_source_url, is_archive_url,
+    is_valid_wiki_code, parse_revision_from_etag, resolve_citation_url, rewrite_wayback_url,
 };
 pub use citation::verdict::{CitationFindingKind, CitationVerdict, SupportLevel, Verdict};
 pub use citation::verify::{
-    CitationFinding, CitationVerificationRequest, GroundingAssertion, LocatedPassage, ModelVerdict,
-    ModelVote, SourceProvenance, VerificationOutcome, VerifyModelInputs, VerifyOptions,
-    assemble_citation_finding, build_model_votes, execute_citation_verify, sha256_hex,
-    verify_citation_use_site,
+    CitationFinding, CitationVerificationRequest, GroundingAssertion, GroundingStatus,
+    LocatedPassage, ModelVerdict, ModelVote, SourceProvenance, VerificationOutcome,
+    VerifyModelInputs, VerifyOptions, assemble_citation_finding, build_model_votes,
+    execute_citation_verify, is_groundable_support, sha256_hex, verify_citation_use_site,
 };
 pub use citation::voting::{BinaryVote, NClassVote, PanelAgreement, binary_vote, n_class_vote};
 pub use context_builder::{ContextInputs, build_scoring_context};

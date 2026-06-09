@@ -10,9 +10,11 @@
 //!   supported*, never a support judgment. Each call yields a [`ModelInvocation`]
 //!   fingerprint for audit/replay (ADR-0006 Decision 8).
 //! - **Grounding gate** ([`assemble_citation_finding`]) — pure: votes the panel
-//!   (ADR-0006), then independently re-locates the winning quote in the fetched bytes; a
-//!   `Supported`/`Partial` whose quote does not locate is **suppressed** to not-supported
-//!   pre-surface (ADR-0007 §5). The model is never trusted on its word.
+//!   (ADR-0006), then independently re-locates the winning quote in the fetched bytes. The
+//!   surfaced verdict is the panel's *judgment*; the gate sets `grounding_status`
+//!   (`Located`/`Unlocated`) — an unverified `Supported`/`Partial` is surfaced honestly but
+//!   is never **groundable** ([`is_groundable_support`], the only autonomous-action gate),
+//!   so the model is never trusted on its word (SP42#25 layer 6; refines ADR-0007 §5).
 //! - **Orchestration** ([`verify_citation_use_site`]) — async: fetch the source once over
 //!   the injected `HttpClient`, run the deterministic body-usability gate (short-circuit
 //!   to `SourceUnavailable` with no model call), then fan the panel out over the
@@ -105,13 +107,39 @@ pub enum GroundingAssertion {
     },
 }
 
+/// Whether a surfaced support verdict was CONFIRMED in the fetched source — the grounding
+/// axis, orthogonal to the verdict (SP42#25 layer 6). The verdict is the panel's *judgment*;
+/// this records whether its supporting quote string-located. Consumed by a human reviewer
+/// (CLI / report) and the audit record; an autonomous action path must require [`Located`]
+/// via [`is_groundable_support`] (SP42 never auto-edits, so this is honest triage, not a
+/// silent verdict rewrite — refines the ADR-0007 §5 anti-fabrication gate).
+///
+/// [`Located`]: GroundingStatus::Located
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum GroundingStatus {
+    /// The support quote located verbatim in the fetched source.
+    Located,
+    /// The panel judged `Supported`/`Partial` but the quote did not locate — surfaced
+    /// honestly as *unverified*; a human may weigh it, an autonomous path never may.
+    Unlocated,
+    /// No supporting quote is expected (`NotSupported` / `SourceUnavailable`).
+    #[default]
+    NotApplicable,
+}
+
 /// The read-only verification result — a Finding, never an action (ADR-0008 §2).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CitationFinding {
     /// The finding kind (single value today).
     pub kind: CitationFindingKind,
-    /// The voted categorical verdict (ADR-0007).
+    /// The panel's voted categorical *judgment* (ADR-0007). NOT rewritten by the grounding
+    /// gate — an unverified support stays `Supported`/`Partial` with `grounding_status`
+    /// `Unlocated` (SP42#25 layer 6).
     pub verdict: CitationVerdict,
+    /// Whether the support verdict was confirmed in the source (the grounding axis).
+    #[serde(default)]
+    pub grounding_status: GroundingStatus,
     /// Measured agreement among the panel's votes (ADR-0006).
     pub agreement: PanelAgreement,
     /// The winning verdict's located passage, or `None`.
@@ -148,11 +176,15 @@ pub struct ModelVote {
     /// Its located passage, if any.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub located_passage: Option<LocatedPassage>,
+    /// The raw quote the model claimed, kept regardless of whether it located — the audit/
+    /// replay record (ADR-0006 Decision 8). `None` when the model returned no quote.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub claimed_quote: Option<String>,
 }
 
 /// The full result of verifying one use-site: the surfaced finding plus the per-model
 /// votes (for the storage record, ADR-0009).
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct VerificationOutcome {
     /// The surfaced read-only finding.
     pub finding: CitationFinding,
@@ -267,12 +299,15 @@ where
     Ok(ModelVerdict { invocation, parsed })
 }
 
-/// Assemble the final [`CitationFinding`] from the panel's model verdicts — the
-/// anti-fabrication grounding gate (ADR-0007 §5).
+/// Assemble the final [`CitationFinding`] from the panel's model verdicts (SP42#25 layer 6).
 ///
-/// Votes the panel, then for a `Supported`/`Partial` winner re-locates a winning-class
-/// quote in `source_text`; if none locates, the support claim is suppressed to
-/// not-supported. A no-quote winner grounds on "source fetched".
+/// Votes the panel; the surfaced `verdict` is the panel's *judgment* and is never rewritten.
+/// For a `Supported`/`Partial` winner it re-locates a winning-class quote in `source_text`:
+/// if one locates the finding is `grounding_status: Located` with the passage; if none does,
+/// the verdict STAYS as the panel judged it but is marked `Unlocated` (unverified) — honest
+/// for the human-in-the-loop consumer, with anti-fabrication enforced at the action gate
+/// ([`is_groundable_support`]), never by rewriting the verdict (refines ADR-0007 §5). A
+/// no-quote (non-support) winner is `NotApplicable`.
 #[must_use]
 pub fn assemble_citation_finding(
     source_text: &str,
@@ -284,6 +319,7 @@ pub fn assemble_citation_finding(
     let Some(vote) = n_class_vote(&verdicts) else {
         return no_quote_finding(
             CitationVerdict::SourceUnavailable,
+            GroundingStatus::NotApplicable,
             PanelAgreement::new(0, 0),
             provenance,
             use_site_ordinal,
@@ -304,6 +340,7 @@ pub fn assemble_citation_finding(
             Some((quote, offset)) => CitationFinding {
                 kind: CitationFindingKind::CitationVerdict,
                 verdict: CitationVerdict::from(vote.winner),
+                grounding_status: GroundingStatus::Located,
                 agreement: vote.agreement,
                 passage: Some(LocatedPassage {
                     quote: quote.clone(),
@@ -318,9 +355,12 @@ pub fn assemble_citation_finding(
                 use_site_ordinal,
                 schema_version: SCHEMA_VERSION,
             },
-            // Anti-fabrication: a support claim whose quote does not locate is suppressed.
+            // Layer 6: the support quote did not locate. Do NOT rewrite the verdict — surface
+            // the panel's judgment marked `Unlocated` (unverified). Anti-fabrication is the
+            // action gate's job ([`is_groundable_support`]), not a silent downgrade.
             None => no_quote_finding(
-                CitationVerdict::Judged(SupportLevel::NotSupported),
+                CitationVerdict::from(vote.winner),
+                GroundingStatus::Unlocated,
                 vote.agreement,
                 provenance,
                 use_site_ordinal,
@@ -330,10 +370,24 @@ pub fn assemble_citation_finding(
 
     no_quote_finding(
         CitationVerdict::from(vote.winner),
+        GroundingStatus::NotApplicable,
         vote.agreement,
         provenance,
         use_site_ordinal,
     )
+}
+
+/// Whether a finding is a CONFIRMED support verdict — the *only* gate an autonomous
+/// accept/edit path may use (SP42#25 layer 6). `true` iff the verdict is support-class AND
+/// its supporting quote located in the fetched source (`grounding_status: Located`). A human
+/// reviewer may still weigh an `Unlocated` support; an autonomous path may not.
+#[must_use]
+pub fn is_groundable_support(finding: &CitationFinding) -> bool {
+    finding.grounding_status == GroundingStatus::Located
+        && matches!(
+            finding.verdict,
+            CitationVerdict::Judged(SupportLevel::Supported | SupportLevel::Partial)
+        )
 }
 
 /// Build the per-model vote records for the verdict store (ADR-0009): each vote's
@@ -358,6 +412,7 @@ pub fn build_model_votes(votes: &[ModelVerdict], source_text: &str) -> Vec<Model
                 invocation: vote.invocation.clone(),
                 verdict: CitationVerdict::from(vote.parsed.verdict),
                 located_passage,
+                claimed_quote: vote.parsed.quote.clone(),
             }
         })
         .collect()
@@ -366,6 +421,7 @@ pub fn build_model_votes(votes: &[ModelVerdict], source_text: &str) -> Vec<Model
 /// A finding with no located passage, grounded on "the source was fetched".
 fn no_quote_finding(
     verdict: CitationVerdict,
+    grounding_status: GroundingStatus,
     agreement: PanelAgreement,
     provenance: &SourceProvenance,
     use_site_ordinal: u32,
@@ -373,6 +429,7 @@ fn no_quote_finding(
     CitationFinding {
         kind: CitationFindingKind::CitationVerdict,
         verdict,
+        grounding_status,
         agreement,
         passage: None,
         provenance: provenance.clone(),
@@ -502,6 +559,7 @@ where
         return Ok(VerificationOutcome {
             finding: no_quote_finding(
                 CitationVerdict::SourceUnavailable,
+                GroundingStatus::NotApplicable,
                 PanelAgreement::new(0, 0),
                 &provenance,
                 use_site_ordinal,
@@ -554,9 +612,10 @@ mod tests {
     use sp42_types::{ModelCompletion, ModelInvocation, ModelRef, SamplingParams, StubModelClient};
 
     use super::{
-        CitationVerificationRequest, GroundingAssertion, ModelVerdict, SourceProvenance,
-        VerifyModelInputs, VerifyOptions, assemble_citation_finding, build_model_votes,
-        execute_citation_verify, verify_citation_use_site,
+        CitationVerificationRequest, GroundingAssertion, GroundingStatus, ModelVerdict,
+        SourceProvenance, VerifyModelInputs, VerifyOptions, assemble_citation_finding,
+        build_model_votes, execute_citation_verify, is_groundable_support,
+        verify_citation_use_site,
     };
     use crate::citation::parsing::ParsedVerdict;
     use crate::citation::verdict::{CitationVerdict, SupportLevel, Verdict};
@@ -688,6 +747,8 @@ mod tests {
             finding.verdict,
             CitationVerdict::Judged(SupportLevel::Supported)
         );
+        assert_eq!(finding.grounding_status, GroundingStatus::Located);
+        assert!(is_groundable_support(&finding));
         assert_eq!(finding.use_site_ordinal, 7);
         assert!(matches!(
             finding.grounding,
@@ -697,8 +758,9 @@ mod tests {
     }
 
     #[test]
-    fn assemble_suppresses_a_supported_verdict_whose_quote_is_absent() {
-        // THE anti-fabrication gate: a fabricated quote not in the source.
+    fn assemble_marks_an_unlocatable_support_as_unverified_not_downgraded() {
+        // Layer 6: a support quote that does not locate is NOT downgraded — the verdict
+        // stays as the panel judged it, marked `Unlocated` (unverified) and NOT groundable.
         let source = "Acme Corp was established in 1985.";
         let finding = assemble_citation_finding(
             source,
@@ -711,8 +773,10 @@ mod tests {
         );
         assert_eq!(
             finding.verdict,
-            CitationVerdict::Judged(SupportLevel::NotSupported)
+            CitationVerdict::Judged(SupportLevel::Supported)
         );
+        assert_eq!(finding.grounding_status, GroundingStatus::Unlocated);
+        assert!(!is_groundable_support(&finding));
         assert!(finding.passage.is_none());
         assert!(matches!(
             finding.grounding,
@@ -739,19 +803,35 @@ mod tests {
     }
 
     #[test]
-    fn build_model_votes_carries_fingerprint_and_located_passage() {
+    fn build_model_votes_carries_fingerprint_quote_and_located_passage() {
         let source = "Acme Corp was established in 1985.";
         let votes = build_model_votes(
             &[
                 model_verdict(Verdict::Supported, Some("established in 1985")),
                 model_verdict(Verdict::NotSupported, None),
+                model_verdict(Verdict::Supported, Some("absent verbatim span")),
             ],
             source,
         );
-        assert_eq!(votes.len(), 2);
+        assert_eq!(votes.len(), 3);
         assert_eq!(votes[0].invocation.prompt_hash, "test");
+        // Quote locates: both the located passage and the raw claimed quote are present.
         assert!(votes[0].located_passage.is_some());
+        assert_eq!(
+            votes[0].claimed_quote.as_deref(),
+            Some("established in 1985")
+        );
+        // No quote claimed: both none.
         assert!(votes[1].located_passage.is_none());
+        assert_eq!(votes[1].claimed_quote, None);
+        // KEY (SP42#25): a support quote that does NOT locate is still captured as
+        // claimed_quote (so the offline locate-replay harness can see it), even though the
+        // gate located nothing.
+        assert!(votes[2].located_passage.is_none());
+        assert_eq!(
+            votes[2].claimed_quote.as_deref(),
+            Some("absent verbatim span")
+        );
     }
 
     fn long_html_with(quote: &str) -> Vec<u8> {
@@ -825,7 +905,10 @@ mod tests {
     }
 
     #[test]
-    fn end_to_end_fabricated_quote_is_suppressed() {
+    fn end_to_end_fabricated_quote_is_unverified_not_groundable() {
+        // Layer 6: the model claims SUPPORTED with a quote nowhere in the body. The verdict
+        // is surfaced honestly (the panel judged it), but marked Unlocated and NOT groundable
+        // — anti-fabrication is the action gate's job, not a silent downgrade.
         let fetch = StubHttpClient::new([Ok(HttpResponse {
             status: 200,
             headers: BTreeMap::from([("content-type".to_string(), "text/html".to_string())]),
@@ -844,16 +927,17 @@ mod tests {
             VerifyOptions::default(),
         ))
         .expect("verifies");
-        assert_eq!(
-            outcome.finding.verdict,
-            CitationVerdict::Judged(SupportLevel::NotSupported)
-        );
+        assert_eq!(outcome.finding.grounding_status, GroundingStatus::Unlocated);
+        assert!(!is_groundable_support(&outcome.finding));
         assert!(outcome.finding.passage.is_none());
     }
 
     proptest! {
+        /// THE anti-fabrication guarantee (layer 6): a `Supported` vote whose quote cannot
+        /// locate in the source is never GROUNDABLE — the verdict may be surfaced for a human,
+        /// but `is_groundable_support` (the only autonomous-action gate) is always false.
         #[test]
-        fn supported_is_never_surfaced_without_a_locatable_quote(
+        fn fabricated_support_is_never_groundable(
             source in "[a-m ]{0,200}",
             quote in "[n-z]{3,40}",
         ) {
@@ -864,7 +948,8 @@ mod tests {
                 &[model_verdict(Verdict::Supported, Some(&quote))],
                 0,
             );
-            prop_assert_ne!(finding.verdict, CitationVerdict::Judged(SupportLevel::Supported));
+            prop_assert!(!is_groundable_support(&finding));
+            prop_assert_ne!(finding.grounding_status, GroundingStatus::Located);
         }
     }
 }

@@ -20,7 +20,7 @@ use serde::de::DeserializeOwned;
 use url::Url;
 
 use super::verdict::CitationVerdict;
-use super::verify::{CitationFinding, LocatedPassage, ModelVote, sha256_hex};
+use super::verify::{CitationFinding, GroundingStatus, LocatedPassage, ModelVote, sha256_hex};
 use super::voting::PanelAgreement;
 use crate::branding::PROJECT_NAME;
 use crate::errors::CitationStorageError;
@@ -63,8 +63,11 @@ pub struct VerdictEnvelope {
     pub snapshot_hash: String,
     /// Record time in epoch ms (from the injected `Clock`).
     pub recorded_at_ms: i64,
-    /// The voted categorical verdict.
+    /// The voted categorical verdict (the panel's judgment).
     pub verdict: CitationVerdict,
+    /// Whether the support verdict was confirmed in the source (SP42#25 layer 6).
+    #[serde(default)]
+    pub grounding_status: GroundingStatus,
     /// The winning verdict's located passage, if any.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub located_passage: Option<LocatedPassage>,
@@ -106,6 +109,7 @@ pub fn build_verdict_envelope(
         snapshot_hash: finding.provenance.content_hash.clone(),
         recorded_at_ms,
         verdict: finding.verdict,
+        grounding_status: finding.grounding_status,
         located_passage: finding.passage.clone(),
         panel_votes,
         agreement: finding.agreement,
@@ -259,8 +263,8 @@ mod tests {
     use crate::citation::parsing::ParsedVerdict;
     use crate::citation::verdict::{CitationFindingKind, CitationVerdict, SupportLevel, Verdict};
     use crate::citation::verify::{
-        CitationFinding, GroundingAssertion, LocatedPassage, ModelVerdict, SourceProvenance,
-        assemble_citation_finding, sha256_hex,
+        CitationFinding, GroundingAssertion, GroundingStatus, LocatedPassage, ModelVerdict,
+        SourceProvenance, assemble_citation_finding, sha256_hex,
     };
     use crate::citation::voting::PanelAgreement;
     use crate::traits::MemoryStorage;
@@ -324,6 +328,7 @@ mod tests {
         CitationFinding {
             kind: CitationFindingKind::CitationVerdict,
             verdict: CitationVerdict::Judged(SupportLevel::Supported),
+            grounding_status: GroundingStatus::Located,
             agreement: PanelAgreement::new(2, 2),
             passage: Some(LocatedPassage {
                 quote: "opened in 1850".to_string(),
@@ -357,11 +362,13 @@ mod tests {
                 invocation: invocation(),
                 verdict: CitationVerdict::Judged(SupportLevel::Supported),
                 located_passage: finding.passage.clone(),
+                claimed_quote: finding.passage.as_ref().map(|p| p.quote.clone()),
             },
             ModelVote {
                 invocation: invocation(),
                 verdict: CitationVerdict::Judged(SupportLevel::Supported),
                 located_passage: None,
+                claimed_quote: Some("a quote the source lacks".to_string()),
             },
         ];
         let envelope = build_verdict_envelope(

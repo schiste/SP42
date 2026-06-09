@@ -15,4 +15,5 @@
 //! Verdict semantics → ADR-0007; request/response contract → ADR-0008; model
 //! panel + measured agreement → ADR-0006; source-snapshot storage → ADR-0009.
 
+pub mod locate_quote;
 pub mod verdict;

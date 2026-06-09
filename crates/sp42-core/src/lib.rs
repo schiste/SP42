@@ -65,6 +65,7 @@ pub use action_executor::{
 pub use article_inventory::{
     ArticleInventory, ArticleReference, article_inventory_notes, build_article_inventory,
 };
+pub use citation::locate_quote::locate_quote;
 pub use citation::verdict::{CitationFindingKind, CitationVerdict, SupportLevel, Verdict};
 pub use context_builder::{ContextInputs, build_scoring_context};
 pub use dev_auth::{

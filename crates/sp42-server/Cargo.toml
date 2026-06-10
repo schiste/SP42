@@ -12,6 +12,7 @@ workspace = true
 async-trait.workspace = true
 axum.workspace = true
 futures.workspace = true
+parsoid.workspace = true
 rand.workspace = true
 reqwest.workspace = true
 serde.workspace = true

@@ -205,6 +205,7 @@ fn build_action_request(
             .get(&edit.event.rev_id)
             .cloned(),
         replacement_text: None,
+        node_locator: None,
     }
 }
 

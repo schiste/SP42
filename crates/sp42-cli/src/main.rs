@@ -494,6 +494,168 @@ fn parse_action_kind(value: &str) -> Result<SessionActionKind, String> {
     }
 }
 
+/// One executed bare-URL repair, for rendering.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct BareUrlExecuteReport {
+    bridge_base_url: String,
+    wiki_id: String,
+    title: String,
+    rev_id: u64,
+    ordinal: usize,
+    proposal: sp42_core::BareUrlProposal,
+    response: sp42_core::BareUrlApplyResponse,
+}
+
+fn bare_url_proposal_lines(response: &sp42_core::BareUrlProposalsResponse) -> Vec<String> {
+    response
+        .proposals
+        .iter()
+        .map(|proposal| {
+            format!(
+                "#{} url={} replacement={}",
+                proposal.locator.ordinal, proposal.url, proposal.replacement_wikitext
+            )
+        })
+        .collect()
+}
+
+fn bare_url_declined_lines(response: &sp42_core::BareUrlProposalsResponse) -> Vec<String> {
+    response
+        .declined
+        .iter()
+        .map(|declined| {
+            format!(
+                "#{} url={} declined={}",
+                declined.ordinal,
+                declined.url,
+                declined.reason.code()
+            )
+        })
+        .collect()
+}
+
+fn render_bare_url_proposals(
+    bare_url: &BareUrlCliOptions,
+    bridge_base_url: &str,
+    response: &sp42_core::BareUrlProposalsResponse,
+    format: OutputFormat,
+) -> Result<String, String> {
+    match format {
+        OutputFormat::Text => {
+            let mut lines = vec![format!(
+                "bare-url preview bridge={bridge_base_url} wiki={} title=\"{}\" rev_id={} proposals={} declined={}",
+                bare_url.wiki_id,
+                bare_url.title,
+                bare_url.rev_id,
+                response.proposals.len(),
+                response.declined.len(),
+            )];
+            lines.extend(bare_url_proposal_lines(response));
+            lines.extend(bare_url_declined_lines(response));
+            Ok(lines.join("\n"))
+        }
+        OutputFormat::Markdown => {
+            let proposals = bare_url_proposal_lines(response);
+            let declined = bare_url_declined_lines(response);
+            Ok([
+                render_markdown_section(
+                    "Bare-URL proposals",
+                    &if proposals.is_empty() {
+                        "(none)".to_string()
+                    } else {
+                        proposals.join("\n")
+                    },
+                ),
+                render_markdown_section(
+                    "Declined references",
+                    &if declined.is_empty() {
+                        "(none)".to_string()
+                    } else {
+                        declined.join("\n")
+                    },
+                ),
+            ]
+            .join("\n\n"))
+        }
+        OutputFormat::Json => serde_json::to_string_pretty(&serde_json::json!({
+            "bridge_base_url": bridge_base_url,
+            "wiki_id": bare_url.wiki_id,
+            "title": bare_url.title,
+            "rev_id": bare_url.rev_id,
+            "proposals": response.proposals,
+            "declined": response.declined,
+        }))
+        .map_err(|error| error.to_string()),
+    }
+}
+
+fn render_bare_url_execute(
+    report: &BareUrlExecuteReport,
+    format: OutputFormat,
+) -> Result<String, String> {
+    let status = report
+        .response
+        .http_status
+        .map_or_else(|| "none".to_string(), |status| status.to_string());
+    match format {
+        OutputFormat::Text => Ok([
+            format!(
+                "bare-url execute bridge={} wiki={} title=\"{}\" rev_id={} ordinal={}",
+                report.bridge_base_url, report.wiki_id, report.title, report.rev_id, report.ordinal
+            ),
+            format!(
+                "proposal url={} replacement={}",
+                report.proposal.url, report.proposal.replacement_wikitext
+            ),
+            format!(
+                "apply accepted={} http_status={status} message={}",
+                report.response.accepted,
+                report.response.message.as_deref().unwrap_or("none"),
+            ),
+        ]
+        .join("\n")),
+        OutputFormat::Markdown => Ok([
+            render_markdown_section(
+                "Bare-URL execute",
+                &format!(
+                    "bridge={} wiki={} title=\"{}\" rev_id={} ordinal={}",
+                    report.bridge_base_url,
+                    report.wiki_id,
+                    report.title,
+                    report.rev_id,
+                    report.ordinal
+                ),
+            ),
+            render_markdown_section(
+                "Proposal",
+                &format!(
+                    "url={} replacement={}",
+                    report.proposal.url, report.proposal.replacement_wikitext
+                ),
+            ),
+            render_markdown_section(
+                "Apply result",
+                &format!(
+                    "accepted={} http_status={status} message={}",
+                    report.response.accepted,
+                    report.response.message.as_deref().unwrap_or("none"),
+                ),
+            ),
+        ]
+        .join("\n\n")),
+        OutputFormat::Json => serde_json::to_string_pretty(&serde_json::json!({
+            "bridge_base_url": report.bridge_base_url,
+            "wiki_id": report.wiki_id,
+            "title": report.title,
+            "rev_id": report.rev_id,
+            "ordinal": report.ordinal,
+            "proposal": report.proposal,
+            "response": report.response,
+        }))
+        .map_err(|error| error.to_string()),
+    }
+}
+
 fn render_queue(queue: &[QueuedEdit], format: OutputFormat) -> Result<String, String> {
     match format {
         OutputFormat::Text => Ok(queue
@@ -1967,9 +2129,9 @@ mod tests {
     use serde_json::Value;
 
     use super::{
-        BareUrlCliMode, CliOptions, ContextPreviewOptions, LOCAL_SERVER_BASE_URL, OutputFormat, PreviewMode,
+        BareUrlCliMode, BareUrlCliOptions, BareUrlExecuteReport, CliOptions, ContextPreviewOptions, LOCAL_SERVER_BASE_URL, OutputFormat, PreviewMode,
         ShellMode, WorkbenchOptions, parse_options, render_action_preview, render_backlog_preview,
-        render_context_preview, render_coordination_preview, render_parity_report, render_queue,
+        render_bare_url_execute, render_bare_url_proposals, render_context_preview, render_coordination_preview, render_parity_report, render_queue,
         render_scenario_report, render_session_digest, render_stream_preview, render_workbench,
         server_report_lines,
     };
@@ -2698,5 +2860,115 @@ mod tests {
         );
         assert!(parse(&["--bare-url-preview", "--title", "T", "--rev", "abc"]).is_err());
         assert!(parse(&[]).expect("no flags is fine").bare_url.is_none());
+    }
+
+    fn fixture_bare_url_options() -> BareUrlCliOptions {
+        BareUrlCliOptions {
+            mode: BareUrlCliMode::Preview,
+            wiki_id: "testwiki".to_string(),
+            title: "Sandbox".to_string(),
+            rev_id: 123,
+        }
+    }
+
+    fn fixture_proposals_response() -> sp42_core::BareUrlProposalsResponse {
+        sp42_core::BareUrlProposalsResponse {
+            proposals: vec![sp42_core::BareUrlProposal {
+                locator: sp42_core::WikitextNodeLocator {
+                    kind: sp42_core::WikitextNodeKind::Reference,
+                    ordinal: 0,
+                    expected_text: "https://example.org/article".to_string(),
+                },
+                url: "https://example.org/article".to_string(),
+                current_anchor: "https://example.org/article".to_string(),
+                replacement_wikitext:
+                    "{{cite web |url=https://example.org/article |title=Headline |access-date=2026-06-09}}"
+                        .to_string(),
+            }],
+            declined: vec![sp42_core::BareUrlDeclined {
+                ordinal: 3,
+                url: "https://fail.example/b".to_string(),
+                reason: sp42_core::BareUrlDeclineReason::MetadataUnavailable,
+            }],
+        }
+    }
+
+    #[test]
+    fn renders_bare_url_proposals_in_all_formats() {
+        let options = fixture_bare_url_options();
+        let response = fixture_proposals_response();
+
+        let text =
+            render_bare_url_proposals(&options, "http://127.0.0.1:8788", &response, OutputFormat::Text)
+                .expect("text render should work");
+        assert!(text.contains("bare-url preview"));
+        assert!(text.contains("wiki=testwiki"));
+        assert!(text.contains("#0 url=https://example.org/article"));
+        assert!(text.contains("|title=Headline"));
+        assert!(text.contains("#3 url=https://fail.example/b declined=metadata-unavailable"));
+
+        let markdown = render_bare_url_proposals(
+            &options,
+            "http://127.0.0.1:8788",
+            &response,
+            OutputFormat::Markdown,
+        )
+        .expect("markdown render should work");
+        assert!(markdown.contains("## Bare-URL proposals"));
+        assert!(markdown.contains("## Declined references"));
+
+        let json = render_bare_url_proposals(
+            &options,
+            "http://127.0.0.1:8788",
+            &response,
+            OutputFormat::Json,
+        )
+        .expect("json render should work");
+        let value: serde_json::Value = serde_json::from_str(&json).expect("json should parse");
+        assert_eq!(value["wiki_id"], "testwiki");
+        assert_eq!(value["proposals"][0]["locator"]["ordinal"], 0);
+        assert_eq!(value["declined"][0]["reason"], "metadata-unavailable");
+    }
+
+    #[test]
+    fn renders_bare_url_execute_report_in_all_formats() {
+        let response = fixture_proposals_response();
+        let report = BareUrlExecuteReport {
+            bridge_base_url: "http://127.0.0.1:8788".to_string(),
+            wiki_id: "testwiki".to_string(),
+            title: "Sandbox".to_string(),
+            rev_id: 123,
+            ordinal: 0,
+            proposal: response.proposals[0].clone(),
+            response: sp42_core::BareUrlApplyResponse {
+                wiki_id: "testwiki".to_string(),
+                rev_id: 123,
+                accepted: true,
+                actor: Some("Example".to_string()),
+                http_status: Some(200),
+                api_code: None,
+                retryable: false,
+                warnings: Vec::new(),
+                result: Some("Success".to_string()),
+                message: Some("MediaWiki HTTP 200".to_string()),
+            },
+        };
+
+        let text = render_bare_url_execute(&report, OutputFormat::Text)
+            .expect("text render should work");
+        assert!(text.contains("bare-url execute"));
+        assert!(text.contains("ordinal=0"));
+        assert!(text.contains("accepted=true"));
+
+        let markdown = render_bare_url_execute(&report, OutputFormat::Markdown)
+            .expect("markdown render should work");
+        assert!(markdown.contains("## Bare-URL execute"));
+        assert!(markdown.contains("## Apply result"));
+
+        let json = render_bare_url_execute(&report, OutputFormat::Json)
+            .expect("json render should work");
+        let value: serde_json::Value = serde_json::from_str(&json).expect("json should parse");
+        assert_eq!(value["ordinal"], 0);
+        assert_eq!(value["response"]["accepted"], true);
     }
 }

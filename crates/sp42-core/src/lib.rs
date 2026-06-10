@@ -50,6 +50,7 @@ pub mod traits;
 pub mod types;
 pub mod user_analyzer;
 pub mod wiki_storage;
+pub mod wikitext_editor;
 
 pub use action_contracts::{
     ActionResponseSummary, PatrolRequest, RollbackRequest, SessionActionExecutionRequest,
@@ -158,4 +159,9 @@ pub use wiki_storage::{
     build_wiki_storage_plan, load_wiki_storage_document, parse_wiki_storage_document_response,
     parse_wiki_storage_payload_envelope, render_wiki_storage_document_page,
     render_wiki_storage_index_page, resolve_wiki_storage_document, save_wiki_storage_document,
+};
+pub use wikitext_editor::{
+    ScriptedEditorInvocation, ScriptedWikitextEditor, ScriptedWikitextNode, WikitextEditOutcome,
+    WikitextEditRefusal, WikitextEditor, WikitextEditorError, WikitextNodeDescriptor,
+    WikitextNodeKind, WikitextNodeLocator, WikitextPageRef, normalize_anchor_text,
 };

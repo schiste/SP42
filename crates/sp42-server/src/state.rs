@@ -40,7 +40,6 @@ pub(crate) struct AppState {
     pub(crate) coordination: CoordinationRegistry,
     pub(crate) deployment: DeploymentConfig,
     pub(crate) wiki_registry: WikiRegistry,
-    #[allow(dead_code)]
     pub(crate) wikitext_editor: Arc<dyn WikitextEditor>,
     pub(crate) next_client_id: Arc<AtomicU64>,
     pub(crate) next_session_id: Arc<AtomicU64>,

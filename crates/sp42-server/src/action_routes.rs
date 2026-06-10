@@ -10,8 +10,9 @@ use sp42_core::{
     ActionError, ActionExecutionHistoryReport, ActionExecutionLogEntry,
     ActionExecutionStatusReport, ActionResponseSummary, DevAuthCapabilityReport, FlagState,
     PatrolRequest, RollbackRequest, SessionActionExecutionRequest, SessionActionExecutionResponse,
-    SessionActionKind, TokenKind, UndoRequest, WikiPageSaveRequest, execute_fetch_token,
-    execute_patrol, execute_rollback, execute_undo, execute_wiki_page_save,
+    SessionActionKind, TokenKind, UndoRequest, WikiPageSaveRequest, WikitextEditor,
+    WikitextEditorError, WikitextEditOutcome, WikitextNodeLocator, WikitextPageRef,
+    execute_fetch_token, execute_patrol, execute_rollback, execute_undo, execute_wiki_page_save,
     parse_action_response_summary, replace_exactly_once,
 };
 use sp42_types::HttpResponse;
@@ -68,7 +69,7 @@ pub(crate) async fn post_execute_action(
     let config = config_for_state_wiki(&state, &payload.wiki_id)?;
     let client = BearerHttpClient::new(state.http_client.clone(), session.access_token.clone());
     let executed_at_ms = state.clock.now_ms();
-    let outcome = execute_session_action(&client, &config, &payload).await;
+    let outcome = execute_session_action(&client, &config, &payload, state.wikitext_editor.as_ref()).await;
     info!(
         session_id = session.session_id.as_str(),
         wiki_id = payload.wiki_id.as_str(),
@@ -249,6 +250,7 @@ async fn execute_session_action(
     client: &BearerHttpClient,
     config: &sp42_core::WikiConfig,
     payload: &SessionActionExecutionRequest,
+    editor: &dyn WikitextEditor,
 ) -> Result<HttpResponse, ActionError> {
     match payload.kind {
         SessionActionKind::Rollback => {
@@ -319,7 +321,7 @@ async fn execute_session_action(
         SessionActionKind::TagCitationNeeded => {
             execute_tag_citation_needed_action(client, config, payload).await
         }
-        SessionActionKind::InlineEdit => execute_inline_edit_action(client, config, payload).await,
+        SessionActionKind::InlineEdit => execute_inline_edit_action(client, config, payload, editor).await,
     }
 }
 
@@ -367,25 +369,30 @@ async fn execute_tag_citation_needed_action(
     Ok(save_response)
 }
 
-async fn execute_inline_edit_action(
+pub(crate) async fn execute_inline_edit_action(
     client: &BearerHttpClient,
     config: &sp42_core::WikiConfig,
     payload: &SessionActionExecutionRequest,
+    editor: &dyn WikitextEditor,
 ) -> Result<HttpResponse, ActionError> {
     let token = execute_fetch_token(client, config, TokenKind::Csrf).await?;
     let title = payload.title.clone().unwrap_or_default();
-    let original = payload.selected_text.clone().unwrap_or_default();
-    let replacement = payload.replacement_text.clone().unwrap_or_default();
-    if original.trim().is_empty() {
-        return Err(ActionError::Execution {
-            message: "selected_text (original) is required for inline edit".to_string(),
-            code: Some("invalid-input".to_string()),
-            http_status: None,
-            retryable: false,
-        });
-    }
-    let page_text = crate::fetch_page_wikitext(client, config, &title).await?;
-    let updated_text = replace_exactly_once(&page_text, &original, &replacement)?;
+    let updated_text = if let Some(locator) = payload.node_locator.as_ref() {
+        node_anchored_replacement(config, &title, payload, locator, editor).await?
+    } else {
+        let original = payload.selected_text.clone().unwrap_or_default();
+        let replacement = payload.replacement_text.clone().unwrap_or_default();
+        if original.trim().is_empty() {
+            return Err(ActionError::Execution {
+                message: "selected_text (original) is required for inline edit".to_string(),
+                code: Some("invalid-input".to_string()),
+                http_status: None,
+                retryable: false,
+            });
+        }
+        let page_text = crate::fetch_page_wikitext(client, config, &title).await?;
+        replace_exactly_once(&page_text, &original, &replacement)?
+    };
     let summary = payload
         .summary
         .clone()
@@ -408,6 +415,57 @@ async fn execute_inline_edit_action(
     .await?;
     patrol_original_edit_if_possible(client, config, payload.rev_id).await;
     Ok(save_response)
+}
+
+async fn node_anchored_replacement(
+    config: &sp42_core::WikiConfig,
+    title: &str,
+    payload: &SessionActionExecutionRequest,
+    locator: &WikitextNodeLocator,
+    editor: &dyn WikitextEditor,
+) -> Result<String, ActionError> {
+    let Some(replacement) = payload.replacement_text.clone() else {
+        return Err(ActionError::Execution {
+            message: "replacement_text is required for node-anchored inline edit".to_string(),
+            code: Some("invalid-input".to_string()),
+            http_status: Some(400),
+            retryable: false,
+        });
+    };
+    let page = WikitextPageRef {
+        title: title.to_string(),
+        rev_id: payload.rev_id,
+    };
+    let outcome = editor
+        .replace_node(config, &page, locator, &replacement)
+        .await
+        .map_err(|e| action_error_from_editor(&e))?;
+    match outcome {
+        WikitextEditOutcome::Applied { new_wikitext } => Ok(new_wikitext),
+        WikitextEditOutcome::Refused(refusal) => Err(ActionError::Execution {
+            message: refusal.message(),
+            code: Some(refusal.code().to_string()),
+            http_status: Some(409),
+            retryable: false,
+        }),
+    }
+}
+
+pub(crate) fn action_error_from_editor(error: &WikitextEditorError) -> ActionError {
+    let (code, http_status, retryable) = match error {
+        WikitextEditorError::Unavailable { retryable, .. } => {
+            ("editor-unavailable", None, *retryable)
+        }
+        WikitextEditorError::MissingTarget { .. } => ("editor-missing-target", Some(404), false),
+        WikitextEditorError::NotConfigured { .. } => ("editor-not-configured", None, false),
+        WikitextEditorError::Unsupported { .. } => ("editor-unsupported", Some(400), false),
+    };
+    ActionError::Execution {
+        message: error.to_string(),
+        code: Some(code.to_string()),
+        http_status,
+        retryable,
+    }
 }
 
 fn apply_citation_template(

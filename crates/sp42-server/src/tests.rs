@@ -2824,3 +2824,192 @@ fn validate_rejects_node_locator_for_citation_tagging() {
             .contains("not supported")
     );
 }
+
+// Mock wiki backend for testing node-anchored inline edits
+struct MockWikiBackend {
+    base_url: String,
+    edit_bodies: Arc<std::sync::Mutex<Vec<String>>>,
+}
+
+async fn spawn_mock_wiki_backend(page_wikitext: &'static str) -> MockWikiBackend {
+    let edit_bodies = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let recorded = edit_bodies.clone();
+    let handler = move |request: axum::extract::Request| {
+        let recorded = recorded.clone();
+        async move {
+            let query = request.uri().query().unwrap_or_default().to_string();
+            let body_bytes = axum::body::to_bytes(request.into_body(), usize::MAX)
+                .await
+                .expect("mock body should read");
+            let body = String::from_utf8_lossy(&body_bytes).to_string();
+            let json = if query.contains("meta=tokens") {
+                serde_json::json!({
+                    "batchcomplete": true,
+                    "query": { "tokens": {
+                        "csrftoken": "test-csrf-token+\\",
+                        "patroltoken": "test-patrol-token+\\"
+                    } }
+                })
+            } else if query.contains("prop=revisions") {
+                serde_json::json!({
+                    "batchcomplete": true,
+                    "query": { "pages": [ { "title": "Exemple", "revisions": [
+                        { "slots": { "main": { "content": page_wikitext } } }
+                    ] } ] }
+                })
+            } else if body.contains("action=edit") {
+                recorded
+                    .lock()
+                    .expect("mock edit log should lock")
+                    .push(body);
+                serde_json::json!({
+                    "edit": { "result": "Success", "pageid": 1, "title": "Exemple", "newrevid": 4243 }
+                })
+            } else if body.contains("action=patrol") {
+                serde_json::json!({ "patrol": { "rcid": 7, "ns": 0, "title": "Exemple" } })
+            } else {
+                serde_json::json!({ "error": { "code": "unmocked", "info": format!("query={query} body={body}") } })
+            };
+            axum::Json(json)
+        }
+    };
+    let app = axum::Router::new().fallback(handler);
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("mock wiki backend should bind");
+    let addr = listener
+        .local_addr()
+        .expect("mock wiki backend should expose addr");
+    tokio::spawn(async move {
+        axum::serve(listener, app)
+            .await
+            .expect("mock wiki backend should serve");
+    });
+    MockWikiBackend {
+        base_url: format!("http://{addr}"),
+        edit_bodies,
+    }
+}
+
+fn wiki_config_for_backend(base_url: &str) -> sp42_core::WikiConfig {
+    let mut config = test_wiki_registry().default_config();
+    config.api_url = format!("{base_url}/w/api.php")
+        .parse()
+        .expect("mock api url should parse");
+    config
+}
+
+#[tokio::test]
+async fn inline_edit_with_locator_saves_editor_output() {
+    let backend = spawn_mock_wiki_backend("unused page text").await;
+    let config = wiki_config_for_backend(&backend.base_url);
+    let editor = sp42_core::ScriptedWikitextEditor::new(
+        vec![sp42_core::ScriptedWikitextNode {
+            kind: sp42_core::WikitextNodeKind::Template,
+            anchor_text: "{{cite web|url=https://example.org/a|title=Example A}}".to_string(),
+        }],
+        "NEWPAGEWIKITEXT".to_string(),
+    );
+    let client = crate::runtime_adapters::BearerHttpClient::new(
+        reqwest::Client::new(),
+        "test-access-token".to_string(),
+    );
+    let payload = inline_edit_request(
+        Some(template_locator()),
+        None,
+        Some("{{cite web|url=https://example.org/b|title=Example B}}".to_string()),
+    );
+
+    let response =
+        crate::action_routes::execute_inline_edit_action(&client, &config, &payload, &editor)
+            .await
+            .expect("node-anchored inline edit should succeed");
+
+    assert_eq!(response.status, 200);
+    let invocations = editor.invocations();
+    assert_eq!(invocations.len(), 1);
+    assert_eq!(invocations[0].operation, "replace_node");
+    assert_eq!(
+        invocations[0].payload,
+        "{{cite web|url=https://example.org/b|title=Example B}}"
+    );
+    let edits = backend.edit_bodies.lock().expect("mock edit log should lock");
+    assert_eq!(edits.len(), 1, "exactly one save must reach the wiki");
+    assert!(edits[0].contains("NEWPAGEWIKITEXT"), "save must carry the editor output: {}", edits[0]);
+    assert!(edits[0].contains("baserevid=42"), "save must stay baserevid-guarded: {}", edits[0]);
+}
+
+#[tokio::test]
+async fn inline_edit_with_drifted_locator_refuses_without_saving() {
+    let backend = spawn_mock_wiki_backend("unused page text").await;
+    let config = wiki_config_for_backend(&backend.base_url);
+    let editor = sp42_core::ScriptedWikitextEditor::new(
+        vec![sp42_core::ScriptedWikitextNode {
+            kind: sp42_core::WikitextNodeKind::Template,
+            anchor_text: "{{cite web|url=https://example.org/DIFFERENT|title=Drifted}}"
+                .to_string(),
+        }],
+        "NEVERUSED".to_string(),
+    );
+    let client = crate::runtime_adapters::BearerHttpClient::new(
+        reqwest::Client::new(),
+        "test-access-token".to_string(),
+    );
+    let payload = inline_edit_request(Some(template_locator()), None, Some("x".to_string()));
+
+    let error =
+        crate::action_routes::execute_inline_edit_action(&client, &config, &payload, &editor)
+            .await
+            .expect_err("drifted locator must refuse");
+
+    let sp42_core::ActionError::Execution { code, http_status, retryable, .. } = error;
+    assert_eq!(code.as_deref(), Some("node-drift"));
+    assert_eq!(http_status, Some(409));
+    assert!(!retryable);
+    assert!(
+        backend.edit_bodies.lock().expect("mock edit log should lock").is_empty(),
+        "a refused edit must never reach the wiki"
+    );
+}
+
+#[tokio::test]
+async fn inline_edit_without_locator_refuses_ambiguous_literal_target() {
+    let backend = spawn_mock_wiki_backend("le mot, le mot, deux fois").await;
+    let config = wiki_config_for_backend(&backend.base_url);
+    let editor = sp42_core::ScriptedWikitextEditor::new(Vec::new(), String::new());
+    let client = crate::runtime_adapters::BearerHttpClient::new(
+        reqwest::Client::new(),
+        "test-access-token".to_string(),
+    );
+    let payload = inline_edit_request(None, Some("le mot".to_string()), Some("la phrase".to_string()));
+
+    let error =
+        crate::action_routes::execute_inline_edit_action(&client, &config, &payload, &editor)
+            .await
+            .expect_err("ambiguous literal target must refuse");
+
+    let sp42_core::ActionError::Execution { code, .. } = error;
+    assert_eq!(code.as_deref(), Some("text-ambiguous"));
+    assert!(backend.edit_bodies.lock().expect("mock edit log should lock").is_empty());
+}
+
+#[test]
+fn editor_errors_map_to_action_error_codes() {
+    let error = sp42_core::WikitextEditorError::NotConfigured {
+        wiki_id: "frwiki".to_string(),
+    };
+    let mapped = crate::action_routes::action_error_from_editor(&error);
+    let sp42_core::ActionError::Execution { code, http_status, retryable, .. } = mapped;
+    assert_eq!(code.as_deref(), Some("editor-not-configured"));
+    assert_eq!(http_status, None, "configuration gaps surface as gateway errors");
+    assert!(!retryable);
+
+    let error = sp42_core::WikitextEditorError::Unavailable {
+        message: "down".to_string(),
+        retryable: true,
+    };
+    let mapped = crate::action_routes::action_error_from_editor(&error);
+    let sp42_core::ActionError::Execution { code, retryable, .. } = mapped;
+    assert_eq!(code.as_deref(), Some("editor-unavailable"));
+    assert!(retryable);
+}

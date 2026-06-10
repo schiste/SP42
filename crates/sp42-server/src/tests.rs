@@ -666,6 +666,37 @@ async fn bare_url_proposals_route_is_registered_and_gated() {
     assert_eq!(json["code"], "bare-url-repair-not-enabled");
 }
 
+#[tokio::test]
+async fn bare_url_apply_route_requires_a_session() {
+    let router = build_router(test_state());
+    let response = router
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/dev/citation/bare-url-apply")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::json!({
+                        "wiki_id": "frwiki",
+                        "title": "Exemple",
+                        "rev_id": 42,
+                        "locator": {
+                            "kind": "reference",
+                            "ordinal": 0,
+                            "expected_text": "https://example.org/article"
+                        },
+                        "replacement_wikitext": "{{cite web |url=https://example.org/article |title=T |access-date=2026-06-09}}"
+                    })
+                    .to_string(),
+                ))
+                .expect("request should build"),
+        )
+        .await
+        .expect("request should complete");
+
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+}
+
 #[test]
 fn vps_session_cookie_is_secure() {
     let mut state = test_state();

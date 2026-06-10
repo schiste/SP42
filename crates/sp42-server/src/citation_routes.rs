@@ -8,14 +8,15 @@
 use std::time::Duration;
 
 use sp42_core::{
-    ActionError, BareUrlApplyRequest, BareUrlDeclined, BareUrlOutcome, BareUrlProposal,
-    BareUrlProposalsRequest, BareUrlProposalsResponse, FlagState, TokenKind, WikitextEditor,
-    WikitextNodeKind, WikitextNodeLocator, WikitextPageRef, WikiPageSaveRequest,
-    bare_url_references, build_citoid_header, build_citoid_request, citoid_language,
-    execute_fetch_token, execute_wiki_page_save, render_bare_url_citation,
+    ActionError, ActionResponseSummary, BareUrlApplyRequest, BareUrlApplyResponse,
+    BareUrlDeclined, BareUrlOutcome, BareUrlProposal, BareUrlProposalsRequest,
+    BareUrlProposalsResponse, FlagState, TokenKind, WikitextEditor, WikitextNodeKind,
+    WikitextNodeLocator, WikitextPageRef, WikiPageSaveRequest, bare_url_references,
+    build_citoid_header, build_citoid_request, citoid_language, execute_fetch_token,
+    execute_wiki_page_save, parse_action_response_summary, render_bare_url_citation,
 };
 
-use axum::{Json, extract::State, http::StatusCode, response::IntoResponse};
+use axum::{Json, extract::State, http::{HeaderMap, StatusCode}, response::IntoResponse};
 
 use sp42_types::HttpResponse;
 
@@ -24,7 +25,9 @@ use crate::action_routes::{
     replace_node_or_refuse,
 };
 use crate::config_for_state_wiki;
+use crate::http_errors::unauthorized_error;
 use crate::runtime_adapters::BearerHttpClient;
+use crate::session_runtime::{current_session_snapshot, validate_csrf_header};
 use crate::state::AppState;
 
 /// Citoid etiquette: at most one request per second on the live service.
@@ -175,7 +178,6 @@ pub(crate) async fn post_bare_url_proposals(
 /// `bare-url-repair-not-enabled` (gate, before any wiki traffic),
 /// `editor-*` codes, `node-drift` / `node-out-of-range` (409-in-body, zero
 /// wiki writes), or upstream save failures.
-#[allow(dead_code)]
 pub(crate) async fn execute_bare_url_apply(
     client: &BearerHttpClient,
     config: &sp42_core::WikiConfig,
@@ -216,6 +218,68 @@ pub(crate) async fn execute_bare_url_apply(
     .await?;
     patrol_original_edit_if_possible(client, config, payload.rev_id).await;
     Ok(save_response)
+}
+
+/// `POST /dev/citation/bare-url-apply` — the operator-confirmed write path.
+/// Session + CSRF gated exactly like `post_execute_action` (ADR-0002).
+pub(crate) async fn post_bare_url_apply(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(payload): Json<BareUrlApplyRequest>,
+) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
+    let Some(session) = current_session_snapshot(&state, &headers, true).await else {
+        return Err(unauthorized_error(
+            "No authenticated bridge session is active.",
+        ));
+    };
+    validate_csrf_header(&headers, &session)?;
+    let config = config_for_state_wiki(&state, &payload.wiki_id)?;
+    let client = BearerHttpClient::new(state.http_client.clone(), session.access_token.clone());
+    let response =
+        execute_bare_url_apply(&client, &config, &payload, state.wikitext_editor.as_ref())
+            .await
+            .map_err(|error| action_error_response(&error))?;
+    let summary = parse_action_response_summary(&response, "bare-url-repair")
+        .map_err(|error| action_error_response(&error))?;
+    Ok((
+        StatusCode::OK,
+        Json(bare_url_apply_response(
+            &payload,
+            session.username.clone(),
+            &response,
+            &summary,
+        )),
+    ))
+}
+
+/// The execute-action outcome shape (minus session-action `kind`) for one
+/// applied bare-URL repair — mirrors `action_response_payload`.
+fn bare_url_apply_response(
+    payload: &BareUrlApplyRequest,
+    actor: String,
+    response: &HttpResponse,
+    summary: &ActionResponseSummary,
+) -> BareUrlApplyResponse {
+    let mut warnings = summary.warnings.clone();
+    if summary.nochange {
+        warnings.push("no change — the edit may have already been reverted".to_string());
+    }
+    BareUrlApplyResponse {
+        wiki_id: payload.wiki_id.clone(),
+        rev_id: payload.rev_id,
+        accepted: !summary.nochange,
+        actor: Some(actor),
+        http_status: Some(response.status),
+        api_code: summary.api_code.clone(),
+        retryable: summary.retryable,
+        warnings,
+        result: summary.result.clone(),
+        message: if summary.nochange {
+            Some("no change — the edit may have already been reverted".to_string())
+        } else {
+            Some(format!("MediaWiki HTTP {}", response.status))
+        },
+    }
 }
 
 #[cfg(test)]

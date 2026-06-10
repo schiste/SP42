@@ -8,20 +8,31 @@
 use std::time::Duration;
 
 use sp42_core::{
-    ActionError, BareUrlDeclined, BareUrlOutcome, BareUrlProposal, BareUrlProposalsRequest,
-    BareUrlProposalsResponse, WikitextEditor, WikitextNodeKind, WikitextNodeLocator,
-    WikitextPageRef, bare_url_references, build_citoid_header, build_citoid_request,
-    citoid_language, render_bare_url_citation,
+    ActionError, BareUrlApplyRequest, BareUrlDeclined, BareUrlOutcome, BareUrlProposal,
+    BareUrlProposalsRequest, BareUrlProposalsResponse, FlagState, TokenKind, WikitextEditor,
+    WikitextNodeKind, WikitextNodeLocator, WikitextPageRef, WikiPageSaveRequest,
+    bare_url_references, build_citoid_header, build_citoid_request, citoid_language,
+    execute_fetch_token, execute_wiki_page_save, render_bare_url_citation,
 };
 
 use axum::{Json, extract::State, http::StatusCode, response::IntoResponse};
 
-use crate::action_routes::{action_error_from_editor, action_error_response};
+use sp42_types::HttpResponse;
+
+use crate::action_routes::{
+    action_error_from_editor, action_error_response, patrol_original_edit_if_possible,
+    replace_node_or_refuse,
+};
 use crate::config_for_state_wiki;
+use crate::runtime_adapters::BearerHttpClient;
 use crate::state::AppState;
 
 /// Citoid etiquette: at most one request per second on the live service.
 const CITOID_PACE: Duration = Duration::from_secs(1);
+
+/// Default edit summary when the operator supplies no note.
+#[allow(dead_code)]
+const BARE_URL_DEFAULT_SUMMARY: &str = "SP42: bare-URL repair";
 
 /// The configured bare-URL citation template, or the per-wiki gate refusal.
 ///
@@ -153,6 +164,58 @@ pub(crate) async fn post_bare_url_proposals(
     .await
     .map_err(|error| action_error_response(&error))?;
     Ok(Json(response))
+}
+
+/// Replay one proposal verbatim: gate → CSRF token → node-anchored replace
+/// (anti-drift re-check inside the editor) → `baserevid`-guarded save →
+/// patrol of the original revision. Mirrors `execute_inline_edit_action`.
+///
+/// # Errors
+///
+/// `bare-url-repair-not-enabled` (gate, before any wiki traffic),
+/// `editor-*` codes, `node-drift` / `node-out-of-range` (409-in-body, zero
+/// wiki writes), or upstream save failures.
+#[allow(dead_code)]
+pub(crate) async fn execute_bare_url_apply(
+    client: &BearerHttpClient,
+    config: &sp42_core::WikiConfig,
+    payload: &BareUrlApplyRequest,
+    editor: &dyn WikitextEditor,
+) -> Result<HttpResponse, ActionError> {
+    bare_url_template(config)?;
+    let token = execute_fetch_token(client, config, TokenKind::Csrf).await?;
+    let updated_text = replace_node_or_refuse(
+        config,
+        &payload.title,
+        payload.rev_id,
+        &payload.locator,
+        &payload.replacement_wikitext,
+        editor,
+    )
+    .await?;
+    let summary = payload
+        .summary
+        .clone()
+        .filter(|summary| !summary.trim().is_empty())
+        .unwrap_or_else(|| BARE_URL_DEFAULT_SUMMARY.to_string());
+    let save_response = execute_wiki_page_save(
+        client,
+        config,
+        &WikiPageSaveRequest {
+            title: payload.title.clone(),
+            text: updated_text,
+            token,
+            summary: Some(summary),
+            baserevid: Some(payload.rev_id),
+            tags: Vec::new(),
+            watchlist: None,
+            create_only: FlagState::Disabled,
+            minor: FlagState::Disabled,
+        },
+    )
+    .await?;
+    patrol_original_edit_if_possible(client, config, payload.rev_id).await;
+    Ok(save_response)
 }
 
 #[cfg(test)]

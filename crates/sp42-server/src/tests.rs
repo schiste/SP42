@@ -3023,6 +3023,170 @@ async fn inline_edit_without_locator_refuses_ambiguous_literal_target() {
     assert!(backend.edit_bodies.lock().expect("mock edit log should lock").is_empty());
 }
 
+fn bare_url_apply_payload(summary: Option<&str>) -> sp42_core::BareUrlApplyRequest {
+    sp42_core::BareUrlApplyRequest {
+        wiki_id: "frwiki".to_string(),
+        title: "Exemple".to_string(),
+        rev_id: 42,
+        locator: sp42_core::WikitextNodeLocator {
+            kind: sp42_core::WikitextNodeKind::Reference,
+            ordinal: 0,
+            expected_text: "https://example.org/article".to_string(),
+        },
+        replacement_wikitext:
+            "{{cite web |url=https://example.org/article |title=Headline |access-date=2026-06-09}}"
+                .to_string(),
+        summary: summary.map(ToString::to_string),
+    }
+}
+
+fn bare_url_test_editor(anchor: &str) -> sp42_core::ScriptedWikitextEditor {
+    sp42_core::ScriptedWikitextEditor::new(
+        vec![sp42_core::ScriptedWikitextNode {
+            kind: sp42_core::WikitextNodeKind::Reference,
+            anchor_text: anchor.to_string(),
+        }],
+        "NEWPAGEWIKITEXT".to_string(),
+    )
+}
+
+#[tokio::test]
+async fn bare_url_apply_saves_exact_replacement_with_baserevid() {
+    let backend = spawn_mock_wiki_backend("unused page text").await;
+    let mut config = wiki_config_for_backend(&backend.base_url);
+    config.templates.bare_url_citation = Some("cite web".to_string());
+    let editor = bare_url_test_editor("https://example.org/article");
+    let client = crate::runtime_adapters::BearerHttpClient::new(
+        reqwest::Client::new(),
+        "test-access-token".to_string(),
+    );
+    let payload = bare_url_apply_payload(None);
+
+    let response =
+        crate::citation_routes::execute_bare_url_apply(&client, &config, &payload, &editor)
+            .await
+            .expect("bare-url apply should succeed");
+
+    assert_eq!(response.status, 200);
+    let invocations = editor.invocations();
+    assert_eq!(invocations.len(), 1);
+    assert_eq!(invocations[0].operation, "replace_node");
+    assert_eq!(
+        invocations[0].payload, payload.replacement_wikitext,
+        "the proposed replacement must be replayed verbatim"
+    );
+    let edits = backend.edit_bodies.lock().expect("mock edit log should lock");
+    assert_eq!(edits.len(), 1, "exactly one save must reach the wiki");
+    assert!(edits[0].contains("NEWPAGEWIKITEXT"), "save must carry the editor output: {}", edits[0]);
+    assert!(edits[0].contains("baserevid=42"), "save must stay baserevid-guarded: {}", edits[0]);
+    assert!(
+        edits[0].contains("bare-URL+repair"),
+        "default summary should be applied: {}",
+        edits[0]
+    );
+}
+
+#[tokio::test]
+async fn bare_url_apply_operator_summary_wins() {
+    let backend = spawn_mock_wiki_backend("unused page text").await;
+    let mut config = wiki_config_for_backend(&backend.base_url);
+    config.templates.bare_url_citation = Some("cite web".to_string());
+    let editor = bare_url_test_editor("https://example.org/article");
+    let client = crate::runtime_adapters::BearerHttpClient::new(
+        reqwest::Client::new(),
+        "test-access-token".to_string(),
+    );
+    let payload = bare_url_apply_payload(Some("fixed ref per talk"));
+
+    crate::citation_routes::execute_bare_url_apply(&client, &config, &payload, &editor)
+        .await
+        .expect("bare-url apply should succeed");
+
+    let edits = backend.edit_bodies.lock().expect("mock edit log should lock");
+    assert_eq!(edits.len(), 1);
+    assert!(
+        edits[0].contains("fixed+ref+per+talk"),
+        "operator note must win over the default summary: {}",
+        edits[0]
+    );
+    assert!(!edits[0].contains("bare-URL+repair"), "default must not also apply: {}", edits[0]);
+}
+
+#[tokio::test]
+async fn bare_url_apply_drift_refuses_with_zero_writes() {
+    let backend = spawn_mock_wiki_backend("unused page text").await;
+    let mut config = wiki_config_for_backend(&backend.base_url);
+    config.templates.bare_url_citation = Some("cite web".to_string());
+    let editor = bare_url_test_editor("https://example.org/SOMETHING-ELSE");
+    let client = crate::runtime_adapters::BearerHttpClient::new(
+        reqwest::Client::new(),
+        "test-access-token".to_string(),
+    );
+    let payload = bare_url_apply_payload(None);
+
+    let error = crate::citation_routes::execute_bare_url_apply(&client, &config, &payload, &editor)
+        .await
+        .expect_err("drifted anchor must refuse");
+
+    let sp42_core::ActionError::Execution { code, http_status, retryable, .. } = error;
+    assert_eq!(code.as_deref(), Some("node-drift"));
+    assert_eq!(http_status, Some(409));
+    assert!(!retryable);
+    assert!(
+        backend.edit_bodies.lock().expect("mock edit log should lock").is_empty(),
+        "a refused apply must never reach the wiki"
+    );
+}
+
+#[tokio::test]
+async fn bare_url_apply_out_of_range_refuses_with_zero_writes() {
+    let backend = spawn_mock_wiki_backend("unused page text").await;
+    let mut config = wiki_config_for_backend(&backend.base_url);
+    config.templates.bare_url_citation = Some("cite web".to_string());
+    let editor = sp42_core::ScriptedWikitextEditor::new(Vec::new(), "NEVERUSED".to_string());
+    let client = crate::runtime_adapters::BearerHttpClient::new(
+        reqwest::Client::new(),
+        "test-access-token".to_string(),
+    );
+    let payload = bare_url_apply_payload(None);
+
+    let error = crate::citation_routes::execute_bare_url_apply(&client, &config, &payload, &editor)
+        .await
+        .expect_err("missing ordinal must refuse");
+
+    let sp42_core::ActionError::Execution { code, http_status, .. } = error;
+    assert_eq!(code.as_deref(), Some("node-out-of-range"));
+    assert_eq!(http_status, Some(409));
+    assert!(
+        backend.edit_bodies.lock().expect("mock edit log should lock").is_empty(),
+        "a refused apply must never reach the wiki"
+    );
+}
+
+#[tokio::test]
+async fn bare_url_apply_gate_refuses_with_zero_writes() {
+    let backend = spawn_mock_wiki_backend("unused page text").await;
+    let config = wiki_config_for_backend(&backend.base_url);
+    let editor = bare_url_test_editor("https://example.org/article");
+    let client = crate::runtime_adapters::BearerHttpClient::new(
+        reqwest::Client::new(),
+        "test-access-token".to_string(),
+    );
+    let payload = bare_url_apply_payload(None);
+
+    let error = crate::citation_routes::execute_bare_url_apply(&client, &config, &payload, &editor)
+        .await
+        .expect_err("unconfigured wiki must refuse");
+
+    let sp42_core::ActionError::Execution { code, .. } = error;
+    assert_eq!(code.as_deref(), Some("bare-url-repair-not-enabled"));
+    assert!(editor.invocations().is_empty(), "gate refusal must not touch the editor");
+    assert!(
+        backend.edit_bodies.lock().expect("mock edit log should lock").is_empty(),
+        "gate refusal must not touch the wiki"
+    );
+}
+
 #[test]
 fn editor_errors_map_to_action_error_codes() {
     let error = sp42_core::WikitextEditorError::NotConfigured {

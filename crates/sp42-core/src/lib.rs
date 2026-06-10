@@ -14,6 +14,7 @@
 //!     oauth_token_url: "https://meta.wikimedia.org/w/rest.php/oauth2/access_token".parse().unwrap(),
 //!     liftwing_url: None,
 //!     coordination_url: None,
+//!     parsoid_url: None,
 //!     namespace_allowlist: vec![0],
 //!     scoring_policy_ref: "active/frwiki-vandalism".to_string(),
 //!     scoring: Default::default(),

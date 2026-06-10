@@ -119,6 +119,9 @@ fn main() -> ExitCode {
 
 fn run() -> Result<String, String> {
     let options = parse_options(std::env::args().skip(1))?;
+    if let Some(bare_url) = &options.bare_url {
+        return render_bare_url_mode(bare_url, &options, options.format);
+    }
     let input = read_stdin().map_err(|error| error.to_string())?;
     let payload = if input.trim().is_empty() {
         DEV_PREVIEW_SAMPLE_EVENTS
@@ -653,6 +656,33 @@ fn render_bare_url_execute(
             "response": report.response,
         }))
         .map_err(|error| error.to_string()),
+    }
+}
+
+/// Run the selected bare-URL flag-mode against the bridge and render it.
+fn render_bare_url_mode(
+    bare_url: &BareUrlCliOptions,
+    options: &CliOptions,
+    format: OutputFormat,
+) -> Result<String, String> {
+    match bare_url.mode {
+        BareUrlCliMode::Preview => {
+            let response = block_on(fetch_bare_url_proposals(
+                &options.bridge_base_url,
+                &bare_url_proposals_request(bare_url),
+            ))?;
+            render_bare_url_proposals(bare_url, &options.bridge_base_url, &response, format)
+        }
+        BareUrlCliMode::Execute { ordinal } => {
+            let note = action_note(options);
+            let report = block_on(execute_bare_url_via_bridge(
+                &options.bridge_base_url,
+                bare_url,
+                ordinal,
+                note.as_deref(),
+            ))?;
+            render_bare_url_execute(&report, format)
+        }
     }
 }
 
@@ -1785,6 +1815,125 @@ async fn execute_bridge_action(
         session_cookie_present: !session_cookie.is_empty(),
         request: request.clone(),
         response: action_response,
+    })
+}
+
+fn bare_url_proposals_request(bare_url: &BareUrlCliOptions) -> sp42_core::BareUrlProposalsRequest {
+    sp42_core::BareUrlProposalsRequest {
+        wiki_id: bare_url.wiki_id.clone(),
+        title: bare_url.title.clone(),
+        rev_id: bare_url.rev_id,
+    }
+}
+
+async fn fetch_bare_url_proposals(
+    base_url: &str,
+    request: &sp42_core::BareUrlProposalsRequest,
+) -> Result<sp42_core::BareUrlProposalsResponse, String> {
+    let client = reqwest::Client::builder()
+        .user_agent(sp42_core::branding::USER_AGENT)
+        .build()
+        .map_err(|error| format!("bridge client failed to build: {error}"))?;
+    let request_url = format!(
+        "{base_url}{}",
+        route_contracts::DEV_CITATION_BARE_URL_PROPOSALS_PATH
+    );
+    let response = client
+        .post(&request_url)
+        .json(request)
+        .send()
+        .await
+        .map_err(|error| format!("bare-url proposals request failed: {error}"))?
+        .error_for_status()
+        .map_err(|error| format!("bare-url proposals request failed: {error}"))?;
+    response
+        .json::<sp42_core::BareUrlProposalsResponse>()
+        .await
+        .map_err(|error| format!("bare-url proposals payload was invalid: {error}"))
+}
+
+/// Re-fetch proposals, select ordinal K, and replay it against the apply
+/// route. The fresh fetch re-anchors the locator, narrowing the TOCTOU
+/// window; the server's anti-drift re-check and `baserevid` guard close it.
+/// Auth rides the bridge session (ADR-0002): bootstrap, then send the
+/// session cookie *and* the bootstrap-reported CSRF token.
+async fn execute_bare_url_via_bridge(
+    bridge_base_url: &str,
+    bare_url_options: &BareUrlCliOptions,
+    ordinal: usize,
+    note: Option<&str>,
+) -> Result<BareUrlExecuteReport, String> {
+    let proposals = fetch_bare_url_proposals(bridge_base_url, &bare_url_proposals_request(bare_url_options)).await?;
+    let proposal = proposals
+        .proposals
+        .iter()
+        .find(|proposal| proposal.locator.ordinal == ordinal)
+        .cloned()
+        .ok_or_else(|| {
+            let declined = proposals
+                .declined
+                .iter()
+                .map(|entry| format!("#{} {} ({})", entry.ordinal, entry.url, entry.reason.code()))
+                .collect::<Vec<_>>()
+                .join(", ");
+            format!("no bare-URL proposal for ordinal {ordinal}; declined: [{declined}]")
+        })?;
+
+    let client = reqwest::Client::builder()
+        .user_agent(sp42_core::branding::USER_AGENT)
+        .build()
+        .map_err(|error| format!("bridge client failed to build: {error}"))?;
+    let bootstrap_request =
+        build_dev_auth_bootstrap_request(bridge_base_url, &DevAuthBootstrapRequest::default())
+            .map_err(|error| error.to_string())?;
+    let bootstrap_response = execute_local_http_request(&client, bootstrap_request).await?;
+    let bootstrap =
+        parse_dev_auth_status(&bootstrap_response.body).map_err(|error| error.to_string())?;
+    if !bootstrap.authenticated {
+        return Err("bridge bootstrap did not produce an authenticated session".to_string());
+    }
+    let session_cookie = session_cookie_from_headers(&bootstrap_response.headers)
+        .ok_or_else(|| "bridge bootstrap did not set a session cookie".to_string())?;
+    let csrf_token = bootstrap
+        .csrf_token
+        .clone()
+        .ok_or_else(|| "bridge bootstrap did not return a CSRF token".to_string())?;
+
+    let apply_request = sp42_core::BareUrlApplyRequest {
+        wiki_id: bare_url_options.wiki_id.clone(),
+        title: bare_url_options.title.clone(),
+        rev_id: bare_url_options.rev_id,
+        locator: proposal.locator.clone(),
+        replacement_wikitext: proposal.replacement_wikitext.clone(),
+        summary: note.map(ToString::to_string),
+    };
+    let request_url = format!(
+        "{bridge_base_url}{}",
+        route_contracts::DEV_CITATION_BARE_URL_APPLY_PATH
+    );
+    let response = client
+        .post(&request_url)
+        .header(COOKIE, session_cookie.as_str())
+        .header(route_contracts::CSRF_HEADER_NAME, csrf_token.as_str())
+        .json(&apply_request)
+        .send()
+        .await
+        .map_err(|error| format!("bare-url apply request failed: {error}"))?
+        .error_for_status()
+        .map_err(|error| format!("bare-url apply request failed: {error}"))?;
+    let apply = response
+        .json::<sp42_core::BareUrlApplyResponse>()
+        .await
+        .map_err(|error| format!("bare-url apply payload was invalid: {error}"))?;
+
+    Ok(BareUrlExecuteReport {
+        bridge_base_url: bridge_base_url.to_string(),
+        wiki_id: bare_url_options.wiki_id.clone(),
+        title: bare_url_options.title.clone(),
+        rev_id: bare_url_options.rev_id,
+        ordinal,
+        proposal,
+        response: apply,
     })
 }
 

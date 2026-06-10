@@ -28,6 +28,7 @@
 pub mod action_contracts;
 pub mod action_executor;
 pub mod article_inventory;
+pub mod bare_url_repair;
 pub mod branding;
 pub mod citation;
 pub mod context_builder;

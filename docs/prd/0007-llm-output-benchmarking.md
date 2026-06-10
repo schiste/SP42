@@ -3,7 +3,7 @@
 **Author:** Luis Villa (drafted with Claude)
 **Date:** 2026-06-09
 **State:** Draft
-**Discussion:** <PR link>
+**Discussion:** https://github.com/schiste/SP42/pull/37
 **Spawned ADRs:** none yet — the harness's structure (crate placement, the
 injected-clients import boundary, where the composition root with real clients
 and keys lives) is an ADR decision to spawn before implementation, not a

@@ -62,6 +62,9 @@ PWA packaging and offline installability are now effectively complete for local 
 - the service worker keeps auth/debug/coordination/API traffic out of caches while preserving the shell offline
 - the browser shell exposes install, offline, and update state separately, including waiting-worker activation
 - browser-specific guidance now covers Chromium install prompts, iOS Add-to-Home-Screen behavior, and standalone shell operation
+- node-anchored wikitext editing (ADR-0003) is implemented: a `WikitextEditor`
+  contract with a Parsoid-backed adapter; `InlineEdit` accepts an optional
+  node locator, and the literal fallback refuses ambiguous matches
 
 ## Current Verification
 

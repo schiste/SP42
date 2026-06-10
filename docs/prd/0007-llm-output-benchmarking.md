@@ -54,10 +54,16 @@ comparison mode for control-vs-treatment decisions.
   sentence/passage for puffery or weasel-wording), the expected categorical
   outcome (ground truth), optional **cohort tags** (e.g. paywalled,
   non-English, short-cite, PDF), and **provenance**.
-- A **corpus** is a validated JSON file of labeled cases. Corpora live
-  **outside the repo** (the existing corpus contains scraped source text that
-  cannot be redistributed); the harness takes a path. A tiny synthetic fixture
-  is committed for hermetic tests.
+- A **corpus** is a validated JSON file of labeled cases, **committed to the
+  repo** with explicit licensing provenance: every text payload carries its
+  license and attribution — **CC BY-SA** for Wikipedia-derived text (claims,
+  article context; attributed to article + revision), **CC0** for
+  Wikidata-derived data, and **fair use** for bounded extractions from cited
+  third-party websites (labeled as such, kept to the excerpt needed for
+  verification, and individually removable — content-hash ids mean deleting a
+  case never disturbs the rest). The harness also accepts an external
+  `--corpus <path>` for private or in-progress corpora. A tiny synthetic
+  fixture serves the hermetic harness tests.
 - A **run** is corpus × model panel × pinned parameters → per-case, per-model
   outcomes plus the panel vote. A **report** renders a run; a **compare** diffs
   two runs.
@@ -127,14 +133,17 @@ to "did my prompt change regress anything."
   schema natively rather than inheriting the alex format.
 - **Existing corpus:** a one-shot importer maps the alex-cite-checker corpus
   (189 rows) into this schema — applying the wikiharness re-audit learnings
-  (content-hash ids, GT corrections map, provenance fields) — as a transform
-  tool, not a committed corpus.
+  (content-hash ids, GT corrections map, provenance fields) and attaching the
+  licensing labels (CC BY-SA claims, fair-use source extracts) — producing the
+  first committed corpus.
 
 ## Definition of Done
 
 - [ ] A corpus loader validates on load: duplicate ids, unknown outcome
-      values, and **banned keys** (`confidence`, `tranche`, `dataset_version`,
-      positional ids) are each rejected — verified by schema unit tests.
+      values, missing **license/attribution labels** (each text payload must
+      declare CC BY-SA, CC0, or fair-use provenance), and **banned keys**
+      (`confidence`, `tranche`, `dataset_version`, positional ids) are each
+      rejected — verified by schema unit tests.
 - [ ] Case ids are content-hash derived and stable under corpus reordering and
       insertion — verified by a property test.
 - [ ] A run produces per-model and per-panel accuracy, per-outcome confusion,
@@ -178,10 +187,13 @@ to "did my prompt change regress anything."
 - **A bespoke harness per task.** This is the citation-only version of the
   status quo with better hygiene; #30/#31 would each rebuild metrics, compare,
   and governance. The marginal cost of task-genericity is one trait boundary.
-- **Commit the corpus to the repo.** Blocked by redistribution (scraped source
-  text) and undesirable anyway: corpora should be able to grow and be
-  re-audited without repo churn. The committed artifact is the schema, the
-  fixture, and the importer.
+- **Keep corpora outside the repo.** Considered (the alex corpus contains
+  scraped third-party text), rejected: external corpora make every published
+  number irreproducible by anyone else and keep the corpus-replay gate out of
+  CI permanently. The licensing concern is handled head-on instead — each text
+  payload is labeled CC BY-SA (Wikipedia), CC0 (Wikidata), or fair use
+  (bounded website extractions), and any case is individually removable
+  without disturbing the rest.
 
 ## Risks
 
@@ -202,6 +214,12 @@ to "did my prompt change regress anything."
 - **Cost creep.** Real-model runs cost money and invite casual re-running.
   Mitigation: replay is the default mode; live-model runs require explicit
   opt-in plus keys, and never run in CI.
+- **A fair-use claim is a judgment, not a license.** Committed website
+  extractions rest on a fair-use rationale that could be challenged.
+  Mitigation: extracts are bounded to what verification needs, every payload
+  is labeled with its basis and origin URL, a corpus README states the
+  posture, and content-hash ids make any case deletable on request without
+  renumbering or breaking the rest of the corpus.
 
 ## Open questions
 
@@ -214,9 +232,13 @@ to "did my prompt change regress anything."
    ordinary `cargo test` from day one; wiring a corpus-replay gate into
    `ci-all.sh` (cf. `check-scoring-governance.sh`) waits until the first
    frozen capture is stable enough to gate on.
-3. **Corpus path contract.** Proposed: explicit `--corpus <path>` (env
-   fallback), with the alex importer documented as the way to produce the
-   first corpus locally. Nothing in the repo assumes a corpus exists.
+3. **Corpus layout and licensing presentation.** Proposed: committed corpora
+   under a dedicated `corpora/` directory with a README stating the licensing
+   posture (CC BY-SA / CC0 / fair use, per-payload labels), produced initially
+   by the alex importer; `--corpus <path>` remains for private or in-progress
+   corpora. Whether per-payload labels need finer granularity than the
+   three-way split (e.g. revision-level attribution strings for CC BY-SA) is
+   settled at import time.
 4. **Which gates are hard?** Proposed: grounding integrity (an exact-located
    passage must re-locate — machine-checkable) is hard; accuracy/regression
    thresholds are declared per task; identity-invariance is deferred until an

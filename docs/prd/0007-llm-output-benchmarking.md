@@ -4,7 +4,10 @@
 **Date:** 2026-06-09
 **State:** Draft
 **Discussion:** <PR link>
-**Spawned ADRs:** none yet
+**Spawned ADRs:** none yet — the harness's structure (crate placement, the
+injected-clients import boundary, where the composition root with real clients
+and keys lives) is an ADR decision to spawn before implementation, not a
+question this PRD answers
 
 ## Problem
 
@@ -123,6 +126,16 @@ errored cells cannot flatter the delta); and flags aggregate deltas below a
 declared noise floor as not-a-signal. The flip taxonomy is the natural answer
 to "did my prompt change regress anything."
 
+### No promotion without passing
+
+Measured quality gates are part of the product promise, not optional tooling:
+a prompt, model, panel, or policy change that fails a declared hard gate, or
+regresses past a task's declared threshold, does not ship. The harness's job
+is to make that check cheap (replay mode, no keys) and its verdict unambiguous
+(the flip taxonomy); *how* the block is wired — CI, hooks, release checklist —
+is implementation sequencing tracked outside this PRD, but the wiring must
+exist for the promise to be claimable.
+
 ### Future corpora this must already fit
 
 - **Puffery (#30) and weasel words (#31):** single-passage classification
@@ -174,6 +187,11 @@ to "did my prompt change regress anything."
       house no-float-on-verdict-paths rule).
 - [ ] Every report carries the reproducibility header (corpus hash, panel,
       parameter fingerprint, code version) — verified by a report unit test.
+- [ ] **No promotion without passing:** a run that fails a declared hard gate,
+      or a compare that shows regression past a task's declared threshold,
+      yields a failing (nonzero) result that a promotion check can block on —
+      verified by gate/compare unit tests covering the pass, hard-fail, and
+      regression cases.
 
 ## Alternatives
 
@@ -223,27 +241,33 @@ to "did my prompt change regress anything."
 
 ## Open questions
 
-1. **Where does it live?** Proposed: pure runner/metrics/compare in a
-   dedicated evals crate (or module) with the composition root (real clients,
-   keys, corpus path) in `sp42-devtools`/`xtask` — mirroring the wikiharness
-   import boundary (runner takes injected clients; no live edge in the eval
-   package). Structural decision → spawn an ADR.
-2. **When does the gate join CI?** Proposed: the hermetic fixture tests are
-   ordinary `cargo test` from day one; wiring a corpus-replay gate into
-   `ci-all.sh` (cf. `check-scoring-governance.sh`) waits until the first
-   frozen capture is stable enough to gate on.
-3. **Corpus layout and licensing presentation.** Proposed: committed corpora
+1. **Corpus layout and licensing presentation.** Proposed: committed corpora
    under a dedicated `corpora/` directory with a README stating the licensing
    posture (CC BY-SA / CC0 / fair use, per-payload labels), produced initially
    by the alex importer; `--corpus <path>` remains for private or in-progress
    corpora. Whether per-payload labels need finer granularity than the
    three-way split (e.g. revision-level attribution strings for CC BY-SA) is
    settled at import time.
-4. **Which gates are hard?** Proposed: grounding integrity (an exact-located
+2. **Which gates are hard?** Proposed: grounding integrity (an exact-located
    passage must re-locate — machine-checkable) is hard; accuracy/regression
    thresholds are declared per task; identity-invariance is deferred until an
    SP42 task injects editor identity into a prompt (none does today).
-5. **On-wiki outcome measurement** (acceptance, reversion durability vs human
-   baselines — wikiharness `05`'s external evidence harness). Proposed: out of
-   scope for this PRD; a successor PRD once SP42 performs live actions at
-   volume.
+3. **CI wiring sequence** — *implementation tracking, not a design question;
+   convert to a tracked issue and link it at acceptance.* Proposed sequencing
+   for that issue: the hermetic fixture tests are ordinary `cargo test` from
+   day one; the corpus-replay gate joins `ci-all.sh` (cf.
+   `check-scoring-governance.sh`) once the first frozen capture is stable
+   enough to gate on. The *promise* this wiring serves is already fixed in
+   Proposal ("No promotion without passing") and the Definition of Done.
+
+Resolved:
+
+- **Where does the harness live?** Not a PRD question — structural decision
+  (crate placement, import boundary, composition root) deferred to the spawned
+  ADR; see the *Spawned ADRs* header. The PRD retains only the requirements
+  the structure must satisfy (injected clients; replay without keys), which
+  are in the Definition of Done.
+- **On-wiki outcome measurement** (acceptance, reversion durability vs human
+  baselines — wikiharness `05`'s external evidence harness): out of scope for
+  this PRD (owner decision, 2026-06-09); a successor PRD once SP42 performs
+  live actions at volume.

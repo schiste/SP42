@@ -290,6 +290,7 @@ mod tests {
                 verdict,
                 quote: quote.map(ToString::to_string),
             },
+            repair: None,
         }
     }
 
@@ -363,12 +364,16 @@ mod tests {
                 verdict: CitationVerdict::Judged(SupportLevel::Supported),
                 located_passage: finding.passage.clone(),
                 claimed_quote: finding.passage.as_ref().map(|p| p.quote.clone()),
+                repaired_quote: None,
+                repair_invocation: None,
             },
             ModelVote {
                 invocation: invocation(),
                 verdict: CitationVerdict::Judged(SupportLevel::Supported),
                 located_passage: None,
                 claimed_quote: Some("a quote the source lacks".to_string()),
+                repaired_quote: None,
+                repair_invocation: None,
             },
         ];
         let envelope = build_verdict_envelope(

@@ -72,6 +72,9 @@ struct VerifyCliOptions {
     /// Emit the full `VerificationOutcome` (finding + per-model votes incl. raw claimed
     /// quotes) as JSON, for the deterministic locate-replay harness (SP42#25).
     debug_votes: bool,
+    /// Run the bounded repair turn (SP42#25 layer 3); `--no-repair` turns it off (one fewer
+    /// model call per unlocated support vote, for cost control and A/B measurement).
+    repair: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -227,6 +230,7 @@ fn parse_options(args: impl IntoIterator<Item = String>) -> Result<CliOptions, S
     let mut verify_source_url = None;
     let mut verify_metadata = false;
     let mut verify_debug_votes = false;
+    let mut verify_repair = true;
     let mut verdict_only = false;
     let mut probe_quote = None;
     let mut locate_probe_flag = false;
@@ -248,6 +252,7 @@ fn parse_options(args: impl IntoIterator<Item = String>) -> Result<CliOptions, S
             verify_source_url: &mut verify_source_url,
             verify_metadata: &mut verify_metadata,
             verify_debug_votes: &mut verify_debug_votes,
+            verify_repair: &mut verify_repair,
             verdict_only: &mut verdict_only,
             probe_quote: &mut probe_quote,
             locate_probe_flag: &mut locate_probe_flag,
@@ -260,6 +265,7 @@ fn parse_options(args: impl IntoIterator<Item = String>) -> Result<CliOptions, S
         verify_source_url,
         verify_metadata,
         verify_debug_votes,
+        verify_repair,
     )?;
     let locate_probe = if locate_probe_flag {
         Some(probe_quote.ok_or_else(|| "--locate-probe requires --quote".to_string())?)
@@ -292,6 +298,7 @@ fn build_verify_options(
     source_url: Option<String>,
     include_metadata: bool,
     debug_votes: bool,
+    repair: bool,
 ) -> Result<Option<VerifyCliOptions>, String> {
     match (claim, source_url) {
         (Some(claim), Some(source_url)) => Ok(Some(VerifyCliOptions {
@@ -299,6 +306,7 @@ fn build_verify_options(
             source_url,
             include_metadata,
             debug_votes,
+            repair,
         })),
         (None, None) => Ok(None),
         _ => Err("citation verification requires both --claim and --source-url".to_string()),
@@ -321,6 +329,7 @@ struct CliParseState<'a> {
     verify_source_url: &'a mut Option<String>,
     verify_metadata: &'a mut bool,
     verify_debug_votes: &'a mut bool,
+    verify_repair: &'a mut bool,
     verdict_only: &'a mut bool,
     probe_quote: &'a mut Option<String>,
     locate_probe_flag: &'a mut bool,
@@ -382,6 +391,9 @@ where
         }
         "--debug-votes" => {
             *state.verify_debug_votes = true;
+        }
+        "--no-repair" => {
+            *state.verify_repair = false;
         }
         "--quote" => {
             *state.probe_quote = Some(next_option_value(args, "--quote")?);
@@ -736,6 +748,7 @@ async fn run_verify(options: &VerifyCliOptions) -> Result<VerificationOutcome, S
     let verify_options = CoreVerifyOptions {
         include_metadata: options.include_metadata,
         concurrency: 3,
+        repair_turn: options.repair,
         ..Default::default()
     };
     let outcome = verify_citation_use_site(
@@ -891,9 +904,23 @@ mod verify_tests {
                 source_url: "https://example.com/bridge".to_string(),
                 include_metadata: true,
                 debug_votes: false,
+                repair: true,
             }
         );
         assert!(!options.verdict_only);
+    }
+
+    #[test]
+    fn no_repair_flag_disables_the_repair_turn() {
+        let options = parse_options(args(&[
+            "--claim",
+            "c",
+            "--source-url",
+            "https://example.com",
+            "--no-repair",
+        ]))
+        .expect("parses");
+        assert!(!options.verify.expect("verify present").repair);
     }
 
     #[test]

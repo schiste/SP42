@@ -38,8 +38,8 @@ use super::citoid::{
 };
 use super::concurrency::map_with_concurrency;
 use super::locate_quote::locate_quote;
-use super::parsing::{ParsedVerdict, parse_verdict_response};
-use super::prompts::build_verify_prompt;
+use super::parsing::{ParsedVerdict, parse_repair_response, parse_verdict_response};
+use super::prompts::{build_repair_prompt, build_verify_prompt};
 use super::source_fetch::{html_to_text, looks_like_html, recover_wayback_body};
 use super::urls::rewrite_wayback_url;
 use super::verdict::{CitationFindingKind, CitationVerdict, SupportLevel, Verdict};
@@ -163,6 +163,20 @@ pub struct ModelVerdict {
     pub invocation: ModelInvocation,
     /// The parsed verdict (still ungrounded — the gate re-checks the quote).
     pub parsed: ParsedVerdict,
+    /// The bounded repair turn, when one was attempted (SP42#25 layer 3). The repair fixes
+    /// *transcription* only — the vote's verdict is never re-litigated by it.
+    pub repair: Option<RepairAttempt>,
+}
+
+/// The outcome of one bounded repair turn (SP42#25 layer 3): the fingerprint of the repair
+/// call plus the span it returned (`None` for `NO_SPAN` / unparseable). The span is still
+/// ungrounded — the gate re-locates it like any other quote.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RepairAttempt {
+    /// The fingerprint of the repair call (ADR-0006 Decision 8).
+    pub invocation: ModelInvocation,
+    /// The repaired candidate span, or `None` when the model returned `NO_SPAN`.
+    pub quote: Option<String>,
 }
 
 /// A persisted per-model vote (ADR-0009 §3): the invocation fingerprint, its returned
@@ -180,6 +194,14 @@ pub struct ModelVote {
     /// replay record (ADR-0006 Decision 8). `None` when the model returned no quote.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub claimed_quote: Option<String>,
+    /// The span the bounded repair turn returned, when one ran (SP42#25 layer 3); the
+    /// original `claimed_quote` is never rewritten by a repair.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub repaired_quote: Option<String>,
+    /// The fingerprint of the repair call, when one ran — recorded even for a `NO_SPAN`
+    /// outcome, so every model call stays in the audit record (ADR-0006 Decision 8).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub repair_invocation: Option<ModelInvocation>,
 }
 
 /// The full result of verifying one use-site: the surfaced finding plus the per-model
@@ -215,6 +237,10 @@ pub struct VerifyOptions {
     pub concurrency: usize,
     /// Sampling / reasoning parameters for each model call.
     pub params: SamplingParams,
+    /// Whether to run the bounded repair turn (SP42#25 layer 3): one extra call per
+    /// support-class vote whose quote failed to locate, asking for the exact shortest
+    /// verbatim span (or `NO_SPAN`). Transcription only — never re-litigates the verdict.
+    pub repair_turn: bool,
 }
 
 impl Default for VerifyOptions {
@@ -223,6 +249,7 @@ impl Default for VerifyOptions {
             include_metadata: false,
             concurrency: 3,
             params: SamplingParams::deterministic(),
+            repair_turn: true,
         }
     }
 }
@@ -296,7 +323,72 @@ where
         params: params.fingerprint(),
         prompt_hash,
     };
-    Ok(ModelVerdict { invocation, parsed })
+    Ok(ModelVerdict {
+        invocation,
+        parsed,
+        repair: None,
+    })
+}
+
+/// Run one bounded repair turn (SP42#25 layer 3) over the [`ModelClient`] boundary: hand
+/// the model its non-locating quote and the source again, asking for the exact shortest
+/// verbatim span (or `NO_SPAN`). The returned span is still ungrounded — the caller
+/// re-locates it deterministically like any other quote.
+///
+/// # Errors
+///
+/// Returns [`CitationVerificationError`] on a serialization error or model client failure.
+pub async fn execute_citation_repair<M>(
+    model_client: &M,
+    model: &ModelRef,
+    params: &SamplingParams,
+    inputs: VerifyModelInputs<'_>,
+    failed_quote: &str,
+) -> Result<RepairAttempt, CitationVerificationError>
+where
+    M: ModelClient + ?Sized,
+{
+    let messages = build_repair_prompt(
+        inputs.claim,
+        inputs.source_text,
+        inputs.source_url,
+        failed_quote,
+    )
+    .to_vec();
+    let prompt_hash = sha256_hex(&serde_json::to_vec(&messages)?);
+    let request = ModelCompletionRequest {
+        model: model.clone(),
+        messages,
+        params: params.clone(),
+    };
+    let completion = model_client.complete(&request).await.map_err(|error| {
+        CitationVerificationError::InvalidResponse {
+            message: error.to_string(),
+        }
+    })?;
+    Ok(RepairAttempt {
+        invocation: ModelInvocation {
+            model: model.clone(),
+            quant: None,
+            params: params.fingerprint(),
+            prompt_hash,
+        },
+        quote: parse_repair_response(&completion.text),
+    })
+}
+
+/// Locate a vote's supporting span in `source_text`: the original claimed quote first,
+/// then the repaired span (SP42#25 layer 3). Either way the span must string-locate — a
+/// repair is a second chance at transcription, never a bypass around the gate.
+fn locate_vote_quote(vote: &ModelVerdict, source_text: &str) -> Option<(String, usize)> {
+    let original =
+        vote.parsed.quote.as_ref().and_then(|quote| {
+            locate_quote(quote, source_text).map(|offset| (quote.clone(), offset))
+        });
+    original.or_else(|| {
+        let repaired = vote.repair.as_ref()?.quote.as_ref()?;
+        locate_quote(repaired, source_text).map(|offset| (repaired.clone(), offset))
+    })
 }
 
 /// Assemble the final [`CitationFinding`] from the panel's model verdicts (SP42#25 layer 6).
@@ -330,11 +422,7 @@ pub fn assemble_citation_finding(
         let located = votes
             .iter()
             .filter(|candidate| candidate.parsed.verdict == vote.winner)
-            .find_map(|candidate| {
-                let quote = candidate.parsed.quote.as_ref()?;
-                let offset = locate_quote(quote, source_text)?;
-                Some((quote.clone(), offset))
-            });
+            .find_map(|candidate| locate_vote_quote(candidate, source_text));
 
         return match located {
             Some((quote, offset)) => CitationFinding {
@@ -399,12 +487,8 @@ pub fn build_model_votes(votes: &[ModelVerdict], source_text: &str) -> Vec<Model
         .iter()
         .map(|vote| {
             let located_passage = if vote.parsed.verdict.is_support_class() {
-                vote.parsed.quote.as_ref().and_then(|quote| {
-                    locate_quote(quote, source_text).map(|offset| LocatedPassage {
-                        quote: quote.clone(),
-                        offset,
-                    })
-                })
+                locate_vote_quote(vote, source_text)
+                    .map(|(quote, offset)| LocatedPassage { quote, offset })
             } else {
                 None
             };
@@ -413,6 +497,14 @@ pub fn build_model_votes(votes: &[ModelVerdict], source_text: &str) -> Vec<Model
                 verdict: CitationVerdict::from(vote.parsed.verdict),
                 located_passage,
                 claimed_quote: vote.parsed.quote.clone(),
+                repaired_quote: vote
+                    .repair
+                    .as_ref()
+                    .and_then(|attempt| attempt.quote.clone()),
+                repair_invocation: vote
+                    .repair
+                    .as_ref()
+                    .map(|attempt| attempt.invocation.clone()),
             }
         })
         .collect()
@@ -586,11 +678,47 @@ where
         execute_citation_verify(model_client, &model, params, inputs).await
     })
     .await;
-    let model_verdicts: Vec<ModelVerdict> = results.into_iter().filter_map(Result::ok).collect();
+    let mut model_verdicts: Vec<ModelVerdict> =
+        results.into_iter().filter_map(Result::ok).collect();
     if model_verdicts.is_empty() {
         return Err(CitationVerificationError::InvalidResponse {
             message: "all panel models failed".to_string(),
         });
+    }
+
+    // Bounded repair turn (SP42#25 layer 3): one extra call per support-class vote whose
+    // quote failed to locate. Best-effort — a failed repair call leaves the vote as-is.
+    if options.repair_turn {
+        let pending: Vec<(usize, ModelRef, String)> = model_verdicts
+            .iter()
+            .enumerate()
+            .filter_map(|(index, vote)| {
+                if !vote.parsed.verdict.is_support_class() {
+                    return None;
+                }
+                let quote = vote.parsed.quote.as_ref()?;
+                if locate_quote(quote, &fetched.text).is_some() {
+                    return None;
+                }
+                Some((index, vote.invocation.model.clone(), quote.clone()))
+            })
+            .collect();
+        let repairs = map_with_concurrency(
+            pending,
+            concurrency,
+            |(index, model, failed_quote), _| async move {
+                let attempt =
+                    execute_citation_repair(model_client, &model, params, inputs, &failed_quote)
+                        .await;
+                (index, attempt)
+            },
+        )
+        .await;
+        for (index, attempt) in repairs {
+            if let Ok(attempt) = attempt {
+                model_verdicts[index].repair = Some(attempt);
+            }
+        }
     }
 
     let finding = assemble_citation_finding(
@@ -613,9 +741,9 @@ mod tests {
 
     use super::{
         CitationVerificationRequest, GroundingAssertion, GroundingStatus, ModelVerdict,
-        SourceProvenance, VerifyModelInputs, VerifyOptions, assemble_citation_finding,
-        build_model_votes, execute_citation_verify, is_groundable_support,
-        verify_citation_use_site,
+        RepairAttempt, SourceProvenance, VerifyModelInputs, VerifyOptions,
+        assemble_citation_finding, build_model_votes, execute_citation_repair,
+        execute_citation_verify, is_groundable_support, verify_citation_use_site,
     };
     use crate::citation::parsing::ParsedVerdict;
     use crate::citation::verdict::{CitationVerdict, SupportLevel, Verdict};
@@ -666,7 +794,26 @@ mod tests {
                 verdict,
                 quote: quote.map(ToString::to_string),
             },
+            repair: None,
         }
+    }
+
+    fn repaired_verdict(
+        verdict: Verdict,
+        quote: Option<&str>,
+        repair_quote: Option<&str>,
+    ) -> ModelVerdict {
+        let mut vote = model_verdict(verdict, quote);
+        vote.repair = Some(RepairAttempt {
+            invocation: ModelInvocation {
+                model: model(),
+                quant: None,
+                params: BTreeMap::new(),
+                prompt_hash: "repair".to_string(),
+            },
+            quote: repair_quote.map(ToString::to_string),
+        });
+        vote
     }
 
     #[test]
@@ -932,6 +1079,256 @@ mod tests {
         assert!(outcome.finding.passage.is_none());
     }
 
+    // --- repair turn (SP42#25 layer 3) ---
+
+    #[test]
+    fn repair_edge_parses_a_returned_span_and_fingerprints() {
+        let client = StubModelClient::new([Ok(completion(r#"{"quote": "established in 1985"}"#))]);
+        let attempt = block_on(execute_citation_repair(
+            &client,
+            &model(),
+            &params(),
+            inputs(
+                "the company was founded in 1985",
+                "Acme Corp was established in 1985.",
+            ),
+            "the company was founded in 1985",
+        ))
+        .expect("repairs");
+        assert_eq!(attempt.quote.as_deref(), Some("established in 1985"));
+        assert_eq!(attempt.invocation.prompt_hash.len(), 64);
+        assert_eq!(attempt.invocation.model, model());
+    }
+
+    #[test]
+    fn repair_edge_no_span_yields_no_quote() {
+        let client = StubModelClient::new([Ok(completion(r#"{"quote": "NO_SPAN"}"#))]);
+        let attempt = block_on(execute_citation_repair(
+            &client,
+            &model(),
+            &params(),
+            inputs("a claim", "a usable source body"),
+            "a quote that failed",
+        ))
+        .expect("repairs");
+        assert_eq!(attempt.quote, None);
+    }
+
+    #[test]
+    fn assemble_grounds_a_support_via_the_repaired_quote() {
+        // Layer 3: the original quote does not locate, the repaired one does — the finding
+        // is Located on the repaired passage; the verdict was never up for re-litigation.
+        let source = "Acme Corp was established in 1985 by its founder John Smith.";
+        let finding = assemble_citation_finding(
+            source,
+            &provenance(),
+            &[repaired_verdict(
+                Verdict::Supported,
+                Some("Acme was founded in 1985"),
+                Some("established in 1985"),
+            )],
+            0,
+        );
+        assert_eq!(
+            finding.verdict,
+            CitationVerdict::Judged(SupportLevel::Supported)
+        );
+        assert_eq!(finding.grounding_status, GroundingStatus::Located);
+        assert!(is_groundable_support(&finding));
+        assert_eq!(
+            finding.passage.as_ref().map(|p| p.quote.as_str()),
+            Some("established in 1985")
+        );
+    }
+
+    #[test]
+    fn assemble_ignores_a_repair_that_still_does_not_locate() {
+        let source = "Acme Corp was established in 1985.";
+        let finding = assemble_citation_finding(
+            source,
+            &provenance(),
+            &[repaired_verdict(
+                Verdict::Supported,
+                Some("founded in 1772"),
+                Some("an invented repair span"),
+            )],
+            0,
+        );
+        assert_eq!(finding.grounding_status, GroundingStatus::Unlocated);
+        assert!(!is_groundable_support(&finding));
+        assert!(finding.passage.is_none());
+    }
+
+    #[test]
+    fn build_model_votes_records_the_repair_audit_trail() {
+        let source = "Acme Corp was established in 1985.";
+        let votes = build_model_votes(
+            &[repaired_verdict(
+                Verdict::Supported,
+                Some("Acme was founded in 1985"),
+                Some("established in 1985"),
+            )],
+            source,
+        );
+        // The raw claimed quote stays the ORIGINAL (the repair never rewrites history);
+        // the repaired span and its invocation fingerprint are recorded alongside.
+        assert_eq!(
+            votes[0].claimed_quote.as_deref(),
+            Some("Acme was founded in 1985")
+        );
+        assert_eq!(
+            votes[0].repaired_quote.as_deref(),
+            Some("established in 1985")
+        );
+        assert_eq!(
+            votes[0]
+                .repair_invocation
+                .as_ref()
+                .map(|i| i.prompt_hash.as_str()),
+            Some("repair")
+        );
+        // The located passage comes from the repaired span.
+        assert_eq!(
+            votes[0].located_passage.as_ref().map(|p| p.quote.as_str()),
+            Some("established in 1985")
+        );
+    }
+
+    #[test]
+    fn end_to_end_repair_turn_recovers_a_transcription_miss() {
+        let fetch = StubHttpClient::new([Ok(HttpResponse {
+            status: 200,
+            headers: BTreeMap::from([("content-type".to_string(), "text/html".to_string())]),
+            body: long_html_with("the bridge opened to traffic in 1998"),
+        })]);
+        // Turn 1: SUPPORTED with a paraphrased (non-locating) quote. Turn 2 (repair): the
+        // exact span. Stub is FIFO; panel of 1 at concurrency 1 keeps the order deterministic.
+        let model_client = StubModelClient::new([
+            Ok(completion(
+                r#"{"verdict": "SUPPORTED", "quote": "the bridge was opened in 1998"}"#,
+            )),
+            Ok(completion(
+                r#"{"quote": "the bridge opened to traffic in 1998"}"#,
+            )),
+        ]);
+        let outcome = block_on(verify_citation_use_site(
+            &fetch,
+            &model_client,
+            &FixedClock::new(1),
+            &[model()],
+            &request("The bridge opened in 1998", "https://example.com/bridge"),
+            0,
+            VerifyOptions::default(),
+        ))
+        .expect("verifies");
+        assert_eq!(
+            outcome.finding.verdict,
+            CitationVerdict::Judged(SupportLevel::Supported)
+        );
+        assert_eq!(outcome.finding.grounding_status, GroundingStatus::Located);
+        assert!(is_groundable_support(&outcome.finding));
+        assert_eq!(
+            outcome.votes[0].claimed_quote.as_deref(),
+            Some("the bridge was opened in 1998")
+        );
+        assert_eq!(
+            outcome.votes[0].repaired_quote.as_deref(),
+            Some("the bridge opened to traffic in 1998")
+        );
+        assert!(outcome.votes[0].repair_invocation.is_some());
+    }
+
+    #[test]
+    fn end_to_end_repair_disabled_makes_no_extra_model_call() {
+        let fetch = StubHttpClient::new([Ok(HttpResponse {
+            status: 200,
+            headers: BTreeMap::from([("content-type".to_string(), "text/html".to_string())]),
+            body: long_html_with("the bridge opened to traffic in 1998"),
+        })]);
+        // A locating repair response IS queued — if the repair ran, the finding would be
+        // Located. With repair_turn off it must stay Unlocated (the response unconsumed).
+        let model_client = StubModelClient::new([
+            Ok(completion(
+                r#"{"verdict": "SUPPORTED", "quote": "the bridge was opened in 1998"}"#,
+            )),
+            Ok(completion(
+                r#"{"quote": "the bridge opened to traffic in 1998"}"#,
+            )),
+        ]);
+        let options = VerifyOptions {
+            repair_turn: false,
+            ..VerifyOptions::default()
+        };
+        let outcome = block_on(verify_citation_use_site(
+            &fetch,
+            &model_client,
+            &FixedClock::new(1),
+            &[model()],
+            &request("The bridge opened in 1998", "https://example.com/bridge"),
+            0,
+            options,
+        ))
+        .expect("verifies");
+        assert_eq!(outcome.finding.grounding_status, GroundingStatus::Unlocated);
+        assert!(outcome.votes[0].repair_invocation.is_none());
+    }
+
+    #[test]
+    fn end_to_end_no_span_repair_stays_unlocated() {
+        let fetch = StubHttpClient::new([Ok(HttpResponse {
+            status: 200,
+            headers: BTreeMap::from([("content-type".to_string(), "text/html".to_string())]),
+            body: long_html_with("the museum was founded in 1850"),
+        })]);
+        let model_client = StubModelClient::new([
+            Ok(completion(
+                r#"{"verdict": "SUPPORTED", "quote": "a quote that is nowhere in the body"}"#,
+            )),
+            Ok(completion(r#"{"quote": "NO_SPAN"}"#)),
+        ]);
+        let outcome = block_on(verify_citation_use_site(
+            &fetch,
+            &model_client,
+            &FixedClock::new(1),
+            &[model()],
+            &request("The museum opened in 1850", "https://example.com/museum"),
+            0,
+            VerifyOptions::default(),
+        ))
+        .expect("verifies");
+        assert_eq!(outcome.finding.grounding_status, GroundingStatus::Unlocated);
+        assert!(!is_groundable_support(&outcome.finding));
+        // The repair was attempted (audit trail) but returned NO_SPAN.
+        assert!(outcome.votes[0].repair_invocation.is_some());
+        assert_eq!(outcome.votes[0].repaired_quote, None);
+    }
+
+    #[test]
+    fn end_to_end_located_quote_triggers_no_repair() {
+        let fetch = StubHttpClient::new([Ok(HttpResponse {
+            status: 200,
+            headers: BTreeMap::from([("content-type".to_string(), "text/html".to_string())]),
+            body: long_html_with("the bridge opened in 1998"),
+        })]);
+        // Exactly ONE response queued: a repair attempt would consume a second and record
+        // an (errored) attempt; a locating first quote must skip the repair entirely.
+        let model_client = StubModelClient::new([Ok(completion(
+            r#"{"verdict": "SUPPORTED", "quote": "the bridge opened in 1998"}"#,
+        ))]);
+        let outcome = block_on(verify_citation_use_site(
+            &fetch,
+            &model_client,
+            &FixedClock::new(1),
+            &[model()],
+            &request("The bridge opened in 1998", "https://example.com/bridge"),
+            0,
+            VerifyOptions::default(),
+        ))
+        .expect("verifies");
+        assert_eq!(outcome.finding.grounding_status, GroundingStatus::Located);
+        assert!(outcome.votes[0].repair_invocation.is_none());
+    }
+
     proptest! {
         /// THE anti-fabrication guarantee (layer 6): a `Supported` vote whose quote cannot
         /// locate in the source is never GROUNDABLE — the verdict may be surfaced for a human,
@@ -946,6 +1343,25 @@ mod tests {
                 &source,
                 &provenance(),
                 &[model_verdict(Verdict::Supported, Some(&quote))],
+                0,
+            );
+            prop_assert!(!is_groundable_support(&finding));
+            prop_assert_ne!(finding.grounding_status, GroundingStatus::Located);
+        }
+
+        /// Layer 3 must not weaken the guarantee: a repair span that does not locate in
+        /// the fetched source never grounds either — the repair turn gives the model a
+        /// second chance at TRANSCRIPTION, never a bypass around the locate gate.
+        #[test]
+        fn fabricated_repair_is_never_groundable(
+            source in "[a-m ]{0,200}",
+            quote in "[n-z]{3,40}",
+            repair in "[n-z]{3,40}",
+        ) {
+            let finding = assemble_citation_finding(
+                &source,
+                &provenance(),
+                &[repaired_verdict(Verdict::Supported, Some(&quote), Some(&repair))],
                 0,
             );
             prop_assert!(!is_groundable_support(&finding));

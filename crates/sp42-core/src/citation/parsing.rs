@@ -112,6 +112,42 @@ pub fn parse_verdict_response(text: &str) -> Option<ParsedVerdict> {
     })
 }
 
+/// Parse a repair-turn response (SP42#25 layer 3) into the repaired candidate span, or
+/// `None` for `NO_SPAN` / empty / unrecoverable. The span is **not yet grounded** — the
+/// caller re-locates it in the fetched bytes; a model "repair" that still does not locate
+/// changes nothing.
+#[must_use]
+pub fn parse_repair_response(text: &str) -> Option<String> {
+    for candidate in json_candidates(text) {
+        let Ok(Value::Object(map)) = serde_json::from_str::<Value>(&candidate) else {
+            continue;
+        };
+        let Some(quote) = map.get("quote").and_then(Value::as_str) else {
+            continue;
+        };
+        return repair_span(quote);
+    }
+    if is_no_span(text) {
+        return None;
+    }
+    first_quoted_span(text).as_deref().and_then(repair_span)
+}
+
+/// A trimmed repair span, or `None` when empty or the `NO_SPAN` sentinel.
+fn repair_span(raw: &str) -> Option<String> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() || is_no_span(trimmed) {
+        return None;
+    }
+    Some(trimmed.to_string())
+}
+
+/// Whether `text` is the `NO_SPAN` sentinel (tolerating case and trailing punctuation).
+fn is_no_span(text: &str) -> bool {
+    let bare = text.trim().trim_end_matches(['.', '!']).trim();
+    bare.eq_ignore_ascii_case("NO_SPAN") || bare.eq_ignore_ascii_case("no span")
+}
+
 /// Candidate JSON substrings, in priority order: a fenced ```` ``` ```` block, then the
 /// outermost `{`…`}` brace span.
 fn json_candidates(text: &str) -> Vec<String> {
@@ -138,7 +174,7 @@ fn first_quoted_span(text: &str) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{canonicalize_verdict, parse_verdict_response};
+    use super::{canonicalize_verdict, parse_repair_response, parse_verdict_response};
     use crate::citation::verdict::Verdict;
 
     #[test]
@@ -246,5 +282,57 @@ mod tests {
             parse_verdict_response("{\"verdict\": \"banana\"} — overall the claim is supported")
                 .expect("should parse");
         assert_eq!(parsed.verdict, Verdict::Supported);
+    }
+
+    // --- repair response (SP42#25 layer 3) ---
+
+    #[test]
+    fn repair_parses_plain_json_quote() {
+        assert_eq!(
+            parse_repair_response(r#"{"quote": "opened to traffic in 1998"}"#).as_deref(),
+            Some("opened to traffic in 1998")
+        );
+    }
+
+    #[test]
+    fn repair_parses_fenced_json_quote() {
+        let text = "Here you go:\n```json\n{\"quote\": \"established in 1985\"}\n```";
+        assert_eq!(
+            parse_repair_response(text).as_deref(),
+            Some("established in 1985")
+        );
+    }
+
+    #[test]
+    fn repair_no_span_json_value_is_none() {
+        assert_eq!(parse_repair_response(r#"{"quote": "NO_SPAN"}"#), None);
+        assert_eq!(parse_repair_response(r#"{"quote": "no_span"}"#), None);
+    }
+
+    #[test]
+    fn repair_bare_no_span_is_none() {
+        assert_eq!(parse_repair_response("NO_SPAN"), None);
+        assert_eq!(parse_repair_response("  NO_SPAN.  "), None);
+    }
+
+    #[test]
+    fn repair_empty_quote_is_none() {
+        assert_eq!(parse_repair_response(r#"{"quote": ""}"#), None);
+        assert_eq!(parse_repair_response(r#"{"quote": "   "}"#), None);
+    }
+
+    #[test]
+    fn repair_prose_quoted_span_is_recovered() {
+        assert_eq!(
+            parse_repair_response("The exact span is \"opened in August 2002\" from the source.")
+                .as_deref(),
+            Some("opened in August 2002")
+        );
+    }
+
+    #[test]
+    fn repair_garbage_is_none() {
+        assert_eq!(parse_repair_response("the quick brown fox"), None);
+        assert_eq!(parse_repair_response(""), None);
     }
 }

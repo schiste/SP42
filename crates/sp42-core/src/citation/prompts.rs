@@ -63,6 +63,17 @@ Claim: "The treaty was signed in Paris."
 Source: "It is believed the treaty was signed in Paris, though some historians dispute this."
 {"verdict": "PARTIAL", "quote": "It is believed the treaty was signed in Paris"}"#;
 
+/// The repair-turn system instruction (SP42#25 layer 3): one bounded extra turn that fixes
+/// *transcription*, never judgment — it asks only for a verbatim span (or `NO_SPAN`), never
+/// for a verdict, so the panel's judgment cannot be re-litigated by the retry.
+pub const REPAIR_SYSTEM: &str = r#"You are given a CLAIM, a SOURCE, and a previous supporting quote that did NOT match the source text verbatim.
+
+Your only job is transcription. Find the exact SHORTEST contiguous span of the SOURCE text that backs the claim, and copy it character for character (VERBATIM). Do not paraphrase, reword, correct spelling, abbreviate, or merge separate passages. Copy from the SOURCE text only — never from the claim, and never from memory.
+
+If no such span exists in the source, respond with NO_SPAN.
+
+Respond with a single JSON object: {"quote": "<verbatim span copied from the source>"} or {"quote": "NO_SPAN"}."#;
+
 /// Build the two-message verification prompt: `[system, user]`.
 ///
 /// `metadata`, when present, is rendered as a context-only block before the source —
@@ -79,6 +90,22 @@ pub fn build_verify_prompt(
         "CLAIM:\n{claim}\n\n{section}SOURCE ({source_url}):\n\"\"\"\n{source_text}\n\"\"\"\n\nRespond with the JSON object described in the instructions."
     );
     [ChatMessage::system(SYSTEM), ChatMessage::user(user)]
+}
+
+/// Build the two-message repair-turn prompt (SP42#25 layer 3): the claim, the quote that
+/// failed to locate, and the source again. The response is re-located deterministically by
+/// the caller; an unrepairable quote stays unlocated.
+#[must_use]
+pub fn build_repair_prompt(
+    claim: &str,
+    source_text: &str,
+    source_url: &str,
+    failed_quote: &str,
+) -> [ChatMessage; 2] {
+    let user = format!(
+        "CLAIM:\n{claim}\n\nPREVIOUS QUOTE (did not match the source verbatim):\n\"\"\"\n{failed_quote}\n\"\"\"\n\nSOURCE ({source_url}):\n\"\"\"\n{source_text}\n\"\"\"\n\nRespond with the JSON object described in the instructions."
+    );
+    [ChatMessage::system(REPAIR_SYSTEM), ChatMessage::user(user)]
 }
 
 /// Render the bibliographic metadata as a context-only section (empty when no field is
@@ -108,7 +135,7 @@ fn metadata_section(meta: &CitoidMetadata) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{SYSTEM, build_verify_prompt};
+    use super::{REPAIR_SYSTEM, SYSTEM, build_repair_prompt, build_verify_prompt};
     use crate::citation::citoid::CitoidMetadata;
     use sp42_types::ChatRole;
 
@@ -189,5 +216,48 @@ mod tests {
     fn no_metadata_means_no_metadata_section() {
         let prompt = build_verify_prompt("c", "body", "https://example.com", None);
         assert!(!prompt[1].content.contains("METADATA"));
+    }
+
+    // --- repair turn (SP42#25 layer 3) ---
+
+    #[test]
+    fn repair_prompt_returns_system_then_user() {
+        let prompt = build_repair_prompt(
+            "the claim",
+            "the source body",
+            "https://example.com",
+            "the failed quote",
+        );
+        assert_eq!(prompt[0].role, ChatRole::System);
+        assert_eq!(prompt[1].role, ChatRole::User);
+        assert_eq!(prompt[0].content, REPAIR_SYSTEM);
+    }
+
+    #[test]
+    fn repair_user_message_carries_claim_source_url_and_failed_quote() {
+        let prompt = build_repair_prompt(
+            "The bridge opened in 1998",
+            "The bridge opened to traffic in 1998.",
+            "https://example.com/bridge",
+            "bridge was opened in 1998",
+        );
+        let user = &prompt[1].content;
+        assert!(user.contains("The bridge opened in 1998"));
+        assert!(user.contains("The bridge opened to traffic in 1998."));
+        assert!(user.contains("https://example.com/bridge"));
+        assert!(user.contains("bridge was opened in 1998"));
+    }
+
+    #[test]
+    fn repair_system_states_the_transcription_only_discipline() {
+        // The repair turn fixes TRANSCRIPTION, never judgment: it must demand a verbatim
+        // shortest span, offer NO_SPAN as the out, and never ask for a verdict.
+        assert!(REPAIR_SYSTEM.contains("NO_SPAN"));
+        assert!(
+            REPAIR_SYSTEM.contains("VERBATIM") || REPAIR_SYSTEM.contains("character for character")
+        );
+        assert!(REPAIR_SYSTEM.to_lowercase().contains("shortest"));
+        assert!(!REPAIR_SYSTEM.to_lowercase().contains("verdict"));
+        assert!(REPAIR_SYSTEM.contains("\"quote\":"));
     }
 }

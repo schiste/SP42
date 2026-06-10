@@ -230,6 +230,27 @@ tiebreaker can never resolve *up* to `Supported` (ADR-0006). Voting decides *whi
 verdict wins; this located-quote gate decides whether a `Supported`/`Partial` may
 be surfaced *at all*.
 
+**What this gate establishes — and what it cannot.** The re-check verifies that
+the cited passage **exists in the bytes SP42 fetched this session**. It does not —
+and cannot — verify that the passage *caused* the model's verdict. A model with
+the source in its context can judge from priors and copy a plausible span post
+hoc, and observed behavior confirms the quote field is a *reconstruction*, not a
+trace: models emit quotes with markdown emphasis added, encoding damage silently
+repaired, and casing normalized. This gate is therefore an **anti-fabrication
+check on the model's evidence assertion** ("this text exists and I claim it backs
+the claim"), not a faithfulness check on the model's reasoning. What any grounding
+mechanism actually grades is **how strongly the located artifact ties back to an
+evidence assertion the model made**: an exactly-located quote (the model asserted
+that very span) is the strongest tie; recovery mechanisms that locate something
+*near* or *implied by* the model's output carry a weaker tie and must be surfaced
+as such, never silently promoted to the exact tier; and a mechanism in which code
+expands or selects display text beyond what the model asserted (e.g.
+anchor-pointing) grounds only the asserted part — the expansion is the code's
+choice, and presenting it with the authority of a model-asserted, code-verified
+quote would manufacture certainty the system does not have. Design rule: every
+weaker-tie mechanism carries its own distinct grounding status, and only the
+exact tier may ever satisfy an autonomous-action check.
+
 ### 6. A verdict is informational, never a Wikimedia action
 
 A verdict is read-only output. It does not write, it does not patrol, it is not a

@@ -73,6 +73,10 @@ fn test_wiki_registry() -> WikiRegistry {
     WikiRegistry::embedded_default().expect("embedded wiki registry should load")
 }
 
+fn test_wikitext_editor() -> std::sync::Arc<dyn sp42_core::WikitextEditor> {
+    std::sync::Arc::new(sp42_core::ScriptedWikitextEditor::new(Vec::new(), String::new()))
+}
+
 fn test_state() -> AppState {
     let clock: Arc<dyn Clock> = Arc::new(SystemClock);
     AppState {
@@ -94,6 +98,7 @@ fn test_state() -> AppState {
         coordination: CoordinationRegistry::new(clock),
         deployment: test_deployment(),
         wiki_registry: test_wiki_registry(),
+        wikitext_editor: test_wikitext_editor(),
         next_client_id: Arc::new(AtomicU64::new(1)),
         next_session_id: Arc::new(AtomicU64::new(1)),
         started_at: Instant::now(),
@@ -710,6 +715,7 @@ async fn healthz_reports_ready_when_local_token_is_loaded() {
         coordination: CoordinationRegistry::new(clock),
         deployment: test_deployment(),
         wiki_registry: test_wiki_registry(),
+        wikitext_editor: test_wikitext_editor(),
         next_client_id: Arc::new(AtomicU64::new(1)),
         next_session_id: Arc::new(AtomicU64::new(1)),
         started_at: Instant::now(),
@@ -1219,6 +1225,7 @@ async fn capability_route_uses_injected_targets() {
         coordination: CoordinationRegistry::new(clock),
         deployment: test_deployment(),
         wiki_registry: test_wiki_registry(),
+        wikitext_editor: test_wikitext_editor(),
         next_client_id: Arc::new(AtomicU64::new(1)),
         next_session_id: Arc::new(AtomicU64::new(1)),
         started_at: Instant::now(),
@@ -1287,6 +1294,7 @@ async fn live_operator_route_returns_canonical_operator_contract() {
         coordination: CoordinationRegistry::new(clock),
         deployment: test_deployment(),
         wiki_registry: test_wiki_registry(),
+        wikitext_editor: test_wikitext_editor(),
         next_client_id: Arc::new(AtomicU64::new(1)),
         next_session_id: Arc::new(AtomicU64::new(1)),
         started_at: Instant::now(),
@@ -1378,6 +1386,7 @@ async fn live_operator_route_surfaces_cached_backlog_state() {
         coordination: CoordinationRegistry::new(clock),
         deployment: test_deployment(),
         wiki_registry: test_wiki_registry(),
+        wikitext_editor: test_wikitext_editor(),
         next_client_id: Arc::new(AtomicU64::new(1)),
         next_session_id: Arc::new(AtomicU64::new(1)),
         started_at: Instant::now(),
@@ -1554,6 +1563,7 @@ async fn logical_storage_document_route_resolves_profile_page() {
         coordination: CoordinationRegistry::new(clock),
         deployment: test_deployment(),
         wiki_registry: test_wiki_registry(),
+        wikitext_editor: test_wikitext_editor(),
         next_client_id: Arc::new(AtomicU64::new(1)),
         next_session_id: Arc::new(AtomicU64::new(1)),
         started_at: Instant::now(),
@@ -1637,6 +1647,7 @@ async fn public_storage_document_route_returns_typed_preferences() {
         coordination: CoordinationRegistry::new(clock),
         deployment: test_deployment(),
         wiki_registry: test_wiki_registry(),
+        wikitext_editor: test_wikitext_editor(),
         next_client_id: Arc::new(AtomicU64::new(1)),
         next_session_id: Arc::new(AtomicU64::new(1)),
         started_at: Instant::now(),
@@ -1726,6 +1737,7 @@ async fn bootstrap_derives_username_and_scopes_from_validated_token() {
         coordination: CoordinationRegistry::new(clock),
         deployment: test_deployment(),
         wiki_registry: test_wiki_registry(),
+        wikitext_editor: test_wikitext_editor(),
         next_client_id: Arc::new(AtomicU64::new(1)),
         next_session_id: Arc::new(AtomicU64::new(1)),
         started_at: Instant::now(),

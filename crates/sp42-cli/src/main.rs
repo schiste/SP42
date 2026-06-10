@@ -19,7 +19,7 @@ use sp42_core::{
     ModelCompletion, ModelCompletionRequest, ModelEndpointConfig, ModelRef, QueuedEdit,
     SamplingParams, SessionActionExecutionRequest, SessionActionExecutionResponse,
     SessionActionKind, SystemClock, VerificationOutcome, VerifyOptions as CoreVerifyOptions,
-    build_dev_auth_bootstrap_request, check_fetchable_source_url, locate_quote,
+    build_dev_auth_bootstrap_request, check_fetchable_source_url, locate_quote, locate_quote_fuzzy,
     parse_dev_auth_status, verify_citation_use_site,
 };
 use sp42_devtools::{
@@ -646,14 +646,25 @@ fn normalize_base_url(raw: &str) -> String {
 }
 
 /// Run the offline locate probe: report whether `quote` locates verbatim in `source` using
-/// the real [`locate_quote`], as JSON `{"located": bool, "offset": <n>|null}`. No model, no
-/// network — lets a harness replay a frozen corpus of model quotes through the actual Rust
-/// matcher to measure locate changes exactly (SP42#25).
+/// the real [`locate_quote`], plus the guarded-fuzzy axis when exact locate misses, as JSON
+/// `{"located": bool, "offset": <n>|null, "fuzzy": bool, "fuzzy_span": <s>|null,
+/// "fuzzy_offset": <n>|null}`. No model, no network — lets a harness replay a frozen corpus
+/// of model quotes through the actual Rust matcher to measure locate changes exactly (SP42#25).
 fn run_locate_probe(quote: &str, source: &str) -> Result<String, String> {
     let offset = locate_quote(quote, source);
+    // The fuzzy axis (SP42#25 layer 5) is reported only when exact locate misses, mirroring
+    // the gate's exact-first order, so the harness measures layer 5's marginal recovery.
+    let fuzzy = if offset.is_some() {
+        None
+    } else {
+        locate_quote_fuzzy(quote, source)
+    };
     serde_json::to_string(&serde_json::json!({
         "located": offset.is_some(),
         "offset": offset,
+        "fuzzy": fuzzy.is_some(),
+        "fuzzy_span": fuzzy.as_ref().map(|hit| hit.span.as_str()),
+        "fuzzy_offset": fuzzy.as_ref().map(|hit| hit.offset),
     }))
     .map_err(|error| error.to_string())
 }
@@ -977,6 +988,27 @@ mod verify_tests {
         assert!(hit.contains("\"located\":true"));
         let miss = run_locate_probe("absent span", "a completely different text").expect("ok");
         assert!(miss.contains("\"located\":false"));
+    }
+
+    #[test]
+    fn run_locate_probe_reports_the_fuzzy_fallback() {
+        // Exact locate fails (one reworded token), the guarded fuzzy path recovers: the
+        // probe reports both axes so the offline harness can measure layer 5 (SP42#25).
+        let source = "In 1985 the Acme Corporation was established in Springfield by a group \
+                      of local investors led by John Smith.";
+        let quote = "the Acme Corporation was founded in Springfield by a group of local investors";
+        let report = run_locate_probe(quote, source).expect("ok");
+        assert!(report.contains("\"located\":false"));
+        assert!(report.contains("\"fuzzy\":true"));
+        assert!(report.contains("established in Springfield"));
+        // A fabricated quote is neither located nor fuzzy.
+        let miss = run_locate_probe(
+            "the museum acquired seventeen paintings from the private collection",
+            source,
+        )
+        .expect("ok");
+        assert!(miss.contains("\"located\":false"));
+        assert!(miss.contains("\"fuzzy\":false"));
     }
 
     fn fixture_finding() -> CitationFinding {

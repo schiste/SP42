@@ -71,9 +71,11 @@ pub use citation::citoid::{
     CitoidMetadata, build_citoid_header, build_citoid_request, parse_citoid_response,
 };
 pub use citation::concurrency::map_with_concurrency;
-pub use citation::locate_quote::locate_quote;
-pub use citation::parsing::{ParsedVerdict, canonicalize_verdict, parse_verdict_response};
-pub use citation::prompts::build_verify_prompt;
+pub use citation::locate_quote::{FuzzyLocate, locate_quote, locate_quote_fuzzy};
+pub use citation::parsing::{
+    ParsedVerdict, canonicalize_verdict, parse_repair_response, parse_verdict_response,
+};
+pub use citation::prompts::{build_repair_prompt, build_verify_prompt};
 pub use citation::source_fetch::{html_to_text, looks_like_html, recover_wayback_body};
 pub use citation::storage::{
     SnapshotEnvelope, VerdictEnvelope, build_snapshot, build_verdict_envelope, load_snapshot,

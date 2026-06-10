@@ -183,34 +183,54 @@ discarding real text.
 
 ### 5. The load-bearing anti-fabrication invariant (the firm, isolated rule)
 
-**A verdict never reports `Supported`, and never `Partial` on a quoted passage,
-unless that supporting passage is locatable VERBATIM in a source SP42 actually
-fetched this session.**
+**A `Supported`/`Partial` verdict is never CONFIRMED — and no autonomous path
+may ever act on it — unless its supporting passage is locatable VERBATIM in a
+source SP42 actually fetched this session.**
 
 This is PRD-0001 DoD item 3, the reason an LLM can be trusted in this loop at all,
 and the rule this ADR holds **set in stone** independent of the §1 value set (it
 binds to the `Judged(Supported)` / `Judged(Partial)` support levels, but its force
-does not depend on what those categories are named). The mechanism has two parts:
+does not depend on what those categories are named). The verdict itself is the
+panel's *judgment* and is surfaced honestly either way; what this rule controls is
+the orthogonal **grounding axis** — whether that judgment is machine-confirmed in
+the fetched bytes (`located`), recovered by the guarded fuzzy match
+(`located_fuzzy`), or **unverified** (`unlocated`: a human may weigh it, an
+autonomous path never may). Rewriting the verdict on a locate miss is itself a
+falsehood (it asserts "the source lacks the evidence" when the truth is "we could
+not verify the transcription") and is therefore *not* how the rule is enforced.
+The mechanism has two parts:
 
 - **A pure locatability primitive.** A pure `sp42-core` function
   `locate_quote(quote, source) -> Option<usize>` returns a byte offset into the
-  source, or `None`. It is **case-sensitive** with only *conservative*
-  normalization (Unicode NFC, whitespace collapse, curly→straight quotes) —
-  enough to absorb HTML→text extraction artifacts, **nothing semantic**. A
-  reworded or re-cased "quote" therefore does not match. An empty/whitespace
-  quote returns `None` (an empty string would otherwise "locate everywhere").
+  source, or `None`. It folds **transcription/extraction artifacts only** —
+  Unicode NFC, whitespace-run collapse, curly→straight quotes, case folding,
+  dash unification, zero-width-character stripping — **nothing semantic**; an
+  ellipsis-elided quote matches fragment-by-fragment, in document order, within
+  a bounded window. A reworded or fabricated span therefore still does not
+  match. An empty/whitespace quote returns `None` (an empty string would
+  otherwise "locate everywhere"). Two bounded recovery mechanisms sit on top,
+  neither able to weaken the guarantee: a **repair turn** (one extra model call
+  asking for the exact shortest verbatim span or `NO_SPAN` — transcription
+  only, it never re-litigates the verdict, and its span re-locates through this
+  same primitive) and a **guarded fuzzy fallback** (`locate_quote_fuzzy`:
+  anchor-token candidate windows, in-order token match at a high threshold,
+  digit-bearing tokens required exactly, short quotes excluded; it surfaces the
+  SOURCE's own span and only ever yields the distinct `located_fuzzy` status,
+  never the exact tier).
 
 - **An independent re-check, not the model's self-report.** The producing step
   (model call + verdict parse) is *untrusted*. A separate, tool-agnostic
   grounding check re-runs `locate_quote` against the **bytes SP42 actually
-  fetched** (content-addressed; see ADR-0009) before any verdict is surfaced. If
-  a `Supported` / `Partial` verdict's quote does not locate in those
-  fetched bytes — or the source was never fetched this session, or a claimed
-  offset is forged — the support claim is **suppressed pre-operator**. The
-  contract "no support without a grounded passage" holds *not by trusting the
-  model* but by re-verifying against retrieved bytes. Even a hallucinating model
-  cannot produce a surfaced `Supported`, because the fabricated quote it offers
-  does not exist in the fetched source and the re-check drops it.
+  fetched** (content-addressed; see ADR-0009) before any finding is surfaced,
+  and records the result as the finding's `grounding_status`. A support verdict
+  whose quote does not locate is surfaced marked **unverified** and is never
+  **groundable**: `is_groundable_support` — which requires the exact `located`
+  tier — is the *only* check an autonomous accept/edit path may consult. The
+  contract "no actionable support without a grounded passage" holds *not by
+  trusting the model* but by re-verifying against retrieved bytes. Even a
+  hallucinating model cannot produce a *groundable* `Supported`, because the
+  fabricated quote it offers does not exist in the fetched source and the
+  re-check refuses to confirm it.
 
 For a no-quote verdict (`NotSupported` / `SourceUnavailable`) there is
 no passage to locate, so it grounds on **provenance**: "the cited source was
@@ -224,11 +244,12 @@ bibliographic metadata *into* the grounded/hashed bytes, which let a model
 to keep metadata strictly outside the grounding boundary — see Alternatives.)
 
 This gate **composes with the panel voting of ADR-0006 and is never weakened by
-it**: a *voted* `Supported`/`Partial` still requires the winning verdict's one
-verbatim located quote to pass this independent re-check, and the skeptical
-tiebreaker can never resolve *up* to `Supported` (ADR-0006). Voting decides *which*
-verdict wins; this located-quote gate decides whether a `Supported`/`Partial` may
-be surfaced *at all*.
+it**: a *voted* `Supported`/`Partial` still requires a winning-class verbatim
+located quote to pass this independent re-check before it is CONFIRMED, and the
+skeptical tiebreaker can never resolve *up* to `Supported` (ADR-0006). Voting
+decides *which* verdict wins; this located-quote gate decides whether a
+`Supported`/`Partial` is ever **groundable** — confirmable evidence an
+autonomous path could act on — at all.
 
 **What this gate establishes — and what it cannot.** The re-check verifies that
 the cited passage **exists in the bytes SP42 fetched this session**. It does not —
@@ -340,13 +361,19 @@ mode, where the operator provides both inputs directly.
   bytes* at an independent re-check (Decision 5). This is the single most
   load-bearing rule in the ADR.
 
-- **(c) Fuzzy / semantic quote matching** (case-insensitive, paraphrase-tolerant
-  locator). **Rejected** as the grounding check. A loose match lets a reworded or
-  re-cased "quote" pass and defeats the gate. Conservative, case-sensitive
-  normalization absorbs only mechanical extraction artifacts (Unicode form,
-  whitespace, curly quotes) and nothing semantic. (Paraphrase tolerance is a
-  *model* concern at the `Supported`/`Partial` boundary — the source
-  may paraphrase the claim — but the *grounding passage itself* must be verbatim.)
+- **(c) Fuzzy / semantic quote matching as the confirmation tier.** **Rejected**
+  as the check that CONFIRMS evidence: a loose match would let a reworded
+  "quote" pass and defeat the gate, so the `located` tier — the only tier
+  `is_groundable_support` accepts — stays verbatim. Two refinements, measured
+  against a labeled benchmark (SP42#25): **case folding moved into the verbatim
+  normalization** (re-casing proved to be a transcription artifact, not a
+  fabrication signal — dashes, zero-width characters, and ellipsis-elided
+  fragments likewise), and a **bounded fuzzy fallback was admitted as a
+  separate, weaker tier** (`located_fuzzy`: heavily guarded, surfaces the
+  source's own span, weighable by a human, can never ground). Paraphrase
+  tolerance remains a *model* concern at the `Supported`/`Partial` boundary —
+  the source may paraphrase the claim — but a CONFIRMED grounding passage
+  itself must be verbatim.
 
 - **(d) Let the model decide availability for the mechanically-detectable cases.**
   **Rejected.** Folding archive chrome, anti-bot pages, and CSS/JSON-LD leaks into
@@ -461,11 +488,15 @@ Cross-cutting:
   abstention*, never a model-emitted number — and the standalone first cut
   (PRD-0001) keeps the verdict out of scoring entirely.
 
-- **The grounding discipline biases toward suppression.** Every failure mode —
-  empty quote, missing source, offset mismatch, unfetched source — fails *closed*
-  (the support claim is dropped). The deliberate consequence: SP42 will sometimes
-  withhold a real `Supported` rather than ever surface a fabricated one. For a
-  trust-critical capability that is the correct bias.
+- **The grounding discipline fails closed on the action axis.** Every failure
+  mode — empty quote, missing source, offset mismatch, unfetched source — fails
+  *closed* where it matters: the support claim is surfaced as **unverified** and
+  is never groundable. The deliberate consequence: SP42 will sometimes decline to
+  CONFIRM a real `Supported` rather than ever confirm a fabricated one. For a
+  trust-critical capability that is the correct bias — and the measured cost of
+  over-firing (SP42#25: ~24% of support votes failed to locate over pure
+  transcription noise before the artifact-folding/repair/fuzzy layers) is managed
+  by widening what counts as *transcription*, never what counts as *confirmed*.
 
 - **The body-usability pattern set is maintenance.** A curated, ReDoS-safe set of
   unusable-body detectors needs upkeep as the web changes; the cost is accepted in

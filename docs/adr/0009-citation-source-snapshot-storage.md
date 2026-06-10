@@ -97,7 +97,10 @@ first cut). Breaking changes increment the version with one release cycle of bac
 ```rust
 // SnapshotEnvelope { version, source_url, fetched_at_ms, content_hash, body_text }
 // VerdictEnvelope  { version, claim, snapshot_hash, verdict, located_passage: Option<...>,
-//                    panel_votes: Vec<{ invocation: ModelInvocation, verdict, located_passage: Option<...> }>,
+//                    panel_votes: Vec<{ invocation: ModelInvocation, verdict, located_passage: Option<...>,
+//                                       claimed_quote: Option<String>,        // the model's RAW quote, kept even unlocated
+//                                       repaired_quote: Option<String>,       // the repair turn's span, if one ran (ADR-0007 §5)
+//                                       repair_invocation: Option<ModelInvocation> }>, // the repair call's fingerprint
 //                    agreement: PanelAgreement { panel_size, winner_votes }, panel_ref: Vec<ModelRef> }
 // ModelInvocation { model: ModelRef, quant: Option<..>, params, prompt_hash }  // per-call fingerprint (ADR-0006 D8)
 // ModelRef { provider, model, version }  // version = the pinned model id used; never a key/token
@@ -105,8 +108,10 @@ first cut). Breaking changes increment the version with one release cycle of bac
 
 The verdict record persists the **whole panel**, not just the surfaced answer: the N per-model
 votes (each tagged with the **`ModelInvocation` fingerprint** — `model` / `quant` / `params` /
-`prompt_hash` (ADR-0006 Decision 8) — of the call that cast it, its returned verdict, and its
-located passage) **and** the measured
+`prompt_hash` (ADR-0006 Decision 8) — of the call that cast it, its returned verdict, its raw
+**claimed quote** (kept even when it fails to locate — the offline locate-replay record), its
+located passage, and — when the bounded repair turn ran (ADR-0007 §5) — the repaired span and
+the repair call's own fingerprint, so every model call stays in the audit record) **and** the measured
 `PanelAgreement { panel_size, winner_votes }`, alongside the `verdict` that the vote elected. **Persisting** these is storage's job; what the vote, the tiebreaker, and the agreement
 *mean* is owned by **ADR-0006**. The panel is captured because the voted verdict is only meaningful
 if the inputs that produced it and the observed agreement among them are recoverable from the

@@ -105,6 +105,7 @@ this contract a thin claim+source request.
 pub struct CitationFinding {
     pub kind: CitationFindingKind,      // single value: citation_verdict
     pub verdict: CitationVerdict,       // the VOTED categorical verdict (ADR-0007)
+    pub grounding_status: GroundingStatus, // the orthogonal grounding axis (ADR-0007 §5)
     pub agreement: PanelAgreement,      // measured agreement among the panel's votes
     pub passage: Option<LocatedPassage>,// the winning verdict's located passage, or None
     pub provenance: SourceProvenance,   // the really-fetched source
@@ -121,6 +122,16 @@ The response is a **`CitationFinding`** carrying:
   anywhere on the contract or its sub-types (see Alternative (a)). The value
   carried is the panel's **voted** result; how that vote is computed (the pure
   tally and the skeptical tiebreaker) is owned by **ADR-0006**.
+- **The grounding axis, orthogonal to the verdict.** `grounding_status:
+  GroundingStatus` ∈ {`located`, `located_fuzzy`, `unlocated`,
+  `not_applicable`} — whether the support verdict's passage was machine-confirmed
+  in the fetched bytes (ADR-0007 §5). The verdict is the panel's *judgment* and
+  is never rewritten by the gate; this field records whether that judgment is
+  CONFIRMED (`located`), recovered by the guarded fuzzy match (`located_fuzzy`),
+  or **unverified** (`unlocated` — weighable by a human, never actionable). The
+  predicate `is_groundable_support` (verdict is support-class AND status is
+  exactly `located`) is the only check an autonomous accept/edit path may
+  consult.
 - **The measured agreement among the panel's votes.** `agreement:
   PanelAgreement` where `PanelAgreement { panel_size: u8, winner_votes: u8 }` —
   the **measured** vote counts (the fraction `winner_votes / panel_size` is

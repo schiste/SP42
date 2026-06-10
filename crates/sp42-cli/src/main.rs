@@ -34,6 +34,24 @@ enum OutputFormat {
     Markdown,
 }
 
+/// Which bare-URL flag-mode was selected (PRD-0008 CLI surface).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum BareUrlCliMode {
+    Preview,
+    Execute { ordinal: usize },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct BareUrlCliOptions {
+    mode: BareUrlCliMode,
+    wiki_id: String,
+    title: String,
+    rev_id: u64,
+}
+
+/// The MVP's only enabled wiki; overridable with --wiki.
+const BARE_URL_DEFAULT_WIKI: &str = "testwiki";
+
 #[derive(Debug, Clone, PartialEq)]
 struct CliOptions {
     format: OutputFormat,
@@ -44,6 +62,7 @@ struct CliOptions {
     action_note: Option<String>,
     action_kind: SessionActionKind,
     bridge_base_url: String,
+    bare_url: Option<BareUrlCliOptions>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -182,6 +201,12 @@ fn parse_options(args: impl IntoIterator<Item = String>) -> Result<CliOptions, S
     let mut action_kind = SessionActionKind::Patrol;
     let mut bridge_base_url = LOCAL_SERVER_BASE_URL.to_string();
     let mut preview_modes = BTreeSet::new();
+    let mut bare_url_preview = false;
+    let mut bare_url_execute = false;
+    let mut bare_url_title = None;
+    let mut bare_url_rev = None;
+    let mut bare_url_ordinal = None;
+    let mut bare_url_wiki = BARE_URL_DEFAULT_WIKI.to_string();
 
     while let Some(arg) = args.next() {
         let mut state = CliParseState {
@@ -196,9 +221,24 @@ fn parse_options(args: impl IntoIterator<Item = String>) -> Result<CliOptions, S
             action_kind: &mut action_kind,
             bridge_base_url: &mut bridge_base_url,
             preview_modes: &mut preview_modes,
+            bare_url_preview: &mut bare_url_preview,
+            bare_url_execute: &mut bare_url_execute,
+            bare_url_title: &mut bare_url_title,
+            bare_url_rev: &mut bare_url_rev,
+            bare_url_ordinal: &mut bare_url_ordinal,
+            bare_url_wiki: &mut bare_url_wiki,
         };
         apply_cli_argument(&arg, &mut args, &mut state)?;
     }
+
+    let bare_url = build_bare_url_options(
+        bare_url_preview,
+        bare_url_execute,
+        bare_url_wiki,
+        bare_url_title,
+        bare_url_rev,
+        bare_url_ordinal,
+    )?;
 
     Ok(CliOptions {
         format,
@@ -213,6 +253,7 @@ fn parse_options(args: impl IntoIterator<Item = String>) -> Result<CliOptions, S
         action_note,
         action_kind,
         bridge_base_url,
+        bare_url,
     })
 }
 
@@ -228,6 +269,12 @@ struct CliParseState<'a> {
     action_kind: &'a mut SessionActionKind,
     bridge_base_url: &'a mut String,
     preview_modes: &'a mut BTreeSet<PreviewMode>,
+    bare_url_preview: &'a mut bool,
+    bare_url_execute: &'a mut bool,
+    bare_url_title: &'a mut Option<String>,
+    bare_url_rev: &'a mut Option<u64>,
+    bare_url_ordinal: &'a mut Option<usize>,
+    bare_url_wiki: &'a mut String,
 }
 
 fn apply_cli_argument<I>(
@@ -275,10 +322,63 @@ where
         "--bridge-base-url" => {
             *state.bridge_base_url = next_option_value(args, "--bridge-base-url")?;
         }
+        "--bare-url-preview" => {
+            *state.bare_url_preview = true;
+        }
+        "--bare-url-execute" => {
+            *state.bare_url_execute = true;
+        }
+        "--title" => {
+            *state.bare_url_title = Some(next_option_value(args, "--title")?);
+        }
+        "--rev" => {
+            let value = next_option_value(args, "--rev")?;
+            *state.bare_url_rev =
+                Some(value.parse().map_err(|_| format!("--rev expects a revision id, got: {value}"))?);
+        }
+        "--ordinal" => {
+            let value = next_option_value(args, "--ordinal")?;
+            *state.bare_url_ordinal = Some(
+                value
+                    .parse()
+                    .map_err(|_| format!("--ordinal expects a zero-based index, got: {value}"))?,
+            );
+        }
+        "--wiki" => {
+            *state.bare_url_wiki = next_option_value(args, "--wiki")?;
+        }
         _ => return Err(format!("unsupported argument: {arg}")),
     }
 
     Ok(())
+}
+
+/// Assemble the bare-URL flag-mode options. Both modes need --title and
+/// --rev; --bare-url-execute additionally needs --ordinal.
+fn build_bare_url_options(
+    preview: bool,
+    execute: bool,
+    wiki_id: String,
+    title: Option<String>,
+    rev_id: Option<u64>,
+    ordinal: Option<usize>,
+) -> Result<Option<BareUrlCliOptions>, String> {
+    if preview && execute {
+        return Err("--bare-url-preview and --bare-url-execute are mutually exclusive".to_string());
+    }
+    if !preview && !execute {
+        return Ok(None);
+    }
+    let title = title.ok_or_else(|| "bare-url modes require --title".to_string())?;
+    let rev_id = rev_id.ok_or_else(|| "bare-url modes require --rev".to_string())?;
+    let mode = if execute {
+        let ordinal =
+            ordinal.ok_or_else(|| "--bare-url-execute requires --ordinal".to_string())?;
+        BareUrlCliMode::Execute { ordinal }
+    } else {
+        BareUrlCliMode::Preview
+    };
+    Ok(Some(BareUrlCliOptions { mode, wiki_id, title, rev_id }))
 }
 
 fn build_context_preview(
@@ -1867,7 +1967,7 @@ mod tests {
     use serde_json::Value;
 
     use super::{
-        CliOptions, ContextPreviewOptions, LOCAL_SERVER_BASE_URL, OutputFormat, PreviewMode,
+        BareUrlCliMode, CliOptions, ContextPreviewOptions, LOCAL_SERVER_BASE_URL, OutputFormat, PreviewMode,
         ShellMode, WorkbenchOptions, parse_options, render_action_preview, render_backlog_preview,
         render_context_preview, render_coordination_preview, render_parity_report, render_queue,
         render_scenario_report, render_session_digest, render_stream_preview, render_workbench,
@@ -2056,6 +2156,7 @@ mod tests {
                 action_note: None,
                 action_kind: sp42_core::SessionActionKind::Patrol,
                 bridge_base_url: LOCAL_SERVER_BASE_URL.to_string(),
+                bare_url: None,
             },
             OutputFormat::Text,
         )
@@ -2086,6 +2187,7 @@ mod tests {
                 action_note: None,
                 action_kind: sp42_core::SessionActionKind::Patrol,
                 bridge_base_url: LOCAL_SERVER_BASE_URL.to_string(),
+                bare_url: None,
             },
             OutputFormat::Markdown,
         )
@@ -2114,6 +2216,7 @@ mod tests {
                 action_note: None,
                 action_kind: sp42_core::SessionActionKind::Patrol,
                 bridge_base_url: LOCAL_SERVER_BASE_URL.to_string(),
+                bare_url: None,
             },
             OutputFormat::Json,
         )
@@ -2149,6 +2252,7 @@ mod tests {
             action_note: None,
             action_kind: sp42_core::SessionActionKind::Patrol,
             bridge_base_url: LOCAL_SERVER_BASE_URL.to_string(),
+            bare_url: None,
         };
 
         let text = render_session_digest(&config, &ranked, &options, OutputFormat::Text)
@@ -2187,6 +2291,7 @@ mod tests {
             action_note: Some("inspect".to_string()),
             action_kind: sp42_core::SessionActionKind::Patrol,
             bridge_base_url: "http://127.0.0.1:8788".to_string(),
+            bare_url: None,
         };
 
         let text = render_action_preview(&config, &ranked, &options, OutputFormat::Text)
@@ -2543,5 +2648,55 @@ mod tests {
 
         assert!(markdown.contains("## Localhost operator report"));
         assert!(markdown.contains("- operator report ready_for_local_testing=true"));
+    }
+
+    fn parse(arguments: &[&str]) -> Result<CliOptions, String> {
+        parse_options(arguments.iter().map(ToString::to_string))
+    }
+
+    #[test]
+    fn parses_bare_url_preview_flags() {
+        let options = parse(&["--bare-url-preview", "--title", "Sandbox", "--rev", "123"])
+            .expect("preview flags should parse");
+        let bare_url = options.bare_url.expect("bare-url mode should be selected");
+        assert_eq!(bare_url.mode, BareUrlCliMode::Preview);
+        assert_eq!(bare_url.wiki_id, "testwiki");
+        assert_eq!(bare_url.title, "Sandbox");
+        assert_eq!(bare_url.rev_id, 123);
+    }
+
+    #[test]
+    fn parses_bare_url_execute_flags_with_wiki_override() {
+        let options = parse(&[
+            "--bare-url-execute",
+            "--title",
+            "Sandbox",
+            "--rev",
+            "123",
+            "--ordinal",
+            "2",
+            "--wiki",
+            "frwiki",
+        ])
+        .expect("execute flags should parse");
+        let bare_url = options.bare_url.expect("bare-url mode should be selected");
+        assert_eq!(bare_url.mode, BareUrlCliMode::Execute { ordinal: 2 });
+        assert_eq!(bare_url.wiki_id, "frwiki");
+    }
+
+    #[test]
+    fn bare_url_modes_are_mutually_exclusive_and_validated() {
+        assert!(
+            parse(&["--bare-url-preview", "--bare-url-execute", "--title", "T", "--rev", "1"])
+                .is_err()
+        );
+        assert!(parse(&["--bare-url-preview", "--rev", "1"]).is_err(), "missing --title");
+        assert!(parse(&["--bare-url-preview", "--title", "T"]).is_err(), "missing --rev");
+        assert!(
+            parse(&["--bare-url-execute", "--title", "T", "--rev", "1"]).is_err(),
+            "execute requires --ordinal"
+        );
+        assert!(parse(&["--bare-url-preview", "--title", "T", "--rev", "abc"]).is_err());
+        assert!(parse(&[]).expect("no flags is fine").bare_url.is_none());
     }
 }

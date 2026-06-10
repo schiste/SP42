@@ -400,6 +400,9 @@ pub struct WikiConfig {
     pub oauth_token_url: Url,
     pub liftwing_url: Option<Url>,
     pub coordination_url: Option<Url>,
+    /// Parsoid core REST endpoint (`…/w/rest.php`) used for node-anchored
+    /// content edits (ADR-0003). `None` disables the node-anchored path.
+    pub parsoid_url: Option<Url>,
     #[serde(default)]
     pub namespace_allowlist: Vec<i32>,
     #[serde(default = "default_scoring_policy_ref")]

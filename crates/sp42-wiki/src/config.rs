@@ -18,6 +18,7 @@ struct RawWikiConfig {
     oauth_token_url: Url,
     liftwing_url: Option<Url>,
     coordination_url: Option<Url>,
+    parsoid_url: Option<Url>,
     #[serde(default)]
     namespace_allowlist: Vec<i32>,
     #[serde(default = "default_scoring_policy_ref")]
@@ -59,6 +60,7 @@ pub fn parse_wiki_config(source: &str) -> Result<WikiConfig, ConfigError> {
         oauth_token_url: raw.oauth_token_url,
         liftwing_url: raw.liftwing_url,
         coordination_url: raw.coordination_url,
+        parsoid_url: raw.parsoid_url,
         namespace_allowlist: raw.namespace_allowlist,
         scoring_policy_ref: raw.scoring_policy_ref,
         scoring: compiled_policy.scoring_config,
@@ -95,6 +97,11 @@ fn validate_config(config: WikiConfig) -> Result<WikiConfig, ConfigError> {
         "coordination_url",
         config.coordination_url.as_ref(),
         &["http", "https", "ws", "wss"],
+    )?;
+    ensure_optional_url_scheme(
+        "parsoid_url",
+        config.parsoid_url.as_ref(),
+        &["http", "https"],
     )?;
 
     if !config.api_url.path().ends_with("/api.php") {
@@ -169,6 +176,69 @@ fn ensure_optional_url_scheme(
 mod tests {
     use super::parse_wiki_config;
     use crate::errors::ConfigError;
+    use url::Url;
+
+    #[test]
+    fn parses_optional_parsoid_url() {
+        let yaml = r"
+wiki_id: frwiki
+display_name: French Wikipedia
+api_url: https://fr.wikipedia.org/w/api.php
+eventstreams_url: https://stream.wikimedia.org/v2/stream/recentchange
+oauth_authorize_url: https://meta.wikimedia.org/w/rest.php/oauth2/authorize
+oauth_token_url: https://meta.wikimedia.org/w/rest.php/oauth2/access_token
+liftwing_url:
+coordination_url:
+parsoid_url: https://fr.wikipedia.org/w/rest.php
+namespace_allowlist: [0]
+scoring_policy_ref: active/frwiki-vandalism
+";
+        let config = parse_wiki_config(yaml).expect("config with parsoid_url should parse");
+        assert_eq!(
+            config.parsoid_url.as_ref().map(Url::as_str),
+            Some("https://fr.wikipedia.org/w/rest.php")
+        );
+    }
+
+    #[test]
+    fn parsoid_url_defaults_to_none_when_absent() {
+        let yaml = r"
+wiki_id: frwiki
+display_name: French Wikipedia
+api_url: https://fr.wikipedia.org/w/api.php
+eventstreams_url: https://stream.wikimedia.org/v2/stream/recentchange
+oauth_authorize_url: https://meta.wikimedia.org/w/rest.php/oauth2/authorize
+oauth_token_url: https://meta.wikimedia.org/w/rest.php/oauth2/access_token
+liftwing_url:
+coordination_url:
+namespace_allowlist: [0]
+scoring_policy_ref: active/frwiki-vandalism
+";
+        let config = parse_wiki_config(yaml).expect("config without parsoid_url should parse");
+        assert_eq!(config.parsoid_url, None);
+    }
+
+    #[test]
+    fn rejects_parsoid_url_with_unsupported_scheme() {
+        let yaml = r"
+wiki_id: frwiki
+display_name: French Wikipedia
+api_url: https://fr.wikipedia.org/w/api.php
+eventstreams_url: https://stream.wikimedia.org/v2/stream/recentchange
+oauth_authorize_url: https://meta.wikimedia.org/w/rest.php/oauth2/authorize
+oauth_token_url: https://meta.wikimedia.org/w/rest.php/oauth2/access_token
+liftwing_url:
+coordination_url:
+parsoid_url: ftp://fr.wikipedia.org/w/rest.php
+namespace_allowlist: [0]
+scoring_policy_ref: active/frwiki-vandalism
+";
+        let error = parse_wiki_config(yaml).expect_err("ftp parsoid_url should be rejected");
+        assert!(matches!(
+            error,
+            ConfigError::InvalidField { field: "parsoid_url", .. }
+        ));
+    }
 
     #[test]
     fn parses_frwiki_fixture() {

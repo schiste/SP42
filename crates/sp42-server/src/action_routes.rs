@@ -12,7 +12,7 @@ use sp42_core::{
     PatrolRequest, RollbackRequest, SessionActionExecutionRequest, SessionActionExecutionResponse,
     SessionActionKind, TokenKind, UndoRequest, WikiPageSaveRequest, execute_fetch_token,
     execute_patrol, execute_rollback, execute_undo, execute_wiki_page_save,
-    parse_action_response_summary,
+    parse_action_response_summary, replace_exactly_once,
 };
 use sp42_types::HttpResponse;
 
@@ -385,15 +385,7 @@ async fn execute_inline_edit_action(
         });
     }
     let page_text = crate::fetch_page_wikitext(client, config, &title).await?;
-    let updated_text = page_text.replacen(&original, &replacement, 1);
-    if updated_text == page_text {
-        return Err(ActionError::Execution {
-            message: "original text not found in page content".to_string(),
-            code: Some("text-not-found".to_string()),
-            http_status: None,
-            retryable: false,
-        });
-    }
+    let updated_text = replace_exactly_once(&page_text, &original, &replacement)?;
     let summary = payload
         .summary
         .clone()
@@ -430,16 +422,7 @@ fn apply_citation_template(
         selected_text.to_string()
     };
     let tagged = format!("{{{{{template}|{text_param}|date={date}}}}}");
-    let updated_text = page_text.replacen(selected_text, &tagged, 1);
-    if updated_text == page_text {
-        return Err(ActionError::Execution {
-            message: "selected text not found in page content".to_string(),
-            code: Some("text-not-found".to_string()),
-            http_status: None,
-            retryable: false,
-        });
-    }
-    Ok(updated_text)
+    replace_exactly_once(page_text, selected_text, &tagged)
 }
 
 async fn patrol_original_edit_if_possible(
@@ -892,8 +875,8 @@ fn action_error_message(body: &Json<serde_json::Value>) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::action_feedback_for_entry;
-    use sp42_core::{ActionExecutionLogEntry, SessionActionKind};
+    use super::{action_feedback_for_entry, apply_citation_template};
+    use sp42_core::{ActionError, ActionExecutionLogEntry, SessionActionKind};
 
     #[test]
     fn action_feedback_includes_rationale_summary() {
@@ -918,5 +901,46 @@ mod tests {
         let feedback = action_feedback_for_entry(&entry);
 
         assert!(feedback.contains("SP42 rationale: obvious-vandalism"));
+    }
+
+    #[test]
+    fn apply_citation_template_tags_unique_selected_text() {
+        let updated = apply_citation_template(
+            "Une phrase sans source.",
+            "phrase sans source",
+            "Référence nécessaire",
+            "juin 2026",
+        )
+        .expect("unique selected text should tag");
+        assert_eq!(
+            updated,
+            "Une {{Référence nécessaire|phrase sans source|date=juin 2026}}."
+        );
+    }
+
+    #[test]
+    fn apply_citation_template_refuses_ambiguous_selected_text() {
+        let error = apply_citation_template(
+            "mot répété, mot répété.",
+            "mot répété",
+            "Référence nécessaire",
+            "juin 2026",
+        )
+        .expect_err("ambiguous selected text should refuse");
+        let ActionError::Execution { code, .. } = error;
+        assert_eq!(code.as_deref(), Some("text-ambiguous"));
+    }
+
+    #[test]
+    fn apply_citation_template_refuses_missing_selected_text() {
+        let error = apply_citation_template(
+            "Une phrase sans source.",
+            "texte absent",
+            "Référence nécessaire",
+            "juin 2026",
+        )
+        .expect_err("missing selected text should refuse");
+        let ActionError::Execution { code, .. } = error;
+        assert_eq!(code.as_deref(), Some("text-not-found"));
     }
 }

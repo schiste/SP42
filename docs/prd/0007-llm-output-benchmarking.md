@@ -3,7 +3,7 @@
 **Author:** Luis Villa (drafted with Claude)
 **Date:** 2026-06-09
 **State:** Draft
-**Discussion:** https://github.com/schiste/SP42/pull/36
+**Discussion:** <PR link>
 **Spawned ADRs:** none yet
 
 ## Problem

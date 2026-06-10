@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
 use crate::citation::citoid::CitoidMetadata;
-use crate::wikitext_editor::{WikitextNodeDescriptor, WikitextNodeKind};
+use crate::wikitext_editor::{WikitextNodeDescriptor, WikitextNodeKind, WikitextNodeLocator};
 
 /// One bare-URL reference found among a revision's `Reference` nodes.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -197,6 +197,120 @@ fn is_own_language(language: &str) -> bool {
 /// `{{!}}` and newlines collapse to spaces.
 fn sanitize_template_value(value: &str) -> String {
     value.replace('|', "{{!}}").replace(['\n', '\r'], " ")
+}
+
+/// One replayable bare-URL repair proposal (wire type, PRD-0008).
+///
+/// The locator (`kind`/`ordinal`/`expected_text`) plus the replacement wikitext is
+/// a complete, drift-guarded edit payload: apply replays it verbatim.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BareUrlProposal {
+    /// Drift-guarded address of the reference (`kind` is always `reference`).
+    pub locator: WikitextNodeLocator,
+    /// The bare URL being repaired.
+    pub url: String,
+    /// The reference's current anchor text — the operator's "before" view.
+    pub current_anchor: String,
+    /// Proposed replacement contents for the `<ref>` element.
+    pub replacement_wikitext: String,
+}
+
+/// Request body for `POST /dev/citation/bare-url-proposals`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BareUrlProposalsRequest {
+    /// Wiki the revision belongs to (must be enabled via config).
+    pub wiki_id: String,
+    /// Page title.
+    pub title: String,
+    /// Revision the proposals are generated against (`baserevid` at apply).
+    pub rev_id: u64,
+}
+
+/// One declined reference in the proposals response.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BareUrlDeclined {
+    /// Zero-based document-order position among `Reference` nodes.
+    pub ordinal: usize,
+    /// The reference's bare URL.
+    pub url: String,
+    /// Why no proposal was produced.
+    pub reason: BareUrlDeclineReason,
+}
+
+/// Response body for `POST /dev/citation/bare-url-proposals`.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BareUrlProposalsResponse {
+    /// Replayable proposals, in document order.
+    pub proposals: Vec<BareUrlProposal>,
+    /// Bare references that declined, with reasons.
+    #[serde(default)]
+    pub declined: Vec<BareUrlDeclined>,
+}
+
+/// Request body for `POST /dev/citation/bare-url-apply`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BareUrlApplyRequest {
+    /// Wiki the revision belongs to (must be enabled via config).
+    pub wiki_id: String,
+    /// Page title.
+    pub title: String,
+    /// Revision the proposal was generated against (sent as `baserevid`).
+    pub rev_id: u64,
+    /// The proposal's locator, replayed verbatim.
+    pub locator: WikitextNodeLocator,
+    /// The proposal's replacement wikitext, replayed verbatim.
+    pub replacement_wikitext: String,
+    /// Optional operator note; wins over the default edit summary.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub summary: Option<String>,
+}
+
+/// Response body for `POST /dev/citation/bare-url-apply` — the
+/// execute-action outcome shape, minus the session-action `kind`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BareUrlApplyResponse {
+    /// Wiki the edit was applied to.
+    pub wiki_id: String,
+    /// Revision the apply was guarded against.
+    pub rev_id: u64,
+    /// Whether the wiki accepted the edit (false on no-change).
+    pub accepted: bool,
+    /// Acting operator username.
+    pub actor: Option<String>,
+    /// Upstream `MediaWiki` HTTP status.
+    pub http_status: Option<u16>,
+    /// Upstream `MediaWiki` API error code, when present.
+    pub api_code: Option<String>,
+    /// Whether a failed apply is retryable.
+    #[serde(default)]
+    pub retryable: bool,
+    /// Upstream warnings (including the no-change advisory).
+    #[serde(default)]
+    pub warnings: Vec<String>,
+    /// Upstream API result token, when present.
+    pub result: Option<String>,
+    /// Human-readable outcome summary.
+    pub message: Option<String>,
+}
+
+/// Civil ISO `YYYY-MM-DD` (UTC) for an epoch timestamp in milliseconds.
+///
+/// Days-from-epoch → civil conversion (Howard Hinnant's algorithm), pure so
+/// the shell can pass `clock.now_ms()` and the core stays clock-free
+/// (Constitution Art. 1.4).
+#[must_use]
+pub fn iso_date_from_epoch_ms(epoch_ms: i64) -> String {
+    let days = epoch_ms.div_euclid(86_400_000);
+    let z = days + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z.rem_euclid(146_097);
+    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146_096) / 365;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let day = doy - (153 * mp + 2) / 5 + 1;
+    let month = if mp < 10 { mp + 3 } else { mp - 9 };
+    let year = yoe + era * 400 + i64::from(month <= 2);
+    format!("{year:04}-{month:02}-{day:02}")
 }
 
 #[cfg(test)]
@@ -406,5 +520,46 @@ mod tests {
         );
         assert_eq!(citoid_language(without.as_object().expect("object")), None);
         assert_eq!(citoid_language(empty.as_object().expect("object")), None);
+    }
+
+    #[test]
+    fn iso_date_from_epoch_ms_converts_civil_dates() {
+        assert_eq!(iso_date_from_epoch_ms(0), "1970-01-01");
+        assert_eq!(iso_date_from_epoch_ms(951_782_400_000), "2000-02-29");
+        assert_eq!(iso_date_from_epoch_ms(1_780_963_200_000), "2026-06-09");
+        // Mid-day timestamps land on the same UTC date.
+        assert_eq!(iso_date_from_epoch_ms(1_780_963_200_000 + 43_200_000), "2026-06-09");
+    }
+
+    #[test]
+    fn wire_types_round_trip_and_use_kebab_reason_codes() {
+        use crate::wikitext_editor::WikitextNodeLocator;
+
+        let proposal = BareUrlProposal {
+            locator: WikitextNodeLocator {
+                kind: WikitextNodeKind::Reference,
+                ordinal: 2,
+                expected_text: "https://example.org/a".to_string(),
+            },
+            url: "https://example.org/a".to_string(),
+            current_anchor: "https://example.org/a".to_string(),
+            replacement_wikitext: "{{cite web |url=https://example.org/a |title=T |access-date=2026-06-09}}".to_string(),
+        };
+        let response = BareUrlProposalsResponse {
+            proposals: vec![proposal],
+            declined: vec![BareUrlDeclined {
+                ordinal: 4,
+                url: "https://degenerate.example/x".to_string(),
+                reason: BareUrlDeclineReason::NoUsableTitle,
+            }],
+        };
+
+        let json = serde_json::to_value(&response).expect("response should serialize");
+        assert_eq!(json["declined"][0]["reason"], "no-usable-title");
+        assert_eq!(json["proposals"][0]["locator"]["kind"], "reference");
+
+        let back: BareUrlProposalsResponse =
+            serde_json::from_value(json).expect("response should deserialize");
+        assert_eq!(back, response);
     }
 }

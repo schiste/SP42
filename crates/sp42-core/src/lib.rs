@@ -69,6 +69,12 @@ pub use action_executor::{
 pub use article_inventory::{
     ArticleInventory, ArticleReference, article_inventory_notes, build_article_inventory,
 };
+pub use bare_url_repair::{
+    BareUrlApplyRequest, BareUrlApplyResponse, BareUrlDeclineReason, BareUrlDeclined,
+    BareUrlOutcome, BareUrlProposal, BareUrlProposalsRequest, BareUrlProposalsResponse,
+    BareUrlReference, bare_url_references, citoid_language, classify_bare_url,
+    iso_date_from_epoch_ms, render_bare_url_citation,
+};
 pub use citation::citoid::{
     CitoidMetadata, build_citoid_header, build_citoid_request, parse_citoid_response,
 };

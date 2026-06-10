@@ -37,7 +37,7 @@ use super::citoid::{
     CitoidMetadata, build_citoid_header, build_citoid_request, parse_citoid_response,
 };
 use super::concurrency::map_with_concurrency;
-use super::locate_quote::locate_quote;
+use super::locate_quote::{locate_quote, locate_quote_fuzzy};
 use super::parsing::{ParsedVerdict, parse_repair_response, parse_verdict_response};
 use super::prompts::{build_repair_prompt, build_verify_prompt};
 use super::source_fetch::{html_to_text, looks_like_html, recover_wayback_body};
@@ -120,6 +120,13 @@ pub enum GroundingAssertion {
 pub enum GroundingStatus {
     /// The support quote located verbatim in the fetched source.
     Located,
+    /// The quote did not locate verbatim, but the guarded fuzzy match (SP42#25 layer 5)
+    /// found the backing passage in the fetched source — the surfaced passage is the
+    /// SOURCE's own text. Weighable by a human; never sufficient for an autonomous path
+    /// ([`is_groundable_support`] requires [`Located`]).
+    ///
+    /// [`Located`]: GroundingStatus::Located
+    LocatedFuzzy,
     /// The panel judged `Supported`/`Partial` but the quote did not locate — surfaced
     /// honestly as *unverified*; a human may weigh it, an autonomous path never may.
     Unlocated,
@@ -391,6 +398,24 @@ fn locate_vote_quote(vote: &ModelVerdict, source_text: &str) -> Option<(String, 
     })
 }
 
+/// Fuzzy-locate a vote's supporting span (SP42#25 layer 5): the original claimed quote
+/// first, then the repaired one. Only reached after exact locate failed for every
+/// winner-class vote; the returned span is the source's own text.
+fn fuzzy_locate_vote_quote(
+    vote: &ModelVerdict,
+    source_text: &str,
+) -> Option<super::locate_quote::FuzzyLocate> {
+    let original = vote
+        .parsed
+        .quote
+        .as_ref()
+        .and_then(|quote| locate_quote_fuzzy(quote, source_text));
+    original.or_else(|| {
+        let repaired = vote.repair.as_ref()?.quote.as_ref()?;
+        locate_quote_fuzzy(repaired, source_text)
+    })
+}
+
 /// Assemble the final [`CitationFinding`] from the panel's model verdicts (SP42#25 layer 6).
 ///
 /// Votes the panel; the surfaced `verdict` is the panel's *judgment* and is never rewritten.
@@ -419,16 +444,31 @@ pub fn assemble_citation_finding(
     };
 
     if vote.winner.is_support_class() {
-        let located = votes
-            .iter()
-            .filter(|candidate| candidate.parsed.verdict == vote.winner)
-            .find_map(|candidate| locate_vote_quote(candidate, source_text));
+        let winners = || {
+            votes
+                .iter()
+                .filter(|candidate| candidate.parsed.verdict == vote.winner)
+        };
+        // Exact locate first (original quote, then the repaired one — layer 3); only when
+        // every winner-class quote misses, fall back to the guarded fuzzy match (layer 5),
+        // whose passage is the source's own text.
+        let located = winners()
+            .find_map(|candidate| {
+                locate_vote_quote(candidate, source_text)
+                    .map(|(quote, offset)| (quote, offset, GroundingStatus::Located))
+            })
+            .or_else(|| {
+                winners().find_map(|candidate| {
+                    fuzzy_locate_vote_quote(candidate, source_text)
+                        .map(|hit| (hit.span, hit.offset, GroundingStatus::LocatedFuzzy))
+                })
+            });
 
         return match located {
-            Some((quote, offset)) => CitationFinding {
+            Some((quote, offset, grounding_status)) => CitationFinding {
                 kind: CitationFindingKind::CitationVerdict,
                 verdict: CitationVerdict::from(vote.winner),
-                grounding_status: GroundingStatus::Located,
+                grounding_status,
                 agreement: vote.agreement,
                 passage: Some(LocatedPassage {
                     quote: quote.clone(),
@@ -1079,6 +1119,54 @@ mod tests {
         assert!(outcome.finding.passage.is_none());
     }
 
+    // --- guarded fuzzy locate at the gate (SP42#25 layer 5) ---
+
+    #[test]
+    fn assemble_fuzzy_grounds_a_near_miss_as_located_fuzzy_and_not_groundable() {
+        let source = "In 1985 the Acme Corporation was established in Springfield by a group \
+                      of local investors led by John Smith.";
+        // One reworded token: exact locate fails, the guarded fuzzy path recovers. The
+        // surfaced passage is the SOURCE's text; the finding is marked LocatedFuzzy and is
+        // NOT groundable — the hard exact-locate gate guards any autonomous path.
+        let finding = assemble_citation_finding(
+            source,
+            &provenance(),
+            &[model_verdict(
+                Verdict::Supported,
+                Some(
+                    "the Acme Corporation was founded in Springfield by a group of local investors",
+                ),
+            )],
+            0,
+        );
+        assert_eq!(
+            finding.verdict,
+            CitationVerdict::Judged(SupportLevel::Supported)
+        );
+        assert_eq!(finding.grounding_status, GroundingStatus::LocatedFuzzy);
+        assert!(!is_groundable_support(&finding));
+        let passage = finding.passage.as_ref().expect("fuzzy passage");
+        assert!(passage.quote.contains("established in Springfield"));
+        assert!(!passage.quote.contains("founded"));
+    }
+
+    #[test]
+    fn assemble_prefers_exact_locate_over_fuzzy() {
+        let source = "In 1985 the Acme Corporation was established in Springfield by a group \
+                      of local investors led by John Smith.";
+        let finding = assemble_citation_finding(
+            source,
+            &provenance(),
+            &[model_verdict(
+                Verdict::Supported,
+                Some("established in Springfield by a group of local investors"),
+            )],
+            0,
+        );
+        assert_eq!(finding.grounding_status, GroundingStatus::Located);
+        assert!(is_groundable_support(&finding));
+    }
+
     // --- repair turn (SP42#25 layer 3) ---
 
     #[test]
@@ -1347,6 +1435,24 @@ mod tests {
             );
             prop_assert!(!is_groundable_support(&finding));
             prop_assert_ne!(finding.grounding_status, GroundingStatus::Located);
+        }
+
+        /// Layer 5 must not weaken the guarantee either: a fabricated MULTI-TOKEN quote
+        /// (eligible for the fuzzy path) over a disjoint-alphabet source is never Located
+        /// OR LocatedFuzzy, and never groundable.
+        #[test]
+        fn fabricated_multi_token_quote_never_grounds_fuzzily(
+            source in "[a-m ]{50,300}",
+            quote in "[n-z]{4,9}( [n-z]{4,9}){5,12}",
+        ) {
+            let finding = assemble_citation_finding(
+                &source,
+                &provenance(),
+                &[model_verdict(Verdict::Supported, Some(&quote))],
+                0,
+            );
+            prop_assert!(!is_groundable_support(&finding));
+            prop_assert_eq!(finding.grounding_status, GroundingStatus::Unlocated);
         }
 
         /// Layer 3 must not weaken the guarantee: a repair span that does not locate in

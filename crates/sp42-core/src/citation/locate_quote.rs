@@ -115,6 +115,224 @@ fn locate_multi_fragment(
     offset_map.get(first).copied()
 }
 
+/// Minimum cleaned quote tokens before the fuzzy path may fire (SP42#25 layer 5): short
+/// spans carry too little signal to fuzzy-match safely, so they must locate exactly.
+const MIN_FUZZY_TOKENS: usize = 5;
+/// Fuzzy similarity threshold as a ratio: `matched * DEN >= quote_tokens * NUM` (85%).
+/// Integer arithmetic only — no float ever touches a verdict path (ADR-0006/0008).
+const FUZZY_THRESHOLD_NUM: usize = 17;
+const FUZZY_THRESHOLD_DEN: usize = 20;
+/// Cap on candidate anchor windows examined — bounds worst-case work on a hostile source.
+const MAX_FUZZY_WINDOWS: usize = 50;
+
+/// A guarded fuzzy match (SP42#25 layer 5): the span is the SOURCE's own text (the code
+/// extracts real fetched bytes — the model's mangled quote is never surfaced), with the
+/// measured token counts that justified it (any ratio is derived at display, never stored).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FuzzyLocate {
+    /// Byte offset of the span start in the original source.
+    pub offset: usize,
+    /// The matched span, copied from the original source bytes.
+    pub span: String,
+    /// Quote tokens matched in order within the window (LCS).
+    pub matched_tokens: u32,
+    /// Total cleaned quote tokens.
+    pub quote_tokens: u32,
+}
+
+/// A token of the normalized source: its cleaned text plus its char range, so a matched
+/// window can be mapped back to original source bytes via the offset map.
+struct SourceToken {
+    cleaned: String,
+    start_char: usize,
+    end_char: usize,
+}
+
+/// Locate `quote` in `source` by bounded fuzzy match — the guarded last resort (SP42#25
+/// layer 5), tried only after [`locate_quote`] fails. Guards, all of which must hold:
+///
+/// - the quote has at least [`MIN_FUZZY_TOKENS`] cleaned tokens (short spans: exact only);
+/// - candidate windows are anchored on real shared tokens (a quote sharing no anchor with
+///   the source examines zero windows — a fabricated quote cannot even be considered);
+/// - quote tokens must match **in order** (longest common subsequence) at ≥ 85%;
+/// - every load-bearing (digit-bearing) quote token occurs EXACTLY in the window — a wrong
+///   date or number is a factual mismatch, never transcription noise.
+///
+/// The returned span is the source's own text; the model's wording is discarded.
+#[must_use]
+pub fn locate_quote_fuzzy(quote: &str, source: &str) -> Option<FuzzyLocate> {
+    let normalized_quote = normalize_for_match(quote.trim());
+    let quote_tokens: Vec<String> = normalized_quote
+        .split(' ')
+        .map(clean_token)
+        .filter(|token| !token.is_empty())
+        .collect();
+    if quote_tokens.len() < MIN_FUZZY_TOKENS {
+        return None;
+    }
+
+    let (normalized_source, offset_map) = normalize_with_map(source);
+    let source_tokens = tokenize_source(&normalized_source);
+    if source_tokens.is_empty() {
+        return None;
+    }
+
+    let load_bearing: Vec<&String> = quote_tokens
+        .iter()
+        .filter(|token| token.chars().any(|ch| ch.is_ascii_digit()))
+        .collect();
+    let anchors = anchor_tokens(&quote_tokens);
+    if anchors.is_empty() {
+        return None;
+    }
+
+    // Examine a bounded window of source tokens around every anchor occurrence.
+    let radius = quote_tokens.len() + 2;
+    let mut best: Option<(usize, usize, usize)> = None; // (matched, first_token, last_token)
+    let mut windows = 0usize;
+    for (index, token) in source_tokens.iter().enumerate() {
+        if !anchors.contains(&token.cleaned.as_str()) {
+            continue;
+        }
+        windows += 1;
+        if windows > MAX_FUZZY_WINDOWS {
+            break;
+        }
+        let window_start = index.saturating_sub(radius);
+        let window_end = (index + radius + 1).min(source_tokens.len());
+        let window = &source_tokens[window_start..window_end];
+        if let Some((matched, first, last)) = lcs_match(&quote_tokens, window) {
+            let candidate = (matched, window_start + first, window_start + last);
+            if best.is_none_or(|(best_matched, _, _)| matched > best_matched) {
+                best = Some(candidate);
+            }
+        }
+    }
+
+    let (matched, first_token, last_token) = best?;
+    if matched * FUZZY_THRESHOLD_DEN < quote_tokens.len() * FUZZY_THRESHOLD_NUM {
+        return None;
+    }
+    // Load-bearing tokens must occur exactly inside the matched span itself.
+    let span_tokens = &source_tokens[first_token..=last_token];
+    if !load_bearing
+        .iter()
+        .all(|needed| span_tokens.iter().any(|token| token.cleaned == **needed))
+    {
+        return None;
+    }
+
+    let start_char = source_tokens[first_token].start_char;
+    let end_char = source_tokens[last_token].end_char;
+    let start_byte = offset_map.get(start_char).copied()?;
+    let end_byte = offset_map.get(end_char).copied().unwrap_or(source.len());
+    Some(FuzzyLocate {
+        offset: start_byte,
+        span: source[start_byte..end_byte].trim_end().to_string(),
+        matched_tokens: u32::try_from(matched).unwrap_or(u32::MAX),
+        quote_tokens: u32::try_from(quote_tokens.len()).unwrap_or(u32::MAX),
+    })
+}
+
+/// Strip leading/trailing punctuation from a normalized token, so `"study,"` and
+/// `"(1985)"` compare as `"study"` / `"1985"`. Interior punctuation (hyphens, apostrophes)
+/// is kept — it is part of the word.
+fn clean_token(token: &str) -> String {
+    token
+        .trim_matches(|ch: char| !ch.is_alphanumeric())
+        .to_string()
+}
+
+/// Tokenize the normalized source into cleaned tokens with their char ranges.
+fn tokenize_source(normalized_source: &str) -> Vec<SourceToken> {
+    let mut tokens = Vec::new();
+    let mut start: Option<usize> = None;
+    let mut current = String::new();
+    for (char_index, ch) in normalized_source.chars().enumerate() {
+        if ch == ' ' {
+            if let Some(start_char) = start.take() {
+                tokens.push(SourceToken {
+                    cleaned: clean_token(&current),
+                    start_char,
+                    end_char: char_index,
+                });
+                current.clear();
+            }
+        } else {
+            if start.is_none() {
+                start = Some(char_index);
+            }
+            current.push(ch);
+        }
+    }
+    if let Some(start_char) = start {
+        let end_char = normalized_source.chars().count();
+        tokens.push(SourceToken {
+            cleaned: clean_token(&current),
+            start_char,
+            end_char,
+        });
+    }
+    tokens.retain(|token| !token.cleaned.is_empty());
+    tokens
+}
+
+/// Anchor tokens for candidate-window generation: every digit-bearing token plus the
+/// three longest tokens of at least five chars. A window is only ever opened where one of
+/// these occurs verbatim in the source.
+fn anchor_tokens(quote_tokens: &[String]) -> Vec<&str> {
+    let mut anchors: Vec<&str> = quote_tokens
+        .iter()
+        .filter(|token| token.chars().count() >= 5 || token.chars().any(|ch| ch.is_ascii_digit()))
+        .map(String::as_str)
+        .collect();
+    anchors.sort_by_key(|token| std::cmp::Reverse(token.chars().count()));
+    anchors.truncate(3);
+    anchors
+}
+
+/// Longest common subsequence of `quote_tokens` within `window`, returning the matched
+/// count plus the window indices of the first and last matched tokens, or `None` when
+/// nothing matches. Order is enforced by construction — shuffled tokens do not count.
+fn lcs_match(quote_tokens: &[String], window: &[SourceToken]) -> Option<(usize, usize, usize)> {
+    let rows = quote_tokens.len();
+    let cols = window.len();
+    let mut table = vec![0usize; (rows + 1) * (cols + 1)];
+    let at = |row: usize, col: usize| row * (cols + 1) + col;
+    for row in 1..=rows {
+        for col in 1..=cols {
+            table[at(row, col)] = if quote_tokens[row - 1] == window[col - 1].cleaned {
+                table[at(row - 1, col - 1)] + 1
+            } else {
+                table[at(row - 1, col)].max(table[at(row, col - 1)])
+            };
+        }
+    }
+    let matched = table[at(rows, cols)];
+    if matched == 0 {
+        return None;
+    }
+    // Backtrack for the window range that the match actually spans.
+    let (mut row, mut col) = (rows, cols);
+    let mut first: Option<usize> = None;
+    let mut last: Option<usize> = None;
+    while row > 0 && col > 0 {
+        if quote_tokens[row - 1] == window[col - 1].cleaned
+            && table[at(row, col)] == table[at(row - 1, col - 1)] + 1
+        {
+            first = Some(col - 1);
+            last = last.or(Some(col - 1));
+            row -= 1;
+            col -= 1;
+        } else if table[at(row - 1, col)] >= table[at(row, col - 1)] {
+            row -= 1;
+        } else {
+            col -= 1;
+        }
+    }
+    Some((matched, first?, last?))
+}
+
 /// Fold a typographic quote or dash character to its ASCII equivalent; all other
 /// characters pass through unchanged. These are transcription/extraction artifacts, not
 /// semantic content (ADR-0007 §5; SP42#25 layer 1).
@@ -223,7 +441,7 @@ fn normalize_with_map(source: &str) -> (String, Vec<usize>) {
 
 #[cfg(test)]
 mod tests {
-    use super::locate_quote;
+    use super::{locate_quote, locate_quote_fuzzy};
     use proptest::prelude::*;
 
     #[test]
@@ -381,6 +599,83 @@ mod tests {
         assert_eq!(locate_quote(quote, &source), None);
     }
 
+    // --- bounded fuzzy locate (SP42#25 layer 5) ---
+
+    #[test]
+    fn fuzzy_locates_a_quote_with_one_reworded_token_and_returns_the_source_span() {
+        let source = "In 1985 the Acme Corporation was established in Springfield by a group \
+                      of local investors led by John Smith.";
+        // The model wrote "founded" where the source says "established": exact locate fails,
+        // fuzzy recovers — and the returned span is the SOURCE's own text, not the model's.
+        let quote = "the Acme Corporation was founded in Springfield by a group of local investors";
+        assert_eq!(locate_quote(quote, source), None);
+        let hit = locate_quote_fuzzy(quote, source).expect("fuzzy should locate");
+        assert!(source[hit.offset..].starts_with("the Acme Corporation"));
+        assert!(hit.span.contains("established in Springfield"));
+        assert!(!hit.span.contains("founded"));
+    }
+
+    #[test]
+    fn fuzzy_rejects_a_mismatched_load_bearing_number() {
+        // The quote's year does not appear in the source: dates/numbers are load-bearing
+        // and must match EXACTLY — a high token overlap cannot paper over a wrong number.
+        let source = "In 1985 the Acme Corporation was established in Springfield by a group \
+                      of local investors led by John Smith.";
+        let quote = "In 1958 the Acme Corporation was established in Springfield by a group \
+                     of local investors";
+        assert_eq!(locate_quote_fuzzy(quote, source), None);
+    }
+
+    #[test]
+    fn fuzzy_rejects_a_fabricated_quote() {
+        let source = "The committee reviewed the annual budget and approved the proposal.";
+        let quote = "the museum acquired seventeen paintings from the private collection downtown";
+        assert_eq!(locate_quote_fuzzy(quote, source), None);
+    }
+
+    #[test]
+    fn fuzzy_rejects_short_quotes_entirely() {
+        // Below the minimum token count fuzzy never fires — short spans must locate exactly.
+        let source = "The bridge opened to traffic in August.";
+        assert_eq!(locate_quote_fuzzy("bridge opened to cars", source), None);
+    }
+
+    #[test]
+    fn fuzzy_rejects_low_similarity_even_with_shared_anchors() {
+        // Shares "Springfield"/"investors" anchors but most tokens differ: below threshold.
+        let source = "In 1985 the Acme Corporation was established in Springfield by a group \
+                      of local investors led by John Smith.";
+        let quote = "several wealthy investors from Springfield reportedly demanded immediate \
+                     control over every major decision";
+        assert_eq!(locate_quote_fuzzy(quote, source), None);
+    }
+
+    #[test]
+    fn fuzzy_tolerates_minor_punctuation_and_inflection_drift() {
+        let source = "The study, published in March 2019, found that 62 percent of participants \
+                      reported improved sleep quality after eight weeks.";
+        let quote = "The study published in March 2019 found that 62 percent of participants \
+                     reported improved sleep";
+        // Exact locate already handles pure punctuation/whitespace; clip one word so the
+        // exact path genuinely fails and the fuzzy path is exercised end to end.
+        let quote = quote.replace("reported improved", "noted improved");
+        assert_eq!(locate_quote(&quote, source), None);
+        let hit = locate_quote_fuzzy(&quote, source).expect("fuzzy should locate");
+        assert!(hit.span.contains("62 percent"));
+    }
+
+    #[test]
+    fn fuzzy_counts_are_measured_not_derived() {
+        // No float anywhere (ADR-0006/0008 discipline): the outcome carries measured
+        // token counts; any ratio is derived at display time.
+        let source = "In 1985 the Acme Corporation was established in Springfield by a group \
+                      of local investors led by John Smith.";
+        let quote = "the Acme Corporation was founded in Springfield by a group of local investors";
+        let hit = locate_quote_fuzzy(quote, source).expect("fuzzy should locate");
+        assert!(hit.quote_tokens >= hit.matched_tokens);
+        assert!(hit.matched_tokens > 0);
+    }
+
     proptest! {
         /// Anti-fabrication (the guardrail): a multi-fragment quote whose alphabet is
         /// DISJOINT from the source can never stitch a match, however the ellipsis splits it.
@@ -392,6 +687,16 @@ mod tests {
         ) {
             let quote = format!("{a} ... {b}");
             prop_assert_eq!(locate_quote(&quote, &src), None);
+        }
+
+        /// Layer 5 guardrail: a fuzzy match still requires REAL shared tokens — a quote
+        /// whose alphabet is disjoint from the source can never fuzzy-locate.
+        #[test]
+        fn fabricated_disjoint_alphabet_never_fuzzy_locates(
+            quote in "[n-z]{4,9}( [n-z]{4,9}){5,12}",
+            src in "[a-m ]{50,400}",
+        ) {
+            prop_assert_eq!(locate_quote_fuzzy(&quote, &src), None);
         }
     }
 }

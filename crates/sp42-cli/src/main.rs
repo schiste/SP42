@@ -787,6 +787,10 @@ fn render_verify_text(finding: &CitationFinding) -> String {
         GroundingStatus::Located => {
             lines.push("verification: quote located in source".to_string());
         }
+        GroundingStatus::LocatedFuzzy => lines.push(
+            "verification: passage located by guarded fuzzy match (shown text is the source's own) — please confirm"
+                .to_string(),
+        ),
         GroundingStatus::Unlocated => lines.push(
             "verification: UNVERIFIED — model claims support but its quote was not found in the source"
                 .to_string(),

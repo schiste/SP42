@@ -122,6 +122,31 @@ verbatim, confirm replays exactly that payload, any divergence refuses — so
 that issues #28/#29/#32 reuse it instead of re-deriving it (Resolved
 question 5).
 
+## Proposed CLI surface
+
+The MVP's operator surface is two mutually-exclusive CLI flag-modes over the
+dev bridge (ADR-0002), following the house flag-mode pattern (decided by the
+Editor mid-design, 2026-06-09):
+
+```text
+--bare-url-preview --title <T> --rev <N> [--wiki <ID>] [--bridge-base-url <URL>] [--format text|json|markdown]
+--bare-url-execute --title <T> --rev <N> --ordinal <K> [--wiki <ID>] [--action-note <summary>] [--bridge-base-url <URL>] [--format text|json|markdown]
+```
+
+- `--bare-url-preview` calls `POST /dev/citation/bare-url-proposals` and
+  renders the revision's `{proposals, declined}`; it is read-only and needs
+  no session.
+- `--bare-url-execute` re-fetches the proposals, selects ordinal `<K>`, and
+  replays exactly that proposal against `POST /dev/citation/bare-url-apply`
+  under the operator's bridge session (bootstrap + CSRF token). The fresh
+  fetch re-anchors the locator; the server's anti-drift re-check and
+  `baserevid` guard refuse on any race (`node-drift` / `node-out-of-range`,
+  zero writes).
+- `--wiki` defaults to `testwiki`, the only wiki the MVP enables.
+- `--action-note` wins over the default edit summary `SP42: bare-URL repair`.
+- Declined references render with their reason codes (`metadata-unavailable`,
+  `no-usable-title`) so the operator sees why a bare URL kept its finding.
+
 ## Definition of Done
 
 *The items below name planned test coverage; the closing PR records the exact

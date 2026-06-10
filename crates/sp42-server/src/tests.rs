@@ -2890,14 +2890,19 @@ fn validate_rejects_node_locator_for_citation_tagging() {
 struct MockWikiBackend {
     base_url: String,
     edit_bodies: Arc<std::sync::Mutex<Vec<String>>>,
+    total_requests: Arc<std::sync::atomic::AtomicUsize>,
 }
 
 async fn spawn_mock_wiki_backend(page_wikitext: &'static str) -> MockWikiBackend {
     let edit_bodies = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let total_requests = Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let recorded = edit_bodies.clone();
+    let request_counter = total_requests.clone();
     let handler = move |request: axum::extract::Request| {
         let recorded = recorded.clone();
+        let request_counter = request_counter.clone();
         async move {
+            request_counter.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
             let query = request.uri().query().unwrap_or_default().to_string();
             let body_bytes = axum::body::to_bytes(request.into_body(), usize::MAX)
                 .await
@@ -2949,6 +2954,7 @@ async fn spawn_mock_wiki_backend(page_wikitext: &'static str) -> MockWikiBackend
     MockWikiBackend {
         base_url: format!("http://{addr}"),
         edit_bodies,
+        total_requests,
     }
 }
 
@@ -3212,9 +3218,10 @@ async fn bare_url_apply_gate_refuses_with_zero_writes() {
     let sp42_core::ActionError::Execution { code, .. } = error;
     assert_eq!(code.as_deref(), Some("bare-url-repair-not-enabled"));
     assert!(editor.invocations().is_empty(), "gate refusal must not touch the editor");
-    assert!(
-        backend.edit_bodies.lock().expect("mock edit log should lock").is_empty(),
-        "gate refusal must not touch the wiki"
+    assert_eq!(
+        backend.total_requests.load(std::sync::atomic::Ordering::SeqCst),
+        0,
+        "gate refusal must not reach the wiki at all"
     );
 }
 

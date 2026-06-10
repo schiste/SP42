@@ -34,7 +34,6 @@ use crate::state::AppState;
 const CITOID_PACE: Duration = Duration::from_secs(1);
 
 /// Default edit summary when the operator supplies no note.
-#[allow(dead_code)]
 const BARE_URL_DEFAULT_SUMMARY: &str = "SP42: bare-URL repair";
 
 /// The configured bare-URL citation template, or the per-wiki gate refusal.

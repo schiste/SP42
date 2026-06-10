@@ -23,17 +23,14 @@ use sp42_core::{
 };
 
 /// Parsoid-REST production implementation of [`WikitextEditor`].
-#[allow(dead_code)]
 pub(crate) struct ParsoidWikitextEditor;
 
 impl ParsoidWikitextEditor {
-    #[allow(dead_code)]
     pub(crate) const fn new() -> Self {
         Self
     }
 }
 
-#[allow(dead_code)]
 fn editor_client(config: &WikiConfig) -> Result<Client, WikitextEditorError> {
     let Some(parsoid_url) = config.parsoid_url.as_ref() else {
         return Err(WikitextEditorError::NotConfigured {
@@ -50,7 +47,6 @@ fn editor_client(config: &WikiConfig) -> Result<Client, WikitextEditorError> {
     })
 }
 
-#[allow(dead_code)]
 fn map_parsoid_error(error: parsoid::Error) -> WikitextEditorError {
     match error {
         parsoid::Error::PageDoesNotExist(title) => WikitextEditorError::MissingTarget {
@@ -71,7 +67,6 @@ fn map_parsoid_error(error: parsoid::Error) -> WikitextEditorError {
     }
 }
 
-#[allow(dead_code)]
 fn dom_interpretation_error(error: &parsoid::Error) -> WikitextEditorError {
     WikitextEditorError::Unavailable {
         message: format!("Parsoid HTML could not be interpreted: {error}"),
@@ -79,7 +74,6 @@ fn dom_interpretation_error(error: &parsoid::Error) -> WikitextEditorError {
     }
 }
 
-#[allow(dead_code)]
 fn template_anchor_text(template: &Template) -> String {
     let mut anchor = format!("{{{{{}", template.name_in_wikitext());
     for (name, value) in template.params() {
@@ -92,13 +86,11 @@ fn template_anchor_text(template: &Template) -> String {
     normalize_anchor_text(&anchor)
 }
 
-#[allow(dead_code)]
 fn reference_anchor_text(reference: &Reference) -> String {
     normalize_anchor_text(&reference.contents().text_contents())
 }
 
 /// Enumerate the nodes of `kind` in `revision`, in document order.
-#[allow(dead_code)]
 fn enumerate_revision(
     revision: &ImmutableWikicode,
     kind: WikitextNodeKind,
@@ -130,7 +122,6 @@ fn enumerate_revision(
 }
 
 /// A node edit to apply synchronously to a fetched revision.
-#[allow(dead_code)]
 enum EditRequest {
     /// Replace the addressed node with the body content of `fragment`
     /// (a Parsoid-parsed rendering of the replacement wikitext).
@@ -141,7 +132,6 @@ enum EditRequest {
 
 /// Result of applying an [`EditRequest`].
 #[derive(Debug)]
-#[allow(dead_code)]
 enum AppliedEdit {
     /// The DOM edit applied; the edited document, metadata preserved.
     Edited(ImmutableWikicode),
@@ -149,7 +139,6 @@ enum AppliedEdit {
     Refused(WikitextEditRefusal),
 }
 
-#[allow(dead_code)]
 fn refusal_if_drifted(expected_text: &str, found: String) -> Option<WikitextEditRefusal> {
     let expected = normalize_anchor_text(expected_text);
     if expected == found {
@@ -159,7 +148,6 @@ fn refusal_if_drifted(expected_text: &str, found: String) -> Option<WikitextEdit
     }
 }
 
-#[allow(dead_code)]
 fn fragment_body_children(
     fragment: &ImmutableWikicode,
 ) -> Result<Vec<Wikinode>, WikitextEditorError> {
@@ -173,7 +161,6 @@ fn fragment_body_children(
     Ok(body.children().collect())
 }
 
-#[allow(dead_code)]
 fn transclusion_part_count(template: &Template) -> Result<usize, WikitextEditorError> {
     let nodes = template.as_nodes();
     let Some(first) = nodes.first() else {
@@ -202,7 +189,6 @@ fn transclusion_part_count(template: &Template) -> Result<usize, WikitextEditorE
 /// All DOM work happens synchronously here; the function consumes and
 /// returns [`ImmutableWikicode`] so no `!Send` DOM value can leak across an
 /// `.await` point in the callers.
-#[allow(dead_code)]
 fn apply_revision_edit(
     revision: ImmutableWikicode,
     locator: &WikitextNodeLocator,

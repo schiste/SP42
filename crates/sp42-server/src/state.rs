@@ -4,7 +4,7 @@ use std::sync::Arc;
 use std::sync::atomic::AtomicU64;
 use std::time::Instant;
 
-use sp42_core::{ActionExecutionLogEntry, DevAuthCapabilityReport};
+use sp42_core::{ActionExecutionLogEntry, DevAuthCapabilityReport, WikitextEditor};
 use sp42_types::Clock;
 use sp42_wiki::WikiRegistry;
 use tokio::sync::RwLock;
@@ -40,6 +40,8 @@ pub(crate) struct AppState {
     pub(crate) coordination: CoordinationRegistry,
     pub(crate) deployment: DeploymentConfig,
     pub(crate) wiki_registry: WikiRegistry,
+    #[allow(dead_code)]
+    pub(crate) wikitext_editor: Arc<dyn WikitextEditor>,
     pub(crate) next_client_id: Arc<AtomicU64>,
     pub(crate) next_session_id: Arc<AtomicU64>,
     pub(crate) started_at: Instant,

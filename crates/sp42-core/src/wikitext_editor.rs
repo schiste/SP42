@@ -434,24 +434,15 @@ mod tests {
     fn enumerates_nodes_per_kind_in_order() {
         let editor = ScriptedWikitextEditor::new(scripted_nodes(), "WIKITEXT".to_string());
         let config = fixture_wiki_config();
-        let templates = block_on(editor.enumerate_nodes(
-            &config,
-            &page(),
-            WikitextNodeKind::Template,
-        ))
-        .expect("enumeration should succeed");
+        let templates =
+            block_on(editor.enumerate_nodes(&config, &page(), WikitextNodeKind::Template))
+                .expect("enumeration should succeed");
         assert_eq!(templates.len(), 2);
         assert_eq!(templates[0].ordinal, 0);
-        assert_eq!(
-            templates[1].anchor_text,
-            "{{lang|fr|latte cosmique}}"
-        );
-        let references = block_on(editor.enumerate_nodes(
-            &config,
-            &page(),
-            WikitextNodeKind::Reference,
-        ))
-        .expect("enumeration should succeed");
+        assert_eq!(templates[1].anchor_text, "{{lang|fr|latte cosmique}}");
+        let references =
+            block_on(editor.enumerate_nodes(&config, &page(), WikitextNodeKind::Reference))
+                .expect("enumeration should succeed");
         assert_eq!(references.len(), 1);
     }
 

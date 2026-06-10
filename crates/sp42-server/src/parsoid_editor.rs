@@ -202,10 +202,12 @@ fn apply_revision_edit(
                 .map_err(|error| dom_interpretation_error(&error))?;
             let available = templates.len();
             let Some(target) = templates.get(locator.ordinal) else {
-                return Ok(AppliedEdit::Refused(WikitextEditRefusal::OrdinalOutOfRange {
-                    requested: locator.ordinal,
-                    available,
-                }));
+                return Ok(AppliedEdit::Refused(
+                    WikitextEditRefusal::OrdinalOutOfRange {
+                        requested: locator.ordinal,
+                        available,
+                    },
+                ));
             };
             if let Some(refusal) =
                 refusal_if_drifted(&locator.expected_text, template_anchor_text(target))
@@ -252,10 +254,12 @@ fn apply_revision_edit(
             let references = code.filter_references();
             let available = references.len();
             let Some(target) = references.get(locator.ordinal) else {
-                return Ok(AppliedEdit::Refused(WikitextEditRefusal::OrdinalOutOfRange {
-                    requested: locator.ordinal,
-                    available,
-                }));
+                return Ok(AppliedEdit::Refused(
+                    WikitextEditRefusal::OrdinalOutOfRange {
+                        requested: locator.ordinal,
+                        available,
+                    },
+                ));
             };
             if let Some(refusal) =
                 refusal_if_drifted(&locator.expected_text, reference_anchor_text(target))
@@ -417,8 +421,7 @@ mod tests {
 
     #[test]
     fn sets_template_params_when_anchor_matches() {
-        let locator =
-            template_locator(1, "{{cite web|url=https://example.org/a|title=Example A}}");
+        let locator = template_locator(1, "{{cite web|url=https://example.org/a|title=Example A}}");
         let applied = apply_revision_edit(
             revision(FIXTURE_HTML),
             &locator,
@@ -433,7 +436,9 @@ mod tests {
         let descriptors = enumerate_revision(&edited, WikitextNodeKind::Template)
             .expect("re-enumeration should succeed");
         assert!(
-            descriptors[1].anchor_text.contains("access-date=9 June 2026"),
+            descriptors[1]
+                .anchor_text
+                .contains("access-date=9 June 2026"),
             "edited template should carry the new parameter: {}",
             descriptors[1].anchor_text
         );
@@ -540,9 +545,11 @@ mod tests {
 
     #[test]
     fn refuses_replacing_multi_part_transclusions() {
-        let descriptors =
-            enumerate_revision(&revision(MULTI_PART_FIXTURE_HTML), WikitextNodeKind::Template)
-                .expect("multi-part enumeration should succeed");
+        let descriptors = enumerate_revision(
+            &revision(MULTI_PART_FIXTURE_HTML),
+            WikitextNodeKind::Template,
+        )
+        .expect("multi-part enumeration should succeed");
         let locator = template_locator(0, &descriptors[0].anchor_text);
         let fragment = revision("<html><body>plain</body></html>");
         let error = apply_revision_edit(
@@ -559,9 +566,8 @@ mod tests {
 
     #[test]
     fn maps_missing_page_error() {
-        let mapped = super::map_parsoid_error(parsoid::Error::PageDoesNotExist(
-            "Missing page".to_string(),
-        ));
+        let mapped =
+            super::map_parsoid_error(parsoid::Error::PageDoesNotExist("Missing page".to_string()));
         assert!(matches!(
             mapped,
             sp42_core::WikitextEditorError::MissingTarget { .. }
@@ -635,9 +641,13 @@ mod tests {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
             .await
             .expect("mock parsoid should bind");
-        let addr = listener.local_addr().expect("mock parsoid should expose addr");
+        let addr = listener
+            .local_addr()
+            .expect("mock parsoid should expose addr");
         tokio::spawn(async move {
-            axum::serve(listener, app).await.expect("mock parsoid should serve");
+            axum::serve(listener, app)
+                .await
+                .expect("mock parsoid should serve");
         });
         MockParsoid {
             base_url: format!("http://{addr}/w/rest.php"),
@@ -666,10 +676,7 @@ mod tests {
         let mock = spawn_mock_parsoid(false).await;
         let editor = super::ParsoidWikitextEditor::new();
         let config = config_with_parsoid(&mock.base_url);
-        let locator = template_locator(
-            1,
-            "{{cite web|url=https://example.org/a|title=Example A}}",
-        );
+        let locator = template_locator(1, "{{cite web|url=https://example.org/a|title=Example A}}");
         let outcome = editor
             .set_template_params(
                 &config,

@@ -74,7 +74,10 @@ fn test_wiki_registry() -> WikiRegistry {
 }
 
 fn test_wikitext_editor() -> std::sync::Arc<dyn sp42_core::WikitextEditor> {
-    std::sync::Arc::new(sp42_core::ScriptedWikitextEditor::new(Vec::new(), String::new()))
+    std::sync::Arc::new(sp42_core::ScriptedWikitextEditor::new(
+        Vec::new(),
+        String::new(),
+    ))
 }
 
 fn test_state() -> AppState {
@@ -2820,7 +2823,11 @@ fn template_locator() -> sp42_core::WikitextNodeLocator {
 
 #[test]
 fn validate_accepts_inline_edit_with_node_locator() {
-    let payload = inline_edit_request(Some(template_locator()), None, Some("{{lang|fr|x}}".to_string()));
+    let payload = inline_edit_request(
+        Some(template_locator()),
+        None,
+        Some("{{lang|fr|x}}".to_string()),
+    );
     let report = capability_report_allowing_edit();
     assert!(crate::action_routes::validate_action_request(&payload, &report).is_ok());
 }
@@ -3000,10 +3007,21 @@ async fn inline_edit_with_locator_saves_editor_output() {
         invocations[0].payload,
         "{{cite web|url=https://example.org/b|title=Example B}}"
     );
-    let edits = backend.edit_bodies.lock().expect("mock edit log should lock");
+    let edits = backend
+        .edit_bodies
+        .lock()
+        .expect("mock edit log should lock");
     assert_eq!(edits.len(), 1, "exactly one save must reach the wiki");
-    assert!(edits[0].contains("NEWPAGEWIKITEXT"), "save must carry the editor output: {}", edits[0]);
-    assert!(edits[0].contains("baserevid=42"), "save must stay baserevid-guarded: {}", edits[0]);
+    assert!(
+        edits[0].contains("NEWPAGEWIKITEXT"),
+        "save must carry the editor output: {}",
+        edits[0]
+    );
+    assert!(
+        edits[0].contains("baserevid=42"),
+        "save must stay baserevid-guarded: {}",
+        edits[0]
+    );
 }
 
 #[tokio::test]
@@ -3013,8 +3031,7 @@ async fn inline_edit_with_drifted_locator_refuses_without_saving() {
     let editor = sp42_core::ScriptedWikitextEditor::new(
         vec![sp42_core::ScriptedWikitextNode {
             kind: sp42_core::WikitextNodeKind::Template,
-            anchor_text: "{{cite web|url=https://example.org/DIFFERENT|title=Drifted}}"
-                .to_string(),
+            anchor_text: "{{cite web|url=https://example.org/DIFFERENT|title=Drifted}}".to_string(),
         }],
         "NEVERUSED".to_string(),
     );
@@ -3029,12 +3046,21 @@ async fn inline_edit_with_drifted_locator_refuses_without_saving() {
             .await
             .expect_err("drifted locator must refuse");
 
-    let sp42_core::ActionError::Execution { code, http_status, retryable, .. } = error;
+    let sp42_core::ActionError::Execution {
+        code,
+        http_status,
+        retryable,
+        ..
+    } = error;
     assert_eq!(code.as_deref(), Some("node-drift"));
     assert_eq!(http_status, Some(409));
     assert!(!retryable);
     assert!(
-        backend.edit_bodies.lock().expect("mock edit log should lock").is_empty(),
+        backend
+            .edit_bodies
+            .lock()
+            .expect("mock edit log should lock")
+            .is_empty(),
         "a refused edit must never reach the wiki"
     );
 }
@@ -3048,7 +3074,11 @@ async fn inline_edit_without_locator_refuses_ambiguous_literal_target() {
         reqwest::Client::new(),
         "test-access-token".to_string(),
     );
-    let payload = inline_edit_request(None, Some("le mot".to_string()), Some("la phrase".to_string()));
+    let payload = inline_edit_request(
+        None,
+        Some("le mot".to_string()),
+        Some("la phrase".to_string()),
+    );
 
     let error =
         crate::action_routes::execute_inline_edit_action(&client, &config, &payload, &editor)
@@ -3057,7 +3087,13 @@ async fn inline_edit_without_locator_refuses_ambiguous_literal_target() {
 
     let sp42_core::ActionError::Execution { code, .. } = error;
     assert_eq!(code.as_deref(), Some("text-ambiguous"));
-    assert!(backend.edit_bodies.lock().expect("mock edit log should lock").is_empty());
+    assert!(
+        backend
+            .edit_bodies
+            .lock()
+            .expect("mock edit log should lock")
+            .is_empty()
+    );
 }
 
 fn bare_url_apply_payload(summary: Option<&str>) -> sp42_core::BareUrlApplyRequest {
@@ -3112,10 +3148,21 @@ async fn bare_url_apply_saves_exact_replacement_with_baserevid() {
         invocations[0].payload, payload.replacement_wikitext,
         "the proposed replacement must be replayed verbatim"
     );
-    let edits = backend.edit_bodies.lock().expect("mock edit log should lock");
+    let edits = backend
+        .edit_bodies
+        .lock()
+        .expect("mock edit log should lock");
     assert_eq!(edits.len(), 1, "exactly one save must reach the wiki");
-    assert!(edits[0].contains("NEWPAGEWIKITEXT"), "save must carry the editor output: {}", edits[0]);
-    assert!(edits[0].contains("baserevid=42"), "save must stay baserevid-guarded: {}", edits[0]);
+    assert!(
+        edits[0].contains("NEWPAGEWIKITEXT"),
+        "save must carry the editor output: {}",
+        edits[0]
+    );
+    assert!(
+        edits[0].contains("baserevid=42"),
+        "save must stay baserevid-guarded: {}",
+        edits[0]
+    );
     assert!(
         edits[0].contains("bare-URL+repair"),
         "default summary should be applied: {}",
@@ -3139,14 +3186,21 @@ async fn bare_url_apply_operator_summary_wins() {
         .await
         .expect("bare-url apply should succeed");
 
-    let edits = backend.edit_bodies.lock().expect("mock edit log should lock");
+    let edits = backend
+        .edit_bodies
+        .lock()
+        .expect("mock edit log should lock");
     assert_eq!(edits.len(), 1);
     assert!(
         edits[0].contains("fixed+ref+per+talk"),
         "operator note must win over the default summary: {}",
         edits[0]
     );
-    assert!(!edits[0].contains("bare-URL+repair"), "default must not also apply: {}", edits[0]);
+    assert!(
+        !edits[0].contains("bare-URL+repair"),
+        "default must not also apply: {}",
+        edits[0]
+    );
 }
 
 #[tokio::test]
@@ -3165,12 +3219,21 @@ async fn bare_url_apply_drift_refuses_with_zero_writes() {
         .await
         .expect_err("drifted anchor must refuse");
 
-    let sp42_core::ActionError::Execution { code, http_status, retryable, .. } = error;
+    let sp42_core::ActionError::Execution {
+        code,
+        http_status,
+        retryable,
+        ..
+    } = error;
     assert_eq!(code.as_deref(), Some("node-drift"));
     assert_eq!(http_status, Some(409));
     assert!(!retryable);
     assert!(
-        backend.edit_bodies.lock().expect("mock edit log should lock").is_empty(),
+        backend
+            .edit_bodies
+            .lock()
+            .expect("mock edit log should lock")
+            .is_empty(),
         "a refused apply must never reach the wiki"
     );
 }
@@ -3191,11 +3254,17 @@ async fn bare_url_apply_out_of_range_refuses_with_zero_writes() {
         .await
         .expect_err("missing ordinal must refuse");
 
-    let sp42_core::ActionError::Execution { code, http_status, .. } = error;
+    let sp42_core::ActionError::Execution {
+        code, http_status, ..
+    } = error;
     assert_eq!(code.as_deref(), Some("node-out-of-range"));
     assert_eq!(http_status, Some(409));
     assert!(
-        backend.edit_bodies.lock().expect("mock edit log should lock").is_empty(),
+        backend
+            .edit_bodies
+            .lock()
+            .expect("mock edit log should lock")
+            .is_empty(),
         "a refused apply must never reach the wiki"
     );
 }
@@ -3217,9 +3286,14 @@ async fn bare_url_apply_gate_refuses_with_zero_writes() {
 
     let sp42_core::ActionError::Execution { code, .. } = error;
     assert_eq!(code.as_deref(), Some("bare-url-repair-not-enabled"));
-    assert!(editor.invocations().is_empty(), "gate refusal must not touch the editor");
+    assert!(
+        editor.invocations().is_empty(),
+        "gate refusal must not touch the editor"
+    );
     assert_eq!(
-        backend.total_requests.load(std::sync::atomic::Ordering::SeqCst),
+        backend
+            .total_requests
+            .load(std::sync::atomic::Ordering::SeqCst),
         0,
         "gate refusal must not reach the wiki at all"
     );
@@ -3231,9 +3305,17 @@ fn editor_errors_map_to_action_error_codes() {
         wiki_id: "frwiki".to_string(),
     };
     let mapped = crate::action_routes::action_error_from_editor(&error);
-    let sp42_core::ActionError::Execution { code, http_status, retryable, .. } = mapped;
+    let sp42_core::ActionError::Execution {
+        code,
+        http_status,
+        retryable,
+        ..
+    } = mapped;
     assert_eq!(code.as_deref(), Some("editor-not-configured"));
-    assert_eq!(http_status, None, "configuration gaps surface as gateway errors");
+    assert_eq!(
+        http_status, None,
+        "configuration gaps surface as gateway errors"
+    );
     assert!(!retryable);
 
     let error = sp42_core::WikitextEditorError::Unavailable {
@@ -3241,7 +3323,9 @@ fn editor_errors_map_to_action_error_codes() {
         retryable: true,
     };
     let mapped = crate::action_routes::action_error_from_editor(&error);
-    let sp42_core::ActionError::Execution { code, retryable, .. } = mapped;
+    let sp42_core::ActionError::Execution {
+        code, retryable, ..
+    } = mapped;
     assert_eq!(code.as_deref(), Some("editor-unavailable"));
     assert!(retryable);
 }

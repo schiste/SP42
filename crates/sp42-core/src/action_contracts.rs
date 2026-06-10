@@ -222,8 +222,7 @@ mod tests {
             node_locator: Some(WikitextNodeLocator {
                 kind: WikitextNodeKind::Template,
                 ordinal: 2,
-                expected_text: "{{cite web|url=https://old.example.org|title=Exemple}}"
-                    .to_string(),
+                expected_text: "{{cite web|url=https://old.example.org|title=Exemple}}".to_string(),
             }),
         };
 

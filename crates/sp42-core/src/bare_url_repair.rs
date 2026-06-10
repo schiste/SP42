@@ -146,10 +146,8 @@ pub fn render_bare_url_citation(
         };
     }
 
-    let mut parameters: Vec<(&str, String)> = vec![
-        ("url", url.to_string()),
-        ("title", title.to_string()),
-    ];
+    let mut parameters: Vec<(&str, String)> =
+        vec![("url", url.to_string()), ("title", title.to_string())];
     if let Some(publication) = &metadata.publication {
         parameters.push(("website", publication.clone()));
     }
@@ -380,7 +378,12 @@ mod tests {
             .expect("fixture should parse as a citoid array");
         let metadata = crate::citation::citoid::build_citoid_header(&raw, source_url);
         let language = citoid_language(&raw);
-        render_bare_url_citation("cite web", metadata.as_ref(), language.as_deref(), "2026-06-09")
+        render_bare_url_citation(
+            "cite web",
+            metadata.as_ref(),
+            language.as_deref(),
+            "2026-06-09",
+        )
     }
 
     #[test]
@@ -392,16 +395,21 @@ mod tests {
         let expected = "{{cite web |url=https://example.org/article |title=Headline |website=The Guardian |author=Jane Doe, John Smith |date=2020-01-01 |access-date=2026-06-09 |language=fr}}";
         assert_eq!(
             outcome,
-            BareUrlOutcome::Proposed { replacement_wikitext: expected.to_string() }
+            BareUrlOutcome::Proposed {
+                replacement_wikitext: expected.to_string()
+            }
         );
     }
 
     #[test]
     fn website_falls_back_and_partial_dates_pass_through() {
-        let BareUrlOutcome::Proposed { replacement_wikitext } = rendered(
+        let BareUrlOutcome::Proposed {
+            replacement_wikitext,
+        } = rendered(
             include_str!("../../../fixtures/citoid/partial_date.json"),
             "https://example.org/report",
-        ) else {
+        )
+        else {
             panic!("partial-date fixture should produce a proposal");
         };
         assert!(replacement_wikitext.contains("|website=Example Site"));
@@ -411,10 +419,13 @@ mod tests {
 
     #[test]
     fn creators_fallback_formats_authors() {
-        let BareUrlOutcome::Proposed { replacement_wikitext } = rendered(
+        let BareUrlOutcome::Proposed {
+            replacement_wikitext,
+        } = rendered(
             include_str!("../../../fixtures/citoid/creators_fallback.json"),
             "https://example.org/mixed",
-        ) else {
+        )
+        else {
             panic!("creators fixture should produce a proposal");
         };
         assert!(replacement_wikitext.contains("|author=Ada Lovelace"));
@@ -425,7 +436,9 @@ mod tests {
         let outcome = render_bare_url_citation("cite web", None, None, "2026-06-09");
         assert_eq!(
             outcome,
-            BareUrlOutcome::Declined { reason: BareUrlDeclineReason::MetadataUnavailable }
+            BareUrlOutcome::Declined {
+                reason: BareUrlDeclineReason::MetadataUnavailable
+            }
         );
     }
 
@@ -437,7 +450,9 @@ mod tests {
         );
         assert_eq!(
             outcome,
-            BareUrlOutcome::Declined { reason: BareUrlDeclineReason::NoUsableTitle }
+            BareUrlOutcome::Declined {
+                reason: BareUrlDeclineReason::NoUsableTitle
+            }
         );
     }
 
@@ -449,7 +464,9 @@ mod tests {
         );
         assert_eq!(
             outcome,
-            BareUrlOutcome::Declined { reason: BareUrlDeclineReason::NoUsableTitle }
+            BareUrlOutcome::Declined {
+                reason: BareUrlDeclineReason::NoUsableTitle
+            }
         );
     }
 
@@ -466,11 +483,24 @@ mod tests {
         let en_us =
             render_bare_url_citation("cite web", Some(&metadata), Some("en-US"), "2026-06-09");
         let fr = render_bare_url_citation("cite web", Some(&metadata), Some("fr"), "2026-06-09");
-        let BareUrlOutcome::Proposed { replacement_wikitext: en } = en else { panic!("en") };
-        let BareUrlOutcome::Proposed { replacement_wikitext: en_us } = en_us else {
+        let BareUrlOutcome::Proposed {
+            replacement_wikitext: en,
+        } = en
+        else {
+            panic!("en")
+        };
+        let BareUrlOutcome::Proposed {
+            replacement_wikitext: en_us,
+        } = en_us
+        else {
             panic!("en-US")
         };
-        let BareUrlOutcome::Proposed { replacement_wikitext: fr } = fr else { panic!("fr") };
+        let BareUrlOutcome::Proposed {
+            replacement_wikitext: fr,
+        } = fr
+        else {
+            panic!("fr")
+        };
         assert!(!en.contains("|language="));
         assert!(!en_us.contains("|language="));
         assert!(fr.contains("|language=fr"));
@@ -485,8 +515,9 @@ mod tests {
             title: Some("Titre".to_string()),
             url: "https://example.org/fr".to_string(),
         };
-        let BareUrlOutcome::Proposed { replacement_wikitext } =
-            render_bare_url_citation("Lien web", Some(&metadata), None, "2026-06-09")
+        let BareUrlOutcome::Proposed {
+            replacement_wikitext,
+        } = render_bare_url_citation("Lien web", Some(&metadata), None, "2026-06-09")
         else {
             panic!("should propose");
         };
@@ -502,8 +533,9 @@ mod tests {
             title: Some("A|B\nC".to_string()),
             url: "https://example.org/p".to_string(),
         };
-        let BareUrlOutcome::Proposed { replacement_wikitext } =
-            render_bare_url_citation("cite web", Some(&metadata), None, "2026-06-09")
+        let BareUrlOutcome::Proposed {
+            replacement_wikitext,
+        } = render_bare_url_citation("cite web", Some(&metadata), None, "2026-06-09")
         else {
             panic!("should propose");
         };
@@ -529,7 +561,10 @@ mod tests {
         assert_eq!(iso_date_from_epoch_ms(951_782_400_000), "2000-02-29");
         assert_eq!(iso_date_from_epoch_ms(1_780_963_200_000), "2026-06-09");
         // Mid-day timestamps land on the same UTC date.
-        assert_eq!(iso_date_from_epoch_ms(1_780_963_200_000 + 43_200_000), "2026-06-09");
+        assert_eq!(
+            iso_date_from_epoch_ms(1_780_963_200_000 + 43_200_000),
+            "2026-06-09"
+        );
     }
 
     #[test]
@@ -544,7 +579,9 @@ mod tests {
             },
             url: "https://example.org/a".to_string(),
             current_anchor: "https://example.org/a".to_string(),
-            replacement_wikitext: "{{cite web |url=https://example.org/a |title=T |access-date=2026-06-09}}".to_string(),
+            replacement_wikitext:
+                "{{cite web |url=https://example.org/a |title=T |access-date=2026-06-09}}"
+                    .to_string(),
         };
         let response = BareUrlProposalsResponse {
             proposals: vec![proposal],

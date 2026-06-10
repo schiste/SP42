@@ -236,7 +236,10 @@ scoring_policy_ref: active/frwiki-vandalism
         let error = parse_wiki_config(yaml).expect_err("ftp parsoid_url should be rejected");
         assert!(matches!(
             error,
-            ConfigError::InvalidField { field: "parsoid_url", .. }
+            ConfigError::InvalidField {
+                field: "parsoid_url",
+                ..
+            }
         ));
     }
 
@@ -327,7 +330,10 @@ templates:
   bare_url_citation: "cite web"
 "#;
         let config = parse_wiki_config(yaml).expect("config with bare_url_citation should parse");
-        assert_eq!(config.templates.bare_url_citation.as_deref(), Some("cite web"));
+        assert_eq!(
+            config.templates.bare_url_citation.as_deref(),
+            Some("cite web")
+        );
     }
 
     #[test]
@@ -341,6 +347,9 @@ templates:
     fn testwiki_fixture_enables_bare_url_citation() {
         let source = include_str!("../../../fixtures/testwiki.yaml");
         let config = parse_wiki_config(source).expect("testwiki fixture should parse");
-        assert_eq!(config.templates.bare_url_citation.as_deref(), Some("cite web"));
+        assert_eq!(
+            config.templates.bare_url_citation.as_deref(),
+            Some("cite web")
+        );
     }
 }

@@ -8,15 +8,20 @@
 use std::time::Duration;
 
 use sp42_core::{
-    ActionError, ActionResponseSummary, BareUrlApplyRequest, BareUrlApplyResponse,
-    BareUrlDeclined, BareUrlOutcome, BareUrlProposal, BareUrlProposalsRequest,
-    BareUrlProposalsResponse, FlagState, TokenKind, WikitextEditor, WikitextNodeKind,
-    WikitextNodeLocator, WikitextPageRef, WikiPageSaveRequest, bare_url_references,
-    build_citoid_header, build_citoid_request, citoid_language, execute_fetch_token,
-    execute_wiki_page_save, parse_action_response_summary, render_bare_url_citation,
+    ActionError, ActionResponseSummary, BareUrlApplyRequest, BareUrlApplyResponse, BareUrlDeclined,
+    BareUrlOutcome, BareUrlProposal, BareUrlProposalsRequest, BareUrlProposalsResponse, FlagState,
+    TokenKind, WikiPageSaveRequest, WikitextEditor, WikitextNodeKind, WikitextNodeLocator,
+    WikitextPageRef, bare_url_references, build_citoid_header, build_citoid_request,
+    citoid_language, execute_fetch_token, execute_wiki_page_save, parse_action_response_summary,
+    render_bare_url_citation,
 };
 
-use axum::{Json, extract::State, http::{HeaderMap, StatusCode}, response::IntoResponse};
+use axum::{
+    Json,
+    extract::State,
+    http::{HeaderMap, StatusCode},
+    response::IntoResponse,
+};
 
 use sp42_types::HttpResponse;
 
@@ -42,15 +47,16 @@ const BARE_URL_DEFAULT_SUMMARY: &str = "SP42: bare-URL repair";
 /// a wiki without it (every production config) refuses before any wiki or
 /// Citoid traffic.
 fn bare_url_template(config: &sp42_core::WikiConfig) -> Result<String, ActionError> {
-    config.templates.bare_url_citation.clone().ok_or_else(|| ActionError::Execution {
-        message: format!(
-            "bare-URL repair is not enabled for wiki {}",
-            config.wiki_id
-        ),
-        code: Some("bare-url-repair-not-enabled".to_string()),
-        http_status: Some(400),
-        retryable: false,
-    })
+    config
+        .templates
+        .bare_url_citation
+        .clone()
+        .ok_or_else(|| ActionError::Execution {
+            message: format!("bare-URL repair is not enabled for wiki {}", config.wiki_id),
+            code: Some("bare-url-repair-not-enabled".to_string()),
+            http_status: Some(400),
+            retryable: false,
+        })
 }
 
 /// Fetch and parse the Citoid object for one source URL; `None` on any
@@ -120,7 +126,9 @@ pub(crate) async fn collect_bare_url_proposals(
             language.as_deref(),
             access_date_iso,
         ) {
-            BareUrlOutcome::Proposed { replacement_wikitext } => {
+            BareUrlOutcome::Proposed {
+                replacement_wikitext,
+            } => {
                 response.proposals.push(BareUrlProposal {
                     locator: WikitextNodeLocator {
                         kind: WikitextNodeKind::Reference,
@@ -356,9 +364,13 @@ mod tests {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
             .await
             .expect("mock citoid should bind");
-        let addr = listener.local_addr().expect("mock citoid should expose addr");
+        let addr = listener
+            .local_addr()
+            .expect("mock citoid should expose addr");
         tokio::spawn(async move {
-            axum::serve(listener, app).await.expect("mock citoid should serve");
+            axum::serve(listener, app)
+                .await
+                .expect("mock citoid should serve");
         });
         MockCitoid {
             base_url: format!("http://{addr}"),
@@ -381,7 +393,12 @@ mod tests {
         );
         let error = bare_url_template(&disabled_config())
             .expect_err("config without bare_url_citation must refuse");
-        let ActionError::Execution { code, http_status, retryable, .. } = error;
+        let ActionError::Execution {
+            code,
+            http_status,
+            retryable,
+            ..
+        } = error;
         assert_eq!(code.as_deref(), Some("bare-url-repair-not-enabled"));
         assert_eq!(http_status, Some(400));
         assert!(!retryable);
@@ -417,23 +434,46 @@ mod tests {
         .expect("proposals should collect");
 
         assert_eq!(response.declined.len(), 0);
-        assert_eq!(response.proposals.len(), 2, "duplicate URLs must each get a proposal");
+        assert_eq!(
+            response.proposals.len(),
+            2,
+            "duplicate URLs must each get a proposal"
+        );
         assert_eq!(response.proposals[0].locator.ordinal, 0);
         assert_eq!(response.proposals[1].locator.ordinal, 2);
         assert_eq!(
             response.proposals[1].locator.expected_text,
             "https://example.org/article"
         );
-        assert_eq!(response.proposals[0].current_anchor, "https://example.org/article");
-        assert!(response.proposals[0].replacement_wikitext.contains("|title=Headline"));
-        assert!(response.proposals[0].replacement_wikitext.contains("|access-date=2026-06-09"));
-        assert_eq!(citoid.requests.load(Ordering::SeqCst), 2, "one fetch per bare reference");
+        assert_eq!(
+            response.proposals[0].current_anchor,
+            "https://example.org/article"
+        );
+        assert!(
+            response.proposals[0]
+                .replacement_wikitext
+                .contains("|title=Headline")
+        );
+        assert!(
+            response.proposals[0]
+                .replacement_wikitext
+                .contains("|access-date=2026-06-09")
+        );
+        assert_eq!(
+            citoid.requests.load(Ordering::SeqCst),
+            2,
+            "one fetch per bare reference"
+        );
     }
 
     #[tokio::test]
     async fn citoid_failure_declines_only_the_affected_reference() {
         let citoid = spawn_mock_citoid(vec![
-            ("ok.example", 200, include_str!("../../../fixtures/citoid/basic.json")),
+            (
+                "ok.example",
+                200,
+                include_str!("../../../fixtures/citoid/basic.json"),
+            ),
             ("fail.example", 520, "{}"),
         ])
         .await;
@@ -462,7 +502,10 @@ mod tests {
         assert_eq!(response.declined.len(), 1);
         assert_eq!(response.declined[0].ordinal, 1);
         assert_eq!(response.declined[0].url, "https://fail.example/b");
-        assert_eq!(response.declined[0].reason, BareUrlDeclineReason::MetadataUnavailable);
+        assert_eq!(
+            response.declined[0].reason,
+            BareUrlDeclineReason::MetadataUnavailable
+        );
     }
 
     #[tokio::test]
@@ -492,7 +535,10 @@ mod tests {
 
         assert!(response.proposals.is_empty());
         assert_eq!(response.declined.len(), 1);
-        assert_eq!(response.declined[0].reason, BareUrlDeclineReason::NoUsableTitle);
+        assert_eq!(
+            response.declined[0].reason,
+            BareUrlDeclineReason::NoUsableTitle
+        );
     }
 
     #[tokio::test]
@@ -517,8 +563,15 @@ mod tests {
 
         let ActionError::Execution { code, .. } = error;
         assert_eq!(code.as_deref(), Some("bare-url-repair-not-enabled"));
-        assert_eq!(citoid.requests.load(Ordering::SeqCst), 0, "no Citoid traffic on refusal");
-        assert!(editor.invocations().is_empty(), "gate refusal must not invoke editor");
+        assert_eq!(
+            citoid.requests.load(Ordering::SeqCst),
+            0,
+            "no Citoid traffic on refusal"
+        );
+        assert!(
+            editor.invocations().is_empty(),
+            "gate refusal must not invoke editor"
+        );
     }
 
     #[tokio::test]

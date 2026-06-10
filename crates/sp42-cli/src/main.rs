@@ -336,8 +336,11 @@ where
         }
         "--rev" => {
             let value = next_option_value(args, "--rev")?;
-            *state.bare_url_rev =
-                Some(value.parse().map_err(|_| format!("--rev expects a revision id, got: {value}"))?);
+            *state.bare_url_rev = Some(
+                value
+                    .parse()
+                    .map_err(|_| format!("--rev expects a revision id, got: {value}"))?,
+            );
         }
         "--ordinal" => {
             let value = next_option_value(args, "--ordinal")?;
@@ -375,13 +378,17 @@ fn build_bare_url_options(
     let title = title.ok_or_else(|| "bare-url modes require --title".to_string())?;
     let rev_id = rev_id.ok_or_else(|| "bare-url modes require --rev".to_string())?;
     let mode = if execute {
-        let ordinal =
-            ordinal.ok_or_else(|| "--bare-url-execute requires --ordinal".to_string())?;
+        let ordinal = ordinal.ok_or_else(|| "--bare-url-execute requires --ordinal".to_string())?;
         BareUrlCliMode::Execute { ordinal }
     } else {
         BareUrlCliMode::Preview
     };
-    Ok(Some(BareUrlCliOptions { mode, wiki_id, title, rev_id }))
+    Ok(Some(BareUrlCliOptions {
+        mode,
+        wiki_id,
+        title,
+        rev_id,
+    }))
 }
 
 fn build_context_preview(
@@ -1885,7 +1892,11 @@ async fn execute_bare_url_via_bridge(
     ordinal: usize,
     note: Option<&str>,
 ) -> Result<BareUrlExecuteReport, String> {
-    let proposals = fetch_bare_url_proposals(bridge_base_url, &bare_url_proposals_request(bare_url_options)).await?;
+    let proposals = fetch_bare_url_proposals(
+        bridge_base_url,
+        &bare_url_proposals_request(bare_url_options),
+    )
+    .await?;
     let proposal = select_bare_url_proposal(&proposals, ordinal)?;
 
     let client = reqwest::Client::builder()
@@ -2287,11 +2298,12 @@ mod tests {
     use serde_json::Value;
 
     use super::{
-        BareUrlCliMode, BareUrlCliOptions, BareUrlExecuteReport, CliOptions, ContextPreviewOptions, LOCAL_SERVER_BASE_URL, OutputFormat, PreviewMode,
-        ShellMode, WorkbenchOptions, parse_options, render_action_preview, render_backlog_preview,
-        render_bare_url_execute, render_bare_url_proposals, render_context_preview, render_coordination_preview, render_parity_report, render_queue,
-        render_scenario_report, render_session_digest, render_stream_preview, render_workbench,
-        select_bare_url_proposal, server_report_lines,
+        BareUrlCliMode, BareUrlCliOptions, BareUrlExecuteReport, CliOptions, ContextPreviewOptions,
+        LOCAL_SERVER_BASE_URL, OutputFormat, PreviewMode, ShellMode, WorkbenchOptions,
+        parse_options, render_action_preview, render_backlog_preview, render_bare_url_execute,
+        render_bare_url_proposals, render_context_preview, render_coordination_preview,
+        render_parity_report, render_queue, render_scenario_report, render_session_digest,
+        render_stream_preview, render_workbench, select_bare_url_proposal, server_report_lines,
     };
     use serde_json::json;
     use sp42_devtools::{
@@ -3007,11 +3019,24 @@ mod tests {
     #[test]
     fn bare_url_modes_are_mutually_exclusive_and_validated() {
         assert!(
-            parse(&["--bare-url-preview", "--bare-url-execute", "--title", "T", "--rev", "1"])
-                .is_err()
+            parse(&[
+                "--bare-url-preview",
+                "--bare-url-execute",
+                "--title",
+                "T",
+                "--rev",
+                "1"
+            ])
+            .is_err()
         );
-        assert!(parse(&["--bare-url-preview", "--rev", "1"]).is_err(), "missing --title");
-        assert!(parse(&["--bare-url-preview", "--title", "T"]).is_err(), "missing --rev");
+        assert!(
+            parse(&["--bare-url-preview", "--rev", "1"]).is_err(),
+            "missing --title"
+        );
+        assert!(
+            parse(&["--bare-url-preview", "--title", "T"]).is_err(),
+            "missing --rev"
+        );
         assert!(
             parse(&["--bare-url-execute", "--title", "T", "--rev", "1"]).is_err(),
             "execute requires --ordinal"
@@ -3056,9 +3081,13 @@ mod tests {
         let options = fixture_bare_url_options();
         let response = fixture_proposals_response();
 
-        let text =
-            render_bare_url_proposals(&options, "http://127.0.0.1:8788", &response, OutputFormat::Text)
-                .expect("text render should work");
+        let text = render_bare_url_proposals(
+            &options,
+            "http://127.0.0.1:8788",
+            &response,
+            OutputFormat::Text,
+        )
+        .expect("text render should work");
         assert!(text.contains("bare-url preview"));
         assert!(text.contains("wiki=testwiki"));
         assert!(text.contains("#0 url=https://example.org/article"));
@@ -3112,8 +3141,8 @@ mod tests {
             },
         };
 
-        let text = render_bare_url_execute(&report, OutputFormat::Text)
-            .expect("text render should work");
+        let text =
+            render_bare_url_execute(&report, OutputFormat::Text).expect("text render should work");
         assert!(text.contains("bare-url execute"));
         assert!(text.contains("ordinal=0"));
         assert!(text.contains("accepted=true"));
@@ -3123,8 +3152,8 @@ mod tests {
         assert!(markdown.contains("## Bare-URL execute"));
         assert!(markdown.contains("## Apply result"));
 
-        let json = render_bare_url_execute(&report, OutputFormat::Json)
-            .expect("json render should work");
+        let json =
+            render_bare_url_execute(&report, OutputFormat::Json).expect("json render should work");
         let value: serde_json::Value = serde_json::from_str(&json).expect("json should parse");
         assert_eq!(value["ordinal"], 0);
         assert_eq!(value["response"]["accepted"], true);
@@ -3141,7 +3170,8 @@ mod tests {
     #[test]
     fn select_bare_url_proposal_returns_error_for_missing_ordinal() {
         let response = fixture_proposals_response();
-        let error = select_bare_url_proposal(&response, 99).expect_err("should fail for missing ordinal");
+        let error =
+            select_bare_url_proposal(&response, 99).expect_err("should fail for missing ordinal");
         assert!(error.contains("no bare-URL proposal for ordinal 99"));
         assert!(error.contains("declined: [#3"));
         assert!(error.contains("https://fail.example/b"));
@@ -3163,7 +3193,8 @@ mod tests {
             }],
             declined: vec![],
         };
-        let error = select_bare_url_proposal(&response, 1).expect_err("should fail for missing ordinal");
+        let error =
+            select_bare_url_proposal(&response, 1).expect_err("should fail for missing ordinal");
         assert!(error.contains("no bare-URL proposal for ordinal 1"));
         assert!(error.contains("declined: []"));
     }

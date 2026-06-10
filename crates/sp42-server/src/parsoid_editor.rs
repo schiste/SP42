@@ -160,7 +160,9 @@ fn refusal_if_drifted(expected_text: &str, found: String) -> Option<WikitextEdit
 }
 
 #[allow(dead_code)]
-fn fragment_body_children(fragment: &ImmutableWikicode) -> Result<Vec<Wikinode>, WikitextEditorError> {
+fn fragment_body_children(
+    fragment: &ImmutableWikicode,
+) -> Result<Vec<Wikinode>, WikitextEditorError> {
     let code = Wikicode::new(fragment.html());
     let body = code
         .select_first("body")
@@ -374,7 +376,6 @@ impl WikitextEditor for ParsoidWikitextEditor {
 }
 
 #[cfg(test)]
-#[allow(dead_code)]
 mod tests {
     use sp42_core::{
         WikitextEditRefusal, WikitextNodeKind, WikitextNodeLocator, normalize_anchor_text,

@@ -6,6 +6,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::types::FlagState;
+use crate::wikitext_editor::WikitextNodeLocator;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RollbackRequest {
@@ -98,6 +99,11 @@ pub struct SessionActionExecutionRequest {
     pub batch_rev_ids: Option<Vec<u64>>,
     #[serde(default)]
     pub replacement_text: Option<String>,
+    /// Optional node-anchored target (ADR-0003): when present, content-edit
+    /// actions ground on this structural node instead of the literal
+    /// `selected_text` span.
+    #[serde(default)]
+    pub node_locator: Option<WikitextNodeLocator>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -162,6 +168,7 @@ mod tests {
             summary: Some("test note".to_string()),
             batch_rev_ids: None,
             replacement_text: None,
+            node_locator: None,
         };
         let response = SessionActionExecutionResponse {
             wiki_id: "frwiki".to_string(),
@@ -193,5 +200,50 @@ mod tests {
         assert!(is_retryable_action_api_error("failed-save"));
         assert!(!is_retryable_action_api_error("badtoken"));
         assert!(!is_retryable_action_api_error("permissiondenied"));
+    }
+
+    #[test]
+    fn session_action_request_round_trips_node_locator() {
+        use crate::wikitext_editor::{WikitextNodeKind, WikitextNodeLocator};
+
+        let request = SessionActionExecutionRequest {
+            wiki_id: "frwiki".to_string(),
+            kind: SessionActionKind::InlineEdit,
+            rev_id: 99,
+            title: Some("Exemple".to_string()),
+            target_user: None,
+            undo_after_rev_id: None,
+            summary: None,
+            selected_text: None,
+            batch_rev_ids: None,
+            replacement_text: Some(
+                "{{cite web|url=https://example.org|title=Exemple}}".to_string(),
+            ),
+            node_locator: Some(WikitextNodeLocator {
+                kind: WikitextNodeKind::Template,
+                ordinal: 2,
+                expected_text: "{{cite web|url=https://old.example.org|title=Exemple}}"
+                    .to_string(),
+            }),
+        };
+
+        let json = serde_json::to_string(&request).expect("request should serialize");
+        assert!(json.contains("\"node_locator\":{"));
+        assert!(json.contains("\"kind\":\"template\""));
+        assert!(json.contains("\"ordinal\":2"));
+
+        let parsed: SessionActionExecutionRequest =
+            serde_json::from_str(&json).expect("request should deserialize");
+        assert_eq!(parsed, request);
+    }
+
+    #[test]
+    fn session_action_request_deserializes_payload_without_node_locator() {
+        let json = r#"{"wiki_id":"frwiki","kind":"Rollback","rev_id":5,"title":null,"target_user":null,"undo_after_rev_id":null,"summary":null}"#;
+        let parsed: SessionActionExecutionRequest =
+            serde_json::from_str(json).expect("legacy payload should deserialize");
+        assert_eq!(parsed.node_locator, None);
+        assert_eq!(parsed.selected_text, None);
+        assert_eq!(parsed.kind, SessionActionKind::Rollback);
     }
 }

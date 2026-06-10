@@ -142,6 +142,7 @@ pub fn build_session_action_execution_requests(
             selected_text: None,
             batch_rev_ids: None,
             replacement_text: None,
+            node_locator: None,
         },
         SessionActionExecutionRequest {
             wiki_id: item.event.wiki_id.clone(),
@@ -154,6 +155,7 @@ pub fn build_session_action_execution_requests(
             selected_text: None,
             batch_rev_ids: None,
             replacement_text: None,
+            node_locator: None,
         },
         SessionActionExecutionRequest {
             wiki_id: item.event.wiki_id.clone(),
@@ -166,6 +168,7 @@ pub fn build_session_action_execution_requests(
             selected_text: None,
             batch_rev_ids: None,
             replacement_text: None,
+            node_locator: None,
         },
     ])
 }

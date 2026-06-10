@@ -6,8 +6,8 @@
 
 ## Context
 
-PRD-0001 (citation verification — initial implementation, open as PR #17 on the
-`prd-0001-citation-verification` branch) adds an operator-facing capability: for
+PRD-0001 (citation verification — initial implementation, merged as PR #17) adds
+an operator-facing capability: for
 a claim and its cited source, SP42 fetches the source read-only and reports a
 categorical verdict, with the supporting passage shown inline. PRD-0001 names
 *public contracts or APIs* as a dual-natured trigger and spawns four ADRs —
@@ -92,8 +92,10 @@ Per-call **sponsor-proxy authorization** (ADR-0006 Decision 6 — a funder payin
 only certain calls) does **not** reshape this contract: the optional capability tag a
 proxy authorizes on (e.g. `citation-verify`) rides as **transport-level authorization
 metadata** alongside the model call, never a typed field on this request and never part
-of the model input. A denied call returns an error the edge already handles — defaulting
-to `SourceUnavailable` (Decision 3 / ADR-0007) — so the contract surface is unchanged.
+of the model input. A denied call returns an error the edge already handles —
+resolving to `SourceUnavailable` with a **model-unavailable** reason, distinct from a
+source-body failure (Decision 3 / ADR-0007's abstention clarification) — so the
+contract surface is unchanged.
 The per-invocation fingerprint that identifies each model call (`ModelInvocation`:
 `model` / `quant` / `params` / `prompt_hash`, ADR-0006 Decision 8) is **not** carried on
 this read surface either; it is persisted with the verdict record (ADR-0009), keeping
@@ -201,24 +203,26 @@ informational kinds without a breaking change (Art. 9.2).
 ### 3. Trait-based, per Constitution Art. 6.2; the per-model edge behind the ADR-0006 `ModelClient` boundary
 
 Verification is exposed as a pure `build_* / parse_*` split plus an injected
-`execute_*`, mirroring the existing external-service edges
+`execute_*`, mirroring the pure-build / parse + injected-edge shape of
 `sp42-core/src/liftwing.rs` and `sp42-core/src/wiki_storage.rs`. This contract
 owns the **per-model unit** — one model, one verdict — which is the unit the
-panel calls. That unit sits **behind the provider-agnostic `ModelClient` boundary
-adopted in ADR-0006 (Decision 7)**: a capability calls the boundary, never a provider
-wire format, and the `build_* / parse_*` split below is what the boundary's *default
-OpenAI-compatible adapter* implements (the concrete adapter — hand-rolled vs. a vendored
-multi-provider crate — is ADR-0006's contained choice, in a shell). The signatures are
-illustrative of that adapter:
+panel calls. That unit sits **above** the provider-agnostic `ModelClient` boundary
+adopted in ADR-0006 (Decision 7): the citation edge builds a **neutral model
+request** (the prompt as chat messages plus `SamplingParams` — ADR-0006 Decision 7's
+neutral DTOs) and parses a **neutral completion**; it **never** builds a provider
+wire request and **never** names a wire format. Turning that neutral request into an
+HTTP call against a provider, and the response back into a completion, is the
+**`ModelClient` adapter's** job — **below** the boundary, in a shell (the default
+OpenAI-compatible adapter; backend `rust-genai`, pinned — ADR-0006's contained
+choice). The signatures are illustrative of the citation edge *above* the boundary:
 
 ```rust
 pub fn build_citation_verify_request(
     config: &WikiConfig,
-    model: &str,
     req: &CitationVerificationRequest,
-) -> Result<HttpRequest, CitationVerificationError>;
+) -> Result<ModelRequest, CitationVerificationError>;   // neutral DTO (ADR-0006 D7), never a wire request
 
-// The per-model unit: one model, one verdict.
+// The per-model unit: one model, one verdict — over the ModelClient boundary.
 pub async fn execute_citation_verify<C>(
     client: &C,
     config: &WikiConfig,
@@ -226,10 +230,10 @@ pub async fn execute_citation_verify<C>(
     req: &CitationVerificationRequest,
 ) -> Result<ParsedVerdict, CitationVerificationError>
 where
-    C: HttpClient + ?Sized;
+    C: ModelClient + ?Sized;
 
 pub fn parse_citation_verify_response(
-    body: &[u8],
+    completion: &Completion,                            // neutral completion (ADR-0006 D7), never raw bytes
 ) -> Result<ParsedVerdict, CitationVerificationError>;
 ```
 
@@ -237,22 +241,24 @@ pub fn parse_citation_verify_response(
 its bounded-concurrency fan-out, the pure vote applied to the N results, and the
 panel config shape); this contract's per-model edge `execute_citation_verify` is
 the unit it calls. The model is reached **only** through the ADR-0006 `ModelClient`
-boundary, whose default OpenAI-compatible adapter rides the existing `HttpClient` trait
-(`sp42-types/src/traits.rs:19`); the model endpoint is an
-optional, config-driven, default-absent per-wiki field, exactly like
-`liftwing_url: Option<Url>` (`sp42-core/src/types.rs:401`) — the panel
+boundary; the concrete adapter behind that trait — which translates the neutral
+request into a provider HTTP call over the existing `HttpClient` edge
+(`sp42-types/src/traits.rs:19`) — lives in a **shell**, never in `sp42-core`. The
+model endpoint is an optional, config-driven, default-absent per-wiki field, exactly
+like `liftwing_url: Option<Url>` (`sp42-core/src/types.rs:401`) — the panel
 generalization of that config is owned by ADR-0006, and *where* the endpoint runs
 (local model, direct provider, or sponsor proxy) plus who holds the keys are owned
-by ADR-0006; this contract is identical in every mode. Core never names a concrete
-model client; the production adapter lives in a shell (`BearerHttpClient`,
-`sp42-server/src/runtime_adapters.rs:51`), the deterministic double `StubHttpClient`
-(`sp42-types/src/traits.rs:51`) drives tests — for a panel, a queue of N recorded
-`HttpResponse`. The pure parser ends in a `validate_*` gate that defaults an
+by ADR-0006; this contract is identical in every mode. `sp42-core` names no concrete
+model client and depends only on the `ModelClient` trait; the production adapter lives
+in a shell (its `HttpClient` impl, e.g. `BearerHttpClient`,
+`sp42-server/src/runtime_adapters.rs:51`), and the deterministic test double is a
+**stub `ModelClient`** returning recorded completions — for a panel, a queue of N
+recorded completions. The pure parser ends in a `validate_*` gate that defaults an
 unrecoverable model response to *not supported*, never to a support judgment.
 
 Per Constitution Art. 1.3 (no network in unit tests), **every unit and property
-test for the contract runs network-free**, driven by `StubHttpClient` (a queue of
-recorded `HttpResponse`); the only network-touching tier is the integration tier
+test for the contract runs network-free**, driven by a stub `ModelClient` (a queue of
+recorded completions); the only network-touching tier is the integration tier
 (Art. 1.2, `--features integration` against a mock server). ADR-0007's
 anti-fabrication property test — a claim with no matching source text never
 yields *supported* — is by construction a no-network test, and holds for the
@@ -285,7 +291,12 @@ gate that lets the caller short-circuit to a `SourceUnavailable` verdict **witho
 a model call at all**, removing one nondeterminism source for the mechanically
 determinable failures. Because the source is fetched once before the panel runs,
 this short-circuit applies to the whole panel: an unusable body yields
-`SourceUnavailable` with no model calls and no vote.
+`SourceUnavailable` with no model calls and no vote. The set also carries a
+**model-unavailable** reason for the distinct case where the body was usable but
+the model/panel could not be reached (an unreachable endpoint or an ADR-0006
+proxy-denied call): the verdict is the same `SourceUnavailable` abstention
+(ADR-0007), but the `reason` keeps the model-unavailable cause separable from a
+source-body failure on the operator-facing surface.
 
 ### 5. The result is informational; any edit flows through the unchanged action path
 

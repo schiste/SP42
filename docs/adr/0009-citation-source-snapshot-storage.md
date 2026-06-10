@@ -6,7 +6,7 @@
 
 ## Context
 
-PRD-0001 (citation verification, PR #17 on `prd-0001-citation-verification`) requires that
+PRD-0001 (citation verification, merged as PR #17) requires that
 re-running verification on the same claim and the **same fetched source snapshot** yields the
 same verdict category (DoD item 5, Constitution Art. 2), and that each verification emits an
 observable showing the fetched source, the located passage (or its absence), and the verdict

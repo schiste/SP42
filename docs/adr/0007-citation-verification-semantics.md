@@ -6,8 +6,8 @@
 
 ## Context
 
-PRD-0001 (*Citation verification — initial implementation*, open as PR #17 on the
-`prd-0001-citation-verification` branch) adds an operator-facing capability: for
+PRD-0001 (*Citation verification — initial implementation*, merged as PR #17)
+adds an operator-facing capability: for
 a claim and its cited source, SP42 fetches the source read-only and reports a
 **categorical verdict** on whether the source supports the claim, with the
 supporting passage shown inline. The PRD names this a dual-natured trigger —
@@ -112,7 +112,7 @@ The serde wire form flattens the two-axis type to a single snake_case string for
 the four observable outcomes — `supported` / `partial` / `not_supported` /
 `source_unavailable` — via a custom (de)serialize, and the read-only finding kind
 serializes as `citation_verdict`. The two-axis split is the in-memory guarantee;
-the flat wire string is the stable contract the sibling ADRs (0008 contract, 0010
+the flat wire string is the stable contract the sibling ADRs (0008 contract, 0009
 storage) use verbatim, so the one canonical form lives here with the type it names.
 
 There is **no `confidence: f32`, no probability, no percentage** anywhere on the
@@ -162,6 +162,16 @@ When there is no usable source to judge, the verdict is `SourceUnavailable` —
 unparseable or non-committal model response defaults to `NotSupported`, never to
 `Supported`: support that cannot be established is *not established*, never a free
 pass — there is no separate "unclear" outcome (Decision 1).
+
+A model or panel that cannot be reached — an unreachable endpoint, or a
+sponsor-proxy call denied per ADR-0006 Decision 6 — **also** resolves to
+`SourceUnavailable`: with no model verdict to ground, abstention is the only
+honest outcome, never a guessed support level. This deliberately **reuses the
+abstention outcome rather than adding a model-unavailable verdict tier** — the
+four-value set stays closed (Decision 1). The verdict value is shared, but the
+*cause* (an unusable source body vs. an unreachable model) is distinguished by
+the `reason` carried on `CitationVerificationError::SourceUnavailable` (ADR-0008),
+so the operator-facing cause is not conflated even though the category is one.
 
 ### 4. The availability axis is deterministic-first: a body-usability (GIGO) gate yields `SourceUnavailable` without a model call
 

@@ -432,12 +432,26 @@ async fn node_anchored_replacement(
             retryable: false,
         });
     };
+    replace_node_or_refuse(config, title, payload.rev_id, locator, &replacement, editor).await
+}
+
+/// Replace one node-anchored target, mapping editor failures to `editor-*`
+/// codes and ADR-0003 refusals (drift / out-of-range) to a 409-in-body
+/// `ActionError` — shared by inline edits and bare-URL repair (PRD-0008).
+pub(crate) async fn replace_node_or_refuse(
+    config: &sp42_core::WikiConfig,
+    title: &str,
+    rev_id: u64,
+    locator: &WikitextNodeLocator,
+    replacement: &str,
+    editor: &dyn WikitextEditor,
+) -> Result<String, ActionError> {
     let page = WikitextPageRef {
         title: title.to_string(),
-        rev_id: payload.rev_id,
+        rev_id,
     };
     let outcome = editor
-        .replace_node(config, &page, locator, &replacement)
+        .replace_node(config, &page, locator, replacement)
         .await
         .map_err(|e| action_error_from_editor(&e))?;
     match outcome {
@@ -483,7 +497,7 @@ fn apply_citation_template(
     replace_exactly_once(page_text, selected_text, &tagged)
 }
 
-async fn patrol_original_edit_if_possible(
+pub(crate) async fn patrol_original_edit_if_possible(
     client: &BearerHttpClient,
     config: &sp42_core::WikiConfig,
     rev_id: u64,

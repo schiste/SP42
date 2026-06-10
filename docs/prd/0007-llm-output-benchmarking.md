@@ -242,7 +242,9 @@ exist for the promise to be claimable.
 ## Open questions
 
 1. **Corpus layout and licensing presentation.** Proposed: committed corpora
-   under a dedicated `corpora/` directory with a README stating the licensing
+   under `evals/<task>/` (e.g. `evals/citation/`), extending the existing
+   `evals/scoring/` precedent so the deterministic scoring evals and the LLM
+   output evals live under one roof, with a README stating the licensing
    posture (CC BY-SA / CC0 / fair use, per-payload labels), produced initially
    by the alex importer; `--corpus <path>` remains for private or in-progress
    corpora. Whether per-payload labels need finer granularity than the

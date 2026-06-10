@@ -60,6 +60,7 @@ pub use action_executor::{
     build_patrol_request, build_rollback_request, build_token_request, build_undo_request,
     build_wiki_page_save_request, execute_fetch_token, execute_patrol, execute_rollback,
     execute_undo, execute_wiki_page_save, parse_action_response_summary, parse_token_response,
+    replace_exactly_once,
 };
 pub use article_inventory::{
     ArticleInventory, ArticleReference, article_inventory_notes, build_article_inventory,

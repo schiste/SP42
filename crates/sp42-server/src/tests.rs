@@ -2712,3 +2712,115 @@ async fn reconnect_storm_keeps_room_counts_and_live_delivery_consistent() {
     let _ = alice.close(None).await;
     server.abort();
 }
+
+// Test helpers for validation and inline edit
+fn capability_report_allowing_edit() -> sp42_core::DevAuthCapabilityReport {
+    sp42_core::DevAuthCapabilityReport {
+        checked: true,
+        wiki_id: "frwiki".to_string(),
+        capabilities: sp42_core::DevAuthDerivedCapabilities {
+            editing: sp42_core::DevAuthEditCapabilities {
+                can_edit: true,
+                can_undo: true,
+            },
+            ..Default::default()
+        },
+        ..Default::default()
+    }
+}
+
+fn inline_edit_request(
+    node_locator: Option<sp42_core::WikitextNodeLocator>,
+    selected_text: Option<String>,
+    replacement_text: Option<String>,
+) -> sp42_core::SessionActionExecutionRequest {
+    sp42_core::SessionActionExecutionRequest {
+        wiki_id: "frwiki".to_string(),
+        kind: sp42_core::SessionActionKind::InlineEdit,
+        rev_id: 42,
+        title: Some("Exemple".to_string()),
+        target_user: None,
+        undo_after_rev_id: None,
+        summary: None,
+        selected_text,
+        batch_rev_ids: None,
+        replacement_text,
+        node_locator,
+    }
+}
+
+fn template_locator() -> sp42_core::WikitextNodeLocator {
+    sp42_core::WikitextNodeLocator {
+        kind: sp42_core::WikitextNodeKind::Template,
+        ordinal: 0,
+        expected_text: "{{cite web|url=https://example.org/a|title=Example A}}".to_string(),
+    }
+}
+
+#[test]
+fn validate_accepts_inline_edit_with_node_locator() {
+    let payload = inline_edit_request(Some(template_locator()), None, Some("{{lang|fr|x}}".to_string()));
+    let report = capability_report_allowing_edit();
+    assert!(crate::action_routes::validate_action_request(&payload, &report).is_ok());
+}
+
+#[test]
+fn validate_rejects_inline_edit_without_selected_text_or_locator() {
+    let payload = inline_edit_request(None, None, Some("x".to_string()));
+    let report = capability_report_allowing_edit();
+    let (status, body) = crate::action_routes::validate_action_request(&payload, &report)
+        .expect_err("missing target must be rejected");
+    assert_eq!(status, axum::http::StatusCode::BAD_REQUEST);
+    assert!(
+        body.0["error"]
+            .as_str()
+            .expect("error body should carry a message")
+            .contains("selected_text or node_locator")
+    );
+}
+
+#[test]
+fn validate_rejects_node_locator_with_empty_expected_text() {
+    let mut locator = template_locator();
+    locator.expected_text = "   ".to_string();
+    let payload = inline_edit_request(Some(locator), None, Some("x".to_string()));
+    let report = capability_report_allowing_edit();
+    let (status, _body) = crate::action_routes::validate_action_request(&payload, &report)
+        .expect_err("empty expected_text must be rejected");
+    assert_eq!(status, axum::http::StatusCode::BAD_REQUEST);
+}
+
+#[test]
+fn validate_rejects_node_locator_without_replacement_text() {
+    let payload = inline_edit_request(Some(template_locator()), None, None);
+    let report = capability_report_allowing_edit();
+    let (status, body) = crate::action_routes::validate_action_request(&payload, &report)
+        .expect_err("missing replacement_text must be rejected");
+    assert_eq!(status, axum::http::StatusCode::BAD_REQUEST);
+    assert!(
+        body.0["error"]
+            .as_str()
+            .expect("error body should carry a message")
+            .contains("replacement_text")
+    );
+}
+
+#[test]
+fn validate_rejects_node_locator_for_citation_tagging() {
+    let mut payload = inline_edit_request(
+        Some(template_locator()),
+        Some("une phrase".to_string()),
+        None,
+    );
+    payload.kind = sp42_core::SessionActionKind::TagCitationNeeded;
+    let report = capability_report_allowing_edit();
+    let (status, body) = crate::action_routes::validate_action_request(&payload, &report)
+        .expect_err("citation tagging must reject locators");
+    assert_eq!(status, axum::http::StatusCode::BAD_REQUEST);
+    assert!(
+        body.0["error"]
+            .as_str()
+            .expect("error body should carry a message")
+            .contains("not supported")
+    );
+}

@@ -806,6 +806,11 @@ pub(crate) fn validate_action_request(
                     "selected_text is required for citation tagging",
                 ));
             }
+            if payload.node_locator.is_some() {
+                return Err(invalid_payload(
+                    "node_locator is not supported for citation tagging",
+                ));
+            }
             if !capabilities.capabilities.editing.can_edit {
                 return Err(forbidden_error(
                     "The authenticated session does not currently have edit capability on this wiki.",
@@ -816,8 +821,26 @@ pub(crate) fn validate_action_request(
             if payload.title.as_deref().is_none_or(str::is_empty) {
                 return Err(invalid_payload("title is required for inline edit"));
             }
-            if payload.selected_text.as_deref().is_none_or(str::is_empty) {
-                return Err(invalid_payload("selected_text is required for inline edit"));
+            match payload.node_locator.as_ref() {
+                Some(locator) => {
+                    if locator.expected_text.trim().is_empty() {
+                        return Err(invalid_payload(
+                            "node_locator.expected_text must not be empty",
+                        ));
+                    }
+                    if payload.replacement_text.is_none() {
+                        return Err(invalid_payload(
+                            "replacement_text is required for node-anchored inline edit",
+                        ));
+                    }
+                }
+                None => {
+                    if payload.selected_text.as_deref().is_none_or(str::is_empty) {
+                        return Err(invalid_payload(
+                            "selected_text or node_locator is required for inline edit",
+                        ));
+                    }
+                }
             }
             if !capabilities.capabilities.editing.can_edit {
                 return Err(forbidden_error(

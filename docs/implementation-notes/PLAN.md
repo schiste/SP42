@@ -1,8 +1,8 @@
 # Citation verification — implementation plan (experimental, exercising PRD-0001 + ADR-0006/0007/0008/0009)
 
-**Branch:** `impl/citation-verification` (off `origin/main` @ bf9a0a3, which has the `sp42-types` extraction).
-**Status:** in progress (overnight first attempt, 2026-06-08).
-**Discipline:** TDD (red→green→refactor), keep `cargo test -p sp42-core` + `cargo clippy --workspace --all-targets --all-features -- -D warnings` green at every commit. **No push, no PR** — local for Luis's review.
+**Branch:** `impl/citation-verification` (off `origin/main` @ bf9a0a3, which has the `sp42-types` extraction; worktree `.worktrees/louie/citation-work`).
+**Status:** overnight run complete (2026-06-08); SP42#25 layer work landed on top 2026-06-09 (see `IMPLEMENTATION-SUMMARY.md` *Since the overnight run*).
+**Discipline:** TDD (red→green→refactor), keep `cargo test -p sp42-core` + `cargo clippy --workspace --all-targets --all-features -- -D warnings` green at every commit. Pushed to `origin/impl/citation-verification`; no PR yet.
 
 This plan is the *sequencing + decisions*. The faithful per-algorithm spec is in
 `docs/implementation-notes/research/01..06`. ADR-change notes accumulate in

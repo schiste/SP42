@@ -79,6 +79,8 @@ Legend: **[note]** = worth recording, no change needed · **[edit]** = suggests 
   see `not_supported` alongside high agreement — which is honest (the panel did agree; the gate
   overrode it for lack of evidence) but could read oddly. No ADR change; recorded as a
   display/UX consideration for when the finding surfaces on `LiveOperatorView`.
+- **Update (2026-06-09, SP42#25):** superseded by entry 8 — the gate no longer rewrites the
+  verdict at all; the oddity this entry describes is resolved by the two-axis surface.
 
 ## 6. [note] First-cut `html_to_text` vs a real readability extractor
 
@@ -97,6 +99,61 @@ Legend: **[note]** = worth recording, no change needed · **[edit]** = suggests 
   the ADR-0007 contract type is the two-axis `CitationVerdict {Judged(SupportLevel),
   SourceUnavailable}`. Both serialize to the same four wire strings; lossless conversion between
   them. This is an implementation convenience fully consistent with ADR-0007 §1 (no ADR change).
+
+## 8. [edit] ADR-0007 §5 — verdict↔grounding decouple + the widened (still conservative) locator (SP42#25)
+
+- **ADR says:** §5 — `locate_quote` is "**case-sensitive** with only *conservative* normalization
+  (NFC, whitespace collapse, curly→straight quotes)", and a non-locating `Supported`/`Partial` is
+  "**suppressed pre-operator**".
+- **Reality (measured on the wikiharness-benchmark port, 2026-06-09):** both rules over-fired on
+  *transcription noise* — re-cased, dash-variant, zero-width-polluted, and ellipsis-elided quotes
+  were suppressed as if fabricated (≈24% of support votes at the ceiling). The implementation now:
+  - **folds transcription artifacts only, wider than the ADR's list** (layer 1: case, dash
+    unification, zero-width stripping) and matches ellipsis-elided quotes fragment-by-fragment in
+    order within a bounded window (layer 2); a reworded or fabricated span still never matches;
+  - **never rewrites the verdict** (the "layer 6" decouple): the finding carries the panel's
+    judgment plus an orthogonal `grounding_status` (`Located`/`LocatedFuzzy`/`Unlocated`/
+    `NotApplicable`), and `is_groundable_support` (requires exact `Located`) is the only gate an
+    autonomous path may consult. Honest triage for the human replaces silent suppression — the old
+    rewrite asserted a *different false thing* ("the source lacks the evidence") when the truth was
+    "we could not verify the transcription";
+  - adds a **bounded repair turn** (layer 3: one extra call asking for the exact shortest verbatim
+    span or `NO_SPAN` — transcription only, the verdict is never re-litigated; the repaired span
+    re-locates through the same gate) and a **guarded fuzzy fallback** (layer 5: anchor-token
+    windows, in-order token match ≥ 85% in integer arithmetic, digit-bearing tokens must occur
+    exactly, ≥ 5 tokens, surfaced span is the SOURCE's own text → `LocatedFuzzy`, weighable by a
+    human, never groundable).
+- **Suggested ADR edit:** §5's "case-sensitive" and "suppressed pre-operator" wording should be
+  replaced by the two-axis contract (judgment + grounding status), the artifact-folding list
+  updated, and the repair/fuzzy mechanisms named with their guards. The invariant itself is
+  unchanged in force: *no autonomous path may act on a support verdict whose passage the code did
+  not confirm verbatim in the fetched bytes.*
+
+## 9. [edit] ADR-0007 §5 — state plainly what the gate establishes (existence, not use)
+
+- **Context (Luis, 2026-06-09):** discussing anchor-extract (SP42#25 layer 4) — "are we
+  recovering something we're not sure the model actually used for its analysis?"
+- **The clarification the ADR should carry:** the locate gate verifies that the cited passage
+  **exists in the bytes SP42 fetched this session** — it has never verified that the passage
+  *caused* the model's verdict. A model with the source in context can judge from priors and copy
+  a plausible span post-hoc; the captures show models *reconstruct* quotes (markdown emphasis
+  added, mojibake cleaned) rather than copy them. The gate is an **anti-fabrication check on the
+  model's evidence assertion**, not a faithfulness check on its reasoning. What the grounding
+  tiers actually grade is **how strongly the located artifact ties back to an evidence assertion
+  the model made**: exact locate (the model asserted this very span) > fuzzy (≥ 85% of the
+  model's own emitted tokens, in order) > a repaired span (a fresh assertion from a second
+  invocation) > an anchor (the model asserted only a pointer; any expanded display text is the
+  code's choice, not the model's assertion).
+- **Consequence for layer 4 (anchor-extract):** as *recovery* for a failed quote it manufactures
+  grounding precisely where the model failed to demonstrate it (a 5–10-word anchor is easy to
+  cherry-pick; the expanded sentence was never asserted as evidence) — rejected. As a *primary*
+  contract ("point at the sentence that backs the claim", stated up front, unique-anchor
+  required) it is a legitimate evidence assertion and belongs to the layer-6 redesign, evaluated
+  on its own A/B. Either way it must carry its own grounding status and never satisfy
+  `is_groundable_support`.
+- **Suggested ADR edit:** add a short "What this gate establishes — and what it cannot"
+  subsection to §5 with the existence-vs-use distinction and the tie-back ordering above, so
+  future layers are designed against the real guarantee rather than an imagined stronger one.
 
 ## Deferred (tracked for the follow-on, not ADR changes)
 

@@ -423,12 +423,18 @@ fn default_scoring_policy_ref() -> String {
 pub struct WikiTemplates {
     #[serde(default = "default_citation_needed")]
     pub citation_needed: String,
+    /// Citation template rendered by bare-URL repair (PRD-0008), for example
+    /// `"cite web"`. Presence enables the feature for this wiki; when `None`,
+    /// the bare-URL routes refuse with `bare-url-repair-not-enabled`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bare_url_citation: Option<String>,
 }
 
 impl Default for WikiTemplates {
     fn default() -> Self {
         Self {
             citation_needed: default_citation_needed(),
+            bare_url_citation: None,
         }
     }
 }

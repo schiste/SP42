@@ -151,7 +151,7 @@ struct SourceToken {
 /// Locate `quote` in `source` by bounded fuzzy match — the guarded last resort (SP42#25
 /// layer 5), tried only after [`locate_quote`] fails. Guards, all of which must hold:
 ///
-/// - the quote has at least [`MIN_FUZZY_TOKENS`] cleaned tokens (short spans: exact only);
+/// - the quote has at least `MIN_FUZZY_TOKENS` cleaned tokens (short spans: exact only);
 /// - candidate windows are anchored on real shared tokens (a quote sharing no anchor with
 ///   the source examines zero windows — a fabricated quote cannot even be considered);
 /// - quote tokens must match **in order** (longest common subsequence) at ≥ 85%;

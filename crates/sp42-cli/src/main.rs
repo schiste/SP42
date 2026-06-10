@@ -1852,19 +1852,13 @@ async fn fetch_bare_url_proposals(
         .map_err(|error| format!("bare-url proposals payload was invalid: {error}"))
 }
 
-/// Re-fetch proposals, select ordinal K, and replay it against the apply
-/// route. The fresh fetch re-anchors the locator, narrowing the TOCTOU
-/// window; the server's anti-drift re-check and `baserevid` guard close it.
-/// Auth rides the bridge session (ADR-0002): bootstrap, then send the
-/// session cookie *and* the bootstrap-reported CSRF token.
-async fn execute_bare_url_via_bridge(
-    bridge_base_url: &str,
-    bare_url_options: &BareUrlCliOptions,
+/// Select a proposal from the response by ordinal. Returns the proposal if
+/// found, or an error message listing declined entries.
+fn select_bare_url_proposal(
+    proposals: &sp42_core::BareUrlProposalsResponse,
     ordinal: usize,
-    note: Option<&str>,
-) -> Result<BareUrlExecuteReport, String> {
-    let proposals = fetch_bare_url_proposals(bridge_base_url, &bare_url_proposals_request(bare_url_options)).await?;
-    let proposal = proposals
+) -> Result<sp42_core::BareUrlProposal, String> {
+    proposals
         .proposals
         .iter()
         .find(|proposal| proposal.locator.ordinal == ordinal)
@@ -1877,7 +1871,22 @@ async fn execute_bare_url_via_bridge(
                 .collect::<Vec<_>>()
                 .join(", ");
             format!("no bare-URL proposal for ordinal {ordinal}; declined: [{declined}]")
-        })?;
+        })
+}
+
+/// Re-fetch proposals, select ordinal K, and replay it against the apply
+/// route. The fresh fetch re-anchors the locator, narrowing the TOCTOU
+/// window; the server's anti-drift re-check and `baserevid` guard close it.
+/// Auth rides the bridge session (ADR-0002): bootstrap, then send the
+/// session cookie *and* the bootstrap-reported CSRF token.
+async fn execute_bare_url_via_bridge(
+    bridge_base_url: &str,
+    bare_url_options: &BareUrlCliOptions,
+    ordinal: usize,
+    note: Option<&str>,
+) -> Result<BareUrlExecuteReport, String> {
+    let proposals = fetch_bare_url_proposals(bridge_base_url, &bare_url_proposals_request(bare_url_options)).await?;
+    let proposal = select_bare_url_proposal(&proposals, ordinal)?;
 
     let client = reqwest::Client::builder()
         .user_agent(sp42_core::branding::USER_AGENT)
@@ -2282,7 +2291,7 @@ mod tests {
         ShellMode, WorkbenchOptions, parse_options, render_action_preview, render_backlog_preview,
         render_bare_url_execute, render_bare_url_proposals, render_context_preview, render_coordination_preview, render_parity_report, render_queue,
         render_scenario_report, render_session_digest, render_stream_preview, render_workbench,
-        server_report_lines,
+        select_bare_url_proposal, server_report_lines,
     };
     use serde_json::json;
     use sp42_devtools::{
@@ -3119,5 +3128,43 @@ mod tests {
         let value: serde_json::Value = serde_json::from_str(&json).expect("json should parse");
         assert_eq!(value["ordinal"], 0);
         assert_eq!(value["response"]["accepted"], true);
+    }
+
+    #[test]
+    fn selects_bare_url_proposal_by_matching_ordinal() {
+        let response = fixture_proposals_response();
+        let proposal = select_bare_url_proposal(&response, 0).expect("should find ordinal 0");
+        assert_eq!(proposal.locator.ordinal, 0);
+        assert_eq!(proposal.url, "https://example.org/article");
+    }
+
+    #[test]
+    fn select_bare_url_proposal_returns_error_for_missing_ordinal() {
+        let response = fixture_proposals_response();
+        let error = select_bare_url_proposal(&response, 99).expect_err("should fail for missing ordinal");
+        assert!(error.contains("no bare-URL proposal for ordinal 99"));
+        assert!(error.contains("declined: [#3"));
+        assert!(error.contains("https://fail.example/b"));
+        assert!(error.contains("metadata-unavailable"));
+    }
+
+    #[test]
+    fn select_bare_url_proposal_handles_empty_declined_list() {
+        let response = sp42_core::BareUrlProposalsResponse {
+            proposals: vec![sp42_core::BareUrlProposal {
+                locator: sp42_core::WikitextNodeLocator {
+                    kind: sp42_core::WikitextNodeKind::Reference,
+                    ordinal: 0,
+                    expected_text: "https://example.org/article".to_string(),
+                },
+                url: "https://example.org/article".to_string(),
+                current_anchor: "https://example.org/article".to_string(),
+                replacement_wikitext: "{{cite web |url=https://example.org/article}}".to_string(),
+            }],
+            declined: vec![],
+        };
+        let error = select_bare_url_proposal(&response, 1).expect_err("should fail for missing ordinal");
+        assert!(error.contains("no bare-URL proposal for ordinal 1"));
+        assert!(error.contains("declined: []"));
     }
 }

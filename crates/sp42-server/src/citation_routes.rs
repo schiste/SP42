@@ -14,7 +14,11 @@ use sp42_core::{
     citoid_language, render_bare_url_citation,
 };
 
-use crate::action_routes::action_error_from_editor;
+use axum::{Json, extract::State, http::StatusCode, response::IntoResponse};
+
+use crate::action_routes::{action_error_from_editor, action_error_response};
+use crate::config_for_state_wiki;
+use crate::state::AppState;
 
 /// Citoid etiquette: at most one request per second on the live service.
 #[allow(dead_code)]
@@ -78,7 +82,7 @@ pub(crate) async fn collect_bare_url_proposals(
     config: &sp42_core::WikiConfig,
     editor: &dyn WikitextEditor,
     access_date_iso: &str,
-    pace: Option<Duration>,
+    pacing: Option<Duration>,
     request: &BareUrlProposalsRequest,
 ) -> Result<BareUrlProposalsResponse, ActionError> {
     let template = bare_url_template(config)?;
@@ -93,8 +97,8 @@ pub(crate) async fn collect_bare_url_proposals(
 
     let mut response = BareUrlProposalsResponse::default();
     for (index, reference) in bare_url_references(&descriptors).into_iter().enumerate() {
-        if let Some(pace) = pace.filter(|_| index > 0) {
-            tokio::time::sleep(pace).await;
+        if let Some(duration) = pacing.filter(|_| index > 0) {
+            tokio::time::sleep(duration).await;
         }
         let raw = fetch_citoid_object(client, citoid_base_override, &reference.url).await;
         let metadata = raw
@@ -129,6 +133,30 @@ pub(crate) async fn collect_bare_url_proposals(
         }
     }
     Ok(response)
+}
+
+/// `POST /dev/citation/bare-url-proposals` — read-only proposal generation.
+///
+/// Not session-gated: it performs only public reads (Parsoid enumeration and
+/// Citoid metadata). The apply route is the authenticated, CSRF-checked path.
+pub(crate) async fn post_bare_url_proposals(
+    State(state): State<AppState>,
+    Json(payload): Json<BareUrlProposalsRequest>,
+) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
+    let config = config_for_state_wiki(&state, &payload.wiki_id)?;
+    let access_date = sp42_core::iso_date_from_epoch_ms(state.clock.now_ms());
+    let response = collect_bare_url_proposals(
+        &state.http_client,
+        None,
+        &config,
+        state.wikitext_editor.as_ref(),
+        &access_date,
+        Some(CITOID_PACE),
+        &payload,
+    )
+    .await
+    .map_err(|error| action_error_response(&error))?;
+    Ok(Json(response))
 }
 
 #[cfg(test)]

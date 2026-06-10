@@ -636,6 +636,36 @@ async fn bootstrap_session_is_disabled_outside_local_mode() {
     );
 }
 
+#[tokio::test]
+async fn bare_url_proposals_route_is_registered_and_gated() {
+    let router = build_router(test_state());
+    let response = router
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/dev/citation/bare-url-proposals")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::json!({
+                        "wiki_id": "frwiki",
+                        "title": "Exemple",
+                        "rev_id": 42
+                    })
+                    .to_string(),
+                ))
+                .expect("request should build"),
+        )
+        .await
+        .expect("request should complete");
+
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    let body = to_bytes(response.into_body(), usize::MAX)
+        .await
+        .expect("response body should read");
+    let json: serde_json::Value = serde_json::from_slice(&body).expect("body should be json");
+    assert_eq!(json["code"], "bare-url-repair-not-enabled");
+}
+
 #[test]
 fn vps_session_cookie_is_secure() {
     let mut state = test_state();

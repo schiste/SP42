@@ -139,14 +139,15 @@ pub fn render_bare_url_citation(
             reason: BareUrlDeclineReason::NoUsableTitle,
         };
     };
-    if title == metadata.url.trim() {
+    let url = metadata.url.trim();
+    if title == url {
         return BareUrlOutcome::Declined {
             reason: BareUrlDeclineReason::NoUsableTitle,
         };
     }
 
     let mut parameters: Vec<(&str, String)> = vec![
-        ("url", metadata.url.clone()),
+        ("url", url.to_string()),
         ("title", title.to_string()),
     ];
     if let Some(publication) = &metadata.publication {

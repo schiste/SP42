@@ -21,7 +21,6 @@ use crate::config_for_state_wiki;
 use crate::state::AppState;
 
 /// Citoid etiquette: at most one request per second on the live service.
-#[allow(dead_code)]
 const CITOID_PACE: Duration = Duration::from_secs(1);
 
 /// The configured bare-URL citation template, or the per-wiki gate refusal.
@@ -29,7 +28,6 @@ const CITOID_PACE: Duration = Duration::from_secs(1);
 /// Presence of `templates.bare_url_citation` is the whole gate (PRD-0008):
 /// a wiki without it (every production config) refuses before any wiki or
 /// Citoid traffic.
-#[allow(dead_code)]
 fn bare_url_template(config: &sp42_core::WikiConfig) -> Result<String, ActionError> {
     config.templates.bare_url_citation.clone().ok_or_else(|| ActionError::Execution {
         message: format!(
@@ -48,7 +46,6 @@ fn bare_url_template(config: &sp42_core::WikiConfig) -> Result<String, ActionErr
 ///
 /// `base_override` swaps the canonical endpoint's scheme/host for tests
 /// while keeping the lifted client's exact path encoding.
-#[allow(dead_code)]
 async fn fetch_citoid_object(
     client: &reqwest::Client,
     base_override: Option<&str>,
@@ -75,7 +72,6 @@ async fn fetch_citoid_object(
 /// Returns the gate refusal for a wiki without `bare_url_citation`, or an
 /// `editor-*` mapped error when reference enumeration fails. Per-reference
 /// Citoid failures are **not** errors; they become declined entries.
-#[allow(dead_code)]
 pub(crate) async fn collect_bare_url_proposals(
     client: &reqwest::Client,
     citoid_base_override: Option<&str>,
@@ -374,7 +370,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn gate_refusal_touches_neither_editor_backend_nor_citoid() {
+    async fn gate_refusal_emits_no_citoid_traffic_and_leaves_editor_untouched() {
         let citoid = spawn_mock_citoid(vec![]).await;
         let editor = ScriptedWikitextEditor::new(
             vec![reference("https://example.org/article")],
@@ -396,6 +392,7 @@ mod tests {
         let ActionError::Execution { code, .. } = error;
         assert_eq!(code.as_deref(), Some("bare-url-repair-not-enabled"));
         assert_eq!(citoid.requests.load(Ordering::SeqCst), 0, "no Citoid traffic on refusal");
+        assert!(editor.invocations().is_empty(), "gate refusal must not invoke editor");
     }
 
     #[tokio::test]

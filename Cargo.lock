@@ -2524,6 +2524,7 @@ dependencies = [
  "base64",
  "futures",
  "proptest",
+ "regex",
  "serde",
  "serde_json",
  "serde_yaml",

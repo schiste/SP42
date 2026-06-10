@@ -29,6 +29,7 @@ pub mod action_contracts;
 pub mod action_executor;
 pub mod article_inventory;
 pub mod branding;
+pub mod citation;
 pub mod context_builder;
 pub mod dev_auth;
 pub mod diff_engine;
@@ -67,6 +68,13 @@ pub use action_executor::{
 pub use article_inventory::{
     ArticleInventory, ArticleReference, article_inventory_notes, build_article_inventory,
 };
+pub use citation::citoid::{
+    CitoidMetadata, build_citoid_header, build_citoid_request, parse_citoid_response,
+};
+pub use citation::urls::{
+    ResolvedUrl, build_article_html_url, check_fetchable_source_url, is_archive_url,
+    is_valid_wiki_code, parse_revision_from_etag, resolve_citation_url, rewrite_wayback_url,
+};
 pub use context_builder::{ContextInputs, build_scoring_context};
 pub use dev_auth::{
     ActionExecutionHistoryReport, ActionExecutionLogEntry, ActionExecutionStatusReport,
@@ -85,9 +93,10 @@ pub use diff_engine::{
     diff_chars, diff_lines,
 };
 pub use errors::{
-    ActionError, BacklogRuntimeError, DevAuthError, DiffError, EventSourceError, HttpClientError,
-    LiftWingError, OAuthError, PublicDocumentError, RecentChangesError, ReviewWorkbenchError,
-    ScoringError, ScoringEvaluationError, ScoringPolicyError, StorageError, StreamIngestorError,
+    ActionError, BacklogRuntimeError, CitationStorageError, CitationVerificationError,
+    DevAuthError, DiffError, EventSourceError, HttpClientError, LiftWingError, OAuthError,
+    PublicDocumentError, RecentChangesError, ReviewWorkbenchError, ScoringError,
+    ScoringEvaluationError, ScoringPolicyError, StorageError, StreamIngestorError,
     StreamRuntimeError, TrainingDataError, UserAnalysisError, WebSocketError, WikiStorageError,
 };
 pub use liftwing::{

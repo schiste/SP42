@@ -81,6 +81,33 @@ pub enum LiftWingError {
     Json(#[from] serde_json::Error),
 }
 
+/// Errors raised by the per-model citation-verification edge (ADR-0008 §4).
+///
+/// `SourceUnavailable` carries a fixed, deterministic reason token so the caller can
+/// short-circuit to a `source_unavailable` verdict without a model call (ADR-0007 §4).
+#[derive(Debug, Error)]
+pub enum CitationVerificationError {
+    #[error("citation verify request is invalid: {message}")]
+    InvalidRequest { message: String },
+    #[error("citation source unavailable: {reason}")]
+    SourceUnavailable { reason: &'static str },
+    #[error("citation verify response is invalid: {message}")]
+    InvalidResponse { message: String },
+    #[error("citation verify serialization failed: {0}")]
+    Json(#[from] serde_json::Error),
+}
+
+/// Errors raised when persisting/loading source snapshots and verdict records (ADR-0009).
+#[derive(Debug, Error)]
+pub enum CitationStorageError {
+    #[error("citation storage input is invalid: {message}")]
+    InvalidInput { message: String },
+    #[error("citation storage serialization failed: {message}")]
+    Serialize { message: String },
+    #[error("citation storage backend failed: {message}")]
+    Storage { message: String },
+}
+
 #[derive(Debug, Error)]
 pub enum DiffError {
     #[error("diff generation failed: {message}")]

@@ -78,6 +78,8 @@ pub const DEV_AUTH_BOOTSTRAP_STATUS_PATH: &str = "/dev/auth/bootstrap/status";
 pub const DEV_ACTION_EXECUTE_PATH: &str = "/dev/actions/execute";
 pub const DEV_ACTION_STATUS_PATH: &str = "/dev/actions/status";
 pub const DEV_ACTION_HISTORY_PATH: &str = "/dev/actions/history";
+pub const DEV_CITATION_BARE_URL_PROPOSALS_PATH: &str = "/dev/citation/bare-url-proposals";
+pub const DEV_CITATION_BARE_URL_APPLY_PATH: &str = "/dev/citation/bare-url-apply";
 
 pub const DEV_AUTH_ACTION_STATUS_PATH: &str = DEV_ACTION_STATUS_PATH;
 pub const DEV_AUTH_ACTION_HISTORY_PATH: &str = DEV_ACTION_HISTORY_PATH;

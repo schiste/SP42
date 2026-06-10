@@ -9,6 +9,7 @@ mod live_queue;
 mod local_env;
 mod oauth_runtime;
 mod operator_live;
+mod parsoid_editor;
 mod revision_artifacts;
 mod routes;
 pub(crate) mod runtime_adapters;

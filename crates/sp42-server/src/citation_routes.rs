@@ -30,7 +30,7 @@ use crate::action_routes::{
     replace_node_or_refuse,
 };
 use crate::config_for_state_wiki;
-use crate::http_errors::unauthorized_error;
+use crate::http_errors::{forbidden_error, unauthorized_error};
 use crate::runtime_adapters::BearerHttpClient;
 use crate::session_runtime::{current_session_snapshot, validate_csrf_header};
 use crate::state::AppState;
@@ -227,6 +227,19 @@ pub(crate) async fn execute_bare_url_apply(
     Ok(save_response)
 }
 
+/// Gate that checks edit capability from a capability report.
+/// Returns Ok if `editing.can_edit` is true, or a 403 error otherwise.
+fn ensure_bare_url_edit_capability(
+    capabilities: &sp42_core::DevAuthCapabilityReport,
+) -> Result<(), (StatusCode, Json<serde_json::Value>)> {
+    if !capabilities.capabilities.editing.can_edit {
+        return Err(forbidden_error(
+            "The authenticated session does not currently have edit capability on this wiki.",
+        ));
+    }
+    Ok(())
+}
+
 /// `POST /dev/citation/bare-url-apply` — the operator-confirmed write path.
 /// Session + CSRF gated exactly like `post_execute_action` (ADR-0002).
 pub(crate) async fn post_bare_url_apply(
@@ -240,6 +253,9 @@ pub(crate) async fn post_bare_url_apply(
         ));
     };
     validate_csrf_header(&headers, &session)?;
+    let capabilities =
+        crate::capability_report_for_session(&state, &session, &payload.wiki_id, false).await;
+    ensure_bare_url_edit_capability(&capabilities)?;
     let config = config_for_state_wiki(&state, &payload.wiki_id)?;
     let client = BearerHttpClient::new(state.http_client.clone(), session.access_token.clone());
     let response =
@@ -294,12 +310,14 @@ mod tests {
     use std::sync::Arc;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
+    use axum::http::StatusCode;
     use sp42_core::{
-        ActionError, BareUrlDeclineReason, BareUrlProposalsRequest, ScriptedWikitextEditor,
+        ActionError, BareUrlDeclineReason, BareUrlProposalsRequest, DevAuthCapabilityReport,
+        DevAuthDerivedCapabilities, DevAuthEditCapabilities, ScriptedWikitextEditor,
         ScriptedWikitextNode, WikitextNodeKind,
     };
 
-    use super::{bare_url_template, collect_bare_url_proposals};
+    use super::{bare_url_template, collect_bare_url_proposals, ensure_bare_url_edit_capability};
 
     fn disabled_config() -> sp42_core::WikiConfig {
         sp42_wiki::WikiRegistry::embedded_default()
@@ -629,5 +647,54 @@ mod tests {
 
         let ActionError::Execution { code, .. } = error;
         assert_eq!(code.as_deref(), Some("editor-not-configured"));
+    }
+
+    #[test]
+    fn ensure_bare_url_edit_capability_accepts_when_can_edit_true() {
+        let report = DevAuthCapabilityReport {
+            checked: true,
+            wiki_id: "frwiki".to_string(),
+            capabilities: DevAuthDerivedCapabilities {
+                editing: DevAuthEditCapabilities {
+                    can_edit: true,
+                    can_undo: false,
+                },
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        let result = ensure_bare_url_edit_capability(&report);
+
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn ensure_bare_url_edit_capability_refuses_when_can_edit_false() {
+        let report = DevAuthCapabilityReport {
+            checked: true,
+            wiki_id: "frwiki".to_string(),
+            capabilities: DevAuthDerivedCapabilities {
+                editing: DevAuthEditCapabilities {
+                    can_edit: false,
+                    can_undo: false,
+                },
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        let result = ensure_bare_url_edit_capability(&report);
+
+        assert!(result.is_err());
+        let (status, body) = result.unwrap_err();
+        assert_eq!(status, StatusCode::FORBIDDEN);
+        assert!(
+            body.0
+                .get("error")
+                .and_then(|v| v.as_str())
+                .is_some_and(|s| s.contains("edit capability")),
+            "error message should mention edit capability"
+        );
     }
 }

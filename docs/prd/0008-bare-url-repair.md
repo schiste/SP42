@@ -6,11 +6,7 @@
 **State:** Draft
 **Discussion:** https://github.com/schiste/SP42/issues/27 (this PRD supersedes
 the issue's micro-PRD draft)
-**Spawned ADRs:** a thin operator-confirmed content-proposal contract ADR,
-drafted with the closing PR (number assigned then — the citation-verification
-series holds unmerged drafts through ADR-0009, so no number is claimed here;
-see Resolved question 5). The editing *mechanism* is governed by ADR-0003
-(accepted, implemented).
+**Spawned ADRs:** ADR-0010 (operator-confirmed content proposals), drafted with the closing PR once the citation-verification series (0006–0009) merged (see Resolved question 5). The editing *mechanism* is governed by ADR-0003 (accepted, implemented).
 
 ## Scope boundary
 
@@ -29,7 +25,7 @@ starts once the editing mechanism has proven itself live.
 It deliberately excludes adjacent concerns:
 
 - **Finding bare URLs at scale** — queue ranking, cross-article discovery, and
-  prioritization are the citation review queue (PRD-0007, future). This PRD
+  prioritization are the citation review queue (issue #26, future). This PRD
   covers only the references of the revision the operator is already reviewing.
 - **How the edit is carried out** — node addressing, anti-drift anchors, and
   lossless re-serialization are **ADR-0003** (implemented). This PRD relies on
@@ -116,7 +112,7 @@ own template mappings at runtime is deferred further still (see Alternatives).
 operator can read, and a confirmation **bound to the exact proposed edit** so
 that what the operator approved is what lands — or the write refuses. ADR-0003
 already supplies the binding primitives (expected-text anchor + `baserevid`
-guard + refuse-on-drift); a thin ADR drafted with the closing PR records the
+guard + refuse-on-drift); a thin ADR (ADR-0010) records the
 contract built on them — the proposal carries the locator and replacement
 verbatim, confirm replays exactly that payload, any divergence refuses — so
 that issues #28/#29/#32 reuse it instead of re-deriving it (Resolved
@@ -298,4 +294,4 @@ Implementation is proceeding at-risk against these answers:
    replacement verbatim; confirm replays exactly that payload; any divergence
    refuses) so that issues #28/#29/#32 reuse it instead of re-deriving it. Its
    number is assigned when drafted, after the citation-verification ADR series
-   (0006–0009) merges.
+   (0006–0009) merges. That condition is now satisfied: the series merged (PR #24) and the ADR is drafted as ADR-0010.

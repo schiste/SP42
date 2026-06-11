@@ -4,9 +4,7 @@
 **Date:** 2026-06-09
 **Author:** Luis Villa
 
-Spawned by PRD-0008 (bare-URL repair), which reserved this number at draft
-time because the citation-verification series holds unmerged drafts through
-ADR-0009.
+Spawned by PRD-0008 (bare-URL repair). PRD-0008 claimed no ADR number at draft time (its Resolved question 5) because the citation-verification series (ADR-0006–0009) was then unmerged; that series has since merged to main (PR #24), so this ADR takes the next free number, 0010.
 
 ## Context
 
@@ -40,6 +38,38 @@ is the contract for how a generated edit travels between "proposed" and
 5. **Wire contracts live in `sp42-core`.** Request/response/proposal types
    are shared serde types (the `action_contracts` precedent), so the server
    and every shell speak one contract.
+
+## Relation to ADR-0008 (the single write lane)
+
+ADR-0008's Context asserts that SP42 has a single wiki-write lane: the
+operator-confirmed action path (`SessionActionExecutionRequest` → `POST
+/dev/actions/execute`). This ADR deliberately adds a second, sibling
+operator-confirmed write surface (the bare-url apply route) rather than
+introducing a new `SessionActionKind` verb:
+
+- **Why not a new SessionActionKind:** Adding a variant ripples through
+  exhaustive `match` statements across every shell, including wasm-gated code
+  (`#[cfg(target_arch = "wasm32")]` in `sp42-app/src/pages/`) invisible to
+  host builds. A missing case would ship undetected until runtime. This risk
+  was deliberately avoided for the MVP; the decision is recorded in the
+  implementation plan.
+- **What is preserved from ADR-0008's principle:** Nothing reaches a wiki
+  unreviewed. The apply route enforces the same gates as `post_execute_action`
+  — session, CSRF, and the per-session edit-capability check — and the write
+  goes through the same single writer (`execute_wiki_page_save`) with
+  `baserevid` guard, making divergence impossible.
+- **What is NOT carried over (MVP omissions):** Action-history recording
+  (already in Non-Goals).
+- **Supportive precedents from the merged series:** ADR-0008 Decision 7
+  places contracts/logic in `sp42-core` (matches this ADR's Decision 5);
+  ADR-0008's optional, config-driven, default-absent per-wiki field pattern
+  (like `liftwing_url`) matches this ADR's Decision 4 presence gate; ADR-0007's
+  structured abstention (`SourceUnavailable` is a verdict, not an error) is the
+  precedent for this ADR's Decision 3 structured declines.
+- **Future fold-into-the-action-lane:** If/when a future phase introduces a
+  `SessionActionKind` for confirmed proposals, the shell wasm-visibility
+  problem will have grown beyond this feature — that change can then fold
+  both routes into a single `SessionActionKind` variant without regret.
 
 ## Consequences
 

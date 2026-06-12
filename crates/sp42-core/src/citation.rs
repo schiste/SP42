@@ -6,5 +6,11 @@
 //! declaration file then takes that branch's version (a known take-theirs
 //! conflict, recorded in the bare-URL repair design plan).
 
+// The lifted files stay byte-identical to the source branch, so their doc
+// comments may link to sibling modules that only exist there; the allows live
+// here, in the already-divergent declaration file, and disappear with the
+// take-theirs resolution when the full module set lands.
+#[allow(rustdoc::broken_intra_doc_links)]
 pub mod citoid;
+#[allow(rustdoc::broken_intra_doc_links)]
 pub mod urls;

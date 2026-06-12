@@ -2959,6 +2959,7 @@ version = "0.1.0"
 dependencies = [
  "async-trait",
  "base64 0.22.1",
+ "regex",
  "serde",
  "serde_json",
  "serde_yaml",
@@ -2967,16 +2968,6 @@ dependencies = [
  "sp42-types",
  "thiserror 2.0.18",
  "tracing",
- "url",
-]
-
-[[package]]
-name = "sp42-types"
-version = "0.1.0"
-dependencies = [
- "async-trait",
- "serde",
- "thiserror 2.0.18",
  "url",
 ]
 
@@ -2990,6 +2981,16 @@ dependencies = [
  "tauri",
  "tauri-build",
  "tauri-plugin-shell",
+]
+
+[[package]]
+name = "sp42-types"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "serde",
+ "thiserror 2.0.18",
+ "url",
 ]
 
 [[package]]

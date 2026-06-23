@@ -15,6 +15,7 @@
 //!     liftwing_url: None,
 //!     coordination_url: None,
 //!     parsoid_url: None,
+//!     inference_url: None,
 //!     namespace_allowlist: vec![0],
 //!     scoring_policy_ref: "active/frwiki-vandalism".to_string(),
 //!     scoring: Default::default(),
@@ -75,13 +76,33 @@ pub use bare_url_repair::{
     BareUrlReference, bare_url_references, citoid_language, classify_bare_url,
     iso_date_from_epoch_ms, render_bare_url_citation,
 };
+pub use citation::body_classifier::{BodyUsability, BodyUsabilityReason, classify_body_usability};
 pub use citation::citoid::{
     CitoidMetadata, build_citoid_header, build_citoid_request, parse_citoid_response,
+};
+pub use citation::concurrency::map_with_concurrency;
+pub use citation::locate_quote::{FuzzyLocate, locate_quote, locate_quote_fuzzy};
+pub use citation::parsing::{
+    ParsedVerdict, canonicalize_verdict, parse_repair_response, parse_verdict_response,
+};
+pub use citation::prompts::{build_repair_prompt, build_verify_prompt};
+pub use citation::source_fetch::{html_to_text, looks_like_html, recover_wayback_body};
+pub use citation::storage::{
+    SnapshotEnvelope, VerdictEnvelope, build_snapshot, build_verdict_envelope, load_snapshot,
+    load_verdict, store_snapshot, store_verdict,
 };
 pub use citation::urls::{
     ResolvedUrl, build_article_html_url, check_fetchable_source_url, is_archive_url,
     is_valid_wiki_code, parse_revision_from_etag, resolve_citation_url, rewrite_wayback_url,
 };
+pub use citation::verdict::{CitationFindingKind, CitationVerdict, SupportLevel, Verdict};
+pub use citation::verify::{
+    CitationFinding, CitationVerificationRequest, GroundingAssertion, GroundingStatus,
+    LocatedPassage, ModelVerdict, ModelVote, SourceProvenance, VerificationOutcome,
+    VerifyModelInputs, VerifyOptions, assemble_citation_finding, build_model_votes,
+    execute_citation_verify, is_groundable_support, sha256_hex, verify_citation_use_site,
+};
+pub use citation::voting::{BinaryVote, NClassVote, PanelAgreement, binary_vote, n_class_vote};
 pub use context_builder::{ContextInputs, build_scoring_context};
 pub use dev_auth::{
     ActionExecutionHistoryReport, ActionExecutionLogEntry, ActionExecutionStatusReport,
@@ -151,6 +172,11 @@ pub use scoring_policy::{
     compile_scoring_policy, default_active_compiled_scoring_policy,
     load_embedded_compiled_scoring_policy, parse_scoring_evaluation_profile, parse_scoring_policy,
     validate_scoring_evaluation_profile, validate_scoring_policy,
+};
+pub use sp42_types::{
+    ChatMessage, ChatRole, EndpointMode, ModelClient, ModelClientError, ModelCompletion,
+    ModelCompletionRequest, ModelEndpointConfig, ModelInvocation, ModelRef, SamplingParams,
+    StubModelClient,
 };
 pub use training_data::{
     TrainingLabel, encode_csv, encode_json, encode_json_line, encode_json_lines,

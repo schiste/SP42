@@ -1,16 +1,29 @@
-//! Citation support: the Citoid bibliographic-metadata client and citation
-//! URL helpers, lifted verbatim from the `impl/citation-verification` branch.
+//! Citation verification (PRD-0001): the pure, deterministic heart plus the
+//! injected-edge orchestration for fetching a source and asking a model panel
+//! whether it supports a claim.
 //!
-//! Only the `citoid` and `urls` submodules exist on this branch; the full
-//! citation-verification module set arrives when that branch merges. This
-//! declaration file then takes that branch's version (a known take-theirs
-//! conflict, recorded in the bare-URL repair design plan).
+//! Layering (Constitution Art. 2.3 — side effects only at the edges):
+//! - Pure `sp42-core` logic: the verdict types, the anti-fabrication locator,
+//!   measured-agreement voting, the body-usability GIGO gate, the verifier
+//!   prompt, the model-response parser, URL helpers, source-text
+//!   recovery/extraction, the Citoid metadata sidecar, bounded concurrency, the
+//!   grounding/assemble gate and per-model edge, and the content-addressed
+//!   snapshot/verdict store.
+//! - I/O is confined to the `async` functions, which are generic over the
+//!   injected `HttpClient` / `Storage` / `Clock` traits.
+//!
+//! Verdict semantics → ADR-0007; request/response contract → ADR-0008; model
+//! panel + measured agreement → ADR-0006; source-snapshot storage → ADR-0009.
 
-// The lifted files stay byte-identical to the source branch, so their doc
-// comments may link to sibling modules that only exist there; the allows live
-// here, in the already-divergent declaration file, and disappear with the
-// take-theirs resolution when the full module set lands.
-#[allow(rustdoc::broken_intra_doc_links)]
+pub mod body_classifier;
 pub mod citoid;
-#[allow(rustdoc::broken_intra_doc_links)]
+pub mod concurrency;
+pub mod locate_quote;
+pub mod parsing;
+pub mod prompts;
+pub mod source_fetch;
+pub mod storage;
 pub mod urls;
+pub mod verdict;
+pub mod verify;
+pub mod voting;

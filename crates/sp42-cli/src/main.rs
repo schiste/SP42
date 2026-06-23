@@ -1,15 +1,26 @@
 use std::convert::TryFrom;
 use std::io::{self, Read};
 use std::process::ExitCode;
+use std::time::Duration;
 
+use async_trait::async_trait;
 use futures::executor::block_on;
+use genai::Client;
+use genai::adapter::AdapterKind;
+use genai::chat::{ChatMessage as GenaiChatMessage, ChatOptions, ChatRequest};
+use genai::resolver::{AuthData, Endpoint};
+use genai::{ModelIden, ServiceTarget};
 use reqwest::header::COOKIE;
 use serde_json::Value;
 use sp42_core::routes as route_contracts;
 use sp42_core::{
-    DevAuthBootstrapRequest, DevAuthSessionStatus, QueuedEdit, SessionActionExecutionRequest,
-    SessionActionExecutionResponse, SessionActionKind, build_dev_auth_bootstrap_request,
-    parse_dev_auth_status,
+    ChatRole, CitationFinding, CitationVerificationRequest, DevAuthBootstrapRequest,
+    DevAuthSessionStatus, EndpointMode, GroundingStatus, ModelClient, ModelClientError,
+    ModelCompletion, ModelCompletionRequest, ModelEndpointConfig, ModelRef, QueuedEdit,
+    SamplingParams, SessionActionExecutionRequest, SessionActionExecutionResponse,
+    SessionActionKind, SystemClock, VerificationOutcome, VerifyOptions as CoreVerifyOptions,
+    build_dev_auth_bootstrap_request, check_fetchable_source_url, locate_quote, locate_quote_fuzzy,
+    parse_dev_auth_status, verify_citation_use_site,
 };
 use sp42_devtools::{
     DEV_PREVIEW_SAMPLE_EVENTS, DEV_PREVIEW_WIKI_ID, DevContextOptions, DevWorkbenchOptions,
@@ -22,7 +33,7 @@ use sp42_reporting::{
     build_shell_state_model, render_patrol_scenario_markdown, render_patrol_scenario_text,
     render_shell_state_markdown, render_shell_state_text,
 };
-use sp42_types::{HttpMethod, HttpRequest, HttpResponse};
+use sp42_types::{HttpClient, HttpClientError, HttpMethod, HttpRequest, HttpResponse};
 use std::collections::{BTreeMap, BTreeSet};
 
 const LOCAL_SERVER_BASE_URL: &str = "http://127.0.0.1:8788";
@@ -63,6 +74,26 @@ struct CliOptions {
     action_kind: SessionActionKind,
     bridge_base_url: String,
     bare_url: Option<BareUrlCliOptions>,
+    verify: Option<VerifyCliOptions>,
+    verdict_only: bool,
+    /// `--locate-probe --quote <q>`: read a source body from STDIN and report whether the
+    /// quote locates (offline, no model) — the deterministic locate-replay tool (SP42#25).
+    locate_probe: Option<String>,
+}
+
+/// Read-only citation-verification request (PRD-0001). The first cut supports the ad-hoc
+/// (claim + source URL) mode; article/revision/index modes await the article parser.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct VerifyCliOptions {
+    claim: String,
+    source_url: String,
+    include_metadata: bool,
+    /// Emit the full `VerificationOutcome` (finding + per-model votes incl. raw claimed
+    /// quotes) as JSON, for the deterministic locate-replay harness (SP42#25).
+    debug_votes: bool,
+    /// Run the bounded repair turn (SP42#25 layer 3); `--no-repair` turns it off (one fewer
+    /// model call per unlocated support vote, for cost control and A/B measurement).
+    repair: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -122,6 +153,19 @@ fn run() -> Result<String, String> {
     if let Some(bare_url) = &options.bare_url {
         return render_bare_url_mode(bare_url, &options, options.format);
     }
+
+    // Offline locate probe: read a source body from STDIN, report whether the quote locates.
+    // No model, no fetch — the deterministic locate-replay tool (SP42#25).
+    if let Some(quote) = &options.locate_probe {
+        let source = read_stdin().map_err(|error| error.to_string())?;
+        return run_locate_probe(quote, &source);
+    }
+
+    // Read-only citation verification is independent of the dev-queue payload.
+    if let Some(verify) = &options.verify {
+        return render_verify(verify, options.format, options.verdict_only);
+    }
+
     let input = read_stdin().map_err(|error| error.to_string())?;
     let payload = if input.trim().is_empty() {
         DEV_PREVIEW_SAMPLE_EVENTS
@@ -210,6 +254,14 @@ fn parse_options(args: impl IntoIterator<Item = String>) -> Result<CliOptions, S
     let mut bare_url_rev = None;
     let mut bare_url_ordinal = None;
     let mut bare_url_wiki = BARE_URL_DEFAULT_WIKI.to_string();
+    let mut verify_claim = None;
+    let mut verify_source_url = None;
+    let mut verify_metadata = false;
+    let mut verify_debug_votes = false;
+    let mut verify_repair = true;
+    let mut verdict_only = false;
+    let mut probe_quote = None;
+    let mut locate_probe_flag = false;
 
     while let Some(arg) = args.next() {
         let mut state = CliParseState {
@@ -230,6 +282,14 @@ fn parse_options(args: impl IntoIterator<Item = String>) -> Result<CliOptions, S
             bare_url_rev: &mut bare_url_rev,
             bare_url_ordinal: &mut bare_url_ordinal,
             bare_url_wiki: &mut bare_url_wiki,
+            verify_claim: &mut verify_claim,
+            verify_source_url: &mut verify_source_url,
+            verify_metadata: &mut verify_metadata,
+            verify_debug_votes: &mut verify_debug_votes,
+            verify_repair: &mut verify_repair,
+            verdict_only: &mut verdict_only,
+            probe_quote: &mut probe_quote,
+            locate_probe_flag: &mut locate_probe_flag,
         };
         apply_cli_argument(&arg, &mut args, &mut state)?;
     }
@@ -242,6 +302,18 @@ fn parse_options(args: impl IntoIterator<Item = String>) -> Result<CliOptions, S
         bare_url_rev,
         bare_url_ordinal,
     )?;
+    let verify = build_verify_options(
+        verify_claim,
+        verify_source_url,
+        verify_metadata,
+        verify_debug_votes,
+        verify_repair,
+    )?;
+    let locate_probe = if locate_probe_flag {
+        Some(probe_quote.ok_or_else(|| "--locate-probe requires --quote".to_string())?)
+    } else {
+        None
+    };
 
     Ok(CliOptions {
         format,
@@ -257,7 +329,31 @@ fn parse_options(args: impl IntoIterator<Item = String>) -> Result<CliOptions, S
         action_kind,
         bridge_base_url,
         bare_url,
+        verify,
+        verdict_only,
+        locate_probe,
     })
+}
+
+/// Assemble the verify options, requiring both the claim and the source URL together.
+fn build_verify_options(
+    claim: Option<String>,
+    source_url: Option<String>,
+    include_metadata: bool,
+    debug_votes: bool,
+    repair: bool,
+) -> Result<Option<VerifyCliOptions>, String> {
+    match (claim, source_url) {
+        (Some(claim), Some(source_url)) => Ok(Some(VerifyCliOptions {
+            claim,
+            source_url,
+            include_metadata,
+            debug_votes,
+            repair,
+        })),
+        (None, None) => Ok(None),
+        _ => Err("citation verification requires both --claim and --source-url".to_string()),
+    }
 }
 
 struct CliParseState<'a> {
@@ -278,6 +374,14 @@ struct CliParseState<'a> {
     bare_url_rev: &'a mut Option<u64>,
     bare_url_ordinal: &'a mut Option<usize>,
     bare_url_wiki: &'a mut String,
+    verify_claim: &'a mut Option<String>,
+    verify_source_url: &'a mut Option<String>,
+    verify_metadata: &'a mut bool,
+    verify_debug_votes: &'a mut bool,
+    verify_repair: &'a mut bool,
+    verdict_only: &'a mut bool,
+    probe_quote: &'a mut Option<String>,
+    locate_probe_flag: &'a mut bool,
 }
 
 fn apply_cli_argument<I>(
@@ -352,6 +456,30 @@ where
         }
         "--wiki" => {
             *state.bare_url_wiki = next_option_value(args, "--wiki")?;
+        }
+        "--claim" => {
+            *state.verify_claim = Some(next_option_value(args, "--claim")?);
+        }
+        "--source-url" => {
+            *state.verify_source_url = Some(next_option_value(args, "--source-url")?);
+        }
+        "--with-metadata" => {
+            *state.verify_metadata = true;
+        }
+        "--debug-votes" => {
+            *state.verify_debug_votes = true;
+        }
+        "--no-repair" => {
+            *state.verify_repair = false;
+        }
+        "--quote" => {
+            *state.probe_quote = Some(next_option_value(args, "--quote")?);
+        }
+        "--locate-probe" => {
+            *state.locate_probe_flag = true;
+        }
+        "--verdict-only" => {
+            *state.verdict_only = true;
         }
         _ => return Err(format!("unsupported argument: {arg}")),
     }
@@ -437,6 +565,595 @@ fn parse_liftwing_probability(value: &str) -> Result<f32, String> {
     value
         .parse::<f32>()
         .map_err(|_| "--context-liftwing must be a valid float".to_string())
+}
+
+// ----- Read-only citation verification (PRD-0001) -----
+
+/// A reqwest-backed `HttpClient` for the CLI's **source fetch** only. It deliberately holds
+/// no inference credential: the model bearer lives solely in [`GenaiModelClient`], so an API
+/// key can never leak to a third-party source site through this client.
+struct CliHttpClient {
+    client: reqwest::Client,
+    /// Allow loopback/private source hosts — a dev/test escape hatch for the loopback-serving
+    /// benchmark harness (`SP42_FETCH_ALLOW_PRIVATE=1`). Off by default (SP42#34 SSRF floor).
+    allow_private: bool,
+}
+
+/// Basic source-response size cap, checked against `Content-Length`. Streaming enforcement
+/// (for chunked responses with no length) is deferred to the SP42#34 fetch-edge ADR.
+const MAX_SOURCE_BYTES: u64 = 8 * 1024 * 1024;
+
+#[async_trait]
+impl HttpClient for CliHttpClient {
+    async fn execute(&self, request: HttpRequest) -> Result<HttpResponse, HttpClientError> {
+        // SSRF floor (SP42#34): refuse a non-http(s) / loopback / private / link-local source
+        // host unless the dev/test escape hatch is set.
+        if !self.allow_private {
+            check_fetchable_source_url(&request.url)
+                .map_err(|message| HttpClientError::Transport { message })?;
+        }
+        // Read-only source fetch: GET only.
+        let HttpMethod::Get = request.method else {
+            return Err(HttpClientError::Transport {
+                message: format!("source fetch only allows GET, got {:?}", request.method),
+            });
+        };
+        let mut builder = self.client.get(request.url.clone());
+        for (key, value) in request.headers {
+            builder = builder.header(&key, value);
+        }
+        let response = builder
+            .send()
+            .await
+            .map_err(|error| HttpClientError::Transport {
+                message: error.to_string(),
+            })?;
+        if response
+            .content_length()
+            .is_some_and(|len| len > MAX_SOURCE_BYTES)
+        {
+            return Err(HttpClientError::Transport {
+                message: format!(
+                    "source response exceeds {MAX_SOURCE_BYTES}-byte cap (Content-Length)"
+                ),
+            });
+        }
+        let status = response.status().as_u16();
+        let headers = response
+            .headers()
+            .iter()
+            .filter_map(|(name, value)| {
+                value
+                    .to_str()
+                    .ok()
+                    .map(|value| (name.as_str().to_lowercase(), value.to_string()))
+            })
+            .collect();
+        let body = response
+            .bytes()
+            .await
+            .map_err(|error| HttpClientError::Transport {
+                message: error.to_string(),
+            })?
+            .to_vec();
+        Ok(HttpResponse {
+            status,
+            headers,
+            body,
+        })
+    }
+}
+
+/// The transport header a sponsor proxy may gate per-call authorization on (ADR-0006
+/// Decision 6). It is authorization metadata only — never part of the model input.
+const CAPABILITY_TAG_HEADER: &str = "X-SP42-Capability";
+
+/// A `genai`-backed [`ModelClient`] adapter (ADR-0006 Decision 7). The concrete provider
+/// wire format lives here in the CLI shell; feature crates only ever see the neutral
+/// boundary, so swapping the adapter touches no domain code.
+///
+/// Per call it builds a `genai` `ServiceTarget` directly (endpoint + auth + model id),
+/// bypassing genai's provider auto-resolution, so the configured OpenAI-compatible endpoint
+/// — a local server, a direct provider, or a sponsor proxy — is used verbatim. The
+/// `capability_tag`, when set, rides as a transport header a sponsor proxy may gate on;
+/// it is never added to the model input.
+struct GenaiModelClient {
+    client: Client,
+    endpoint: ModelEndpointConfig,
+}
+
+/// Wall-clock bound on a single model call so a hung inference endpoint can't wedge the CLI
+/// (SP42#34). Applied via `tokio::time::timeout` because `genai` pins its own `reqwest`
+/// version, so its client can't be built from this crate's `reqwest`.
+const MODEL_CALL_TIMEOUT: Duration = Duration::from_mins(1);
+
+impl GenaiModelClient {
+    fn new(endpoint: ModelEndpointConfig) -> Self {
+        Self {
+            client: Client::default(),
+            endpoint,
+        }
+    }
+}
+
+#[async_trait]
+impl ModelClient for GenaiModelClient {
+    async fn complete(
+        &self,
+        request: &ModelCompletionRequest,
+    ) -> Result<ModelCompletion, ModelClientError> {
+        let messages = request
+            .messages
+            .iter()
+            .map(|message| match message.role {
+                ChatRole::System => GenaiChatMessage::system(message.content.clone()),
+                ChatRole::User => GenaiChatMessage::user(message.content.clone()),
+                ChatRole::Assistant => GenaiChatMessage::assistant(message.content.clone()),
+            })
+            .collect::<Vec<_>>();
+        let chat_request = ChatRequest::new(messages);
+
+        let target = ServiceTarget {
+            endpoint: Endpoint::from_owned(normalize_base_url(&self.endpoint.base_url)),
+            auth: AuthData::from_single(self.endpoint.auth_token.clone().unwrap_or_default()),
+            model: ModelIden::new(AdapterKind::OpenAI, request.model.model.clone()),
+        };
+        let options = genai_chat_options(&request.params, self.endpoint.capability_tag.as_deref());
+
+        let response = tokio::time::timeout(
+            MODEL_CALL_TIMEOUT,
+            self.client.exec_chat(target, chat_request, Some(&options)),
+        )
+        .await
+        .map_err(|_| ModelClientError::Transport {
+            message: format!("model request timed out after {MODEL_CALL_TIMEOUT:?}"),
+        })?
+        .map_err(|error| ModelClientError::Transport {
+            message: error.to_string(),
+        })?;
+
+        let text = response
+            .into_first_text()
+            .ok_or_else(|| ModelClientError::InvalidResponse {
+                message: "model response contained no text".to_string(),
+            })?;
+        Ok(ModelCompletion {
+            text,
+            served_model: None,
+        })
+    }
+}
+
+/// Translate our neutral [`SamplingParams`] into `genai` `ChatOptions`, attaching the
+/// capability tag as a transport header when present.
+fn genai_chat_options(params: &SamplingParams, capability_tag: Option<&str>) -> ChatOptions {
+    let mut options = ChatOptions::default();
+    if let Some(temperature) = params.temperature {
+        options = options.with_temperature(temperature);
+    }
+    if let Some(top_p) = params.top_p {
+        options = options.with_top_p(top_p);
+    }
+    if let Some(max_tokens) = params.max_tokens {
+        options = options.with_max_tokens(max_tokens);
+    }
+    if let Some(tag) = capability_tag {
+        options =
+            options.with_extra_headers([(CAPABILITY_TAG_HEADER.to_string(), tag.to_string())]);
+    }
+    options
+}
+
+/// Normalize an OpenAI-compatible base URL so `genai`'s adapter can join its
+/// `chat/completions` suffix: drop any trailing slash, tolerate a URL that already points at
+/// `.../chat/completions` by stripping that segment, then re-append a single trailing slash
+/// (reqwest's URL join requires the trailing slash to preserve the base path).
+fn normalize_base_url(raw: &str) -> String {
+    let trimmed = raw.trim_end_matches('/');
+    let base = trimmed.strip_suffix("/chat/completions").unwrap_or(trimmed);
+    format!("{base}/")
+}
+
+/// Run the offline locate probe: report whether `quote` locates verbatim in `source` using
+/// the real [`locate_quote`], plus the guarded-fuzzy axis when exact locate misses, as JSON
+/// `{"located": bool, "offset": <n>|null, "fuzzy": bool, "fuzzy_span": <s>|null,
+/// "fuzzy_offset": <n>|null}`. No model, no network — lets a harness replay a frozen corpus
+/// of model quotes through the actual Rust matcher to measure locate changes exactly (SP42#25).
+fn run_locate_probe(quote: &str, source: &str) -> Result<String, String> {
+    let offset = locate_quote(quote, source);
+    // The fuzzy axis (SP42#25 layer 5) is reported only when exact locate misses, mirroring
+    // the gate's exact-first order, so the harness measures layer 5's marginal recovery.
+    let fuzzy = if offset.is_some() {
+        None
+    } else {
+        locate_quote_fuzzy(quote, source)
+    };
+    serde_json::to_string(&serde_json::json!({
+        "located": offset.is_some(),
+        "offset": offset,
+        "fuzzy": fuzzy.is_some(),
+        "fuzzy_span": fuzzy.as_ref().map(|hit| hit.span.as_str()),
+        "fuzzy_offset": fuzzy.as_ref().map(|hit| hit.offset),
+    }))
+    .map_err(|error| error.to_string())
+}
+
+/// Render a citation verdict in the requested format (or terse verdict-only).
+fn render_verify(
+    options: &VerifyCliOptions,
+    format: OutputFormat,
+    verdict_only: bool,
+) -> Result<String, String> {
+    // genai (and reqwest) require a Tokio reactor, so the verify path runs on its own
+    // runtime rather than the futures executor the dev-preview paths use.
+    let runtime = tokio::runtime::Runtime::new()
+        .map_err(|error| format!("failed to start async runtime: {error}"))?;
+    let outcome = runtime.block_on(run_verify(options))?;
+    // --debug-votes emits the full outcome (finding + per-model votes incl. the raw claimed
+    // quotes) so the offline locate-replay harness can capture model outputs once (SP42#25).
+    if options.debug_votes {
+        return serde_json::to_string_pretty(&outcome).map_err(|error| error.to_string());
+    }
+    let finding = &outcome.finding;
+    if verdict_only {
+        return Ok(finding.verdict.as_wire().to_string());
+    }
+    match format {
+        OutputFormat::Json => serde_json::to_string_pretty(finding).map_err(|e| e.to_string()),
+        OutputFormat::Markdown => Ok(render_markdown_section(
+            "Citation verdict",
+            &render_verify_text(finding),
+        )),
+        OutputFormat::Text => Ok(render_verify_text(finding)),
+    }
+}
+
+/// Execute one ad-hoc (claim, source URL) verification against the configured panel.
+///
+/// Reads the inference endpoint, model panel, and (optional) bearer token from the
+/// environment so no secret is hard-coded; performs only read-only GET/POST requests.
+async fn run_verify(options: &VerifyCliOptions) -> Result<VerificationOutcome, String> {
+    let base_url = std::env::var("SP42_INFERENCE_URL").map_err(|_| {
+        "set SP42_INFERENCE_URL to the model's OpenAI-compatible base URL".to_string()
+    })?;
+    let models = std::env::var("SP42_INFERENCE_MODELS").map_err(|_| {
+        "set SP42_INFERENCE_MODELS to a comma-separated list of model ids".to_string()
+    })?;
+    let provider =
+        std::env::var("SP42_INFERENCE_PROVIDER").unwrap_or_else(|_| "configured".to_string());
+    let panel: Vec<ModelRef> = models
+        .split(',')
+        .map(str::trim)
+        .filter(|model| !model.is_empty())
+        .map(|model| ModelRef::new(provider.clone(), model, model))
+        .collect();
+    if panel.is_empty() {
+        return Err("SP42_INFERENCE_MODELS is empty".to_string());
+    }
+    let auth_token = std::env::var("SP42_INFERENCE_TOKEN").ok();
+    let capability_tag = std::env::var("SP42_INFERENCE_CAPABILITY").ok();
+    let mode = parse_endpoint_mode(std::env::var("SP42_INFERENCE_MODE").ok().as_deref())?;
+
+    let source_url = options
+        .source_url
+        .parse()
+        .map_err(|_| format!("invalid --source-url: {}", options.source_url))?;
+    let request = CitationVerificationRequest {
+        wiki_id: String::new(),
+        rev_id: 0,
+        title: String::new(),
+        claim: options.claim.clone(),
+        source_url,
+    };
+
+    // The source-fetch client carries no inference credential; the bearer is held only by
+    // the model adapter, so it can never reach a third-party source host.
+    let fetch_client = CliHttpClient {
+        client: reqwest::Client::builder()
+            .user_agent(sp42_core::branding::USER_AGENT)
+            .connect_timeout(Duration::from_secs(10))
+            .timeout(Duration::from_secs(30))
+            .redirect(reqwest::redirect::Policy::limited(5))
+            .build()
+            .map_err(|error| format!("http client failed to build: {error}"))?,
+        allow_private: std::env::var("SP42_FETCH_ALLOW_PRIVATE").is_ok_and(|value| value == "1"),
+    };
+    let model_client = GenaiModelClient::new(ModelEndpointConfig {
+        mode,
+        base_url,
+        auth_token,
+        capability_tag,
+    });
+
+    let verify_options = CoreVerifyOptions {
+        include_metadata: options.include_metadata,
+        concurrency: 3,
+        repair_turn: options.repair,
+        ..Default::default()
+    };
+    let outcome = verify_citation_use_site(
+        &fetch_client,
+        &model_client,
+        &SystemClock,
+        &panel,
+        &request,
+        0,
+        verify_options,
+    )
+    .await
+    .map_err(|error| error.to_string())?;
+    Ok(outcome)
+}
+
+/// Parse the optional `SP42_INFERENCE_MODE` env value. Defaults to `local`; the mode is
+/// recorded on the endpoint config as advisory metadata (the adapter sends the bearer
+/// whenever a token is present, regardless of mode, in this CLI MVP).
+fn parse_endpoint_mode(value: Option<&str>) -> Result<EndpointMode, String> {
+    match value {
+        None | Some("local") => Ok(EndpointMode::Local),
+        Some("direct") => Ok(EndpointMode::Direct),
+        Some("sponsor_proxy" | "sponsor-proxy") => Ok(EndpointMode::SponsorProxy),
+        Some(other) => Err(format!("unsupported SP42_INFERENCE_MODE: {other}")),
+    }
+}
+
+/// Human-readable verdict block.
+fn render_verify_text(finding: &CitationFinding) -> String {
+    let mut lines = vec![
+        format!("verdict: {}", finding.verdict.as_wire()),
+        format!("source: {}", finding.provenance.url),
+    ];
+    match finding.grounding_status {
+        GroundingStatus::Located => {
+            lines.push("verification: quote located in source".to_string());
+        }
+        GroundingStatus::LocatedFuzzy => lines.push(
+            "verification: passage located by guarded fuzzy match (shown text is the source's own) — please confirm"
+                .to_string(),
+        ),
+        GroundingStatus::Unlocated => lines.push(
+            "verification: UNVERIFIED — model claims support but its quote was not found in the source"
+                .to_string(),
+        ),
+        GroundingStatus::NotApplicable => {}
+    }
+    if finding.agreement.is_meaningful() {
+        lines.push(format!(
+            "agreement: {}/{} models",
+            finding.agreement.winner_votes, finding.agreement.panel_size
+        ));
+    }
+    match &finding.passage {
+        Some(passage) => lines.push(format!("supporting passage: \"{}\"", passage.quote)),
+        None => lines.push("supporting passage: (none located)".to_string()),
+    }
+    lines.push(format!(
+        "source content hash: {}",
+        finding.provenance.content_hash
+    ));
+    lines.join("\n")
+}
+
+#[cfg(test)]
+mod verify_tests {
+    use sp42_core::{
+        CitationFinding, CitationFindingKind, CitationVerdict, GroundingAssertion, GroundingStatus,
+        LocatedPassage, PanelAgreement, SourceProvenance, SupportLevel,
+    };
+
+    use super::{
+        EndpointMode, SamplingParams, VerifyCliOptions, genai_chat_options, normalize_base_url,
+        parse_endpoint_mode, parse_options, render_verify_text, run_locate_probe,
+    };
+
+    fn args(items: &[&str]) -> Vec<String> {
+        items.iter().map(ToString::to_string).collect()
+    }
+
+    #[test]
+    fn normalize_base_url_ensures_single_trailing_slash() {
+        assert_eq!(
+            normalize_base_url("https://openrouter.ai/api/v1"),
+            "https://openrouter.ai/api/v1/"
+        );
+        assert_eq!(
+            normalize_base_url("https://openrouter.ai/api/v1/"),
+            "https://openrouter.ai/api/v1/"
+        );
+    }
+
+    #[test]
+    fn normalize_base_url_strips_a_chat_completions_suffix() {
+        assert_eq!(
+            normalize_base_url("https://openrouter.ai/api/v1/chat/completions"),
+            "https://openrouter.ai/api/v1/"
+        );
+        assert_eq!(
+            normalize_base_url("http://localhost:8080/v1/chat/completions/"),
+            "http://localhost:8080/v1/"
+        );
+    }
+
+    #[test]
+    fn parse_endpoint_mode_maps_known_values() {
+        assert_eq!(parse_endpoint_mode(None), Ok(EndpointMode::Local));
+        assert_eq!(parse_endpoint_mode(Some("local")), Ok(EndpointMode::Local));
+        assert_eq!(
+            parse_endpoint_mode(Some("direct")),
+            Ok(EndpointMode::Direct)
+        );
+        assert_eq!(
+            parse_endpoint_mode(Some("sponsor_proxy")),
+            Ok(EndpointMode::SponsorProxy)
+        );
+        assert_eq!(
+            parse_endpoint_mode(Some("sponsor-proxy")),
+            Ok(EndpointMode::SponsorProxy)
+        );
+        assert!(parse_endpoint_mode(Some("bogus")).is_err());
+    }
+
+    #[test]
+    fn genai_chat_options_attaches_capability_tag_header() {
+        let params = SamplingParams::deterministic();
+        let options = genai_chat_options(&params, Some("citation-verify"));
+        let headers = options.extra_headers.expect("capability header present");
+        assert!(headers.iter().any(
+            |(name, value)| name.as_str() == super::CAPABILITY_TAG_HEADER
+                && value.as_str() == "citation-verify"
+        ));
+    }
+
+    #[test]
+    fn genai_chat_options_omits_headers_without_a_capability_tag() {
+        let options = genai_chat_options(&SamplingParams::deterministic(), None);
+        assert!(options.extra_headers.is_none());
+    }
+
+    #[test]
+    fn parses_ad_hoc_verify_flags() {
+        let options = parse_options(args(&[
+            "--claim",
+            "the bridge opened in 1998",
+            "--source-url",
+            "https://example.com/bridge",
+            "--with-metadata",
+        ]))
+        .expect("parses");
+        let verify = options.verify.expect("verify present");
+        assert_eq!(
+            verify,
+            VerifyCliOptions {
+                claim: "the bridge opened in 1998".to_string(),
+                source_url: "https://example.com/bridge".to_string(),
+                include_metadata: true,
+                debug_votes: false,
+                repair: true,
+            }
+        );
+        assert!(!options.verdict_only);
+    }
+
+    #[test]
+    fn no_repair_flag_disables_the_repair_turn() {
+        let options = parse_options(args(&[
+            "--claim",
+            "c",
+            "--source-url",
+            "https://example.com",
+            "--no-repair",
+        ]))
+        .expect("parses");
+        assert!(!options.verify.expect("verify present").repair);
+    }
+
+    #[test]
+    fn debug_votes_flag_is_recognized() {
+        let options = parse_options(args(&[
+            "--claim",
+            "c",
+            "--source-url",
+            "https://example.com",
+            "--debug-votes",
+        ]))
+        .expect("parses");
+        assert!(options.verify.expect("verify present").debug_votes);
+    }
+
+    #[test]
+    fn verdict_only_flag_is_recognized() {
+        let options = parse_options(args(&[
+            "--claim",
+            "c",
+            "--source-url",
+            "https://example.com",
+            "--verdict-only",
+        ]))
+        .expect("parses");
+        assert!(options.verdict_only);
+    }
+
+    #[test]
+    fn verify_requires_both_claim_and_source_url() {
+        assert!(parse_options(args(&["--claim", "only a claim"])).is_err());
+        assert!(parse_options(args(&["--source-url", "https://example.com"])).is_err());
+    }
+
+    #[test]
+    fn locate_probe_flags_parse_and_carry_the_quote() {
+        let options =
+            parse_options(args(&["--locate-probe", "--quote", "the Nobel Prize"])).expect("parses");
+        assert_eq!(options.locate_probe.as_deref(), Some("the Nobel Prize"));
+    }
+
+    #[test]
+    fn locate_probe_requires_a_quote() {
+        assert!(parse_options(args(&["--locate-probe"])).is_err());
+    }
+
+    #[test]
+    fn run_locate_probe_reports_found_and_not_found() {
+        let hit = run_locate_probe("Nobel Prize", "won the Nobel Prize").expect("ok");
+        assert!(hit.contains("\"located\":true"));
+        let miss = run_locate_probe("absent span", "a completely different text").expect("ok");
+        assert!(miss.contains("\"located\":false"));
+    }
+
+    #[test]
+    fn run_locate_probe_reports_the_fuzzy_fallback() {
+        // Exact locate fails (one reworded token), the guarded fuzzy path recovers: the
+        // probe reports both axes so the offline harness can measure layer 5 (SP42#25).
+        let source = "In 1985 the Acme Corporation was established in Springfield by a group \
+                      of local investors led by John Smith.";
+        let quote = "the Acme Corporation was founded in Springfield by a group of local investors";
+        let report = run_locate_probe(quote, source).expect("ok");
+        assert!(report.contains("\"located\":false"));
+        assert!(report.contains("\"fuzzy\":true"));
+        assert!(report.contains("established in Springfield"));
+        // A fabricated quote is neither located nor fuzzy.
+        let miss = run_locate_probe(
+            "the museum acquired seventeen paintings from the private collection",
+            source,
+        )
+        .expect("ok");
+        assert!(miss.contains("\"located\":false"));
+        assert!(miss.contains("\"fuzzy\":false"));
+    }
+
+    fn fixture_finding() -> CitationFinding {
+        CitationFinding {
+            kind: CitationFindingKind::CitationVerdict,
+            verdict: CitationVerdict::Judged(SupportLevel::Supported),
+            grounding_status: GroundingStatus::Located,
+            agreement: PanelAgreement::new(3, 2),
+            passage: Some(LocatedPassage {
+                quote: "opened in 1998".to_string(),
+                offset: 4,
+            }),
+            provenance: SourceProvenance {
+                url: "https://example.com/bridge".parse().expect("url"),
+                content_hash: "abc123".to_string(),
+                fetched_at: 1,
+                http_status: Some(200),
+            },
+            grounding: GroundingAssertion::LocatedQuote {
+                quote: "opened in 1998".to_string(),
+                source_hash: "abc123".to_string(),
+                offset: 4,
+            },
+            use_site_ordinal: 0,
+            schema_version: 1,
+        }
+    }
+
+    #[test]
+    fn renders_human_verdict_block() {
+        let text = render_verify_text(&fixture_finding());
+        assert!(text.contains("verdict: supported"));
+        assert!(text.contains("agreement: 2/3 models"));
+        assert!(text.contains("opened in 1998"));
+        assert!(text.contains("https://example.com/bridge"));
+    }
 }
 
 fn preview_mode_flag(flag: &str) -> Option<PreviewMode> {
@@ -2489,6 +3206,9 @@ mod tests {
                 action_kind: sp42_core::SessionActionKind::Patrol,
                 bridge_base_url: LOCAL_SERVER_BASE_URL.to_string(),
                 bare_url: None,
+                verify: None,
+                verdict_only: false,
+                locate_probe: None,
             },
             OutputFormat::Text,
         )
@@ -2520,6 +3240,9 @@ mod tests {
                 action_kind: sp42_core::SessionActionKind::Patrol,
                 bridge_base_url: LOCAL_SERVER_BASE_URL.to_string(),
                 bare_url: None,
+                verify: None,
+                verdict_only: false,
+                locate_probe: None,
             },
             OutputFormat::Markdown,
         )
@@ -2549,6 +3272,9 @@ mod tests {
                 action_kind: sp42_core::SessionActionKind::Patrol,
                 bridge_base_url: LOCAL_SERVER_BASE_URL.to_string(),
                 bare_url: None,
+                verify: None,
+                verdict_only: false,
+                locate_probe: None,
             },
             OutputFormat::Json,
         )
@@ -2585,6 +3311,9 @@ mod tests {
             action_kind: sp42_core::SessionActionKind::Patrol,
             bridge_base_url: LOCAL_SERVER_BASE_URL.to_string(),
             bare_url: None,
+            verify: None,
+            verdict_only: false,
+            locate_probe: None,
         };
 
         let text = render_session_digest(&config, &ranked, &options, OutputFormat::Text)
@@ -2624,6 +3353,9 @@ mod tests {
             action_kind: sp42_core::SessionActionKind::Patrol,
             bridge_base_url: "http://127.0.0.1:8788".to_string(),
             bare_url: None,
+            verify: None,
+            verdict_only: false,
+            locate_probe: None,
         };
 
         let text = render_action_preview(&config, &ranked, &options, OutputFormat::Text)

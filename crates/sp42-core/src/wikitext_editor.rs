@@ -243,10 +243,11 @@ impl ScriptedWikitextEditor {
         };
         let expected = normalize_anchor_text(&locator.expected_text);
         let found = normalize_anchor_text(&node.anchor_text);
-        if expected == found {
-            None
-        } else {
+        // Empty expected_text provides no anti-drift guarantee; always refuse.
+        if expected.is_empty() || expected != found {
             Some(WikitextEditRefusal::NodeDrifted { expected, found })
+        } else {
+            None
         }
     }
 
@@ -506,6 +507,29 @@ mod tests {
         };
         assert_eq!(refusal.code(), "node-drift");
         assert!(refusal.message().contains("drifted"));
+    }
+
+    #[test]
+    fn empty_expected_text_always_refuses() {
+        let editor = ScriptedWikitextEditor::new(
+            vec![ScriptedWikitextNode {
+                kind: WikitextNodeKind::Reference,
+                anchor_text: String::new(),
+            }],
+            String::new(),
+        );
+        let config = fixture_wiki_config();
+        let locator = WikitextNodeLocator {
+            kind: WikitextNodeKind::Reference,
+            ordinal: 0,
+            expected_text: String::new(),
+        };
+        let outcome = block_on(editor.replace_node(&config, &page(), &locator, "x"))
+            .expect("scripted replace should succeed");
+        let WikitextEditOutcome::Refused(refusal) = outcome else {
+            panic!("empty anchor must always refuse");
+        };
+        assert_eq!(refusal.code(), "node-drift");
     }
 
     #[test]

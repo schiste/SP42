@@ -141,7 +141,8 @@ enum AppliedEdit {
 
 fn refusal_if_drifted(expected_text: &str, found: String) -> Option<WikitextEditRefusal> {
     let expected = normalize_anchor_text(expected_text);
-    if expected == found {
+    // Empty expected_text provides no anti-drift guarantee; always refuse.
+    if !expected.is_empty() && expected == found {
         None
     } else {
         Some(WikitextEditRefusal::NodeDrifted { expected, found })

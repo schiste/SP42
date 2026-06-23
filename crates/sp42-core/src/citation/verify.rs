@@ -279,25 +279,11 @@ pub fn sha256_hex(bytes: &[u8]) -> String {
     out
 }
 
-/// Run one model's verification over the provider-agnostic [`ModelClient`] boundary,
-/// returning its parsed verdict plus the invocation fingerprint.
-///
-/// An unrecoverable model response defaults to *not supported* (the validate gate), never
-/// a support judgment (ADR-0008 §3).
-///
-/// # Errors
-///
-/// Returns [`CitationVerificationError`] if the claim/source text is empty, a
-/// serialization error, or the model client fails.
-pub async fn execute_citation_verify<M>(
-    model_client: &M,
+fn build_verify_completion_request(
     model: &ModelRef,
     params: &SamplingParams,
     inputs: VerifyModelInputs<'_>,
-) -> Result<ModelVerdict, CitationVerificationError>
-where
-    M: ModelClient + ?Sized,
-{
+) -> Result<(ModelCompletionRequest, ModelInvocation), CitationVerificationError> {
     if inputs.claim.trim().is_empty() {
         return Err(CitationVerificationError::InvalidRequest {
             message: "claim is empty".to_string(),
@@ -322,6 +308,51 @@ where
         messages,
         params: params.clone(),
     };
+    let invocation = ModelInvocation {
+        model: model.clone(),
+        quant: None,
+        params: params.fingerprint(),
+        prompt_hash,
+    };
+    Ok((request, invocation))
+}
+
+fn source_unavailable_model_vote(
+    model: &ModelRef,
+    params: &SamplingParams,
+    inputs: VerifyModelInputs<'_>,
+) -> Result<ModelVerdict, CitationVerificationError> {
+    let (_request, invocation) = build_verify_completion_request(model, params, inputs)?;
+    Ok(ModelVerdict {
+        invocation,
+        parsed: ParsedVerdict {
+            verdict: Verdict::SourceUnavailable,
+            quote: None,
+        },
+        repair: None,
+    })
+}
+
+/// Run one model's verification over the provider-agnostic [`ModelClient`] boundary,
+/// returning its parsed verdict plus the invocation fingerprint.
+///
+/// An unrecoverable model response defaults to *not supported* (the validate gate), never
+/// a support judgment (ADR-0008 §3).
+///
+/// # Errors
+///
+/// Returns [`CitationVerificationError`] if the claim/source text is empty, a
+/// serialization error, or the model client fails.
+pub async fn execute_citation_verify<M>(
+    model_client: &M,
+    model: &ModelRef,
+    params: &SamplingParams,
+    inputs: VerifyModelInputs<'_>,
+) -> Result<ModelVerdict, CitationVerificationError>
+where
+    M: ModelClient + ?Sized,
+{
+    let (request, invocation) = build_verify_completion_request(model, params, inputs)?;
     let completion = model_client.complete(&request).await.map_err(|error| {
         CitationVerificationError::InvalidResponse {
             message: error.to_string(),
@@ -331,12 +362,6 @@ where
         verdict: Verdict::NotSupported,
         quote: None,
     });
-    let invocation = ModelInvocation {
-        model: model.clone(),
-        quant: None,
-        params: params.fingerprint(),
-        prompt_hash,
-    };
     Ok(ModelVerdict {
         invocation,
         parsed,
@@ -660,8 +685,9 @@ where
 ///
 /// # Errors
 ///
-/// Returns [`CitationVerificationError`] for an empty panel, an unfetchable source URL, or
-/// when every panel model fails.
+/// Returns [`CitationVerificationError`] for an empty panel or an unfetchable source URL.
+/// Individual model failures are recorded as `SourceUnavailable` panel votes so the
+/// configured panel size is preserved in the audit trail and agreement counts.
 pub async fn verify_citation_use_site<C, M>(
     fetch_client: &C,
     model_client: &M,
@@ -722,16 +748,16 @@ where
     let params = &options.params;
     let concurrency = options.concurrency.max(1);
     let results = map_with_concurrency(panel.to_vec(), concurrency, |model, _index| async move {
-        execute_citation_verify(model_client, &model, params, inputs).await
+        match execute_citation_verify(model_client, &model, params, inputs).await {
+            Ok(verdict) => Ok(verdict),
+            Err(CitationVerificationError::InvalidResponse { .. }) => {
+                source_unavailable_model_vote(&model, params, inputs)
+            }
+            Err(error) => Err(error),
+        }
     })
     .await;
-    let mut model_verdicts: Vec<ModelVerdict> =
-        results.into_iter().filter_map(Result::ok).collect();
-    if model_verdicts.is_empty() {
-        return Err(CitationVerificationError::InvalidResponse {
-            message: "all panel models failed".to_string(),
-        });
-    }
+    let mut model_verdicts: Vec<ModelVerdict> = results.into_iter().collect::<Result<_, _>>()?;
 
     // Bounded repair turn (SP42#25 layer 3): one extra call per support-class vote whose
     // quote failed to locate. Best-effort — a failed repair call leaves the vote as-is.
@@ -784,7 +810,10 @@ mod tests {
 
     use futures::executor::block_on;
     use proptest::prelude::*;
-    use sp42_types::{ModelCompletion, ModelInvocation, ModelRef, SamplingParams, StubModelClient};
+    use sp42_types::{
+        ModelClientError, ModelCompletion, ModelInvocation, ModelRef, SamplingParams,
+        StubModelClient,
+    };
 
     use super::{
         CitationVerificationRequest, GroundingAssertion, GroundingStatus, ModelVerdict,
@@ -818,6 +847,12 @@ mod tests {
         ModelCompletion {
             text: text.to_string(),
             served_model: None,
+        }
+    }
+
+    fn model_transport_failure() -> ModelClientError {
+        ModelClientError::Transport {
+            message: "model timed out".to_string(),
         }
     }
 
@@ -1083,6 +1118,91 @@ mod tests {
         assert_eq!(outcome.finding.use_site_ordinal, 3);
         assert_eq!(outcome.votes.len(), 1);
         assert_eq!(outcome.votes[0].invocation.prompt_hash.len(), 64);
+    }
+
+    #[test]
+    fn end_to_end_model_failures_remain_panel_votes() {
+        let fetch = StubHttpClient::new([Ok(HttpResponse {
+            status: 200,
+            headers: BTreeMap::from([("content-type".to_string(), "text/html".to_string())]),
+            body: long_html_with("the bridge opened in 1998"),
+        })]);
+        let model_client = StubModelClient::new([
+            Ok(completion(
+                r#"{"verdict": "SUPPORTED", "quote": "the bridge opened in 1998"}"#,
+            )),
+            Err(model_transport_failure()),
+            Err(model_transport_failure()),
+        ]);
+        let options = VerifyOptions {
+            concurrency: 1,
+            ..VerifyOptions::default()
+        };
+        let outcome = block_on(verify_citation_use_site(
+            &fetch,
+            &model_client,
+            &FixedClock::new(1000),
+            &[model(), model(), model()],
+            &request("The bridge opened in 1998", "https://example.com/bridge"),
+            3,
+            options,
+        ))
+        .expect("verifies");
+
+        assert_eq!(outcome.finding.verdict, CitationVerdict::SourceUnavailable);
+        assert_eq!(outcome.finding.agreement.panel_size, 3);
+        assert_eq!(outcome.finding.agreement.winner_votes, 2);
+        assert_eq!(outcome.votes.len(), 3);
+        assert_eq!(
+            outcome.votes[0].verdict,
+            CitationVerdict::Judged(SupportLevel::Supported)
+        );
+        assert_eq!(outcome.votes[1].verdict, CitationVerdict::SourceUnavailable);
+        assert_eq!(outcome.votes[2].verdict, CitationVerdict::SourceUnavailable);
+        assert!(
+            outcome
+                .votes
+                .iter()
+                .all(|vote| vote.invocation.prompt_hash.len() == 64)
+        );
+    }
+
+    #[test]
+    fn end_to_end_all_model_failures_surface_source_unavailable() {
+        let fetch = StubHttpClient::new([Ok(HttpResponse {
+            status: 200,
+            headers: BTreeMap::from([("content-type".to_string(), "text/html".to_string())]),
+            body: long_html_with("the museum was founded in 1850"),
+        })]);
+        let model_client = StubModelClient::new([
+            Err(model_transport_failure()),
+            Err(model_transport_failure()),
+        ]);
+        let options = VerifyOptions {
+            concurrency: 1,
+            ..VerifyOptions::default()
+        };
+        let outcome = block_on(verify_citation_use_site(
+            &fetch,
+            &model_client,
+            &FixedClock::new(1000),
+            &[model(), model()],
+            &request("The museum opened in 1850", "https://example.com/museum"),
+            0,
+            options,
+        ))
+        .expect("verifies");
+
+        assert_eq!(outcome.finding.verdict, CitationVerdict::SourceUnavailable);
+        assert_eq!(outcome.finding.agreement.panel_size, 2);
+        assert_eq!(outcome.finding.agreement.winner_votes, 2);
+        assert_eq!(outcome.votes.len(), 2);
+        assert!(
+            outcome
+                .votes
+                .iter()
+                .all(|vote| vote.verdict == CitationVerdict::SourceUnavailable)
+        );
     }
 
     #[test]

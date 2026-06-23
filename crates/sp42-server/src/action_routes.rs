@@ -493,8 +493,8 @@ async fn patrol_original_edit_if_possible(
     config: &sp42_core::WikiConfig,
     rev_id: u64,
 ) {
-    if let Ok(patrol_token) = execute_fetch_token(client, config, TokenKind::Patrol).await {
-        if let Err(error) = execute_patrol(
+    if let Ok(patrol_token) = execute_fetch_token(client, config, TokenKind::Patrol).await
+        && let Err(error) = execute_patrol(
             client,
             config,
             &PatrolRequest {
@@ -503,9 +503,8 @@ async fn patrol_original_edit_if_possible(
             },
         )
         .await
-        {
-            tracing::warn!(rev_id, %error, "auto-patrol failed; revision left unpatrolled");
-        }
+    {
+        tracing::warn!(rev_id, %error, "auto-patrol failed; revision left unpatrolled");
     }
 }
 

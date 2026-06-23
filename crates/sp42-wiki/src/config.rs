@@ -20,6 +20,8 @@ struct RawWikiConfig {
     coordination_url: Option<Url>,
     parsoid_url: Option<Url>,
     #[serde(default)]
+    inference_url: Option<Url>,
+    #[serde(default)]
     namespace_allowlist: Vec<i32>,
     #[serde(default = "default_scoring_policy_ref")]
     scoring_policy_ref: String,
@@ -61,6 +63,7 @@ pub fn parse_wiki_config(source: &str) -> Result<WikiConfig, ConfigError> {
         liftwing_url: raw.liftwing_url,
         coordination_url: raw.coordination_url,
         parsoid_url: raw.parsoid_url,
+        inference_url: raw.inference_url,
         namespace_allowlist: raw.namespace_allowlist,
         scoring_policy_ref: raw.scoring_policy_ref,
         scoring: compiled_policy.scoring_config,

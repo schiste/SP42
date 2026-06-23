@@ -1,8 +1,13 @@
 # ADR-0003: Node-anchored wikitext editing for content actions
 
-**Status:** Proposed
+**Status:** Accepted
 **Date:** 2026-06-04
 **Author:** Luis Villa
+
+**Implementation note (2026-06-09):** Implemented (Decisions 1-6). The open
+licensing gate resolved via ADR-0001 §3 — SP42 is `GPL-3.0-only`, so the
+`parsoid` crate (`GPL-3.0-or-later`) is linked directly and recorded in
+`deny.toml`.
 
 ## Context
 

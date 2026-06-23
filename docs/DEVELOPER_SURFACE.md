@@ -53,6 +53,11 @@ crates. Current validation is deterministic and local-first; authenticated live
 Wikimedia write validation still requires real credentials and should be called
 out in PR notes when action execution changes.
 
+Node-anchored content editing (ADR-0003) follows the same split: the
+`WikitextEditor` contract, locator types, and the deterministic scripted
+double live in `sp42-core::wikitext_editor`; the Parsoid REST adapter lives
+in `sp42-server::parsoid_editor`.
+
 ## Local Operator Smoke Flow
 
 The repo includes a single local operator smoke entrypoint:

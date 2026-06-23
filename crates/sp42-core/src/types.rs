@@ -400,6 +400,10 @@ pub struct WikiConfig {
     pub oauth_token_url: Url,
     pub liftwing_url: Option<Url>,
     pub coordination_url: Option<Url>,
+    /// Parsoid core REST endpoint (`…/w/rest.php`) used for node-anchored
+    /// content edits (ADR-0003). `None` disables the node-anchored path.
+    #[serde(default)]
+    pub parsoid_url: Option<Url>,
     /// Optional inference endpoint for citation verification — the model panel's
     /// OpenAI-compatible chat-completions URL (ADR-0006 §4, ADR-0008 §3). Default-absent,
     /// exactly like `liftwing_url`; verification is skipped when unset.

@@ -14,6 +14,7 @@
 //!     oauth_token_url: "https://meta.wikimedia.org/w/rest.php/oauth2/access_token".parse().unwrap(),
 //!     liftwing_url: None,
 //!     coordination_url: None,
+//!     parsoid_url: None,
 //!     inference_url: None,
 //!     namespace_allowlist: vec![0],
 //!     scoring_policy_ref: "active/frwiki-vandalism".to_string(),
@@ -52,6 +53,7 @@ pub mod traits;
 pub mod types;
 pub mod user_analyzer;
 pub mod wiki_storage;
+pub mod wikitext_editor;
 
 pub use action_contracts::{
     ActionResponseSummary, PatrolRequest, RollbackRequest, SessionActionExecutionRequest,
@@ -62,6 +64,7 @@ pub use action_executor::{
     build_patrol_request, build_rollback_request, build_token_request, build_undo_request,
     build_wiki_page_save_request, execute_fetch_token, execute_patrol, execute_rollback,
     execute_undo, execute_wiki_page_save, parse_action_response_summary, parse_token_response,
+    replace_exactly_once,
 };
 pub use article_inventory::{
     ArticleInventory, ArticleReference, article_inventory_notes, build_article_inventory,
@@ -192,4 +195,9 @@ pub use wiki_storage::{
     build_wiki_storage_plan, load_wiki_storage_document, parse_wiki_storage_document_response,
     parse_wiki_storage_payload_envelope, render_wiki_storage_document_page,
     render_wiki_storage_index_page, resolve_wiki_storage_document, save_wiki_storage_document,
+};
+pub use wikitext_editor::{
+    ScriptedEditorInvocation, ScriptedWikitextEditor, ScriptedWikitextNode, WikitextEditOutcome,
+    WikitextEditRefusal, WikitextEditor, WikitextEditorError, WikitextNodeDescriptor,
+    WikitextNodeKind, WikitextNodeLocator, WikitextPageRef, normalize_anchor_text,
 };

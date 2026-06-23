@@ -69,8 +69,6 @@ pub(crate) async fn post_execute_action(
     let config = config_for_state_wiki(&state, &payload.wiki_id)?;
     let client = BearerHttpClient::new(state.http_client.clone(), session.access_token.clone());
     let executed_at_ms = state.clock.now_ms();
-    let outcome =
-        execute_session_action(&client, &config, &payload, state.wikitext_editor.as_ref()).await;
     info!(
         session_id = session.session_id.as_str(),
         wiki_id = payload.wiki_id.as_str(),
@@ -78,6 +76,8 @@ pub(crate) async fn post_execute_action(
         kind = ?payload.kind,
         "executing session action"
     );
+    let outcome =
+        execute_session_action(&client, &config, &payload, state.wikitext_editor.as_ref()).await;
 
     match outcome {
         Ok(response) => {
@@ -420,6 +420,8 @@ pub(crate) async fn execute_inline_edit_action(
     Ok(save_response)
 }
 
+/// Dispatches only `replace_node` today. `set_template_params` is deferred to
+/// the citation-repair integration path (ADR-0008; tracked in SP42#26).
 async fn node_anchored_replacement(
     config: &sp42_core::WikiConfig,
     title: &str,
@@ -460,7 +462,7 @@ pub(crate) fn action_error_from_editor(error: &WikitextEditorError) -> ActionErr
             ("editor-unavailable", None, *retryable)
         }
         WikitextEditorError::MissingTarget { .. } => ("editor-missing-target", Some(404), false),
-        WikitextEditorError::NotConfigured { .. } => ("editor-not-configured", None, false),
+        WikitextEditorError::NotConfigured { .. } => ("editor-not-configured", Some(501), false),
         WikitextEditorError::Unsupported { .. } => ("editor-unsupported", Some(400), false),
     };
     ActionError::Execution {
@@ -492,7 +494,7 @@ async fn patrol_original_edit_if_possible(
     rev_id: u64,
 ) {
     if let Ok(patrol_token) = execute_fetch_token(client, config, TokenKind::Patrol).await {
-        let _ = execute_patrol(
+        if let Err(error) = execute_patrol(
             client,
             config,
             &PatrolRequest {
@@ -500,7 +502,10 @@ async fn patrol_original_edit_if_possible(
                 token: patrol_token,
             },
         )
-        .await;
+        .await
+        {
+            tracing::warn!(rev_id, %error, "auto-patrol failed; revision left unpatrolled");
+        }
     }
 }
 
@@ -925,8 +930,8 @@ pub(crate) fn action_error_response(error: &ActionError) -> (StatusCode, Json<se
     };
     (
         match http_status {
-            Some(400..=499) => StatusCode::BAD_REQUEST,
-            _ => StatusCode::BAD_GATEWAY,
+            Some(status) => StatusCode::from_u16(status).unwrap_or(StatusCode::BAD_GATEWAY),
+            None => StatusCode::BAD_GATEWAY,
         },
         Json(serde_json::json!({
             "error": format!("wiki action failed: {message}"),

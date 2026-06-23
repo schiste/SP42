@@ -3042,10 +3042,7 @@ fn editor_errors_map_to_action_error_codes() {
         ..
     } = mapped;
     assert_eq!(code.as_deref(), Some("editor-not-configured"));
-    assert_eq!(
-        http_status, None,
-        "configuration gaps surface as gateway errors"
-    );
+    assert_eq!(http_status, Some(501), "configuration gaps surface as 501");
     assert!(!retryable);
 
     let error = sp42_core::WikitextEditorError::Unavailable {
@@ -3058,4 +3055,51 @@ fn editor_errors_map_to_action_error_codes() {
     } = mapped;
     assert_eq!(code.as_deref(), Some("editor-unavailable"));
     assert!(retryable);
+}
+
+#[test]
+fn action_error_response_preserves_carried_status() {
+    let drift = sp42_core::ActionError::Execution {
+        message: "anchor drifted".to_string(),
+        code: Some("node-drift".to_string()),
+        http_status: Some(409),
+        retryable: false,
+    };
+    assert_eq!(
+        crate::action_routes::action_error_response(&drift).0,
+        axum::http::StatusCode::CONFLICT
+    );
+
+    let missing = sp42_core::ActionError::Execution {
+        message: "page gone".to_string(),
+        code: Some("editor-missing-target".to_string()),
+        http_status: Some(404),
+        retryable: false,
+    };
+    assert_eq!(
+        crate::action_routes::action_error_response(&missing).0,
+        axum::http::StatusCode::NOT_FOUND
+    );
+
+    let not_configured = sp42_core::ActionError::Execution {
+        message: "not configured".to_string(),
+        code: Some("editor-not-configured".to_string()),
+        http_status: Some(501),
+        retryable: false,
+    };
+    assert_eq!(
+        crate::action_routes::action_error_response(&not_configured).0,
+        axum::http::StatusCode::NOT_IMPLEMENTED
+    );
+
+    let no_status = sp42_core::ActionError::Execution {
+        message: "backend down".to_string(),
+        code: Some("editor-unavailable".to_string()),
+        http_status: None,
+        retryable: true,
+    };
+    assert_eq!(
+        crate::action_routes::action_error_response(&no_status).0,
+        axum::http::StatusCode::BAD_GATEWAY
+    );
 }

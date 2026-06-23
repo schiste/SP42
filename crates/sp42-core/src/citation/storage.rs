@@ -339,6 +339,7 @@ mod tests {
                 url: url(),
                 content_hash: sha256_hex(b"the museum opened in 1850"),
                 fetched_at: 42,
+                http_status: Some(200),
             },
             grounding: GroundingAssertion::LocatedQuote {
                 quote: "opened in 1850".to_string(),
@@ -405,6 +406,7 @@ mod tests {
             url: snapshot.source_url.clone(),
             content_hash: snapshot.content_hash.clone(),
             fetched_at: snapshot.fetched_at_ms,
+            http_status: None,
         };
         let votes = vec![
             mv(Verdict::Supported, Some("established in 1985")),
@@ -430,6 +432,7 @@ mod tests {
             url: snapshot.source_url.clone(),
             content_hash: snapshot.content_hash.clone(),
             fetched_at: 1,
+            http_status: None,
         };
         let votes = vec![mv(Verdict::SourceUnavailable, None)];
         let finding = assemble_citation_finding(&snapshot.body_text, &provenance, &votes, 0);

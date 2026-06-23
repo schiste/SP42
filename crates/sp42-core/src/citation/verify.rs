@@ -85,6 +85,13 @@ pub struct SourceProvenance {
     pub content_hash: String,
     /// Fetch time in epoch ms, from the injected `Clock`.
     pub fetched_at: i64,
+    /// The HTTP status the fetch returned, when known. Distinguishes a failed fetch
+    /// (e.g. `403`/`404` permanent, `429`/`503` retryable) from a `200` whose body was
+    /// merely unusable — both surface as `SourceUnavailable`, so the status is the only
+    /// signal that tells a retry path which is which. `None` for records that pre-date
+    /// this field or were replayed from a snapshot that did not capture it.
+    #[serde(default)]
+    pub http_status: Option<u16>,
 }
 
 /// The machine-checkable grounding assertion the gate re-verifies (ADR-0008 §2).
@@ -576,7 +583,6 @@ fn no_quote_finding(
 /// A fetched source body plus the HTTP status it came from.
 struct FetchedSource {
     text: String,
-    #[allow(dead_code)]
     status: u16,
 }
 
@@ -680,6 +686,7 @@ where
         url: request.source_url.clone(),
         content_hash: sha256_hex(fetched.text.as_bytes()),
         fetched_at: clock.now_ms(),
+        http_status: Some(fetched.status),
     };
 
     let body = if fetched.text.is_empty() {
@@ -819,7 +826,18 @@ mod tests {
             url: "https://example.com".parse().expect("url"),
             content_hash: "deadbeef".to_string(),
             fetched_at: 42,
+            http_status: Some(200),
         }
+    }
+
+    #[test]
+    fn provenance_without_http_status_deserializes_to_none() {
+        // ADR-0009 replay: a snapshot written before `http_status` existed must still load.
+        let legacy = r#"{"url":"https://example.com/","content_hash":"deadbeef","fetched_at":42}"#;
+        let provenance: SourceProvenance =
+            serde_json::from_str(legacy).expect("legacy provenance deserializes");
+        assert_eq!(provenance.http_status, None);
+        assert_eq!(provenance.fetched_at, 42);
     }
 
     fn model_verdict(verdict: Verdict, quote: Option<&str>) -> ModelVerdict {
@@ -1089,6 +1107,35 @@ mod tests {
         assert_eq!(outcome.finding.verdict, CitationVerdict::SourceUnavailable);
         assert!(outcome.finding.passage.is_none());
         assert!(outcome.votes.is_empty());
+        // The failing HTTP status is preserved, so a retry path can tell a permanent
+        // 404 from a retryable 429/503 — it is not discarded into the verdict.
+        assert_eq!(outcome.finding.provenance.http_status, Some(404));
+    }
+
+    #[test]
+    fn end_to_end_records_the_http_status_of_a_successful_fetch() {
+        let fetch = StubHttpClient::new([Ok(HttpResponse {
+            status: 200,
+            headers: BTreeMap::from([("content-type".to_string(), "text/html".to_string())]),
+            body: long_html_with("the museum was founded in 1850"),
+        })]);
+        let model_client = StubModelClient::new([Ok(completion(
+            r#"{"verdict": "SUPPORTED", "quote": "the museum was founded in 1850"}"#,
+        ))]);
+        let outcome = block_on(verify_citation_use_site(
+            &fetch,
+            &model_client,
+            &FixedClock::new(1),
+            &[model()],
+            &request(
+                "The museum was founded in 1850",
+                "https://example.com/museum",
+            ),
+            0,
+            VerifyOptions::default(),
+        ))
+        .expect("verifies");
+        assert_eq!(outcome.finding.provenance.http_status, Some(200));
     }
 
     #[test]

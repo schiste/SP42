@@ -1025,6 +1025,7 @@ mod verify_tests {
                 url: "https://example.com/bridge".parse().expect("url"),
                 content_hash: "abc123".to_string(),
                 fetched_at: 1,
+                http_status: Some(200),
             },
             grounding: GroundingAssertion::LocatedQuote {
                 quote: "opened in 1998".to_string(),

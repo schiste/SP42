@@ -314,4 +314,45 @@ scoring_policy_ref: active/frwiki-vandalism
 
         assert!(matches!(error, ConfigError::ScoringPolicy(_)));
     }
+
+    #[test]
+    fn bare_url_citation_parses_when_present() {
+        let yaml = r#"
+wiki_id: frwiki
+display_name: French Wikipedia
+api_url: https://fr.wikipedia.org/w/api.php
+eventstreams_url: https://stream.wikimedia.org/v2/stream/recentchange
+oauth_authorize_url: https://meta.wikimedia.org/w/rest.php/oauth2/authorize
+oauth_token_url: https://meta.wikimedia.org/w/rest.php/oauth2/access_token
+liftwing_url:
+coordination_url:
+namespace_allowlist: [0]
+scoring_policy_ref: active/frwiki-vandalism
+templates:
+  citation_needed: "Citation needed"
+  bare_url_citation: "cite web"
+"#;
+        let config = parse_wiki_config(yaml).expect("config with bare_url_citation should parse");
+        assert_eq!(
+            config.templates.bare_url_citation.as_deref(),
+            Some("cite web")
+        );
+    }
+
+    #[test]
+    fn bare_url_citation_defaults_to_none_when_absent() {
+        let source = include_str!("../../../configs/frwiki.yaml");
+        let config = parse_wiki_config(source).expect("fixture should parse");
+        assert_eq!(config.templates.bare_url_citation, None);
+    }
+
+    #[test]
+    fn testwiki_fixture_enables_bare_url_citation() {
+        let source = include_str!("../../../fixtures/testwiki.yaml");
+        let config = parse_wiki_config(source).expect("testwiki fixture should parse");
+        assert_eq!(
+            config.templates.bare_url_citation.as_deref(),
+            Some("cite web")
+        );
+    }
 }

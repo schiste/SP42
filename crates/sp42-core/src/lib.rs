@@ -29,6 +29,7 @@
 pub mod action_contracts;
 pub mod action_executor;
 pub mod article_inventory;
+pub mod bare_url_repair;
 pub mod branding;
 pub mod citation;
 pub mod context_builder;
@@ -68,6 +69,12 @@ pub use action_executor::{
 };
 pub use article_inventory::{
     ArticleInventory, ArticleReference, article_inventory_notes, build_article_inventory,
+};
+pub use bare_url_repair::{
+    BareUrlApplyRequest, BareUrlApplyResponse, BareUrlDeclineReason, BareUrlDeclined,
+    BareUrlOutcome, BareUrlProposal, BareUrlProposalsRequest, BareUrlProposalsResponse,
+    BareUrlReference, bare_url_references, citoid_language, classify_bare_url,
+    iso_date_from_epoch_ms, render_bare_url_citation,
 };
 pub use citation::body_classifier::{BodyUsability, BodyUsabilityReason, classify_body_usability};
 pub use citation::citoid::{

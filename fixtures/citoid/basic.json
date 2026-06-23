@@ -1,0 +1,12 @@
+[
+  {
+    "itemType": "webpage",
+    "title": "Headline",
+    "publicationTitle": "The Guardian",
+    "author": [["Jane", "Doe"], ["John", "Smith"]],
+    "date": "2020-01-01",
+    "language": "fr",
+    "url": "https://example.org/article",
+    "accessDate": "2026-06-09"
+  }
+]

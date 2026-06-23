@@ -13,3 +13,4 @@ namespace_allowlist:
 scoring_policy_ref: active/testwiki-vandalism
 templates:
   citation_needed: "Citation needed"
+  bare_url_citation: "cite web"

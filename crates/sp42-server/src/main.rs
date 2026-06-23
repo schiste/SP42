@@ -1,5 +1,6 @@
 mod action_routes;
 mod auth_routes;
+mod citation_routes;
 mod coordination;
 mod deployment;
 mod endpoint_manifest;

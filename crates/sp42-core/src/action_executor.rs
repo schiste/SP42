@@ -1055,7 +1055,9 @@ mod tests {
     fn replace_exactly_once_rejects_missing_needle() {
         let error = replace_exactly_once("alpha beta", "delta", "DELTA")
             .expect_err("missing needle should refuse");
-        let ActionError::Execution { code, retryable, .. } = error;
+        let ActionError::Execution {
+            code, retryable, ..
+        } = error;
         assert_eq!(code.as_deref(), Some("text-not-found"));
         assert!(!retryable);
     }
@@ -1066,13 +1068,15 @@ mod tests {
             .expect_err("ambiguous needle should refuse");
         let ActionError::Execution { code, message, .. } = error;
         assert_eq!(code.as_deref(), Some("text-ambiguous"));
-        assert!(message.contains("2 times"), "message should report the count: {message}");
+        assert!(
+            message.contains("2 times"),
+            "message should report the count: {message}"
+        );
     }
 
     #[test]
     fn replace_exactly_once_rejects_empty_needle() {
-        let error = replace_exactly_once("alpha", "", "X")
-            .expect_err("empty needle should refuse");
+        let error = replace_exactly_once("alpha", "", "X").expect_err("empty needle should refuse");
         let ActionError::Execution { code, .. } = error;
         assert_eq!(code.as_deref(), Some("invalid-input"));
     }

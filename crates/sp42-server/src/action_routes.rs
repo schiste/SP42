@@ -10,9 +10,9 @@ use sp42_core::{
     ActionError, ActionExecutionHistoryReport, ActionExecutionLogEntry,
     ActionExecutionStatusReport, ActionResponseSummary, DevAuthCapabilityReport, FlagState,
     PatrolRequest, RollbackRequest, SessionActionExecutionRequest, SessionActionExecutionResponse,
-    SessionActionKind, TokenKind, UndoRequest, WikiPageSaveRequest, WikitextEditor,
-    WikitextEditorError, WikitextEditOutcome, WikitextNodeLocator, WikitextPageRef,
-    execute_fetch_token, execute_patrol, execute_rollback, execute_undo, execute_wiki_page_save,
+    SessionActionKind, TokenKind, UndoRequest, WikiPageSaveRequest, WikitextEditOutcome,
+    WikitextEditor, WikitextEditorError, WikitextNodeLocator, WikitextPageRef, execute_fetch_token,
+    execute_patrol, execute_rollback, execute_undo, execute_wiki_page_save,
     parse_action_response_summary, replace_exactly_once,
 };
 use sp42_types::HttpResponse;
@@ -69,7 +69,8 @@ pub(crate) async fn post_execute_action(
     let config = config_for_state_wiki(&state, &payload.wiki_id)?;
     let client = BearerHttpClient::new(state.http_client.clone(), session.access_token.clone());
     let executed_at_ms = state.clock.now_ms();
-    let outcome = execute_session_action(&client, &config, &payload, state.wikitext_editor.as_ref()).await;
+    let outcome =
+        execute_session_action(&client, &config, &payload, state.wikitext_editor.as_ref()).await;
     info!(
         session_id = session.session_id.as_str(),
         wiki_id = payload.wiki_id.as_str(),
@@ -321,7 +322,9 @@ async fn execute_session_action(
         SessionActionKind::TagCitationNeeded => {
             execute_tag_citation_needed_action(client, config, payload).await
         }
-        SessionActionKind::InlineEdit => execute_inline_edit_action(client, config, payload, editor).await,
+        SessionActionKind::InlineEdit => {
+            execute_inline_edit_action(client, config, payload, editor).await
+        }
     }
 }
 

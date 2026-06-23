@@ -236,7 +236,10 @@ scoring_policy_ref: active/frwiki-vandalism
         let error = parse_wiki_config(yaml).expect_err("ftp parsoid_url should be rejected");
         assert!(matches!(
             error,
-            ConfigError::InvalidField { field: "parsoid_url", .. }
+            ConfigError::InvalidField {
+                field: "parsoid_url",
+                ..
+            }
         ));
     }
 

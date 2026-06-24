@@ -1027,13 +1027,13 @@ mod extract_tests {
             "cite-template ref offset should be inside text"
         );
 
-        // Second ref: bare ExtLink with URL https://en.wikipedia.org/wiki/Etymology_of_cat
+        // Second ref: bare ExtLink with an external URL https://www.etymonline.com/word/cat
         let extlink_ref = &etymology_block.refs[1];
         assert_eq!(extlink_ref.ref_id, "cite_ref-orig_2-0");
         assert_eq!(extlink_ref.source_urls.len(), 1);
         assert_eq!(
             extlink_ref.source_urls[0].as_str(),
-            "https://en.wikipedia.org/wiki/Etymology_of_cat",
+            "https://www.etymonline.com/word/cat",
             "bare ExtLink URL should be extracted"
         );
         assert!(

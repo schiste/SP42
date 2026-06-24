@@ -376,6 +376,27 @@ pub trait WikitextEditor: Send + Sync {
         locator: &WikitextNodeLocator,
         params: &[(String, String)],
     ) -> Result<WikitextEditOutcome, WikitextEditorError>;
+
+    /// Extract prose-bearing blocks (paragraphs, list items, table cells) in
+    /// document order, with inline ref markers removed from text but their byte
+    /// offsets, ids, and source URLs recorded. Read-only.
+    ///
+    /// Defaults to "no blocks": only the Parsoid production editor understands
+    /// page structure, so non-Parsoid impls (scripted/test fakes) inherit the
+    /// empty default and need no changes.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`WikitextEditorError`] when the backend is unavailable, the
+    /// revision is missing, or the wiki has no editing backend configured.
+    async fn extract_blocks(
+        &self,
+        config: &WikiConfig,
+        page: &WikitextPageRef,
+    ) -> Result<Vec<ParsoidBlock>, WikitextEditorError> {
+        let _ = (config, page);
+        Ok(Vec::new())
+    }
 }
 
 #[async_trait]

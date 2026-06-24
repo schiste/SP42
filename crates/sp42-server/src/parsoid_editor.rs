@@ -17,10 +17,11 @@ use async_trait::async_trait;
 use parsoid::prelude::*;
 use parsoid::{Client, ImmutableWikicode};
 use sp42_core::{
-    WikiConfig, WikitextEditOutcome, WikitextEditRefusal, WikitextEditor, WikitextEditorError,
-    WikitextNodeDescriptor, WikitextNodeKind, WikitextNodeLocator, WikitextPageRef,
-    normalize_anchor_text,
+    BlockKind, BlockRef, ParsoidBlock, WikiConfig, WikitextEditOutcome, WikitextEditRefusal,
+    WikitextEditor, WikitextEditorError, WikitextNodeDescriptor, WikitextNodeKind,
+    WikitextNodeLocator, WikitextPageRef, normalize_anchor_text,
 };
+use std::collections::HashMap;
 
 /// Parsoid-REST production implementation of [`WikitextEditor`].
 pub(crate) struct ParsoidWikitextEditor;
@@ -289,6 +290,172 @@ fn apply_revision_edit(
     Ok(AppliedEdit::Edited(code.into_immutable()))
 }
 
+/// Extract prose-bearing blocks from a Parsoid revision, in document order.
+#[allow(clippy::unnecessary_wraps)]
+fn blocks_from_revision(
+    revision: &ImmutableWikicode,
+) -> Result<Vec<ParsoidBlock>, WikitextEditorError> {
+    let code = Wikicode::new(revision.html());
+
+    // Map Reference.id() -> source URLs, read structurally from cite templates
+    // and bare ExtLinks inside each reference's contents.
+    let mut ref_urls: HashMap<String, Vec<url::Url>> = HashMap::new();
+    for reference in code.filter_references() {
+        ref_urls.insert(reference.id(), urls_in_reference(&reference));
+    }
+
+    let mut blocks = Vec::new();
+    let mut ordinal = 0usize;
+    let mut heading_stack: Vec<(u32, String)> = Vec::new();
+    walk(
+        &code,
+        &mut heading_stack,
+        &ref_urls,
+        &mut blocks,
+        &mut ordinal,
+    );
+    Ok(blocks)
+}
+
+/// Recursive walker — track headings, emit blocks, don't recurse into a block once emitted.
+fn walk(
+    node: &impl WikinodeIterator,
+    headings: &mut Vec<(u32, String)>,
+    ref_urls: &HashMap<String, Vec<url::Url>>,
+    blocks: &mut Vec<ParsoidBlock>,
+    ordinal: &mut usize,
+) {
+    for child in node.children() {
+        if let Some(heading) = child.as_heading() {
+            let level = heading.level();
+            while headings.last().is_some_and(|(l, _)| *l >= level) {
+                headings.pop();
+            }
+            headings.push((level, child.text_contents().trim().to_string()));
+            continue;
+        }
+        if let Some(kind) = block_kind(&child) {
+            let section_path = headings.iter().map(|(_, t)| t.clone()).collect();
+            blocks.push(build_block(&child, kind, section_path, *ordinal, ref_urls));
+            *ordinal += 1;
+            continue; // do not descend into an emitted block
+        }
+        walk(&child, headings, ref_urls, blocks, ordinal);
+    }
+}
+
+/// Block detection by tag.
+fn block_kind(node: &Wikinode) -> Option<BlockKind> {
+    let element = node.as_node().as_element()?;
+    match element.name.local.as_ref() {
+        "p" => Some(BlockKind::Paragraph),
+        "li" | "dd" => Some(BlockKind::ListItem),
+        "td" | "th" | "caption" => Some(BlockKind::TableCell),
+        _ => None,
+    }
+}
+
+/// Build one block — ordered child traversal, skipping ref-marker internals and recording offsets.
+fn build_block(
+    node: &Wikinode,
+    kind: BlockKind,
+    section_path: Vec<String>,
+    ordinal: usize,
+    ref_urls: &HashMap<String, Vec<url::Url>>,
+) -> ParsoidBlock {
+    let mut text = String::new();
+    let mut refs = Vec::new();
+    collect_block(node, &mut text, &mut refs, ref_urls);
+    ParsoidBlock {
+        text: text.trim().to_string(),
+        section_path,
+        refs,
+        block_kind: kind,
+        block_ordinal: ordinal,
+    }
+}
+
+/// Collect text and refs from a block, skipping ref markers' own text.
+fn collect_block(
+    node: &impl WikinodeIterator,
+    text: &mut String,
+    refs: &mut Vec<BlockRef>,
+    ref_urls: &HashMap<String, Vec<url::Url>>,
+) {
+    for child in node.children() {
+        if let Some(ref_link) = child.as_reference_link() {
+            let reference_id = ref_link.reference_id().unwrap_or_default();
+            let source_urls = ref_urls.get(&reference_id).cloned().unwrap_or_default();
+            refs.push(BlockRef {
+                offset: text.len(),
+                ref_id: ref_link.id(),
+                source_urls,
+                ref_text: child.text_contents(),
+                named: ref_link.name().ok().flatten().is_some(),
+            });
+            continue; // skip the marker's own text
+        }
+        // A text node: append its text.
+        if let Some(text_ref) = child.as_node().as_text() {
+            text.push_str(&text_ref.borrow());
+            continue;
+        }
+        // Any other element: recurse so we keep inline formatting text and catch
+        // nested ref markers in order.
+        collect_block(&child, text, refs, ref_urls);
+    }
+}
+
+/// URL extraction from a reference's contents.
+fn urls_in_reference(reference: &Reference) -> Vec<url::Url> {
+    let contents = reference.contents();
+    let mut out = Vec::new();
+
+    // Cite-template params via data-mw.
+    for span in contents.select("span[typeof~=\"mw:Transclusion\"]") {
+        if let Some(element) = span.as_node().as_element()
+            && let Some(data_mw) = element.attributes.borrow().get("data-mw")
+        {
+            push_template_urls(data_mw, &mut out);
+        }
+    }
+    // Bare ExtLinks.
+    for node in contents.descendants() {
+        if let Some(extlink) = node.as_extlink()
+            && let Ok(u) = url::Url::parse(&extlink.target())
+        {
+            out.push(u);
+        }
+    }
+    out.sort_by(|a, b| a.as_str().cmp(b.as_str()));
+    out.dedup();
+    out
+}
+
+/// Extract URLs from cite-template data-mw.
+fn push_template_urls(data_mw: &str, out: &mut Vec<url::Url>) {
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(data_mw) else {
+        return;
+    };
+    let Some(parts) = value.get("parts").and_then(|p| p.as_array()) else {
+        return;
+    };
+    for part in parts {
+        let Some(params) = part.pointer("/template/params") else {
+            continue;
+        };
+        for key in ["url", "archive-url", "archiveurl"] {
+            if let Some(wt) = params
+                .pointer(&format!("/{key}/wt"))
+                .and_then(|v| v.as_str())
+                && let Ok(u) = url::Url::parse(wt.trim())
+            {
+                out.push(u);
+            }
+        }
+    }
+}
+
 #[async_trait]
 impl WikitextEditor for ParsoidWikitextEditor {
     async fn enumerate_nodes(
@@ -363,6 +530,19 @@ impl WikitextEditor for ParsoidWikitextEditor {
                 Ok(WikitextEditOutcome::Applied { new_wikitext })
             }
         }
+    }
+
+    async fn extract_blocks(
+        &self,
+        config: &WikiConfig,
+        page: &WikitextPageRef,
+    ) -> Result<Vec<ParsoidBlock>, WikitextEditorError> {
+        let client = editor_client(config)?;
+        let revision = client
+            .get_revision(&page.title, page.rev_id)
+            .await
+            .map_err(map_parsoid_error)?;
+        blocks_from_revision(&revision)
     }
 }
 
@@ -780,5 +960,37 @@ mod tests {
             error,
             WikitextEditorError::MissingTarget { .. } | WikitextEditorError::Unavailable { .. }
         ));
+    }
+}
+
+#[cfg(test)]
+mod extract_tests {
+    use super::*;
+
+    fn fixture() -> ImmutableWikicode {
+        let html = include_str!("../tests/fixtures/parsoid_cats.html");
+        ImmutableWikicode::new(html)
+    }
+
+    #[test]
+    fn extracts_blocks_with_section_refs_and_urls() {
+        let blocks = blocks_from_revision(&fixture()).expect("blocks");
+        assert!(!blocks.is_empty(), "should find prose blocks");
+
+        // At least one block has a heading stack.
+        assert!(blocks.iter().any(|b| !b.section_path.is_empty()));
+
+        // At least one ref with an extracted URL, and its offset lands within
+        // (or at the end of) the cleaned block text.
+        let with_url = blocks
+            .iter()
+            .flat_map(|b| b.refs.iter().map(move |r| (b, r)))
+            .find(|(_, r)| !r.source_urls.is_empty())
+            .expect("a ref with a URL");
+        let (block, r) = with_url;
+        assert!(r.offset <= block.text.len(), "offset within text bounds");
+
+        // Markers are stripped: the cleaned text should not contain "[1]"-style
+        // bracketed cue if the fixture used them (skip if not applicable).
     }
 }

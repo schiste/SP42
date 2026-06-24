@@ -13,9 +13,9 @@ pub struct Sentence {
 
 /// Abbreviations that end in `.` but do not end a sentence.
 const ABBREVIATIONS: &[&str] = &[
-    "U.S.", "U.K.", "U.N.", "E.U.", "U.", "K.", "N.", "a.m.", "p.m.", "Dr.", "Mr.", "Mrs.", "Ms.",
-    "Prof.", "Sr.", "Jr.", "St.", "Mt.", "vs.", "etc.", "al.", "ca.", "c.", "No.", "Vol.", "pp.",
-    "p.", "e.g.", "i.e.", "cf.", "Inc.", "Ltd.", "Co.",
+    "U.S.", "U.K.", "U.N.", "E.U.", "a.m.", "p.m.", "Dr.", "Mr.", "Mrs.", "Ms.", "Prof.", "Sr.",
+    "Jr.", "St.", "Mt.", "vs.", "etc.", "al.", "ca.", "c.", "No.", "Vol.", "pp.", "p.", "e.g.",
+    "i.e.", "cf.", "Inc.", "Ltd.", "Co.",
 ];
 
 /// Split `text` into sentences. Never empty for non-empty input: text with no
@@ -83,8 +83,8 @@ fn leading_ws(s: &str) -> usize {
 }
 
 /// Decide whether a terminator at byte `dot` (with closers up to `end`) ends a
-/// sentence: not a decimal, not a known abbreviation, and followed by
-/// whitespace+capital or end-of-text.
+/// sentence: not a decimal, not a known abbreviation, not a contiguous capital-letter
+/// abbreviation, and followed by whitespace+capital or end-of-text.
 fn is_boundary(text: &str, dot: usize, end: usize) -> bool {
     let bytes = text.as_bytes();
     // Decimal: digit '.' digit
@@ -104,6 +104,19 @@ fn is_boundary(text: &str, dot: usize, end: usize) -> bool {
         // Check abbreviations that end at this dot
         if ABBREVIATIONS.iter().any(|abbr| head.ends_with(abbr)) {
             return false;
+        }
+
+        // Contiguous capital-letter abbreviation: dot between two uppercase letters.
+        // This handles intermediate dots in "U.S.", "U.K.", "U.N.", etc.
+        // The dot is NOT a boundary if the char immediately before it is uppercase
+        // AND the char immediately after it (at `end`) is uppercase (no intervening space).
+        #[allow(clippy::collapsible_if)]
+        if let (Some(prev), Some(next)) =
+            (text[..dot].chars().next_back(), text[end..].chars().next())
+        {
+            if prev.is_uppercase() && next.is_uppercase() {
+                return false;
+            }
         }
     }
 
@@ -234,6 +247,54 @@ mod tests {
         assert_eq!(sentences[1].text, "Then she left.");
 
         // Verify byte ranges index back into input without panic
+        for s in &sentences {
+            assert_eq!(&input[s.range.clone()], s.text);
+        }
+    }
+
+    #[test]
+    fn regression_annex_u_not_merged() {
+        let input = "See Annex U. The next clause applies.";
+        let sentences = segment_sentences(input);
+
+        // Verify the segmentation: should split into 2 sentences, not merge
+        assert_eq!(sentences.len(), 2);
+        assert_eq!(sentences[0].text, "See Annex U.");
+        assert_eq!(sentences[1].text, "The next clause applies.");
+
+        // Verify byte ranges index back into input
+        for s in &sentences {
+            assert_eq!(&input[s.range.clone()], s.text);
+        }
+    }
+
+    #[test]
+    fn regression_vitamin_k_not_merged() {
+        let input = "He lacks vitamin K. Doctors agree.";
+        let sentences = segment_sentences(input);
+
+        // Verify the segmentation: should split into 2 sentences, not merge
+        assert_eq!(sentences.len(), 2);
+        assert_eq!(sentences[0].text, "He lacks vitamin K.");
+        assert_eq!(sentences[1].text, "Doctors agree.");
+
+        // Verify byte ranges index back into input
+        for s in &sentences {
+            assert_eq!(&input[s.range.clone()], s.text);
+        }
+    }
+
+    #[test]
+    fn regression_point_n_not_merged() {
+        let input = "Refer to point N. It explains everything.";
+        let sentences = segment_sentences(input);
+
+        // Verify the segmentation: should split into 2 sentences, not merge
+        assert_eq!(sentences.len(), 2);
+        assert_eq!(sentences[0].text, "Refer to point N.");
+        assert_eq!(sentences[1].text, "It explains everything.");
+
+        // Verify byte ranges index back into input
         for s in &sentences {
             assert_eq!(&input[s.range.clone()], s.text);
         }

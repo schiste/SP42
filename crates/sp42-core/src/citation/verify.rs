@@ -39,7 +39,7 @@ use super::citoid::{
 use super::concurrency::map_with_concurrency;
 use super::locate_quote::{locate_quote, locate_quote_fuzzy};
 use super::parsing::{ParsedVerdict, parse_repair_response, parse_verdict_response};
-use super::prompts::{build_repair_prompt, build_verify_prompt};
+use super::prompts::{ClaimContext, build_repair_prompt, build_verify_prompt};
 use super::source_fetch::{html_to_text, looks_like_html, recover_wayback_body};
 use super::urls::rewrite_wayback_url;
 use super::verdict::{CitationFindingKind, CitationVerdict, SupportLevel, Verdict};
@@ -240,6 +240,8 @@ pub struct VerifyModelInputs<'a> {
     pub source_url: &'a str,
     /// The optional bibliographic metadata sidecar (context only — never grounded).
     pub metadata: Option<&'a CitoidMetadata>,
+    /// The optional co-reference context window (context only — never grounded).
+    pub context: Option<&'a ClaimContext>,
 }
 
 /// Options for a verification run.
@@ -300,7 +302,7 @@ fn build_verify_completion_request(
         inputs.source_text,
         inputs.source_url,
         inputs.metadata,
-        None,
+        inputs.context,
     )
     .to_vec();
     let prompt_hash = sha256_hex(&serde_json::to_vec(&messages)?);
@@ -689,12 +691,18 @@ where
 /// Returns [`CitationVerificationError`] for an empty panel or an unfetchable source URL.
 /// Individual model failures are recorded as `SourceUnavailable` panel votes so the
 /// configured panel size is preserved in the audit trail and agreement counts.
+// The injected edges (fetch/model/clock), the panel, the request, its optional context
+// window, the use-site ordinal, and the run options are all distinct, named inputs; bundling
+// them would obscure rather than clarify. The context rides a separate argument by design —
+// it is kept off `CitationVerificationRequest` (the clean claim+url record, ADR-0008 §1).
+#[allow(clippy::too_many_arguments)]
 pub async fn verify_citation_use_site<C, M>(
     fetch_client: &C,
     model_client: &M,
     clock: &dyn Clock,
     panel: &[ModelRef],
     request: &CitationVerificationRequest,
+    context: Option<&ClaimContext>,
     use_site_ordinal: u32,
     options: VerifyOptions,
 ) -> Result<VerificationOutcome, CitationVerificationError>
@@ -744,6 +752,7 @@ where
         source_text: &fetched.text,
         source_url: request.source_url.as_str(),
         metadata: metadata.as_ref(),
+        context,
     };
 
     let params = &options.params;
@@ -817,9 +826,9 @@ mod tests {
     };
 
     use super::{
-        CitationVerificationRequest, GroundingAssertion, GroundingStatus, ModelVerdict,
-        RepairAttempt, SourceProvenance, VerifyModelInputs, VerifyOptions,
-        assemble_citation_finding, build_model_votes, execute_citation_repair,
+        CitationFinding, CitationVerificationRequest, ClaimContext, GroundingAssertion,
+        GroundingStatus, ModelVerdict, RepairAttempt, SourceProvenance, VerifyModelInputs,
+        VerifyOptions, assemble_citation_finding, build_model_votes, execute_citation_repair,
         execute_citation_verify, is_groundable_support, verify_citation_use_site,
     };
     use crate::citation::parsing::ParsedVerdict;
@@ -841,6 +850,7 @@ mod tests {
             source_text: source,
             source_url: "https://example.com",
             metadata: None,
+            context: None,
         }
     }
 
@@ -1107,6 +1117,7 @@ mod tests {
             &FixedClock::new(1000),
             &[model()],
             &request("The bridge opened in 1998", "https://example.com/bridge"),
+            None,
             3,
             VerifyOptions::default(),
         ))
@@ -1119,6 +1130,51 @@ mod tests {
         assert_eq!(outcome.finding.use_site_ordinal, 3);
         assert_eq!(outcome.votes.len(), 1);
         assert_eq!(outcome.votes[0].invocation.prompt_hash.len(), 64);
+    }
+
+    #[test]
+    fn empty_context_matches_no_context_finding() {
+        // The A/B control arm: supplying an empty ClaimContext must produce a finding
+        // identical to today's no-context path (the prompt is byte-identical, so the whole
+        // outcome is too). Drive the orchestration twice with the same stubbed source/model.
+        fn run(context: Option<&ClaimContext>) -> CitationFinding {
+            let fetch = StubHttpClient::new([Ok(HttpResponse {
+                status: 200,
+                headers: BTreeMap::from([("content-type".to_string(), "text/html".to_string())]),
+                body: long_html_with("the bridge opened in 1998"),
+            })]);
+            let model_client = StubModelClient::new([Ok(completion(
+                r#"{"verdict": "SUPPORTED", "quote": "the bridge opened in 1998"}"#,
+            ))]);
+            block_on(verify_citation_use_site(
+                &fetch,
+                &model_client,
+                &FixedClock::new(1000),
+                &[model()],
+                &request("The bridge opened in 1998", "https://example.com/bridge"),
+                context,
+                0,
+                VerifyOptions::default(),
+            ))
+            .expect("verifies")
+            .finding
+        }
+
+        let none = run(None);
+        let empty = run(Some(&ClaimContext::default()));
+        assert_eq!(none, empty);
+    }
+
+    #[test]
+    fn quote_only_in_context_does_not_ground() {
+        // Structural safety: the grounding gate only ever locates quotes in the source body,
+        // so a quote that lives in the context window (never passed here) cannot ground.
+        let source = "The bridge opened to traffic in 1998.";
+        let context_only_quote = "She joined the club in 1985."; // absent from the source
+        let votes = vec![model_verdict(Verdict::Supported, Some(context_only_quote))];
+        let finding = assemble_citation_finding(source, &provenance(), &votes, 0);
+        assert_eq!(finding.grounding_status, GroundingStatus::Unlocated);
+        assert!(finding.passage.is_none());
     }
 
     #[test]
@@ -1145,6 +1201,7 @@ mod tests {
             &FixedClock::new(1000),
             &[model(), model(), model()],
             &request("The bridge opened in 1998", "https://example.com/bridge"),
+            None,
             3,
             options,
         ))
@@ -1189,6 +1246,7 @@ mod tests {
             &FixedClock::new(1000),
             &[model(), model()],
             &request("The museum opened in 1850", "https://example.com/museum"),
+            None,
             0,
             options,
         ))
@@ -1221,6 +1279,7 @@ mod tests {
             &FixedClock::new(1),
             &[model()],
             &request("some claim", "https://example.com/missing"),
+            None,
             0,
             VerifyOptions::default(),
         ))
@@ -1252,6 +1311,7 @@ mod tests {
                 "The museum was founded in 1850",
                 "https://example.com/museum",
             ),
+            None,
             0,
             VerifyOptions::default(),
         ))
@@ -1278,6 +1338,7 @@ mod tests {
             &FixedClock::new(1),
             &[model()],
             &request("The museum opened in 1850", "https://example.com/museum"),
+            None,
             0,
             VerifyOptions::default(),
         ))
@@ -1473,6 +1534,7 @@ mod tests {
             &FixedClock::new(1),
             &[model()],
             &request("The bridge opened in 1998", "https://example.com/bridge"),
+            None,
             0,
             VerifyOptions::default(),
         ))
@@ -1521,6 +1583,7 @@ mod tests {
             &FixedClock::new(1),
             &[model()],
             &request("The bridge opened in 1998", "https://example.com/bridge"),
+            None,
             0,
             options,
         ))
@@ -1548,6 +1611,7 @@ mod tests {
             &FixedClock::new(1),
             &[model()],
             &request("The museum opened in 1850", "https://example.com/museum"),
+            None,
             0,
             VerifyOptions::default(),
         ))
@@ -1577,6 +1641,7 @@ mod tests {
             &FixedClock::new(1),
             &[model()],
             &request("The bridge opened in 1998", "https://example.com/bridge"),
+            None,
             0,
             VerifyOptions::default(),
         ))

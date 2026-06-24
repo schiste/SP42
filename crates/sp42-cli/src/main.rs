@@ -877,6 +877,7 @@ async fn run_verify(options: &VerifyCliOptions) -> Result<VerificationOutcome, S
         &SystemClock,
         &panel,
         &request,
+        None,
         0,
         verify_options,
     )

@@ -74,6 +74,51 @@ pub struct WikitextNodeDescriptor {
     pub anchor_text: String,
 }
 
+/// Kind of prose-bearing block a citation can appear in.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BlockKind {
+    Paragraph,
+    ListItem,
+    TableCell,
+    Other,
+}
+
+/// One inline `<ref>` within a [`ParsoidBlock`], in document order.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BlockRef {
+    /// Byte offset into [`ParsoidBlock::text`] where the marker sat — the
+    /// position of the punctuation it follows. Anchors claim↔ref association.
+    pub offset: usize,
+    /// Stable cite id of the inline marker, e.g. `"cite_ref-smith_3-0"`.
+    pub ref_id: String,
+    /// Source URL(s) read from the ref's structured `data-mw` cite-template
+    /// params (`url=`, `archive-url=`) via the parsoid crate; for a bare-URL
+    /// ref with no template, from the structured ExtLink node. Empty ⇒ a
+    /// non-URL ref (book/ISBN) that the core records as skipped.
+    pub source_urls: Vec<url::Url>,
+    /// Rendered text of the marker (e.g. `"[3]"`), for provenance.
+    pub ref_text: String,
+    /// `true` when this is a reuse of a `<ref name="…">`.
+    pub named: bool,
+}
+
+/// A single prose-bearing block emitted by the editor's one DOM pass.
+/// Plain `Send` data: no DOM handles. Ref markers are removed from `text`
+/// but their positions are preserved as [`BlockRef::offset`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ParsoidBlock {
+    /// Visible text of the block with ref markers removed.
+    pub text: String,
+    /// Heading stack from page root to this block, outermost first
+    /// (e.g. `["History", "Early life"]`).
+    pub section_path: Vec<String>,
+    /// Inline refs in this block, in document order.
+    pub refs: Vec<BlockRef>,
+    pub block_kind: BlockKind,
+    /// Document-order index of the block within the page.
+    pub block_ordinal: usize,
+}
+
 /// A structured edit that was refused without touching the page.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum WikitextEditRefusal {

@@ -205,7 +205,8 @@ pub use wiki_storage::{
     render_wiki_storage_index_page, resolve_wiki_storage_document, save_wiki_storage_document,
 };
 pub use wikitext_editor::{
-    ScriptedEditorInvocation, ScriptedWikitextEditor, ScriptedWikitextNode, WikitextEditOutcome,
-    WikitextEditRefusal, WikitextEditor, WikitextEditorError, WikitextNodeDescriptor,
-    WikitextNodeKind, WikitextNodeLocator, WikitextPageRef, normalize_anchor_text,
+    BlockKind, BlockRef, ParsoidBlock, ScriptedEditorInvocation, ScriptedWikitextEditor,
+    ScriptedWikitextNode, WikitextEditOutcome, WikitextEditRefusal, WikitextEditor,
+    WikitextEditorError, WikitextNodeDescriptor, WikitextNodeKind, WikitextNodeLocator,
+    WikitextPageRef, normalize_anchor_text,
 };

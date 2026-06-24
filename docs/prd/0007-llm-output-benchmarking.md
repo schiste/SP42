@@ -76,10 +76,14 @@ below).
      load/parse/validate API rather than inventing a parallel mechanism — which
      also makes the cases **contributable without git** (see GOVERNANCE
      *Collaboration Direction*). An interim **public Git repo** hosts the cases
-     until two prerequisites in that subsystem exist: a typed, validated
-     `TrainingDataset` document (today only rule sets are typed) and
-     **revision-id-pinned load** (today the loader fetches latest). The host is
-     therefore deferrable; the *gate and pinning below are not* (Open Question).
+     until three prerequisites in that subsystem exist: a typed, validated
+     `TrainingDataset` document (today only rule sets are typed),
+     **revision-id-pinned load** (today the loader fetches latest), and an
+     **authenticated write** path — the save machinery exists but has no typed
+     dataset write and bottoms out on the still-pending live Wikimedia OAuth
+     write (Phase 4), so the importer cannot place the corpus on-wiki yet. The
+     host is therefore deferrable; the *gate and pinning below are not* (Open
+     Question).
   2. **Fair-use frozen source bytes** (the cached source content replay needs) —
      these **cannot** live on a CC BY-SA wiki, so they sit in a **separate
      pinned store** regardless of where the cases live. Bounded to the excerpt
@@ -307,7 +311,8 @@ promise to be claimable.
   Rejected: SP42 already models `SharedTrainingDataset` (and `SharedRuleSet`)
   on-wiki with a typed load/parse/validate API; a parallel store would duplicate
   that subsystem and forfeit git-free contribution. Instead the cases reuse that
-  convention (its dataset typing and `oldid`-pinned load are the named
+  convention (its dataset typing, `oldid`-pinned load, and an authenticated write
+  — the last gated on live Wikimedia write, Phase 4 — are the named
   prerequisites), with an interim Git host until those land. The unavoidable
   exception is **fair-use source bytes**, which cannot sit on a CC BY-SA wiki and
   so live in a separate pinned store regardless — bounded, labeled with basis +
@@ -363,13 +368,16 @@ promise to be claimable.
    and the Definition of Done.
 3. **Cases-host.** Proposed: the labeled cases target the existing on-wiki
    **`SharedTrainingDataset`** convention (`sp42-core::wiki_storage`), which
-   makes them contributable without git — contingent on two additions to that
+   makes them contributable without git — contingent on three additions to that
    subsystem: a typed, validated `TrainingDataset` document (today only rule
-   sets are typed) and **`oldid`-pinned load** (today the loader fetches
-   latest). A **public Git repo** hosts the cases in the interim. Because the
-   adoption gate and revision pinning are host-agnostic (Resolved below), the
-   host can move later without reworking the harness. Open because the two
-   `wiki_storage` prerequisites are schiste's to land, and whether to ship the
+   sets are typed), **`oldid`-pinned load** (today the loader fetches latest),
+   and an **authenticated write** (the save machinery exists but has no typed
+   dataset write and depends on the still-pending live Wikimedia OAuth write,
+   Phase 4 — so the corpus cannot be placed on-wiki until then). A **public Git
+   repo** hosts the cases in the interim. Because the adoption gate and revision
+   pinning are host-agnostic (Resolved below), the host can move later without
+   reworking the harness. Open because the three `wiki_storage` prerequisites
+   are schiste's to land (and one waits on Phase 4), and whether to ship the
    interim Git host first or wait for on-wiki is his call. (Residue, settled at
    import: whether CC BY-SA payloads need finer attribution than a single label,
    e.g. revision-level strings.)

@@ -6,6 +6,7 @@ members = [
     "crates/sp42-core",
     "crates/sp42-devtools",
     "crates/sp42-desktop",
+    "crates/sp42-inference",
     "crates/sp42-live",
     "crates/sp42-reporting",
     "crates/sp42-server",

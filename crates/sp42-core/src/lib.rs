@@ -82,7 +82,7 @@ pub use citation::citoid::{
 };
 pub use citation::concurrency::map_with_concurrency;
 pub use citation::extract::{
-    BlockFailure, CitationUseSite, ExtractOutcome, SkippedReason, SkippedRef,
+    BlockFailure, CitationUseSite, ExtractOutcome, SkippedReason, SkippedRef, extract_use_sites,
 };
 pub use citation::locate_quote::{FuzzyLocate, locate_quote, locate_quote_fuzzy};
 pub use citation::page::{PageVerificationReport, PageVerificationRequest, PageVerificationStats};

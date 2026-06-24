@@ -11,6 +11,40 @@ use sp42_types::ChatMessage;
 
 use super::citoid::CitoidMetadata;
 
+/// The SIDE-style co-reference context window for a claim (interpreting material only).
+///
+/// Rendered into the verification prompt as a **context-only** block — the model may use it
+/// to interpret the claim (resolve pronouns / elliptical references) but may never quote it
+/// as support. The grounding gate only ever locates quotes in the fetched source body, so
+/// this can never become groundable (refines ADR-0007 Alt (e)). Carries the new contextual
+/// material only; the claim itself stays single-source on `CitationVerificationRequest`.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ClaimContext {
+    /// The article title.
+    pub article_title: String,
+    /// The section title, when known.
+    pub section_title: Option<String>,
+    /// Preceding sentences, in document order (most useful for co-reference).
+    pub preceding_sentences: Vec<String>,
+}
+
+impl ClaimContext {
+    /// `true` when there is no contextual material to render. An empty context renders
+    /// nothing, keeping the prompt byte-identical to the no-context form.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.article_title.trim().is_empty()
+            && self
+                .section_title
+                .as_ref()
+                .is_none_or(|section| section.trim().is_empty())
+            && self
+                .preceding_sentences
+                .iter()
+                .all(|sentence| sentence.trim().is_empty())
+    }
+}
+
 /// The verbatim two-step verifier system instruction.
 pub const SYSTEM: &str = r#"You verify whether a cited SOURCE supports a CLAIM from a Wikipedia article.
 

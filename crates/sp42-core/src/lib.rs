@@ -85,6 +85,7 @@ pub use citation::locate_quote::{FuzzyLocate, locate_quote, locate_quote_fuzzy};
 pub use citation::parsing::{
     ParsedVerdict, canonicalize_verdict, parse_repair_response, parse_verdict_response,
 };
+pub use citation::prompts::ClaimContext;
 pub use citation::prompts::{build_repair_prompt, build_verify_prompt};
 pub use citation::source_fetch::{html_to_text, looks_like_html, recover_wayback_body};
 pub use citation::storage::{

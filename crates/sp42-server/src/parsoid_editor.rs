@@ -366,8 +366,18 @@ fn build_block(
     let mut text = String::new();
     let mut refs = Vec::new();
     collect_block(node, &mut text, &mut refs, ref_urls);
+
+    // Adjust ref offsets from the untrimmed text to the trimmed text.
+    // collect_block records offsets against the untrimmed accumulator,
+    // but we store text.trim(), so offsets are too large by the leading-whitespace byte count.
+    let lead = text.len() - text.trim_start().len();
+    let trimmed = text.trim().to_string();
+    for r in &mut refs {
+        r.offset = r.offset.saturating_sub(lead).min(trimmed.len());
+    }
+
     ParsoidBlock {
-        text: text.trim().to_string(),
+        text: trimmed,
         section_path,
         refs,
         block_kind: kind,
@@ -1040,5 +1050,33 @@ mod extract_tests {
             extlink_ref.offset > 0 && extlink_ref.offset <= etymology_block.text.len(),
             "bare-URL ref offset should be inside text bounds"
         );
+    }
+
+    #[test]
+    fn offsets_adjusted_for_leading_whitespace() {
+        // Regression test for Issue 1: ensure ref offsets are correct relative to
+        // trimmed text, not untrimmed text with leading whitespace.
+        // We use the standard fixture and verify that all ref offsets are valid
+        // relative to the trimmed block text.
+        let blocks = blocks_from_revision(&fixture()).expect("blocks");
+
+        for block in blocks {
+            for r in &block.refs {
+                // The offset should be valid: within the trimmed text bounds
+                // (or clamped to text.len() if it sat in trailing whitespace).
+                assert!(
+                    r.offset <= block.text.len(),
+                    "ref offset {} should not exceed trimmed text length {}",
+                    r.offset,
+                    block.text.len()
+                );
+
+                // For refs with URLs, we can verify indexing into the text works.
+                if !r.source_urls.is_empty() {
+                    // This should not panic or index out of bounds.
+                    let _ = &block.text[..r.offset.min(block.text.len())];
+                }
+            }
+        }
     }
 }

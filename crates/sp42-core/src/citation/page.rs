@@ -7,7 +7,7 @@ use crate::citation::verify::{
     CitationFinding, FetchedSource, VerifyOptions, fetch_source, verify_citation_use_site,
 };
 use sp42_types::{Clock, HttpClient, ModelClient, ModelRef};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 /// Identity of the page to verify.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -65,9 +65,12 @@ where
         skipped,
         failures,
     } = extract;
-    // refs_seen = every ref we encountered: those that became use-sites, those
-    // skipped (non-URL), and those that failed extraction.
-    let refs_seen = use_sites.len() + skipped.len() + failures.len();
+    // refs_seen = every ref we encountered: those that became use-sites (count by distinct ref_id,
+    // since extract_use_sites emits one use-site per source URL), those skipped (non-URL),
+    // and those that failed extraction.
+    let distinct_use_site_refs: HashSet<&str> =
+        use_sites.iter().map(|u| u.ref_id.as_str()).collect();
+    let refs_seen = distinct_use_site_refs.len() + skipped.len() + failures.len();
 
     // Pre-bind shared refs OUTSIDE the closures so the spawned futures capture
     // plain `&`/`&dyn` (Copy) references, not re-borrows of locals — mirrors the
@@ -300,6 +303,74 @@ mod orchestrator_tests {
                 "both findings should be SourceUnavailable"
             );
         }
+    }
+
+    #[test]
+    fn refs_seen_counts_distinct_refs_not_use_sites() {
+        use futures::executor::block_on;
+        // Regression test for Issue 2: refs_seen should count DISTINCT refs
+        // (by ref_id), not use-sites. A single ref with multiple source URLs
+        // produces multiple use-sites but should be counted as one ref.
+        let block = ParsoidBlock {
+            text: "Cats are animals.".into(),
+            section_path: vec!["Facts".into()],
+            refs: vec![BlockRef {
+                offset: 5,
+                ref_id: "ref_multi_url".into(),
+                // ONE ref with TWO source URLs → TWO use-sites in extract_use_sites
+                source_urls: vec![
+                    url::Url::parse("https://s.test/a").unwrap(),
+                    url::Url::parse("https://s.test/b").unwrap(),
+                ],
+                ref_text: "[1]".into(),
+                named: false,
+            }],
+            block_kind: BlockKind::Paragraph,
+            block_ordinal: 0,
+        };
+        let extract = extract_use_sites(&[block], &page());
+        // Verify that extract_use_sites produces 2 use-sites (one per URL)
+        assert_eq!(extract.use_sites.len(), 2, "should have 2 use-sites");
+        assert!(extract.skipped.is_empty(), "no skipped refs");
+        assert!(extract.failures.is_empty(), "no failures");
+
+        // Now verify via verify_page
+        let http = StubHttpClient::new([
+            Ok(HttpResponse {
+                status: 200,
+                headers: std::collections::BTreeMap::new(),
+                body: b"test content a".to_vec(),
+            }),
+            Ok(HttpResponse {
+                status: 200,
+                headers: std::collections::BTreeMap::new(),
+                body: b"test content b".to_vec(),
+            }),
+        ]);
+        let model = StubModelClient::new([
+            Ok(completion(r#"{"verdict":"SUPPORTED","quote":"are"}"#)),
+            Ok(completion(r#"{"verdict":"SUPPORTED","quote":"are"}"#)),
+        ]);
+        let options = VerifyOptions::default();
+        let report = block_on(verify_page(
+            &http,
+            &model,
+            &FixedClock::new(0),
+            &[model_ref()],
+            &page(),
+            extract,
+            options,
+        ));
+
+        // refs_seen should be 1 (one ref), but use_sites_verified should be 2 (two use-sites)
+        assert_eq!(
+            report.stats.refs_seen, 1,
+            "refs_seen should count 1 distinct ref, not 2 use-sites"
+        );
+        assert_eq!(
+            report.stats.use_sites_verified, 2,
+            "use_sites_verified should count 2 use-sites"
+        );
     }
 }
 

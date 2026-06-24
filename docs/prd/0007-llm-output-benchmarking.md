@@ -5,9 +5,11 @@
 **State:** Draft
 **Discussion:** https://github.com/schiste/SP42/pull/37
 **Spawned ADRs:** none yet — the harness's structure (crate placement, the
-injected-clients import boundary, the corpus-loader seam to the external data
-repo, and where the composition root with real clients and keys lives) is an
-ADR decision to spawn before implementation, not a question this PRD answers
+injected-clients import boundary, the corpus-loader/adoption-gate seam and its
+cases-host — on-wiki `SharedTrainingDataset` vs interim Git repo, reusing
+`sp42-core::wiki_storage` — and where the composition root with real clients and
+keys lives) is an ADR decision to spawn before implementation, not a question
+this PRD answers
 
 ## Problem
 
@@ -42,12 +44,13 @@ back — generalized, because citation verification is only the first customer.
 ## Proposal
 
 A **task-generic output-quality harness**: an in-repo runner (with metrics and
-compare) that runs a labeled corpus — sourced from a separate, version-pinned
-data repository — through a real SP42 judgment pipeline and reports measured
-quality, with a deterministic replay mode for regression-gating and a
-comparison mode for control-vs-treatment decisions. The runner and gate stay in
-SP42 (the gate must call SP42's Rust pipeline, even in replay); only the corpus
-data lives outside the core repo.
+compare) that runs a labeled corpus through a real SP42 judgment pipeline and
+reports measured quality, with a deterministic replay mode for regression-gating
+and a comparison mode for control-vs-treatment decisions. The runner and gate
+stay in SP42 (the gate must call SP42's Rust pipeline, even in replay); the
+corpus data lives outside the core repo, pinned to an immutable revision and
+admitted only through an SP42-side validation gate (see the corpus concept
+below).
 
 ### Concepts (the generality contract)
 
@@ -60,24 +63,43 @@ data lives outside the core repo.
   sentence/passage for puffery or weasel-wording), the expected categorical
   outcome (ground truth), optional **cohort tags** (e.g. paywalled,
   non-English, short-cite, PDF), and **provenance**.
-- A **corpus** is a validated JSON file of labeled cases living in a separate,
-  **public, version-pinned data repository** — not in the core repo. The
-  runner reaches it through a single root-path loader seam (the existing
+- A **corpus** is validated JSON labeled cases, living **outside the core repo**
+  and reached through a single root-path loader seam (the existing
   `--corpus <path>`, elevated from escape-hatch to the standard entry point);
-  no other code path hardcodes a corpus location, so relocating the data is a
-  config change, not a refactor. Each corpus directory is **self-contained**
-  (cases + licensing README + GT corrections map, with no references into the
-  rest of the repo), so the whole directory can be lifted out as a unit. The
-  data repo is **pinned by commit SHA** for reproducibility (the SHA joins the
-  report's reproducibility header). Every text payload carries explicit
-  licensing provenance — **CC BY-SA** for Wikipedia-derived text (claims,
-  article context; attributed to article + revision), **CC0** for
-  Wikidata-derived data, and **fair use** for bounded extractions from cited
-  third-party websites (labeled as such, kept to the excerpt needed for
-  verification, and individually removable — content-hash ids mean deleting a
-  case never disturbs the rest). A tiny synthetic fixture stays **in the core
-  repo** to serve the hermetic harness tests (so `cargo test` is offline and
-  key-free by construction; see Definition of Done).
+  no other code path hardcodes a corpus location. It has three parts, by
+  necessity rather than taste:
+
+  1. **Labeled cases** (claim/passage + outcome + cohort tags + provenance +
+     label metadata) — CC BY-SA / CC0, and therefore **on-wiki-eligible**. The
+     intended host is the existing on-wiki **`SharedTrainingDataset`**
+     convention (`sp42-core::wiki_storage` + `public_documents`), reusing its
+     load/parse/validate API rather than inventing a parallel mechanism — which
+     also makes the cases **contributable without git** (see GOVERNANCE
+     *Collaboration Direction*). An interim **public Git repo** hosts the cases
+     until two prerequisites in that subsystem exist: a typed, validated
+     `TrainingDataset` document (today only rule sets are typed) and
+     **revision-id-pinned load** (today the loader fetches latest). The host is
+     therefore deferrable; the *gate and pinning below are not* (Open Question).
+  2. **Fair-use frozen source bytes** (the cached source content replay needs) —
+     these **cannot** live on a CC BY-SA wiki, so they sit in a **separate
+     pinned store** regardless of where the cases live. Bounded to the excerpt
+     verification needs, labeled with basis + origin URL, and individually
+     removable (content-hash ids mean deleting a case never disturbs the rest).
+  3. A tiny **synthetic fixture** stays **in the core repo** to serve the
+     hermetic harness tests (so `cargo test` is offline and key-free by
+     construction; see Definition of Done).
+
+  The cases store is **pinned to an immutable revision** — a Git commit SHA or
+  an on-wiki `oldid` — for reproducibility (the pin joins the report's
+  reproducibility header). Because the host (notably on-wiki) cannot enforce a
+  schema at edit time, a revision is admitted only through an **SP42-side
+  validation/adoption gate**: a candidate revision becomes the pinned corpus
+  only if the loader accepts it (schema, licensing labels, banned keys,
+  outcome-value enums) — the wiki cannot block a bad edit, but SP42 refuses to
+  *adopt* it. Every text payload carries explicit licensing provenance —
+  **CC BY-SA** for Wikipedia-derived text (claims, article context; attributed
+  to article + revision), **CC0** for Wikidata-derived data, and **fair use**
+  for bounded third-party extractions (per part 2).
 - A **run** is corpus × model panel × pinned parameters → per-case, per-model
   outcomes plus the panel vote. A **report** renders a run; a **compare** diffs
   two runs.
@@ -118,10 +140,11 @@ Per model and per panel: accuracy against GT, per-outcome confusion matrix,
 abstention rate, measured agreement. For tasks that declare grounding: the
 **grounding-tier rates** (exact-located / fuzzy-located / unlocated), which is
 the located-rate measurement used throughout SP42#25. Every report opens with a
-**reproducibility header**: corpus content hash, corpus data-repo and commit
-SHA, case count, panel and pinned sampling parameters, code version. (This is
-what makes a number quotable in an issue: today's numbers are unciteable
-precisely because nothing can reproduce them.)
+**reproducibility header**: corpus content hash, the pinned cases-source
+identity (Git commit SHA or on-wiki `oldid`), case count, panel and pinned
+sampling parameters, code version. (This is what makes a number quotable in an
+issue: today's numbers are unciteable precisely because nothing can reproduce
+them.)
 
 Each run record also captures **cost and latency signals** — model identity,
 token counts, model-call count, wall-clock, and estimated cost — reported
@@ -201,7 +224,8 @@ promise to be claimable.
   (189 rows) into this schema — applying the wikiharness re-audit learnings
   (content-hash ids, GT corrections map, provenance fields) and attaching the
   licensing labels (CC BY-SA claims, fair-use source extracts) — producing the
-  first committed corpus.
+  first corpus (cases in the interim Git host, fair-use bytes in the separate
+  store).
 
 ## Definition of Done
 
@@ -210,6 +234,11 @@ promise to be claimable.
       declare CC BY-SA, CC0, or fair-use provenance), and **banned keys**
       (`confidence`, `tranche`, `dataset_version`, positional ids) are each
       rejected — verified by schema unit tests.
+- [ ] The loader is the **adoption gate**: the harness reads a pinned immutable
+      revision (Git SHA or on-wiki `oldid`), never "latest", and a candidate
+      revision that fails validation is **not adopted** as the pinned corpus —
+      verified by a test that a malformed candidate revision is rejected and the
+      prior pin is retained.
 - [ ] Case ids are content-hash derived and stable under corpus reordering and
       insertion — verified by a property test.
 - [ ] A run produces per-model and per-panel accuracy, per-outcome confusion,
@@ -238,9 +267,9 @@ promise to be claimable.
 - [ ] No floating-point confidence value appears in the case schema, run
       record, or report — verified by a structural test (consistent with the
       house no-float-on-verdict-paths rule).
-- [ ] Every report carries the reproducibility header (corpus hash, corpus
-      data-repo + commit SHA, panel, parameter fingerprint, code version) —
-      verified by a report unit test.
+- [ ] Every report carries the reproducibility header (corpus hash, pinned
+      cases-source identity — Git SHA or on-wiki `oldid` — panel, parameter
+      fingerprint, code version) — verified by a report unit test.
 - [ ] Each run record captures cost/latency signals (model, token counts,
       model-call count, wall-clock, estimated cost), present in the report and
       **absent from the quality verdict and the gate inputs** — verified by a
@@ -265,20 +294,24 @@ promise to be claimable.
 - **A bespoke harness per task.** This is the citation-only version of the
   status quo with better hygiene; #30/#31 would each rebuild metrics, compare,
   and governance. The marginal cost of task-genericity is one trait boundary.
-- **Commit corpora inside the core repo.** Considered (it is the simplest path
-  to a CI-gated, reproducible corpus), not chosen: it couples the evaluation
-  data to the core repo's history exactly when a standing goal is to let
-  evaluation be managed *outside* the core (and contributed without git). The
-  two original objections to externalizing — irreproducibility and keeping the
-  gate out of CI — are answered rather than dodged: the data repo is **public
-  and pinned by commit SHA** (so any number is reproducible by anyone, and the
-  SHA is in the report header), and CI fetches the pinned corpus to run the
-  replay gate while the always-on hermetic tests use the in-repo synthetic
-  fixture. The licensing concern is handled the same way regardless of host —
-  each text payload is labeled CC BY-SA (Wikipedia), CC0 (Wikidata), or fair
-  use (bounded website extractions), and any case is individually removable;
-  putting the data in its own repo additionally makes wholesale removal trivial
-  (rewrite one repo, never the core history).
+- **Commit corpora inside the core repo.** Considered (simplest path to a
+  CI-gated, reproducible corpus), not chosen: it couples the evaluation data to
+  the core repo's history exactly when a standing goal is to let evaluation be
+  managed *outside* the core (and contributed without git). The two original
+  objections to externalizing — irreproducibility and keeping the gate out of
+  CI — are answered rather than dodged: the cases source is pinned to an
+  immutable revision (Git SHA or on-wiki `oldid`) recorded in the report header,
+  so any number is reproducible; CI reads the pinned revision to run the replay
+  gate while the always-on hermetic tests use the in-repo synthetic fixture.
+- **Invent a new external store for the cases, ignoring `wiki_storage`.**
+  Rejected: SP42 already models `SharedTrainingDataset` (and `SharedRuleSet`)
+  on-wiki with a typed load/parse/validate API; a parallel store would duplicate
+  that subsystem and forfeit git-free contribution. Instead the cases reuse that
+  convention (its dataset typing and `oldid`-pinned load are the named
+  prerequisites), with an interim Git host until those land. The unavoidable
+  exception is **fair-use source bytes**, which cannot sit on a CC BY-SA wiki and
+  so live in a separate pinned store regardless — bounded, labeled with basis +
+  origin URL, and individually removable.
 
 ## Risks
 
@@ -300,12 +333,19 @@ promise to be claimable.
   Mitigation: replay is the default mode; live-model runs require explicit
   opt-in plus keys, and never run in CI; and per-run cost/latency capture makes
   spend observable rather than invisible.
-- **A fair-use claim is a judgment, not a license.** Committed website
-  extractions rest on a fair-use rationale that could be challenged.
+- **A fair-use claim is a judgment, not a license.** The separately-stored
+  website extractions rest on a fair-use rationale that could be challenged.
   Mitigation: extracts are bounded to what verification needs, every payload
   is labeled with its basis and origin URL, a corpus README states the
   posture, and content-hash ids make any case deletable on request without
   renumbering or breaking the rest of the corpus.
+- **Unguarded edits corrupt an on-wiki cases store.** The wiki cannot run the
+  corpus schema validator at edit time (no pre-save hook for SP42's typed
+  loader), so any account can save a malformed revision. Mitigation: the
+  harness never reads "latest" — it reads a **pinned revision admitted by the
+  SP42-side adoption gate**, so a bad edit can break the live page (one-click
+  revert) but can never enter a run; the loader rejects an invalid candidate on
+  read rather than scoring against it.
 
 ## Open questions
 
@@ -318,19 +358,33 @@ promise to be claimable.
    for that issue: the hermetic fixture tests are ordinary `cargo test` from
    day one; the corpus-replay gate joins `ci-all.sh` (cf.
    `check-scoring-governance.sh`) once the first frozen capture is stable
-   enough to gate on, fetching the SHA-pinned corpus repo. The *promise* this
+   enough to gate on, reading the pinned cases revision. The *promise* this
    wiring serves is already fixed in Proposal ("No promotion without passing")
    and the Definition of Done.
+3. **Cases-host.** Proposed: the labeled cases target the existing on-wiki
+   **`SharedTrainingDataset`** convention (`sp42-core::wiki_storage`), which
+   makes them contributable without git — contingent on two additions to that
+   subsystem: a typed, validated `TrainingDataset` document (today only rule
+   sets are typed) and **`oldid`-pinned load** (today the loader fetches
+   latest). A **public Git repo** hosts the cases in the interim. Because the
+   adoption gate and revision pinning are host-agnostic (Resolved below), the
+   host can move later without reworking the harness. Open because the two
+   `wiki_storage` prerequisites are schiste's to land, and whether to ship the
+   interim Git host first or wait for on-wiki is his call. (Residue, settled at
+   import: whether CC BY-SA payloads need finer attribution than a single label,
+   e.g. revision-level strings.)
 
 Resolved:
 
-- **Corpus hosting and layout.** The corpus lives in a separate, **public,
-  SHA-pinned data repository**, reached through the single root-path loader
-  seam; each corpus directory is self-contained, and a tiny synthetic fixture
-  stays in the core repo for hermetic tests. The first corpus is produced by
-  the alex importer with per-payload licensing labels (CC BY-SA / CC0 / fair
-  use). The only residue, settled at import time, is whether CC BY-SA payloads
-  need finer attribution than a single label (e.g. revision-level strings).
+- **Corpus structure, gate, and pinning** (host-agnostic). The corpus splits by
+  license: CC BY-SA / CC0 **labeled cases**, **fair-use frozen source bytes** in
+  a separate pinned store (they cannot sit on a CC BY-SA wiki), and a synthetic
+  fixture in the core repo for hermetic tests. The cases source is pinned to an
+  immutable revision (Git SHA or on-wiki `oldid`); a candidate revision is
+  admitted only through the **SP42-side validation/adoption gate** (the loader),
+  never by reading "latest". The first corpus is produced by the alex importer
+  with per-payload licensing labels. Only the *host* of the cases is still open
+  (Open Question 3).
 - **Promotion enforcement venue.** The gate is an embeddable verdict callable
   from both repo/CI and product; the in-product rule-authoring lifecycle is a
   successor PRD this PRD does not preclude (see *No promotion without passing*).

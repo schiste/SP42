@@ -5,9 +5,9 @@
 **State:** Draft
 **Discussion:** https://github.com/schiste/SP42/pull/37
 **Spawned ADRs:** none yet — the harness's structure (crate placement, the
-injected-clients import boundary, where the composition root with real clients
-and keys lives) is an ADR decision to spawn before implementation, not a
-question this PRD answers
+injected-clients import boundary, the corpus-loader seam to the external data
+repo, and where the composition root with real clients and keys lives) is an
+ADR decision to spawn before implementation, not a question this PRD answers
 
 ## Problem
 
@@ -41,10 +41,13 @@ back — generalized, because citation verification is only the first customer.
 
 ## Proposal
 
-A **task-generic output-quality harness**: an in-repo mechanism that runs a
-labeled corpus through a real SP42 judgment pipeline and reports measured
+A **task-generic output-quality harness**: an in-repo runner (with metrics and
+compare) that runs a labeled corpus — sourced from a separate, version-pinned
+data repository — through a real SP42 judgment pipeline and reports measured
 quality, with a deterministic replay mode for regression-gating and a
-comparison mode for control-vs-treatment decisions.
+comparison mode for control-vs-treatment decisions. The runner and gate stay in
+SP42 (the gate must call SP42's Rust pipeline, even in replay); only the corpus
+data lives outside the core repo.
 
 ### Concepts (the generality contract)
 
@@ -57,16 +60,24 @@ comparison mode for control-vs-treatment decisions.
   sentence/passage for puffery or weasel-wording), the expected categorical
   outcome (ground truth), optional **cohort tags** (e.g. paywalled,
   non-English, short-cite, PDF), and **provenance**.
-- A **corpus** is a validated JSON file of labeled cases, **committed to the
-  repo** with explicit licensing provenance: every text payload carries its
-  license and attribution — **CC BY-SA** for Wikipedia-derived text (claims,
+- A **corpus** is a validated JSON file of labeled cases living in a separate,
+  **public, version-pinned data repository** — not in the core repo. The
+  runner reaches it through a single root-path loader seam (the existing
+  `--corpus <path>`, elevated from escape-hatch to the standard entry point);
+  no other code path hardcodes a corpus location, so relocating the data is a
+  config change, not a refactor. Each corpus directory is **self-contained**
+  (cases + licensing README + GT corrections map, with no references into the
+  rest of the repo), so the whole directory can be lifted out as a unit. The
+  data repo is **pinned by commit SHA** for reproducibility (the SHA joins the
+  report's reproducibility header). Every text payload carries explicit
+  licensing provenance — **CC BY-SA** for Wikipedia-derived text (claims,
   article context; attributed to article + revision), **CC0** for
   Wikidata-derived data, and **fair use** for bounded extractions from cited
   third-party websites (labeled as such, kept to the excerpt needed for
   verification, and individually removable — content-hash ids mean deleting a
-  case never disturbs the rest). The harness also accepts an external
-  `--corpus <path>` for private or in-progress corpora. A tiny synthetic
-  fixture serves the hermetic harness tests.
+  case never disturbs the rest). A tiny synthetic fixture stays **in the core
+  repo** to serve the hermetic harness tests (so `cargo test` is offline and
+  key-free by construction; see Definition of Done).
 - A **run** is corpus × model panel × pinned parameters → per-case, per-model
   outcomes plus the panel vote. A **report** renders a run; a **compare** diffs
   two runs.
@@ -107,10 +118,17 @@ Per model and per panel: accuracy against GT, per-outcome confusion matrix,
 abstention rate, measured agreement. For tasks that declare grounding: the
 **grounding-tier rates** (exact-located / fuzzy-located / unlocated), which is
 the located-rate measurement used throughout SP42#25. Every report opens with a
-**reproducibility header**: corpus content hash, case count, panel and pinned
-sampling parameters, code version. (This is what makes a number quotable in an
-issue: today's numbers are unciteable precisely because nothing can reproduce
-them.)
+**reproducibility header**: corpus content hash, corpus data-repo and commit
+SHA, case count, panel and pinned sampling parameters, code version. (This is
+what makes a number quotable in an issue: today's numbers are unciteable
+precisely because nothing can reproduce them.)
+
+Each run record also captures **cost and latency signals** — model identity,
+token counts, model-call count, wall-clock, and estimated cost — reported
+alongside the quality metrics but **never blended into the quality verdict**
+(these are cost floats, not verdict floats; the no-confidence-on-verdict-paths
+rule is unaffected). They make the cost-creep risk observable and enable
+constant-quality cost optimization later (see *Compare mode*).
 
 The report carries the ADR-0007 §5 epistemic note: the harness measures verdict
 quality against labels and the existence of asserted evidence — it cannot and
@@ -126,15 +144,50 @@ errored cells cannot flatter the delta); and flags aggregate deltas below a
 declared noise floor as not-a-signal. The flip taxonomy is the natural answer
 to "did my prompt change regress anything."
 
+A compare is trustworthy only under **parity** — control and treatment differ
+in exactly one variable. In **replay** mode parity is guaranteed by
+determinism, so the baseline is a stored prior replay run and costs nothing to
+reuse. In **live** mode, model/API drift breaks parity across time: comparing
+against an old live run confounds your change with provider drift, so the
+control arm is **co-run in the same batch**. The compare noise floor and pinned
+parameters address within-run noise; co-run baseline addresses across-time
+drift. Baseline overhead is therefore paid only in live runs, where it is the
+sole defense against drift.
+
+### Relationship to constant-quality optimization
+
+A different evaluation style — used for agentic-coding scenarios — optimizes at
+*constant quality* and so leans on an LLM comparative judge plus a
+quality×cost×duration ratio as the headline rating. SP42's citation eval is the
+opposite case, for one root reason: it has **labeled ground truth**. So
+comparison is a **deterministic** flip taxonomy against GT (an LLM comparative
+judge would reintroduce the non-determinism the gate exists to remove), and the
+goal is **improving quality**, so quality is the gate while cost is reported
+orthogonally — never traded against precision. The cost/latency signals above
+exist to support that constant-quality view when it is wanted, not to fold cost
+into the quality verdict.
+
 ### No promotion without passing
 
 Measured quality gates are part of the product promise, not optional tooling:
 a prompt, model, panel, or policy change that fails a declared hard gate, or
-regresses past a task's declared threshold, does not ship. The harness's job
-is to make that check cheap (replay mode, no keys) and its verdict unambiguous
-(the flip taxonomy); *how* the block is wired — CI, hooks, release checklist —
-is implementation sequencing tracked outside this PRD, but the wiring must
-exist for the promise to be claimable.
+regresses past a task's declared threshold, does not ship. This is a
+**mechanism-agnostic invariant** — it holds regardless of *where* the check
+runs. The gate/compare decision is produced by an **embeddable verdict
+component** returning a structured result (pass / hard-fail /
+regression-past-threshold); a thin CLI in CI is the first caller, and an
+in-product lifecycle stage is a later caller of the *same* verdict. The check
+is therefore callable from **both** the repo/CI path (the maintainer's tuning
+loop, today and indefinitely) **and** the product — neither is privileged, and
+adding the in-product caller requires no harness change (mirroring the
+task-generality contract). The harness's job is to make the check cheap (replay
+mode, no keys) and its verdict unambiguous (the flip taxonomy). The full
+in-product rule-authoring lifecycle (create / edit / evaluate / validate in the
+UI) is a user-facing workflow and belongs to a **successor PRD**; this PRD
+commits only to not precluding it. *How* the block is wired into each caller —
+CI, hooks, release checklist, in-app stage — is implementation sequencing
+tracked outside this PRD, but at least the repo/CI wiring must exist for the
+promise to be claimable.
 
 ### Future corpora this must already fit
 
@@ -185,13 +238,20 @@ exist for the promise to be claimable.
 - [ ] No floating-point confidence value appears in the case schema, run
       record, or report — verified by a structural test (consistent with the
       house no-float-on-verdict-paths rule).
-- [ ] Every report carries the reproducibility header (corpus hash, panel,
-      parameter fingerprint, code version) — verified by a report unit test.
-- [ ] **No promotion without passing:** a run that fails a declared hard gate,
-      or a compare that shows regression past a task's declared threshold,
-      yields a failing (nonzero) result that a promotion check can block on —
-      verified by gate/compare unit tests covering the pass, hard-fail, and
-      regression cases.
+- [ ] Every report carries the reproducibility header (corpus hash, corpus
+      data-repo + commit SHA, panel, parameter fingerprint, code version) —
+      verified by a report unit test.
+- [ ] Each run record captures cost/latency signals (model, token counts,
+      model-call count, wall-clock, estimated cost), present in the report and
+      **absent from the quality verdict and the gate inputs** — verified by a
+      report test plus a structural test that the verdict path reads no cost
+      field.
+- [ ] **No promotion without passing:** the gate/compare decision is an
+      embeddable component returning a **structured verdict** (pass / hard-fail
+      / regression-past-threshold) that any caller — CI or in-product — can
+      block on; a nonzero CLI exit is one rendering of that verdict. Verified
+      by gate/compare unit tests covering the pass, hard-fail, and regression
+      cases, asserting on the structured verdict, not only the exit code.
 
 ## Alternatives
 
@@ -205,13 +265,20 @@ exist for the promise to be claimable.
 - **A bespoke harness per task.** This is the citation-only version of the
   status quo with better hygiene; #30/#31 would each rebuild metrics, compare,
   and governance. The marginal cost of task-genericity is one trait boundary.
-- **Keep corpora outside the repo.** Considered (the alex corpus contains
-  scraped third-party text), rejected: external corpora make every published
-  number irreproducible by anyone else and keep the corpus-replay gate out of
-  CI permanently. The licensing concern is handled head-on instead — each text
-  payload is labeled CC BY-SA (Wikipedia), CC0 (Wikidata), or fair use
-  (bounded website extractions), and any case is individually removable
-  without disturbing the rest.
+- **Commit corpora inside the core repo.** Considered (it is the simplest path
+  to a CI-gated, reproducible corpus), not chosen: it couples the evaluation
+  data to the core repo's history exactly when a standing goal is to let
+  evaluation be managed *outside* the core (and contributed without git). The
+  two original objections to externalizing — irreproducibility and keeping the
+  gate out of CI — are answered rather than dodged: the data repo is **public
+  and pinned by commit SHA** (so any number is reproducible by anyone, and the
+  SHA is in the report header), and CI fetches the pinned corpus to run the
+  replay gate while the always-on hermetic tests use the in-repo synthetic
+  fixture. The licensing concern is handled the same way regardless of host —
+  each text payload is labeled CC BY-SA (Wikipedia), CC0 (Wikidata), or fair
+  use (bounded website extractions), and any case is individually removable;
+  putting the data in its own repo additionally makes wholesale removal trivial
+  (rewrite one repo, never the core history).
 
 ## Risks
 
@@ -231,7 +298,8 @@ exist for the promise to be claimable.
   parameters in the reproducibility header, and replay mode for the gate.
 - **Cost creep.** Real-model runs cost money and invite casual re-running.
   Mitigation: replay is the default mode; live-model runs require explicit
-  opt-in plus keys, and never run in CI.
+  opt-in plus keys, and never run in CI; and per-run cost/latency capture makes
+  spend observable rather than invisible.
 - **A fair-use claim is a judgment, not a license.** Committed website
   extractions rest on a fair-use rationale that could be challenged.
   Mitigation: extracts are bounded to what verification needs, every payload
@@ -241,29 +309,31 @@ exist for the promise to be claimable.
 
 ## Open questions
 
-1. **Corpus layout and licensing presentation.** Proposed: committed corpora
-   under `evals/<task>/` (e.g. `evals/citation/`), extending the existing
-   `evals/scoring/` precedent so the deterministic scoring evals and the LLM
-   output evals live under one roof, with a README stating the licensing
-   posture (CC BY-SA / CC0 / fair use, per-payload labels), produced initially
-   by the alex importer; `--corpus <path>` remains for private or in-progress
-   corpora. Whether per-payload labels need finer granularity than the
-   three-way split (e.g. revision-level attribution strings for CC BY-SA) is
-   settled at import time.
-2. **Which gates are hard?** Proposed: grounding integrity (an exact-located
+1. **Which gates are hard?** Proposed: grounding integrity (an exact-located
    passage must re-locate — machine-checkable) is hard; accuracy/regression
    thresholds are declared per task; identity-invariance is deferred until an
    SP42 task injects editor identity into a prompt (none does today).
-3. **CI wiring sequence** — *implementation tracking, not a design question;
+2. **CI wiring sequence** — *implementation tracking, not a design question;
    convert to a tracked issue and link it at acceptance.* Proposed sequencing
    for that issue: the hermetic fixture tests are ordinary `cargo test` from
    day one; the corpus-replay gate joins `ci-all.sh` (cf.
    `check-scoring-governance.sh`) once the first frozen capture is stable
-   enough to gate on. The *promise* this wiring serves is already fixed in
-   Proposal ("No promotion without passing") and the Definition of Done.
+   enough to gate on, fetching the SHA-pinned corpus repo. The *promise* this
+   wiring serves is already fixed in Proposal ("No promotion without passing")
+   and the Definition of Done.
 
 Resolved:
 
+- **Corpus hosting and layout.** The corpus lives in a separate, **public,
+  SHA-pinned data repository**, reached through the single root-path loader
+  seam; each corpus directory is self-contained, and a tiny synthetic fixture
+  stays in the core repo for hermetic tests. The first corpus is produced by
+  the alex importer with per-payload licensing labels (CC BY-SA / CC0 / fair
+  use). The only residue, settled at import time, is whether CC BY-SA payloads
+  need finer attribution than a single label (e.g. revision-level strings).
+- **Promotion enforcement venue.** The gate is an embeddable verdict callable
+  from both repo/CI and product; the in-product rule-authoring lifecycle is a
+  successor PRD this PRD does not preclude (see *No promotion without passing*).
 - **Where does the harness live?** Not a PRD question — structural decision
   (crate placement, import boundary, composition root) deferred to the spawned
   ADR; see the *Spawned ADRs* header. The PRD retains only the requirements

@@ -167,9 +167,10 @@ Ported from alex-cite-checker's `ccs compare`: a two-run control-vs-treatment
 diff that classifies every changed cell as **improvement** (wrong→correct),
 **regression** (correct→wrong), or **lateral** (wrong→different-wrong);
 compares only the **intersection** of cases present in both runs (dropped or
-errored cells cannot flatter the delta); and flags aggregate deltas below a
-declared noise floor as not-a-signal. The flip taxonomy is the natural answer
-to "did my prompt change regress anything."
+errored cells cannot flatter the delta — and a net *increase* in drops is itself
+a hard-fail, see *No promotion without passing*); and flags aggregate deltas
+below a declared noise floor as not-a-signal. The flip taxonomy is the natural
+answer to "did my prompt change regress anything."
 
 A compare is trustworthy only under **parity** — control and treatment differ
 in exactly one variable. In **replay** mode parity is guaranteed by
@@ -198,9 +199,32 @@ into the quality verdict.
 
 Measured quality gates are part of the product promise, not optional tooling:
 a prompt, model, panel, or policy change that fails a declared hard gate, or
-regresses past a task's declared threshold, does not ship. This is a
-**mechanism-agnostic invariant** — it holds regardless of *where* the check
-runs. The gate/compare decision is produced by an **embeddable verdict
+regresses past a task's declared threshold, does not ship.
+
+A check is a **hard gate** only when it is **deterministic and machine-checkable
+and its failure is unambiguously a bug, not a tuning judgment**; everything
+measured-and-continuous (accuracy, abstention, net regression) is a **per-task
+declared threshold** instead. Hard gates catch a change that is *broken or
+cheating*; thresholds catch a change that is merely *worse*. The hard gates
+today, all task-applicable to citation verification:
+
+1. **Grounding integrity** — a passage reported as exact-located must re-locate
+   in the case's source bytes.
+2. **Verdict well-formedness** — every verdict is one of the task's declared
+   outcomes, and a positive (supported) verdict carries an evidence locator; no
+   free-text or out-of-vocabulary outcomes.
+3. **No new hard errors** — a change must not increase the count of cases that
+   error or drop out of scoring (a dropped cell is invisible to the flip
+   taxonomy, so crashing on hard cases must never read as an improvement).
+
+Accuracy and net-regression are thresholds, not hard gates. Identity-invariance
+(same verdict regardless of editor identity in the prompt) is deferred — no SP42
+task injects editor identity today; it becomes a hard gate when one does. A
+future task adds a hard gate only by introducing its own deterministic,
+machine-checkable invariant.
+
+This is a **mechanism-agnostic invariant** — it holds regardless of *where* the
+check runs. The gate/compare decision is produced by an **embeddable verdict
 component** returning a structured result (pass / hard-fail /
 regression-past-threshold); a thin CLI in CI is the first caller, and an
 in-product lifecycle stage is a later caller of the *same* verdict. The check
@@ -248,10 +272,20 @@ promise to be claimable.
 - [ ] A run produces per-model and per-panel accuracy, per-outcome confusion,
       abstention rate, and measured agreement, with model clients and the
       source fetch **injected** — verified hermetically with scripted doubles.
-- [ ] For a task declaring grounding, the report includes grounding-tier rates
-      (exact / fuzzy / unlocated), and a passage reported as exact-located is
-      machine-re-checkable in the case's source bytes — verified by a runner
-      test plus the existing locate property tests.
+- [ ] **Hard gate — grounding integrity:** for a task declaring grounding, the
+      report includes grounding-tier rates (exact / fuzzy / unlocated), and a
+      passage reported as exact-located is machine-re-checkable in the case's
+      source bytes — verified by a runner test plus the existing locate property
+      tests.
+- [ ] **Hard gate — verdict well-formedness:** every verdict is one of the
+      task's declared outcomes and a supported verdict carries an evidence
+      locator; a malformed or out-of-vocabulary verdict is a hard-fail —
+      verified by a runner test feeding a malformed model response and asserting
+      the hard-fail.
+- [ ] **Hard gate — no new hard errors:** a compare whose treatment increases
+      the count of errored/dropped cases over the control is a hard-fail, so a
+      change cannot improve its score by crashing on hard cases — verified by a
+      compare unit test with an increased-drop treatment.
 - [ ] An unusable source yields a pipeline-attributed abstention with zero
       model invocations — verified by a runner test asserting no client call.
 - [ ] **Replay mode runs a full corpus with no network and no API keys** from
@@ -354,11 +388,7 @@ promise to be claimable.
 
 ## Open questions
 
-1. **Which gates are hard?** Proposed: grounding integrity (an exact-located
-   passage must re-locate — machine-checkable) is hard; accuracy/regression
-   thresholds are declared per task; identity-invariance is deferred until an
-   SP42 task injects editor identity into a prompt (none does today).
-2. **CI wiring sequence** — *implementation tracking, not a design question;
+1. **CI wiring sequence** — *implementation tracking, not a design question;
    convert to a tracked issue and link it at acceptance.* Proposed sequencing
    for that issue: the hermetic fixture tests are ordinary `cargo test` from
    day one; the corpus-replay gate joins `ci-all.sh` (cf.
@@ -366,23 +396,26 @@ promise to be claimable.
    enough to gate on, reading the pinned cases revision. The *promise* this
    wiring serves is already fixed in Proposal ("No promotion without passing")
    and the Definition of Done.
-3. **Cases-host.** Proposed: the labeled cases target the existing on-wiki
-   **`SharedTrainingDataset`** convention (`sp42-core::wiki_storage`), which
-   makes them contributable without git — contingent on three additions to that
-   subsystem: a typed, validated `TrainingDataset` document (today only rule
-   sets are typed), **`oldid`-pinned load** (today the loader fetches latest),
-   and an **authenticated write** (the save machinery exists but has no typed
-   dataset write and depends on the still-pending live Wikimedia OAuth write,
-   Phase 4 — so the corpus cannot be placed on-wiki until then). A **public Git
-   repo** hosts the cases in the interim. Because the adoption gate and revision
-   pinning are host-agnostic (Resolved below), the host can move later without
-   reworking the harness. Open because the three `wiki_storage` prerequisites
-   are schiste's to land (and one waits on Phase 4), and whether to ship the
-   interim Git host first or wait for on-wiki is his call. (Residue, settled at
-   import: whether CC BY-SA payloads need finer attribution than a single label,
-   e.g. revision-level strings.)
+   *Resolution:* the tracking issue is opened and linked inline (`tracked in
+   #NN`) as part of the acceptance step, not before — implementation issues are
+   not filed for a design that may still change. Until acceptance this question
+   stays open, recording the sequencing above; no separate PR is possible yet
+   because the CI wiring is downstream of the (still-unbuilt) harness.
 
 Resolved:
+
+- **Cases-host.** The labeled cases ship in a **public Git repo** now, so
+  citation-verification work is unblocked without waiting on wiki tooling. The
+  stated plan is to **migrate the cases to the on-wiki `SharedTrainingDataset`
+  convention** (`sp42-core::wiki_storage`) once it meets the harness's needs —
+  i.e. once it gains a typed, validated `TrainingDataset` document,
+  **`oldid`-pinned load**, and an **authenticated write** (the last gated on
+  live Wikimedia integration, Phase 4). Because the adoption gate and revision
+  pinning are host-agnostic, that migration does not rework the harness. Those
+  three additions are schiste's `wiki_storage` work; this PRD commits to the
+  interim host and the migration intent, not to a date. (Residue, settled at
+  import: whether CC BY-SA payloads need finer attribution than a single label,
+  e.g. revision-level strings.)
 
 - **Corpus structure, gate, and pinning** (host-agnostic). The corpus splits by
   license: CC BY-SA / CC0 **labeled cases**, **fair-use frozen source bytes** in
@@ -391,8 +424,15 @@ Resolved:
   immutable revision (Git SHA or on-wiki `oldid`); a candidate revision is
   admitted only through the **SP42-side validation/adoption gate** (the loader),
   never by reading "latest". The first corpus is produced by the alex importer
-  with per-payload licensing labels. Only the *host* of the cases is still open
-  (Open Question 3).
+  with per-payload licensing labels. The cases-host is decided (interim Git now,
+  on-wiki later — see *Cases-host* above).
+- **Which gates are hard?** A check is a hard gate only when it is deterministic,
+  machine-checkable, and its failure is unambiguously a bug. Three apply to
+  citation verification: grounding integrity, verdict well-formedness, and no
+  new hard errors (see *No promotion without passing*). Accuracy and
+  net-regression are per-task thresholds; identity-invariance is deferred until
+  a task injects editor identity into a prompt. A future task adds a hard gate
+  only by introducing its own deterministic, machine-checkable invariant.
 - **Promotion enforcement venue.** The gate is an embeddable verdict callable
   from both repo/CI and product; the in-product rule-authoring lifecycle is a
   successor PRD this PRD does not preclude (see *No promotion without passing*).

@@ -257,6 +257,10 @@ pub struct VerifyOptions {
     /// support-class vote whose quote failed to locate, asking for the exact shortest
     /// verbatim span (or `NO_SPAN`). Transcription only — never re-litigates the verdict.
     pub repair_turn: bool,
+    /// Pre-fetched source body. When `Some`, `verify_citation_use_site` uses it
+    /// instead of fetching — lets the page orchestrator fetch each distinct URL
+    /// once. `None` (the default) preserves the byte-identical single-claim path.
+    pub prefetched: Option<FetchedSource>,
 }
 
 impl Default for VerifyOptions {
@@ -266,6 +270,7 @@ impl Default for VerifyOptions {
             concurrency: 3,
             params: SamplingParams::deterministic(),
             repair_turn: true,
+            prefetched: None,
         }
     }
 }
@@ -609,14 +614,15 @@ fn no_quote_finding(
 }
 
 /// A fetched source body plus the HTTP status it came from.
-struct FetchedSource {
-    text: String,
-    status: u16,
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FetchedSource {
+    pub text: String,
+    pub status: u16,
 }
 
 /// Fetch a source body (read-only GET), extracting text from HTML and recovering past a
 /// surviving Wayback banner. A non-2xx/3xx yields empty text (→ `SourceUnavailable`).
-async fn fetch_source<C>(
+pub(crate) async fn fetch_source<C>(
     client: &C,
     source_url: &str,
 ) -> Result<FetchedSource, CitationVerificationError>
@@ -716,7 +722,10 @@ where
         });
     }
 
-    let fetched = fetch_source(fetch_client, request.source_url.as_str()).await?;
+    let fetched = match &options.prefetched {
+        Some(source) => source.clone(),
+        None => fetch_source(fetch_client, request.source_url.as_str()).await?,
+    };
     let provenance = SourceProvenance {
         url: request.source_url.clone(),
         content_hash: sha256_hex(fetched.text.as_bytes()),
@@ -1130,6 +1139,38 @@ mod tests {
         assert_eq!(outcome.finding.use_site_ordinal, 3);
         assert_eq!(outcome.votes.len(), 1);
         assert_eq!(outcome.votes[0].invocation.prompt_hash.len(), 64);
+    }
+
+    #[test]
+    fn prefetched_source_skips_http_fetch() {
+        // Empty HTTP queue: if the verifier tried to fetch, it would error.
+        let http = StubHttpClient::new([]);
+        let model_client = StubModelClient::new([Ok(completion(
+            r#"{"verdict": "SUPPORTED", "quote": "cats purr and sleep"}"#,
+        ))]);
+        let request = CitationVerificationRequest {
+            wiki_id: "enwiki".into(),
+            rev_id: 1,
+            title: "Cats".into(),
+            claim: "Cats purr.".into(),
+            source_url: url::Url::parse("https://example.test/a").unwrap(),
+        };
+        let mut options = VerifyOptions { repair_turn: false, ..VerifyOptions::default() };
+        // Body must be ≥300 chars to pass usability check (SHORT_BODY_FLOOR).
+        let long_body = "This is real article prose that gives the body enough length to be usable. ".repeat(8) +
+                        "cats purr and sleep all day long. " +
+                        "This is real article prose that gives the body enough length to be usable. ";
+        options.prefetched = Some(super::FetchedSource { text: long_body, status: 200 });
+        let outcome = block_on(verify_citation_use_site(
+            &http, &model_client, &FixedClock::new(0), &[model()],
+            &request, None, 0, options,
+        ))
+        .expect("verifies from prefetched source");
+        // CitationVerdict is `Judged(SupportLevel)` | `SourceUnavailable`
+        assert_eq!(
+            outcome.finding.verdict,
+            CitationVerdict::Judged(SupportLevel::Supported)
+        );
     }
 
     #[test]

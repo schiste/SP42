@@ -103,7 +103,7 @@ pub use citation::urls::{
 };
 pub use citation::verdict::{CitationFindingKind, CitationVerdict, SupportLevel, Verdict};
 pub use citation::verify::{
-    CitationFinding, CitationVerificationRequest, GroundingAssertion, GroundingStatus,
+    CitationFinding, CitationVerificationRequest, FetchedSource, GroundingAssertion, GroundingStatus,
     LocatedPassage, ModelVerdict, ModelVote, SourceProvenance, VerificationOutcome,
     VerifyModelInputs, VerifyOptions, assemble_citation_finding, build_model_votes,
     execute_citation_verify, is_groundable_support, sha256_hex, verify_citation_use_site,

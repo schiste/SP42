@@ -85,7 +85,9 @@ pub use citation::extract::{
     BlockFailure, CitationUseSite, ExtractOutcome, SkippedReason, SkippedRef, extract_use_sites,
 };
 pub use citation::locate_quote::{FuzzyLocate, locate_quote, locate_quote_fuzzy};
-pub use citation::page::{PageVerificationReport, PageVerificationRequest, PageVerificationStats};
+pub use citation::page::{
+    PageVerificationReport, PageVerificationRequest, PageVerificationStats, verify_page,
+};
 pub use citation::parsing::{
     ParsedVerdict, canonicalize_verdict, parse_repair_response, parse_verdict_response,
 };
@@ -103,10 +105,11 @@ pub use citation::urls::{
 };
 pub use citation::verdict::{CitationFindingKind, CitationVerdict, SupportLevel, Verdict};
 pub use citation::verify::{
-    CitationFinding, CitationVerificationRequest, FetchedSource, GroundingAssertion, GroundingStatus,
-    LocatedPassage, ModelVerdict, ModelVote, SourceProvenance, VerificationOutcome,
-    VerifyModelInputs, VerifyOptions, assemble_citation_finding, build_model_votes,
-    execute_citation_verify, is_groundable_support, sha256_hex, verify_citation_use_site,
+    CitationFinding, CitationVerificationRequest, FetchedSource, GroundingAssertion,
+    GroundingStatus, LocatedPassage, ModelVerdict, ModelVote, SourceProvenance,
+    VerificationOutcome, VerifyModelInputs, VerifyOptions, assemble_citation_finding,
+    build_model_votes, execute_citation_verify, is_groundable_support, sha256_hex,
+    verify_citation_use_site,
 };
 pub use citation::voting::{BinaryVote, NClassVote, PanelAgreement, binary_vote, n_class_vote};
 pub use context_builder::{ContextInputs, build_scoring_context};

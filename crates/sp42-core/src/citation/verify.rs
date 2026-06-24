@@ -1155,15 +1155,33 @@ mod tests {
             claim: "Cats purr.".into(),
             source_url: url::Url::parse("https://example.test/a").unwrap(),
         };
-        let mut options = VerifyOptions { repair_turn: false, ..VerifyOptions::default() };
-        // Body must be ≥300 chars to pass usability check (SHORT_BODY_FLOOR).
-        let long_body = "This is real article prose that gives the body enough length to be usable. ".repeat(8) +
-                        "cats purr and sleep all day long. " +
-                        "This is real article prose that gives the body enough length to be usable. ";
-        options.prefetched = Some(super::FetchedSource { text: long_body, status: 200 });
+        let mut options = VerifyOptions {
+            repair_turn: false,
+            ..VerifyOptions::default()
+        };
+        // Body must be ≥300 chars to pass usability check (SHORT_BODY_FLOOR in body_classifier.rs).
+        // The prose padding is repeated to ensure total length exceeds 300 characters.
+        let long_body =
+            "This is real article prose that gives the body enough length to be usable. ".repeat(8)
+                + "cats purr and sleep all day long. "
+                + "This is real article prose that gives the body enough length to be usable. ";
+        assert!(
+            long_body.chars().count() >= 300,
+            "test body must be >= 300 chars (SHORT_BODY_FLOOR)"
+        );
+        options.prefetched = Some(super::FetchedSource {
+            text: long_body,
+            status: 200,
+        });
         let outcome = block_on(verify_citation_use_site(
-            &http, &model_client, &FixedClock::new(0), &[model()],
-            &request, None, 0, options,
+            &http,
+            &model_client,
+            &FixedClock::new(0),
+            &[model()],
+            &request,
+            None,
+            0,
+            options,
         ))
         .expect("verifies from prefetched source");
         // CitationVerdict is `Judged(SupportLevel)` | `SourceUnavailable`

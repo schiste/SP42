@@ -87,17 +87,29 @@ where
     }
     let concurrency = options.concurrency;
     let fetched_list = map_with_concurrency(distinct.clone(), concurrency, |url, _| async move {
-        (url.clone(), fetch_source(fetch_client, &url).await.ok())
+        (url.clone(), fetch_source(fetch_client, &url).await)
     })
     .await;
     let mut bodies: HashMap<String, FetchedSource> = HashMap::new();
-    for (url, source) in fetched_list {
-        if let Some(source) = source {
-            bodies.insert(url, source);
-        }
+    for (url, result) in fetched_list {
+        let source = match result {
+            Ok(source) => source,
+            Err(_) => {
+                // Transport error: insert a sentinel (empty text, status 0) so no use-site
+                // re-fetches. The empty-text path routes to SourceUnavailable via the
+                // body-usability gate (body_classifier.rs).
+                FetchedSource {
+                    text: String::new(),
+                    status: 0,
+                }
+            }
+        };
+        bodies.insert(url, source);
     }
 
     // 2. Fan verify over use-sites, sharing the prefetched body.
+    // Every distinct URL is now in `bodies` (including sentinel entries for failed fetches),
+    // so every use-site finds a prefetched body and never re-fetches.
     let mut extraction_failures = failures;
     let mut findings = Vec::new();
     let bodies_ref = &bodies;
@@ -243,6 +255,51 @@ mod orchestrator_tests {
         assert_eq!(report.stats.use_sites_verified, 2);
         // If a second fetch had been attempted the queue would be empty → error path.
         assert!(report.extraction_failures.is_empty());
+    }
+
+    #[test]
+    fn failed_fetch_is_not_refetched_per_use_site() {
+        use futures::executor::block_on;
+        use sp42_types::HttpClientError;
+
+        // EXACTLY ONE fetch error in the queue: a transport-layer failure.
+        // Both use-sites will encounter this single failing fetch, which gets converted
+        // to an empty-text sentinel. No use-site should ever re-fetch (the queue is consumed).
+        let http = StubHttpClient::new([Err(HttpClientError::Transport {
+            message: "network timeout".to_string(),
+        })]);
+        // No model calls should occur since the body is unavailable (SourceUnavailable
+        // short-circuits before model invocation).
+        let model = StubModelClient::new([]);
+        let options = VerifyOptions {
+            repair_turn: false,
+            concurrency: 2,
+            ..VerifyOptions::default()
+        };
+        let report = block_on(verify_page(
+            &http,
+            &model,
+            &FixedClock::new(0),
+            &[model_ref()],
+            &page(),
+            two_use_sites_same_url(),
+            options,
+        ));
+        // Both use-sites should produce SourceUnavailable findings (not errors),
+        // routed through the empty-text/status-0 sentinel → body-usability gate.
+        assert_eq!(report.findings.len(), 2);
+        assert_eq!(report.stats.use_sites_verified, 2);
+        assert_eq!(report.stats.source_unavailable, 2);
+        // No model invocations occurred, so no extraction failures from the model side.
+        assert!(report.extraction_failures.is_empty());
+        // Verify both findings are SourceUnavailable.
+        for finding in &report.findings {
+            assert_eq!(
+                finding.verdict,
+                super::CitationVerdict::SourceUnavailable,
+                "both findings should be SourceUnavailable"
+            );
+        }
     }
 }
 

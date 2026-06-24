@@ -14,7 +14,7 @@ use reqwest::header::COOKIE;
 use serde_json::Value;
 use sp42_core::routes as route_contracts;
 use sp42_core::{
-    ChatRole, CitationFinding, CitationVerificationRequest, DevAuthBootstrapRequest,
+    ChatRole, CitationFinding, CitationVerificationRequest, ClaimContext, DevAuthBootstrapRequest,
     DevAuthSessionStatus, EndpointMode, GroundingStatus, ModelClient, ModelClientError,
     ModelCompletion, ModelCompletionRequest, ModelEndpointConfig, ModelRef, QueuedEdit,
     SamplingParams, SessionActionExecutionRequest, SessionActionExecutionResponse,
@@ -94,6 +94,11 @@ struct VerifyCliOptions {
     /// Run the bounded repair turn (SP42#25 layer 3); `--no-repair` turns it off (one fewer
     /// model call per unlocated support vote, for cost control and A/B measurement).
     repair: bool,
+    /// The SIDE co-reference context: the section title (`--section-title`), if supplied.
+    section_title: Option<String>,
+    /// The SIDE co-reference context: preceding sentences (`--preceding-sentence`, repeatable),
+    /// in the order given. Empty by default, which keeps the verifier on its no-context path.
+    preceding_sentences: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -259,6 +264,8 @@ fn parse_options(args: impl IntoIterator<Item = String>) -> Result<CliOptions, S
     let mut verify_metadata = false;
     let mut verify_debug_votes = false;
     let mut verify_repair = true;
+    let mut verify_section_title = None;
+    let mut verify_preceding: Vec<String> = Vec::new();
     let mut verdict_only = false;
     let mut probe_quote = None;
     let mut locate_probe_flag = false;
@@ -287,6 +294,8 @@ fn parse_options(args: impl IntoIterator<Item = String>) -> Result<CliOptions, S
             verify_metadata: &mut verify_metadata,
             verify_debug_votes: &mut verify_debug_votes,
             verify_repair: &mut verify_repair,
+            verify_section_title: &mut verify_section_title,
+            verify_preceding: &mut verify_preceding,
             verdict_only: &mut verdict_only,
             probe_quote: &mut probe_quote,
             locate_probe_flag: &mut locate_probe_flag,
@@ -308,6 +317,8 @@ fn parse_options(args: impl IntoIterator<Item = String>) -> Result<CliOptions, S
         verify_metadata,
         verify_debug_votes,
         verify_repair,
+        verify_section_title,
+        verify_preceding,
     )?;
     let locate_probe = if locate_probe_flag {
         Some(probe_quote.ok_or_else(|| "--locate-probe requires --quote".to_string())?)
@@ -342,6 +353,8 @@ fn build_verify_options(
     include_metadata: bool,
     debug_votes: bool,
     repair: bool,
+    section_title: Option<String>,
+    preceding_sentences: Vec<String>,
 ) -> Result<Option<VerifyCliOptions>, String> {
     match (claim, source_url) {
         (Some(claim), Some(source_url)) => Ok(Some(VerifyCliOptions {
@@ -350,6 +363,8 @@ fn build_verify_options(
             include_metadata,
             debug_votes,
             repair,
+            section_title,
+            preceding_sentences,
         })),
         (None, None) => Ok(None),
         _ => Err("citation verification requires both --claim and --source-url".to_string()),
@@ -379,6 +394,8 @@ struct CliParseState<'a> {
     verify_metadata: &'a mut bool,
     verify_debug_votes: &'a mut bool,
     verify_repair: &'a mut bool,
+    verify_section_title: &'a mut Option<String>,
+    verify_preceding: &'a mut Vec<String>,
     verdict_only: &'a mut bool,
     probe_quote: &'a mut Option<String>,
     locate_probe_flag: &'a mut bool,
@@ -462,6 +479,14 @@ where
         }
         "--source-url" => {
             *state.verify_source_url = Some(next_option_value(args, "--source-url")?);
+        }
+        "--section-title" => {
+            *state.verify_section_title = Some(next_option_value(args, "--section-title")?);
+        }
+        "--preceding-sentence" => {
+            state
+                .verify_preceding
+                .push(next_option_value(args, "--preceding-sentence")?);
         }
         "--with-metadata" => {
             *state.verify_metadata = true;
@@ -871,13 +896,28 @@ async fn run_verify(options: &VerifyCliOptions) -> Result<VerificationOutcome, S
         repair_turn: options.repair,
         ..Default::default()
     };
+    // SIDE-style co-reference context (article title unused on the claim+url CLI surface;
+    // the library API is the eval-corpus driver). Empty context stays on the no-context path.
+    let claim_context = {
+        let context = ClaimContext {
+            article_title: String::new(),
+            section_title: options.section_title.clone(),
+            preceding_sentences: options.preceding_sentences.clone(),
+        };
+        if context.is_empty() {
+            None
+        } else {
+            Some(context)
+        }
+    };
+
     let outcome = verify_citation_use_site(
         &fetch_client,
         &model_client,
         &SystemClock,
         &panel,
         &request,
-        None,
+        claim_context.as_ref(),
         0,
         verify_options,
     )
@@ -1030,9 +1070,37 @@ mod verify_tests {
                 include_metadata: true,
                 debug_votes: false,
                 repair: true,
+                section_title: None,
+                preceding_sentences: Vec::new(),
             }
         );
         assert!(!options.verdict_only);
+    }
+
+    #[test]
+    fn verify_collects_section_and_preceding_context() {
+        let options = parse_options(args(&[
+            "--claim",
+            "c",
+            "--source-url",
+            "https://example.com",
+            "--section-title",
+            "Career",
+            "--preceding-sentence",
+            "She joined in 1985.",
+            "--preceding-sentence",
+            "She scored twice.",
+        ]))
+        .expect("parses");
+        let verify = options.verify.expect("verify present");
+        assert_eq!(verify.section_title.as_deref(), Some("Career"));
+        assert_eq!(
+            verify.preceding_sentences,
+            vec![
+                "She joined in 1985.".to_string(),
+                "She scored twice.".to_string()
+            ]
+        );
     }
 
     #[test]

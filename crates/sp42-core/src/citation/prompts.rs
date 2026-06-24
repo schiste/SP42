@@ -110,18 +110,22 @@ Respond with a single JSON object: {"quote": "<verbatim span copied from the sou
 
 /// Build the two-message verification prompt: `[system, user]`.
 ///
-/// `metadata`, when present, is rendered as a context-only block before the source —
-/// never groundable bytes (ADR-0007 Alt (e)).
+/// `context` (the co-reference window) and `metadata` (bibliographic), when present, are
+/// each rendered as a context-only block before the source — never groundable bytes
+/// (ADR-0007 Alt (e)). An absent or empty `context` leaves the prompt byte-identical to the
+/// no-context form.
 #[must_use]
 pub fn build_verify_prompt(
     claim: &str,
     source_text: &str,
     source_url: &str,
     metadata: Option<&CitoidMetadata>,
+    context: Option<&ClaimContext>,
 ) -> [ChatMessage; 2] {
+    let context_block = context.map(context_section).unwrap_or_default();
     let section = metadata.map(metadata_section).unwrap_or_default();
     let user = format!(
-        "CLAIM:\n{claim}\n\n{section}SOURCE ({source_url}):\n\"\"\"\n{source_text}\n\"\"\"\n\nRespond with the JSON object described in the instructions."
+        "CLAIM:\n{claim}\n\n{context_block}{section}SOURCE ({source_url}):\n\"\"\"\n{source_text}\n\"\"\"\n\nRespond with the JSON object described in the instructions."
     );
     [ChatMessage::system(SYSTEM), ChatMessage::user(user)]
 }
@@ -167,16 +171,83 @@ fn metadata_section(meta: &CitoidMetadata) -> String {
     )
 }
 
+/// Render the co-reference context window as a context-only block (empty string when the
+/// context has nothing to show, so the prompt is byte-identical to the no-context form).
+fn context_section(context: &ClaimContext) -> String {
+    if context.is_empty() {
+        return String::new();
+    }
+    let mut lines = Vec::new();
+    if !context.article_title.trim().is_empty() {
+        lines.push(format!("- article: {}", context.article_title));
+    }
+    if let Some(section) = &context.section_title
+        && !section.trim().is_empty()
+    {
+        lines.push(format!("- section: {section}"));
+    }
+    let preceding: Vec<&String> = context
+        .preceding_sentences
+        .iter()
+        .filter(|sentence| !sentence.trim().is_empty())
+        .collect();
+    if !preceding.is_empty() {
+        lines.push("- preceding text:".to_string());
+        for sentence in preceding {
+            lines.push(format!("    {sentence}"));
+        }
+    }
+    format!(
+        "CLAIM CONTEXT (for interpreting the claim only — DO NOT quote from here; your supporting quote MUST come verbatim from the SOURCE text below):\n{}\n\n",
+        lines.join("\n")
+    )
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{REPAIR_SYSTEM, SYSTEM, build_repair_prompt, build_verify_prompt};
+    use super::{
+        ClaimContext, REPAIR_SYSTEM, SYSTEM, build_repair_prompt, build_verify_prompt,
+        context_section,
+    };
     use crate::citation::citoid::CitoidMetadata;
     use sp42_types::ChatRole;
 
     #[test]
+    fn context_section_is_empty_for_empty_context() {
+        assert_eq!(context_section(&ClaimContext::default()), String::new());
+        let blank = ClaimContext {
+            article_title: "   ".to_string(),
+            section_title: Some(String::new()),
+            preceding_sentences: vec!["  ".to_string()],
+        };
+        assert_eq!(context_section(&blank), String::new());
+    }
+
+    #[test]
+    fn context_section_renders_labeled_context_only_block() {
+        let ctx = ClaimContext {
+            article_title: "Ann Jansson".to_string(),
+            section_title: Some("Career".to_string()),
+            preceding_sentences: vec!["She joined the club in 1985.".to_string()],
+        };
+        let rendered = context_section(&ctx);
+        assert!(rendered.contains("Ann Jansson"));
+        assert!(rendered.contains("Career"));
+        assert!(rendered.contains("She joined the club in 1985."));
+        // Context-only discipline: the supporting quote must still come from the SOURCE.
+        assert!(rendered.contains("DO NOT quote"));
+        assert!(rendered.contains("SOURCE"));
+    }
+
+    #[test]
     fn returns_system_then_user() {
-        let prompt =
-            build_verify_prompt("a claim", "some source body", "https://example.com", None);
+        let prompt = build_verify_prompt(
+            "a claim",
+            "some source body",
+            "https://example.com",
+            None,
+            None,
+        );
         assert_eq!(prompt[0].role, ChatRole::System);
         assert_eq!(prompt[1].role, ChatRole::User);
         assert_eq!(prompt[0].content, SYSTEM);
@@ -188,6 +259,7 @@ mod tests {
             "The bridge opened in 1998",
             "The bridge opened to traffic in 1998.",
             "https://example.com/bridge",
+            None,
             None,
         );
         let user = &prompt[1].content;
@@ -233,7 +305,7 @@ mod tests {
             title: Some("Headline".to_string()),
             url: "https://example.com".to_string(),
         };
-        let prompt = build_verify_prompt("c", "body", "https://example.com", Some(&metadata));
+        let prompt = build_verify_prompt("c", "body", "https://example.com", Some(&metadata), None);
         let user = &prompt[1].content;
         assert!(user.contains("METADATA"));
         assert!(user.contains("DO NOT quote"));
@@ -248,8 +320,34 @@ mod tests {
 
     #[test]
     fn no_metadata_means_no_metadata_section() {
-        let prompt = build_verify_prompt("c", "body", "https://example.com", None);
+        let prompt = build_verify_prompt("c", "body", "https://example.com", None, None);
         assert!(!prompt[1].content.contains("METADATA"));
+    }
+
+    #[test]
+    fn empty_context_is_byte_identical_to_no_context() {
+        let with_none = build_verify_prompt("c", "body", "https://example.com", None, None);
+        let with_empty = build_verify_prompt(
+            "c",
+            "body",
+            "https://example.com",
+            None,
+            Some(&ClaimContext::default()),
+        );
+        assert_eq!(with_none[1].content, with_empty[1].content);
+    }
+
+    #[test]
+    fn context_block_precedes_the_source_block() {
+        let ctx = ClaimContext {
+            article_title: "Ann Jansson".to_string(),
+            ..Default::default()
+        };
+        let prompt = build_verify_prompt("c", "body", "https://example.com", None, Some(&ctx));
+        let user = &prompt[1].content;
+        let ctx_at = user.find("CLAIM CONTEXT").expect("context block present");
+        let source_at = user.find("SOURCE (").expect("source block present");
+        assert!(ctx_at < source_at);
     }
 
     // --- repair turn (SP42#25 layer 3) ---

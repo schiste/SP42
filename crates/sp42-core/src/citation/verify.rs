@@ -300,6 +300,7 @@ fn build_verify_completion_request(
         inputs.source_text,
         inputs.source_url,
         inputs.metadata,
+        None,
     )
     .to_vec();
     let prompt_hash = sha256_hex(&serde_json::to_vec(&messages)?);

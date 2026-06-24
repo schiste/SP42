@@ -81,7 +81,13 @@ pub use citation::citoid::{
     CitoidMetadata, build_citoid_header, build_citoid_request, parse_citoid_response,
 };
 pub use citation::concurrency::map_with_concurrency;
+pub use citation::extract::{
+    BlockFailure, CitationUseSite, ExtractOutcome, SkippedReason, SkippedRef,
+};
 pub use citation::locate_quote::{FuzzyLocate, locate_quote, locate_quote_fuzzy};
+pub use citation::page::{
+    PageVerificationReport, PageVerificationRequest, PageVerificationStats,
+};
 pub use citation::parsing::{
     ParsedVerdict, canonicalize_verdict, parse_repair_response, parse_verdict_response,
 };

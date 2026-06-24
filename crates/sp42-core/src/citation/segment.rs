@@ -13,9 +13,9 @@ pub struct Sentence {
 
 /// Abbreviations that end in `.` but do not end a sentence.
 const ABBREVIATIONS: &[&str] = &[
-    "U.S.", "U.K.", "U.N.", "E.U.", "a.m.", "p.m.", "Dr.", "Mr.", "Mrs.", "Ms.", "Prof.", "Sr.",
-    "Jr.", "St.", "Mt.", "vs.", "etc.", "al.", "ca.", "c.", "No.", "Vol.", "pp.", "p.", "e.g.",
-    "i.e.", "cf.", "Inc.", "Ltd.", "Co.",
+    "U.S.", "U.K.", "U.N.", "E.U.", "U.", "K.", "N.", "a.m.", "p.m.", "Dr.", "Mr.", "Mrs.", "Ms.",
+    "Prof.", "Sr.", "Jr.", "St.", "Mt.", "vs.", "etc.", "al.", "ca.", "c.", "No.", "Vol.", "pp.",
+    "p.", "e.g.", "i.e.", "cf.", "Inc.", "Ltd.", "Co.",
 ];
 
 /// Split `text` into sentences. Never empty for non-empty input: text with no
@@ -33,9 +33,21 @@ pub fn segment_sentences(text: &str) -> Vec<Sentence> {
         if c == b'.' || c == b'!' || c == b'?' {
             // Consume trailing closing quotes/parens that belong to this sentence.
             let mut end = i + 1;
-            while end < bytes.len() && matches!(bytes[end], b'"' | b'\'' | b')' | b']' | 0x9d) {
-                end += 1;
+            // Scan forward by chars (not bytes) to stay on char boundaries.
+            let remainder = &text[end..];
+            let mut char_offset = 0;
+            for ch in remainder.chars() {
+                if matches!(
+                    ch,
+                    '"' | '\'' | ')' | ']' | '\u{201C}' | '\u{201D}' | '\u{2018}' | '\u{2019}'
+                ) {
+                    char_offset += ch.len_utf8();
+                } else {
+                    break;
+                }
             }
+            end += char_offset;
+
             if is_boundary(text, i, end) {
                 let slice = &text[start..end];
                 let trimmed_start = start + leading_ws(slice);
@@ -85,27 +97,13 @@ fn is_boundary(text: &str, dot: usize, end: usize) -> bool {
         return false;
     }
     // Known abbreviation: check if this dot is part of a known abbreviation.
-    // We need to check a reasonable window around the dot, since abbreviations
-    // like "U.S." span multiple letters and dots.
     if bytes[dot] == b'.' {
         // Look at text ending at dot+1 and see if any abbreviation matches at the end.
-        // Also look at a window that includes potential continuation (for multi-dot abbrs).
         let head = &text[..=dot];
 
         // Check abbreviations that end at this dot
         if ABBREVIATIONS.iter().any(|abbr| head.ends_with(abbr)) {
             return false;
-        }
-
-        // Also check if we're in the middle of a multi-letter abbreviation like "U.S"
-        // by seeing if adding more characters ahead would match an abbreviation
-        let mut check_end = dot + 1;
-        while check_end < text.len() && check_end < dot + 5 {
-            let candidate = &text[..check_end];
-            if ABBREVIATIONS.iter().any(|abbr| candidate.ends_with(abbr)) {
-                return false;
-            }
-            check_end += 1;
         }
     }
 
@@ -191,5 +189,53 @@ mod tests {
     fn empty_input_is_empty() {
         assert!(segment_sentences("").is_empty());
         assert!(segment_sentences("   ").is_empty());
+    }
+
+    #[test]
+    fn multibyte_accented_latin_after_terminator() {
+        let input = "Café René opened. It closed.";
+        let sentences = segment_sentences(input);
+
+        // Verify the segmentation
+        assert_eq!(sentences.len(), 2);
+        assert_eq!(sentences[0].text, "Café René opened.");
+        assert_eq!(sentences[1].text, "It closed.");
+
+        // Verify byte ranges index back into input without panic
+        for s in &sentences {
+            assert_eq!(&input[s.range.clone()], s.text);
+        }
+    }
+
+    #[test]
+    fn multibyte_cyrillic_after_terminator() {
+        let input = "Текст один. Текст два.";
+        let sentences = segment_sentences(input);
+
+        // Verify the segmentation
+        assert_eq!(sentences.len(), 2);
+        assert_eq!(sentences[0].text, "Текст один.");
+        assert_eq!(sentences[1].text, "Текст два.");
+
+        // Verify byte ranges index back into input without panic
+        for s in &sentences {
+            assert_eq!(&input[s.range.clone()], s.text);
+        }
+    }
+
+    #[test]
+    fn multibyte_curly_quotes_after_terminator() {
+        let input = "She said \u{201C}go.\u{201D} Then she left.";
+        let sentences = segment_sentences(input);
+
+        // Verify the segmentation with curly quotes
+        assert_eq!(sentences.len(), 2);
+        assert_eq!(sentences[0].text, "She said \u{201C}go.\u{201D}");
+        assert_eq!(sentences[1].text, "Then she left.");
+
+        // Verify byte ranges index back into input without panic
+        for s in &sentences {
+            assert_eq!(&input[s.range.clone()], s.text);
+        }
     }
 }

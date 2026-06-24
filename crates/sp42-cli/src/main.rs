@@ -1,7 +1,6 @@
 use std::convert::TryFrom;
 use std::io::{self, Read};
 use std::process::ExitCode;
-use std::time::Duration;
 
 use async_trait::async_trait;
 use futures::executor::block_on;
@@ -740,15 +739,12 @@ async fn run_verify(options: &VerifyCliOptions) -> Result<VerificationOutcome, S
 
     // The source-fetch client carries no inference credential; the bearer is held only by
     // the model adapter, so it can never reach a third-party source host.
+    // Uses a guarded client with per-hop SSRF validation (SP42#34).
+    let allow_private = std::env::var("SP42_FETCH_ALLOW_PRIVATE").is_ok_and(|value| value == "1");
     let fetch_client = CliHttpClient {
-        client: reqwest::Client::builder()
-            .user_agent(sp42_core::branding::USER_AGENT)
-            .connect_timeout(Duration::from_secs(10))
-            .timeout(Duration::from_secs(30))
-            .redirect(reqwest::redirect::Policy::limited(5))
-            .build()
-            .map_err(|error| format!("http client failed to build: {error}"))?,
-        allow_private: std::env::var("SP42_FETCH_ALLOW_PRIVATE").is_ok_and(|value| value == "1"),
+        client: sp42_inference::guarded_source_client(allow_private)
+            .map_err(|error| format!("source http client failed to build: {error}"))?,
+        allow_private,
     };
 
     let verify_options = CoreVerifyOptions {

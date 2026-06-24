@@ -1,5 +1,6 @@
 //! Shared inference edge: the genai-backed `ModelClient` and env-driven
-//! construction of an endpoint config + model panel.
+//! construction of an endpoint config + model panel. Also exports the guarded HTTP client
+//! builder for source fetches with per-hop SSRF validation (SP42#34).
 
 use std::time::Duration;
 
@@ -176,6 +177,118 @@ pub fn client_from_env() -> Result<GenaiModelClient, String> {
     }))
 }
 
+/// Check whether a URL host is safe to fetch from, honoring the `allow_private` escape hatch
+/// (SP42#34 SSRF floor). Used as the per-hop predicate in the redirect policy.
+///
+/// # Arguments
+///
+/// * `url` - The URL to validate (typically from a redirect Location header).
+/// * `allow_private` - If `true`, allow private/loopback/link-local addresses (dev escape hatch).
+///
+/// # Returns
+///
+/// `true` if the URL host passes the SSRF check, `false` if it should be blocked.
+#[must_use]
+pub fn redirect_host_allowed(url: &reqwest::Url, allow_private: bool) -> bool {
+    use std::net::{Ipv4Addr, Ipv6Addr};
+
+    if allow_private {
+        // Dev escape hatch: allow everything except non-http(s) schemes.
+        return matches!(url.scheme(), "http" | "https");
+    }
+
+    // SSRF floor: check scheme and host
+    match url.scheme() {
+        "http" | "https" => {}
+        _ => return false, // Non-http(s) scheme
+    }
+
+    match url.host_str() {
+        None => false, // No host
+        Some(host) => {
+            // Remove brackets from IPv6 addresses (URL crate includes them)
+            let host_for_parse = host.trim_matches(|c| c == '[' || c == ']');
+
+            // Try to parse as IPv4
+            if let Ok(ip4) = host_for_parse.parse::<Ipv4Addr>() {
+                return !(ip4.is_loopback()
+                    || ip4.is_private()
+                    || ip4.is_link_local()
+                    || ip4.is_unspecified()
+                    || ip4.is_broadcast());
+            }
+
+            // Try to parse as IPv6
+            if let Ok(ip6) = host_for_parse.parse::<Ipv6Addr>() {
+                if ip6.is_loopback() || ip6.is_unspecified() {
+                    return false;
+                }
+                // Check IPv4-mapped IPv6
+                if let Some(mapped) = ip6.to_ipv4_mapped() {
+                    return !(mapped.is_loopback()
+                        || mapped.is_private()
+                        || mapped.is_link_local()
+                        || mapped.is_unspecified()
+                        || mapped.is_broadcast());
+                }
+                // Check unique-local (fc00::/7) and link-local (fe80::/10)
+                let first = ip6.segments()[0];
+                if (first & 0xfe00) == 0xfc00 || (first & 0xffc0) == 0xfe80 {
+                    return false;
+                }
+                return true;
+            }
+
+            // Domain name: check for localhost
+            let host_lower = host.to_ascii_lowercase();
+            if host_lower == "localhost" || host_lower.ends_with(".localhost") {
+                return false;
+            }
+
+            true
+        }
+    }
+}
+
+/// Build a `reqwest::Client` configured for source fetches with per-hop SSRF validation (SP42#34).
+/// The client enforces a redirect policy that checks each hop against the SSRF floor and caps
+/// the total redirect count.
+///
+/// # Arguments
+///
+/// * `allow_private` - If `true`, allow private/loopback/link-local addresses (dev escape hatch).
+///
+/// # Returns
+///
+/// A configured `reqwest::Client` ready for source fetches.
+///
+/// # Errors
+///
+/// Returns an error if the client fails to build (e.g., I/O error).
+pub fn guarded_source_client(allow_private: bool) -> Result<reqwest::Client, String> {
+    let max_redirects = 5;
+    reqwest::Client::builder()
+        .timeout(Duration::from_secs(30))
+        .connect_timeout(Duration::from_secs(10))
+        .user_agent(sp42_core::branding::USER_AGENT)
+        .redirect(reqwest::redirect::Policy::custom(move |attempt| {
+            // Check the redirect target host against the SSRF floor.
+            if redirect_host_allowed(attempt.url(), allow_private) {
+                // Host is allowed. Check hop count.
+                if attempt.previous().len() < max_redirects {
+                    attempt.follow()
+                } else {
+                    attempt.stop()
+                }
+            } else {
+                // Host is blocked. Return error so the policy closure reports the failure.
+                attempt.error("SSRF: redirect target host is not allowed")
+            }
+        }))
+        .build()
+        .map_err(|error| format!("failed to build guarded source client: {error}"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -229,5 +342,160 @@ mod tests {
     #[test]
     fn parse_endpoint_mode_rejects_unknown() {
         assert!(parse_endpoint_mode(Some("unknown")).is_err());
+    }
+
+    #[test]
+    fn redirect_host_allowed_with_allow_private_false() {
+        use url::Url;
+
+        // Loopback IPv4 should be blocked
+        assert!(
+            !redirect_host_allowed(
+                &Url::parse("http://127.0.0.1/admin").expect("valid URL"),
+                false
+            ),
+            "127.0.0.1 should be blocked with allow_private=false"
+        );
+
+        // Private IPv4 ranges should be blocked
+        assert!(
+            !redirect_host_allowed(&Url::parse("http://10.0.0.1/").expect("valid URL"), false),
+            "10.0.0.1 should be blocked"
+        );
+        assert!(
+            !redirect_host_allowed(
+                &Url::parse("http://192.168.1.1/").expect("valid URL"),
+                false
+            ),
+            "192.168.1.1 should be blocked"
+        );
+
+        // Link-local IPv4 should be blocked
+        assert!(
+            !redirect_host_allowed(
+                &Url::parse("http://169.254.1.1/").expect("valid URL"),
+                false
+            ),
+            "169.254.x.x link-local should be blocked"
+        );
+
+        // Cloud metadata endpoint should be blocked
+        assert!(
+            !redirect_host_allowed(
+                &Url::parse("http://169.254.169.254/latest/meta-data/").expect("valid URL"),
+                false
+            ),
+            "metadata endpoint should be blocked"
+        );
+
+        // localhost domain should be blocked
+        assert!(
+            !redirect_host_allowed(
+                &Url::parse("http://localhost/admin").expect("valid URL"),
+                false
+            ),
+            "localhost should be blocked"
+        );
+
+        // .localhost subdomain should be blocked
+        assert!(
+            !redirect_host_allowed(
+                &Url::parse("http://foo.localhost/").expect("valid URL"),
+                false
+            ),
+            ".localhost should be blocked"
+        );
+
+        // Loopback IPv6 should be blocked
+        assert!(
+            !redirect_host_allowed(&Url::parse("http://[::1]/").expect("valid URL"), false),
+            "::1 loopback should be blocked"
+        );
+
+        // IPv6 link-local should be blocked
+        assert!(
+            !redirect_host_allowed(&Url::parse("http://[fe80::1]/").expect("valid URL"), false),
+            "fe80:: link-local should be blocked"
+        );
+
+        // IPv6 unique-local should be blocked
+        assert!(
+            !redirect_host_allowed(&Url::parse("http://[fc00::1]/").expect("valid URL"), false),
+            "fc00:: unique-local should be blocked"
+        );
+
+        // IPv4-mapped IPv6 loopback should be blocked
+        assert!(
+            !redirect_host_allowed(
+                &Url::parse("http://[::ffff:127.0.0.1]/").expect("valid URL"),
+                false
+            ),
+            "IPv4-mapped loopback should be blocked"
+        );
+
+        // Non-http(s) scheme should be blocked
+        assert!(
+            !redirect_host_allowed(&Url::parse("file:///etc/passwd").expect("valid URL"), false),
+            "file:// scheme should be blocked"
+        );
+
+        // Normal public domain should be allowed
+        assert!(
+            redirect_host_allowed(
+                &Url::parse("https://example.com/page").expect("valid URL"),
+                false
+            ),
+            "public domain should be allowed"
+        );
+
+        // Public IPv4 should be allowed
+        assert!(
+            redirect_host_allowed(&Url::parse("http://8.8.8.8/dns").expect("valid URL"), false),
+            "public IPv4 should be allowed"
+        );
+    }
+
+    #[test]
+    fn redirect_host_allowed_with_allow_private_true() {
+        use url::Url;
+
+        // With allow_private=true, loopback/private/link-local should be allowed
+        assert!(
+            redirect_host_allowed(
+                &Url::parse("http://127.0.0.1/admin").expect("valid URL"),
+                true
+            ),
+            "127.0.0.1 should be allowed with allow_private=true"
+        );
+        assert!(
+            redirect_host_allowed(&Url::parse("http://10.0.0.1/").expect("valid URL"), true),
+            "10.0.0.1 should be allowed with allow_private=true"
+        );
+        assert!(
+            redirect_host_allowed(&Url::parse("http://192.168.1.1/").expect("valid URL"), true),
+            "192.168.1.1 should be allowed with allow_private=true"
+        );
+        assert!(
+            redirect_host_allowed(
+                &Url::parse("http://169.254.169.254/latest/meta-data/").expect("valid URL"),
+                true
+            ),
+            "metadata endpoint should be allowed with allow_private=true"
+        );
+
+        // But non-http(s) schemes should still be blocked
+        assert!(
+            !redirect_host_allowed(&Url::parse("file:///etc/passwd").expect("valid URL"), true),
+            "file:// scheme should be blocked even with allow_private=true"
+        );
+
+        // And normal public domains should still work
+        assert!(
+            redirect_host_allowed(
+                &Url::parse("https://example.com/page").expect("valid URL"),
+                true
+            ),
+            "public domain should be allowed with allow_private=true"
+        );
     }
 }

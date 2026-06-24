@@ -6,6 +6,7 @@ use std::time::Duration;
 use async_trait::async_trait;
 use rand::Rng as _;
 use sp42_core::check_fetchable_source_url;
+use sp42_inference::guarded_source_client;
 use sp42_types::{HttpClient, HttpClientError, HttpMethod, HttpRequest, HttpResponse};
 use tracing_subscriber::EnvFilter;
 
@@ -22,8 +23,8 @@ pub(crate) fn build_http_client() -> io::Result<reqwest::Client> {
         .timeout(Duration::from_secs(5))
         .user_agent(sp42_core::branding::USER_AGENT)
         // Use default redirect policy (limited to 10 redirects) for general-purpose clients
-        // (e.g., wiki API calls). Source fetches (PlainHttpClient) use their own
-        // policy with per-hop SSRF validation.
+        // (e.g., wiki API calls). Source fetches (PlainHttpClient) construct a dedicated
+        // guarded client with per-hop SSRF validation (SP42#34).
         .build()
         .map_err(|error| io::Error::other(format!("failed to build reqwest client: {error}")))
 }
@@ -116,8 +117,9 @@ impl HttpClient for BearerHttpClient {
 /// Minimal `HttpClient` wrapper around a `reqwest::Client` for read-only source fetches
 /// (no bearer auth, no special header handling). Enforces SSRF floor (SP42#34): blocks
 /// loopback/private/link-local/localhost hosts and non-http(s) schemes, honors
-/// `SP42_FETCH_ALLOW_PRIVATE=1` dev escape hatch, enforces GET-only and `MAX_SOURCE_BYTES` cap,
-/// and applies per-hop SSRF validation on redirects.
+/// `SP42_FETCH_ALLOW_PRIVATE=1` dev escape hatch, enforces GET-only and `MAX_SOURCE_BYTES` cap.
+/// The underlying client is built with a per-hop redirect policy that validates each redirect
+/// target against the same SSRF floor (capped at 5 hops).
 #[derive(Clone)]
 pub(crate) struct PlainHttpClient {
     client: reqwest::Client,
@@ -131,12 +133,14 @@ pub(crate) struct PlainHttpClient {
 const MAX_SOURCE_BYTES: u64 = 8 * 1024 * 1024;
 
 impl PlainHttpClient {
-    pub(crate) fn new(client: reqwest::Client) -> Self {
-        Self {
+    pub(crate) fn new() -> Result<Self, String> {
+        let allow_private =
+            std::env::var("SP42_FETCH_ALLOW_PRIVATE").is_ok_and(|value| value == "1");
+        let client = guarded_source_client(allow_private)?;
+        Ok(Self {
             client,
-            allow_private: std::env::var("SP42_FETCH_ALLOW_PRIVATE")
-                .is_ok_and(|value| value == "1"),
-        }
+            allow_private,
+        })
     }
 }
 

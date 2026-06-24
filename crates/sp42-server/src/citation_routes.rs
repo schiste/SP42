@@ -216,7 +216,12 @@ pub(crate) async fn post_verify_page(
         .map_err(|error| action_error_response(&action_error_from_editor(&error)))?;
     let extract = extract_use_sites(&blocks, &payload);
 
-    let http_client = PlainHttpClient::new(state.http_client.clone());
+    let http_client = PlainHttpClient::new().map_err(|error| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": error })),
+        )
+    })?;
     let options = VerifyOptions::default();
     let report: PageVerificationReport = verify_page(
         &http_client,

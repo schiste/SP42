@@ -768,7 +768,8 @@ async fn verify_page_unknown_wiki_returns_400() {
 #[tokio::test]
 async fn plain_http_client_rejects_loopback_urls() {
     // Unit test: PlainHttpClient must refuse loopback/private URLs unless
-    // SP42_FETCH_ALLOW_PRIVATE=1, proving SSRF floor (SP42#34).
+    // SP42_FETCH_ALLOW_PRIVATE=1, proving SSRF floor (SP42#34). The initial URL
+    // check gates the request before the first hop.
     use crate::runtime_adapters::PlainHttpClient;
     use sp42_types::{HttpClient, HttpRequest};
     use std::collections::BTreeMap;
@@ -779,13 +780,7 @@ async fn plain_http_client_rejects_loopback_urls() {
         std::env::remove_var("SP42_FETCH_ALLOW_PRIVATE");
     }
 
-    let http_client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(5))
-        .user_agent(sp42_core::branding::USER_AGENT)
-        .build()
-        .expect("test http client should build");
-
-    let plain_client = PlainHttpClient::new(http_client);
+    let plain_client = PlainHttpClient::new().expect("PlainHttpClient should build");
 
     // Test loopback IPv4
     let loopback_request = HttpRequest {

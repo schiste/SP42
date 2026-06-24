@@ -732,6 +732,99 @@ async fn verify_page_route_is_registered() {
     assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
 }
 
+#[tokio::test]
+async fn verify_page_unknown_wiki_returns_400() {
+    // Unknown wiki_id should be rejected as a config resolution problem (400)
+    // before any model inference lookup, proving config-first ordering.
+    unsafe {
+        std::env::remove_var("SP42_INFERENCE_MODELS");
+        std::env::remove_var("SP42_INFERENCE_URL");
+    }
+    let router = build_router(test_state());
+    let response = router
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/dev/citation/verify-page")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::json!({
+                        "wiki_id": "unknown_wiki_id_12345",
+                        "title": "Exemple",
+                        "rev_id": 42
+                    })
+                    .to_string(),
+                ))
+                .expect("request should build"),
+        )
+        .await
+        .expect("request should complete");
+
+    // 400 (config resolution failure) proves the route rejects unknown wikis
+    // before attempting inference wiring — config-first ordering is maintained.
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn plain_http_client_rejects_loopback_urls() {
+    // Unit test: PlainHttpClient must refuse loopback/private URLs unless
+    // SP42_FETCH_ALLOW_PRIVATE=1, proving SSRF floor (SP42#34).
+    use crate::runtime_adapters::PlainHttpClient;
+    use sp42_types::{HttpClient, HttpRequest};
+    use std::collections::BTreeMap;
+    use url::Url;
+
+    // Ensure dev escape hatch is OFF for this test
+    unsafe {
+        std::env::remove_var("SP42_FETCH_ALLOW_PRIVATE");
+    }
+
+    let http_client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(5))
+        .user_agent(sp42_core::branding::USER_AGENT)
+        .build()
+        .expect("test http client should build");
+
+    let plain_client = PlainHttpClient::new(http_client);
+
+    // Test loopback IPv4
+    let loopback_request = HttpRequest {
+        url: Url::parse("http://127.0.0.1/admin").expect("valid URL"),
+        method: sp42_types::HttpMethod::Get,
+        headers: BTreeMap::new(),
+        body: vec![],
+    };
+
+    let result = plain_client.execute(loopback_request).await;
+
+    // Must fail with transport error due to SSRF guard
+    assert!(
+        result.is_err(),
+        "PlainHttpClient should reject loopback URL without SP42_FETCH_ALLOW_PRIVATE"
+    );
+    if let Err(sp42_types::HttpClientError::Transport { message }) = result {
+        assert!(
+            message.contains("refusing to fetch"),
+            "Error message should indicate SSRF block: {message}"
+        );
+    }
+
+    // Test metadata endpoint
+    let metadata_request = HttpRequest {
+        url: Url::parse("http://169.254.169.254/latest/meta-data/").expect("valid URL"),
+        method: sp42_types::HttpMethod::Get,
+        headers: BTreeMap::new(),
+        body: vec![],
+    };
+
+    let result = plain_client.execute(metadata_request).await;
+
+    assert!(
+        result.is_err(),
+        "PlainHttpClient should reject cloud metadata endpoint"
+    );
+}
+
 #[test]
 fn vps_session_cookie_is_secure() {
     let mut state = test_state();
@@ -3344,7 +3437,11 @@ fn editor_errors_map_to_action_error_codes() {
         ..
     } = mapped;
     assert_eq!(code.as_deref(), Some("editor-not-configured"));
-    assert_eq!(http_status, Some(501), "configuration gaps surface as 501");
+    assert_eq!(
+        http_status,
+        Some(400),
+        "configuration gaps surface as client error (400)"
+    );
     assert!(!retryable);
 
     let error = sp42_core::WikitextEditorError::Unavailable {
@@ -3353,9 +3450,17 @@ fn editor_errors_map_to_action_error_codes() {
     };
     let mapped = crate::action_routes::action_error_from_editor(&error);
     let sp42_core::ActionError::Execution {
-        code, retryable, ..
+        code,
+        http_status,
+        retryable,
+        ..
     } = mapped;
     assert_eq!(code.as_deref(), Some("editor-unavailable"));
+    assert_eq!(
+        http_status,
+        Some(502),
+        "upstream unavailability surfaces as 502"
+    );
     assert!(retryable);
 }
 

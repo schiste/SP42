@@ -473,10 +473,10 @@ pub(crate) async fn replace_node_or_refuse(
 pub(crate) fn action_error_from_editor(error: &WikitextEditorError) -> ActionError {
     let (code, http_status, retryable) = match error {
         WikitextEditorError::Unavailable { retryable, .. } => {
-            ("editor-unavailable", None, *retryable)
+            ("editor-unavailable", Some(502), *retryable)
         }
         WikitextEditorError::MissingTarget { .. } => ("editor-missing-target", Some(404), false),
-        WikitextEditorError::NotConfigured { .. } => ("editor-not-configured", Some(501), false),
+        WikitextEditorError::NotConfigured { .. } => ("editor-not-configured", Some(400), false),
         WikitextEditorError::Unsupported { .. } => ("editor-unsupported", Some(400), false),
     };
     ActionError::Execution {

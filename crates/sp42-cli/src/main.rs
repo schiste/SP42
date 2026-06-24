@@ -590,7 +590,7 @@ fn parse_liftwing_probability(value: &str) -> Result<f32, String> {
 // ----- Read-only citation verification (PRD-0001) -----
 
 /// A reqwest-backed `HttpClient` for the CLI's **source fetch** only. It deliberately holds
-/// no inference credential: the model bearer lives solely in [`GenaiModelClient`], so an API
+/// no inference credential: the model bearer lives solely in the inference client, so an API
 /// key can never leak to a third-party source site through this client.
 struct CliHttpClient {
     client: reqwest::Client,

@@ -80,6 +80,7 @@ pub enum BlockKind {
     Paragraph,
     ListItem,
     TableCell,
+    /// Reserved for future block kinds; never produced by current implementations.
     Other,
 }
 

@@ -149,7 +149,7 @@ mod extract_tests {
 
 **Step 2: Run to verify it fails**
 
-Run: `PATH="$HOME/.cargo/bin:$PATH" cargo test -p sp42-server extracts_blocks_with_section_refs_and_urls -- --exact`
+Run: `PATH="$HOME/.cargo/bin:$PATH" cargo test -p sp42-server parsoid_editor::extract_tests::extracts_blocks_with_section_refs_and_urls`
 Expected: FAIL (`blocks_from_revision` not yet defined).
 
 **Step 3: Implement the DOM walk**
@@ -346,7 +346,7 @@ Executor notes:
 
 **Step 4: Run the fixture test**
 
-Run: `PATH="$HOME/.cargo/bin:$PATH" cargo test -p sp42-server extracts_blocks_with_section_refs_and_urls -- --exact`
+Run: `PATH="$HOME/.cargo/bin:$PATH" cargo test -p sp42-server parsoid_editor::extract_tests::extracts_blocks_with_section_refs_and_urls`
 Expected: PASS. If it fails on a parsoid API mismatch, fix the method names per the doc survey and re-run.
 
 **Step 5: clippy, fmt, commit**

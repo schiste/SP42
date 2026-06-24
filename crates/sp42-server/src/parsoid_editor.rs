@@ -384,6 +384,8 @@ fn collect_block(
 ) {
     for child in node.children() {
         if let Some(ref_link) = child.as_reference_link() {
+            // Empty reference_id simply misses the ref_urls map, yielding empty
+            // source_urls for a parse-failed ref, without aliasing refs.
             let reference_id = ref_link.reference_id().unwrap_or_default();
             let source_urls = ref_urls.get(&reference_id).cloned().unwrap_or_default();
             refs.push(BlockRef {
@@ -977,20 +979,66 @@ mod extract_tests {
         let blocks = blocks_from_revision(&fixture()).expect("blocks");
         assert!(!blocks.is_empty(), "should find prose blocks");
 
-        // At least one block has a heading stack.
-        assert!(blocks.iter().any(|b| !b.section_path.is_empty()));
-
-        // At least one ref with an extracted URL, and its offset lands within
-        // (or at the end of) the cleaned block text.
-        let with_url = blocks
+        // Specific section path from the fixture: "Etymology"
+        let etymology_block = blocks
             .iter()
-            .flat_map(|b| b.refs.iter().map(move |r| (b, r)))
-            .find(|(_, r)| !r.source_urls.is_empty())
-            .expect("a ref with a URL");
-        let (block, r) = with_url;
-        assert!(r.offset <= block.text.len(), "offset within text bounds");
+            .find(|b| b.section_path.contains(&"Etymology".to_string()))
+            .expect("should find Etymology block");
+        assert_eq!(etymology_block.section_path, vec!["Etymology"]);
 
-        // Markers are stripped: the cleaned text should not contain "[1]"-style
-        // bracketed cue if the fixture used them (skip if not applicable).
+        // The Etymology block contains the fixture text (ends with
+        // "Felis catus" and "differ") minus the bracketed ref markers
+        assert!(
+            etymology_block.text.contains("Felis catus"),
+            "block text should contain 'Felis catus'"
+        );
+        assert!(
+            etymology_block.text.contains("differ"),
+            "block text should contain 'differ'"
+        );
+        // Verify markers [1] and [2] are NOT in the text (they're stripped)
+        assert!(
+            !etymology_block.text.contains("[1]"),
+            "marker [1] should be stripped from text"
+        );
+        assert!(
+            !etymology_block.text.contains("[2]"),
+            "marker [2] should be stripped from text"
+        );
+
+        // The Etymology block has exactly 2 refs (from the fixture)
+        assert_eq!(
+            etymology_block.refs.len(),
+            2,
+            "Etymology block should have 2 refs"
+        );
+
+        // First ref: cite-template with URL https://example.com/cat-origins
+        let cite_ref = &etymology_block.refs[0];
+        assert_eq!(cite_ref.ref_id, "cite_ref-ety_1-0");
+        assert_eq!(cite_ref.source_urls.len(), 1);
+        assert_eq!(
+            cite_ref.source_urls[0].as_str(),
+            "https://example.com/cat-origins"
+        );
+        // Offset should be at the position of "Felis catus" (roughly where [1] was)
+        assert!(
+            cite_ref.offset > 0 && cite_ref.offset < etymology_block.text.len(),
+            "cite-template ref offset should be inside text"
+        );
+
+        // Second ref: bare ExtLink with URL https://en.wikipedia.org/wiki/Etymology_of_cat
+        let extlink_ref = &etymology_block.refs[1];
+        assert_eq!(extlink_ref.ref_id, "cite_ref-orig_2-0");
+        assert_eq!(extlink_ref.source_urls.len(), 1);
+        assert_eq!(
+            extlink_ref.source_urls[0].as_str(),
+            "https://en.wikipedia.org/wiki/Etymology_of_cat",
+            "bare ExtLink URL should be extracted"
+        );
+        assert!(
+            extlink_ref.offset > 0 && extlink_ref.offset <= etymology_block.text.len(),
+            "bare-URL ref offset should be inside text bounds"
+        );
     }
 }

@@ -700,6 +700,38 @@ async fn bare_url_apply_route_requires_a_session() {
     assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
 }
 
+#[tokio::test]
+async fn verify_page_route_is_registered() {
+    // Ensure inference env is absent so we hit the 503 wiring check deterministically.
+    unsafe {
+        std::env::remove_var("SP42_INFERENCE_MODELS");
+        std::env::remove_var("SP42_INFERENCE_URL");
+    }
+    let router = build_router(test_state());
+    let response = router
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/dev/citation/verify-page")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::json!({
+                        "wiki_id": "frwiki",
+                        "title": "Exemple",
+                        "rev_id": 42
+                    })
+                    .to_string(),
+                ))
+                .expect("request should build"),
+        )
+        .await
+        .expect("request should complete");
+
+    // 503 (no inference configured) proves the route is registered and reached
+    // the inference-wiring step — not a 404 or 405. The route exists and is routable.
+    assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+}
+
 #[test]
 fn vps_session_cookie_is_secure() {
     let mut state = test_state();

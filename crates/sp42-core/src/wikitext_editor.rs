@@ -93,7 +93,7 @@ pub struct BlockRef {
     pub ref_id: String,
     /// Source URL(s) read from the ref's structured `data-mw` cite-template
     /// params (`url=`, `archive-url=`) via the parsoid crate; for a bare-URL
-    /// ref with no template, from the structured ExtLink node. Empty ⇒ a
+    /// ref with no template, from the structured `ExtLink` node. Empty ⇒ a
     /// non-URL ref (book/ISBN) that the core records as skipped.
     pub source_urls: Vec<url::Url>,
     /// Rendered text of the marker (e.g. `"[3]"`), for provenance.

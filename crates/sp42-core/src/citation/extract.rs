@@ -1,8 +1,6 @@
 //! Article-level claim↔ref extraction: turning the editor's `ParsoidBlock`
 //! intermediate into per-use-site verification inputs. Pure, no DOM, no I/O.
 
-#[allow(unused_imports)]
-use crate::citation::page::PageVerificationRequest;
 use crate::citation::prompts::ClaimContext;
 use crate::citation::verify::CitationVerificationRequest;
 

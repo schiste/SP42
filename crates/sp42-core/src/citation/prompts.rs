@@ -198,7 +198,7 @@ fn context_section(context: &ClaimContext) -> String {
         }
     }
     format!(
-        "CLAIM CONTEXT (for interpreting the claim only — DO NOT quote from here; your supporting quote MUST come verbatim from the SOURCE text below):\n{}\n\n",
+        "CLAIM CONTEXT — BACKGROUND ONLY. Use this solely to resolve references and pronouns in the CLAIM (what its names, dates, and \"it\"/\"he\"/\"there\" refer to). It is NOT part of the claim and NOT a source. Do NOT verify it, DO NOT quote from it (your supporting quote MUST come verbatim from the SOURCE text below), and do NOT let it widen the claim or make you hedge. Judge the CLAIM against the SOURCE exactly as if the claim were already self-contained:\n{}\n\n",
         lines.join("\n")
     )
 }

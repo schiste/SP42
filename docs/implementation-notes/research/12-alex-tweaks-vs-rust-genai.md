@@ -1,3 +1,35 @@
+# Research: alex/wikiharness model-call tweaks vs. rust-genai coverage
+
+> **Reconciliation (2026-06-23) — read first.**
+>
+> **Part C's recommendation (a hand-rolled thin OpenAI-compatible adapter) is
+> SUPERSEDED by [ADR-0006](../../adr/0006-using-llms.md) Decision 7, which adopts
+> `rust-genai` as the concrete `ModelClient` backend.** That decision is implemented:
+> `crates/sp42-cli` pins `genai = "=0.6.5"` and wires it behind the provider-agnostic
+> `ModelClient` trait (`crates/sp42-types/src/model.rs`), in a CLI-only shell that keeps
+> the vendor dependency out of `sp42-core`.
+>
+> Parts A and B remain accurate and useful — the tweak inventory (Part A) and the
+> per-tweak `rust-genai` coverage map (Part B) are exactly the evidence ADR-0006 leaned
+> on. Only the Part C *verdict* changed, and it changed deliberately:
+>
+> - **Why genai won despite this note's verdict.** This note optimized for a narrow
+>   OpenAI-compatible scope and minimal deps. ADR-0006 instead weighted (1) native
+>   multi-provider reach (OpenAI-compatible gateways **plus** Gemini/Claude/OpenRouter)
+>   so v1 is not locked to one wire shape, and (2) the sponsor-proxy shape out of the box
+>   (pluggable per-request auth + custom endpoint + arbitrary headers). Part B confirms
+>   genai covers both fully. The dependency/churn cost this note raised is real but
+>   *contained*: the dep is **version-pinned** and **shell-only** (never in a domain
+>   crate), and because the `ModelClient` trait *is* the boundary, the backend stays
+>   swappable — if genai's pre-1.0 churn ever bites, it is replaced in one adapter file
+>   without touching feature code. The hand-rolled adapter this note recommends remains
+>   the documented fallback, not a pending action.
+>
+> The original Part C verdict is retained below verbatim as the research trail; treat it
+> as historical, not as current guidance. (Follow-up from PR #38 review, issue #45.)
+
+---
+
 # Part A: Tweaks/Hacks in alex-cite-checker & wikiharness Model Calls
 
 ## Summary Table: ALL Provider-Specific Tweaks
@@ -231,6 +263,10 @@ let mut config = ClientConfig::default()
 ---
 
 ## Recommendation
+
+> **⚠ SUPERSEDED by [ADR-0006](../../adr/0006-using-llms.md) Decision 7 (2026-06-23).**
+> SP42 adopted `rust-genai`, not a hand-rolled adapter. See the reconciliation banner at
+> the top of this note for the rationale. The verdict below is historical.
 
 ### **(c) HAND-ROLLED THIN ADAPTER (over rust-genai)**
 

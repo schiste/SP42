@@ -1,5 +1,19 @@
 # Research: Rust OpenAI-Compatible HTTP Client Options & Build-vs-Buy for SP42
 
+> **Reconciliation (2026-06-23) — read first.**
+>
+> **This note's build-vs-buy verdict (a hand-rolled ~100-line adapter) is SUPERSEDED by
+> [ADR-0006](../../adr/0006-using-llms.md) Decision 7, which adopts `rust-genai` as the
+> concrete `ModelClient` backend** — implemented in `crates/sp42-cli` (`genai = "=0.6.5"`,
+> pinned, CLI-shell only) behind the provider-agnostic `ModelClient` trait
+> (`crates/sp42-types/src/model.rs`). ADR-0006 weighted native multi-provider reach and
+> the sponsor-proxy shape over this note's narrow single-shape framing; it contains the
+> dependency cost by version-pinning and shell isolation, with the `ModelClient` trait as
+> the swap point. The fuller side-by-side and the deciding rationale live in
+> [note 12](./12-alex-tweaks-vs-rust-genai.md) (which note also reconciles its own,
+> opposite, verdict) and ADR-0006 itself. The body below is retained as the research
+> trail; treat its recommendation as historical. (Issue #45 / PR #38 follow-up.)
+
 ## Executive Summary
 
 For SP42's first cut (single OpenAI-compatible chat-completions endpoint behind a sponsor proxy), a **hand-rolled ~100-line adapter over reqwest is the recommended approach**. The reasoning: minimal first-cut shape (one request/response type), strong existing dependencies (reqwest+serde already in use), and clear abstraction boundary. Adopt a third-party multi-provider crate only when a real second provider or shape emerges.

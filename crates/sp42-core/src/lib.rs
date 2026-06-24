@@ -85,14 +85,13 @@ pub use citation::extract::{
     BlockFailure, CitationUseSite, ExtractOutcome, SkippedReason, SkippedRef,
 };
 pub use citation::locate_quote::{FuzzyLocate, locate_quote, locate_quote_fuzzy};
-pub use citation::page::{
-    PageVerificationReport, PageVerificationRequest, PageVerificationStats,
-};
+pub use citation::page::{PageVerificationReport, PageVerificationRequest, PageVerificationStats};
 pub use citation::parsing::{
     ParsedVerdict, canonicalize_verdict, parse_repair_response, parse_verdict_response,
 };
 pub use citation::prompts::ClaimContext;
 pub use citation::prompts::{build_repair_prompt, build_verify_prompt};
+pub use citation::segment::{Sentence, segment_sentences};
 pub use citation::source_fetch::{html_to_text, looks_like_html, recover_wayback_body};
 pub use citation::storage::{
     SnapshotEnvelope, VerdictEnvelope, build_snapshot, build_verdict_envelope, load_snapshot,

@@ -52,8 +52,7 @@ mod tests {
             stats: PageVerificationStats::default(),
         };
         let json = serde_json::to_string(&report).expect("serialize");
-        let back: PageVerificationReport =
-            serde_json::from_str(&json).expect("deserialize");
+        let back: PageVerificationReport = serde_json::from_str(&json).expect("deserialize");
         assert_eq!(report, back);
     }
 }

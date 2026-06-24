@@ -108,3 +108,64 @@ impl HttpClient for BearerHttpClient {
         })
     }
 }
+
+/// Minimal `HttpClient` wrapper around a `reqwest::Client` for read-only source fetches
+/// (no bearer auth, no special header handling).
+#[derive(Clone)]
+#[allow(dead_code)]
+pub(crate) struct PlainHttpClient {
+    client: reqwest::Client,
+}
+
+impl PlainHttpClient {
+    #[allow(dead_code)]
+    pub(crate) fn new(client: reqwest::Client) -> Self {
+        Self { client }
+    }
+}
+
+#[async_trait]
+impl HttpClient for PlainHttpClient {
+    async fn execute(&self, request: HttpRequest) -> Result<HttpResponse, HttpClientError> {
+        let mut builder = match request.method {
+            HttpMethod::Get => self.client.get(request.url),
+            HttpMethod::Post => self.client.post(request.url),
+            HttpMethod::Put => self.client.put(request.url),
+            HttpMethod::Patch => self.client.patch(request.url),
+            HttpMethod::Delete => self.client.delete(request.url),
+        };
+
+        for (key, value) in request.headers {
+            builder = builder.header(&key, &value);
+        }
+
+        let response = if request.body.is_empty() {
+            builder.send().await
+        } else {
+            builder.body(request.body).send().await
+        }
+        .map_err(|error| HttpClientError::Transport {
+            message: error.to_string(),
+        })?;
+
+        let status = response.status().as_u16();
+        let mut headers = HashMap::new();
+        for (key, value) in response.headers() {
+            if let Ok(value) = value.to_str() {
+                headers.insert(key.to_string(), value.to_string());
+            }
+        }
+        let body = response
+            .bytes()
+            .await
+            .map_err(|error| HttpClientError::InvalidResponse {
+                message: error.to_string(),
+            })?;
+
+        Ok(HttpResponse {
+            status,
+            headers: headers.into_iter().collect(),
+            body: body.to_vec(),
+        })
+    }
+}

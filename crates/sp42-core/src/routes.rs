@@ -80,6 +80,7 @@ pub const DEV_ACTION_STATUS_PATH: &str = "/dev/actions/status";
 pub const DEV_ACTION_HISTORY_PATH: &str = "/dev/actions/history";
 pub const DEV_CITATION_BARE_URL_PROPOSALS_PATH: &str = "/dev/citation/bare-url-proposals";
 pub const DEV_CITATION_BARE_URL_APPLY_PATH: &str = "/dev/citation/bare-url-apply";
+pub const DEV_CITATION_VERIFY_PAGE_PATH: &str = "/dev/citation/verify-page";
 
 /// Header carrying the bridge session's CSRF token on state-changing routes.
 pub const CSRF_HEADER_NAME: &str = "x-sp42-csrf-token";

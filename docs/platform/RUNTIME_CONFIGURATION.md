@@ -88,4 +88,4 @@ README.
 ## Desktop Runtime
 
 Desktop-specific sidecar and remote-backend settings live in
-[docs/DESKTOP_DISTRIBUTION.md](DESKTOP_DISTRIBUTION.md).
+[docs/platform/DESKTOP_DISTRIBUTION.md](DESKTOP_DISTRIBUTION.md).

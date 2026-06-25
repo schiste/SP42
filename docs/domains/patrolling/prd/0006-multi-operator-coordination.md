@@ -27,7 +27,7 @@ deliberately excludes the *mechanism* that carries that picture:
   it. There is **no coordination ADR**: the coordination contract (the message
   kinds, the relay/fan-out semantics, the shared room-state reducer, and the
   REST inspection surface) is a public-contract concern that, per
-  `docs/prd/README.md`, warrants its own ADR, but none exists yet — tracked in #21.
+  `docs/process/prd-protocol.md`, warrants its own ADR, but none exists yet — tracked in #21.
 - **What a relayed action, score, or flag *means*** is owned by its sibling PRD,
   not here. The dispositions whose on-wiki meaning coordination relays are
   **PRD-0004**; the scoring/flag semantics of a relayed score delta or flagged
@@ -245,5 +245,5 @@ Factual observations from reverse-engineering the shipped code; these replace
   with no length bound; no test guards reason growth.
 - **Toolforge WebSocket support is an open hosting question.** ADR-0001 §5 flags
   that persistent WebSocket support on Toolforge is unverified, with a VPS
-  fallback (`docs/adr/0001-foundational-decisions.md:47`). The relay is tested
+  fallback (`docs/platform/adr/0001-foundational-decisions.md:47`). The relay is tested
   against an in-process axum server, not a real deployment target.

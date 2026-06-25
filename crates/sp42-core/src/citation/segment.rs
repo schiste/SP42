@@ -101,8 +101,17 @@ fn is_boundary(text: &str, dot: usize, end: usize) -> bool {
         // Look at text ending at dot+1 and see if any abbreviation matches at the end.
         let head = &text[..=dot];
 
-        // Check abbreviations that end at this dot
-        if ABBREVIATIONS.iter().any(|abbr| head.ends_with(abbr)) {
+        // Check abbreviations that end at this dot. The abbreviation must be a
+        // standalone token, not merely a suffix of the preceding word: "public."
+        // ends with "c." and "final." with "al.", but those are sentence ends, not
+        // abbreviations. Require the char before the match to be a word boundary.
+        if ABBREVIATIONS.iter().any(|abbr| {
+            head.ends_with(abbr)
+                && head[..head.len() - abbr.len()]
+                    .chars()
+                    .next_back()
+                    .is_none_or(|prev| !prev.is_alphanumeric())
+        }) {
             return false;
         }
 
@@ -298,5 +307,40 @@ mod tests {
         for s in &sentences {
             assert_eq!(&input[s.range.clone()], s.text);
         }
+    }
+
+    #[test]
+    fn word_ending_in_abbreviation_letters_is_not_an_abbreviation() {
+        // "public." ends with "c.", "final." ends with "al.", "shop." ends with
+        // "p." — all real abbreviations, but only as standalone tokens. A plain
+        // `ends_with` check wrongly treats the word suffix as the abbreviation,
+        // suppresses the boundary, and merges the next sentence — so a citation
+        // after the first sentence gets verified against a widened claim.
+        assert_eq!(
+            texts("The data is public. The source is cited."),
+            vec!["The data is public.", "The source is cited."]
+        );
+        assert_eq!(
+            texts("This was the final. Results followed."),
+            vec!["This was the final.", "Results followed."]
+        );
+        assert_eq!(
+            texts("They opened a shop. It thrived."),
+            vec!["They opened a shop.", "It thrived."]
+        );
+    }
+
+    #[test]
+    fn token_bound_abbreviations_still_suppress_boundaries() {
+        // The fix must not regress genuine abbreviation tokens, where the
+        // abbreviation is preceded by a word boundary.
+        assert_eq!(
+            texts("Born ca. 1500, he traveled widely. He died young."),
+            vec!["Born ca. 1500, he traveled widely.", "He died young."]
+        );
+        assert_eq!(
+            texts("See e.g. the appendix. It has details."),
+            vec!["See e.g. the appendix.", "It has details."]
+        );
     }
 }

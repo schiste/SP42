@@ -128,8 +128,9 @@ pub(crate) struct PlainHttpClient {
     allow_private: bool,
 }
 
-/// Basic source-response size cap, checked against `Content-Length`. Streaming enforcement
-/// (for chunked responses with no length) is deferred to the SP42#34 fetch-edge ADR.
+/// Source-response size cap. Enforced against `Content-Length` (a fast pre-read
+/// reject) and again while streaming the body, so a chunked / length-less response
+/// cannot exceed it (SP42#34 fetch edge).
 const MAX_SOURCE_BYTES: u64 = 8 * 1024 * 1024;
 
 impl PlainHttpClient {
@@ -139,6 +140,16 @@ impl PlainHttpClient {
         let client = guarded_source_client(allow_private)?;
         Ok(Self {
             client,
+            allow_private,
+        })
+    }
+
+    /// Construct with an explicit `allow_private`, bypassing the env-var lookup so a
+    /// test can fetch a loopback server without mutating shared process env.
+    #[cfg(test)]
+    pub(crate) fn with_allow_private(allow_private: bool) -> Result<Self, String> {
+        Ok(Self {
+            client: guarded_source_client(allow_private)?,
             allow_private,
         })
     }
@@ -165,7 +176,7 @@ impl HttpClient for PlainHttpClient {
             builder = builder.header(key, value);
         }
 
-        let response = builder
+        let mut response = builder
             .send()
             .await
             .map_err(|error| HttpClientError::Transport {
@@ -194,13 +205,31 @@ impl HttpClient for PlainHttpClient {
                     .map(|value| (name.as_str().to_lowercase(), value.to_string()))
             })
             .collect();
-        let body = response
-            .bytes()
-            .await
-            .map_err(|error| HttpClientError::Transport {
-                message: error.to_string(),
-            })?
-            .to_vec();
+
+        // Enforce MAX_SOURCE_BYTES while streaming. A chunked / Content-Length-less
+        // response slips past the header check above, so without this an
+        // attacker-influenced source URL could buffer an unbounded body into memory
+        // (worse under verify-page's concurrent fetches). Fail as soon as the
+        // accumulated body would exceed the cap.
+        let cap = usize::try_from(MAX_SOURCE_BYTES).unwrap_or(usize::MAX);
+        let mut body = Vec::new();
+        while let Some(chunk) =
+            response
+                .chunk()
+                .await
+                .map_err(|error| HttpClientError::Transport {
+                    message: error.to_string(),
+                })?
+        {
+            if body.len() + chunk.len() > cap {
+                return Err(HttpClientError::Transport {
+                    message: format!(
+                        "source response exceeds {MAX_SOURCE_BYTES}-byte cap (streamed)"
+                    ),
+                });
+            }
+            body.extend_from_slice(&chunk);
+        }
 
         Ok(HttpResponse {
             status,

@@ -873,6 +873,66 @@ async fn plain_http_client_rejects_loopback_urls() {
     );
 }
 
+#[tokio::test]
+async fn plain_http_client_caps_chunked_response_without_content_length() {
+    // verify-page fetches attacker-influenced citation URLs. A response with no
+    // Content-Length (chunked) skips the header size pre-check, so the cap must be
+    // enforced while streaming or a large/chunked body exhausts memory despite
+    // MAX_SOURCE_BYTES. Serve > 8 MiB chunked with no Content-Length and assert
+    // the fetch is refused.
+    use crate::runtime_adapters::PlainHttpClient;
+    use sp42_types::{HttpClient, HttpRequest};
+    use std::collections::BTreeMap;
+    use std::io::{Read, Write};
+    use url::Url;
+
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind test server");
+    let addr = listener.local_addr().expect("local addr");
+    let server = std::thread::spawn(move || {
+        if let Ok((mut stream, _)) = listener.accept() {
+            // Drain the request headers so the client can finish sending.
+            let mut buf = [0u8; 1024];
+            let _ = stream.read(&mut buf);
+            // Chunked response, deliberately no Content-Length header.
+            let _ = stream.write_all(
+                b"HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nTransfer-Encoding: chunked\r\n\r\n",
+            );
+            let chunk = vec![b'a'; 64 * 1024];
+            let chunk_header = format!("{:x}\r\n", chunk.len());
+            // 160 * 64 KiB = 10 MiB, past the 8 MiB cap. Stop early on broken pipe
+            // once the client aborts the read.
+            for _ in 0..160 {
+                if stream.write_all(chunk_header.as_bytes()).is_err()
+                    || stream.write_all(&chunk).is_err()
+                    || stream.write_all(b"\r\n").is_err()
+                {
+                    break;
+                }
+            }
+            let _ = stream.write_all(b"0\r\n\r\n");
+        }
+    });
+
+    let client =
+        PlainHttpClient::with_allow_private(true).expect("client should build for loopback test");
+    let request = HttpRequest {
+        url: Url::parse(&format!("http://{addr}/")).expect("valid URL"),
+        method: sp42_types::HttpMethod::Get,
+        headers: BTreeMap::new(),
+        body: vec![],
+    };
+
+    let result = client.execute(request).await;
+    let _ = server.join();
+
+    let error = result.expect_err("oversized chunked body must be refused");
+    let message = format!("{error:?}");
+    assert!(
+        message.contains("cap"),
+        "error should report the size cap, got: {message}"
+    );
+}
+
 #[test]
 fn vps_session_cookie_is_secure() {
     let mut state = test_state();

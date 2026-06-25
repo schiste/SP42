@@ -3098,6 +3098,7 @@ dependencies = [
  "sp42-reporting",
  "sp42-types",
  "tokio",
+ "url",
 ]
 
 [[package]]

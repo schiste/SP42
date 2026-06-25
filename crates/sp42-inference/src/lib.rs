@@ -9,7 +9,7 @@ use genai::Client;
 use genai::adapter::AdapterKind;
 use genai::chat::{ChatMessage as GenaiChatMessage, ChatOptions, ChatRequest};
 use genai::resolver::{AuthData, Endpoint};
-use genai::{ModelIden, ServiceTarget};
+use genai::{Headers, ModelIden, ServiceTarget};
 use sp42_types::{
     ChatRole, EndpointMode, ModelClient, ModelClientError, ModelCompletion, ModelCompletionRequest,
     ModelEndpointConfig, ModelRef, SamplingParams,
@@ -59,7 +59,7 @@ impl ModelClient for GenaiModelClient {
 
         let target = ServiceTarget {
             endpoint: Endpoint::from_owned(normalize_base_url(&self.endpoint.base_url)),
-            auth: AuthData::from_single(self.endpoint.auth_token.clone().unwrap_or_default()),
+            auth: genai_auth_for(&self.endpoint),
             model: ModelIden::new(AdapterKind::OpenAI, request.model.model.clone()),
         };
         let options = genai_chat_options(&request.params, self.endpoint.capability_tag.as_deref());
@@ -116,6 +116,46 @@ fn normalize_base_url(raw: &str) -> String {
     let trimmed = raw.trim_end_matches('/');
     let base = trimmed.strip_suffix("/chat/completions").unwrap_or(trimmed);
     format!("{base}/")
+}
+
+/// The full OpenAI-compatible chat-completions URL `genai` would POST to, rebuilt here so the
+/// tokenless [`genai_auth_for`] `RequestOverride` path (which bypasses genai's URL build)
+/// targets the same endpoint. Mirrors genai's `base.join("chat/completions")` over our
+/// normalized base (which already carries the single trailing slash that join requires).
+fn chat_completions_url(base_url: &str) -> String {
+    format!("{}chat/completions", normalize_base_url(base_url))
+}
+
+/// Build the `genai` `AuthData` for an endpoint, sending **no** `Authorization` header when
+/// no token is configured (SP42#44).
+///
+/// With a (non-empty) token we use the standard `Authorization: Bearer <token>` path. Without
+/// one we cannot simply pass an empty key: `genai` 0.6.5's `OpenAI` chat adapter always emits
+/// `Authorization: Bearer {key}` built from the `ServiceTarget` key, so an absent token would
+/// otherwise become a literal `Authorization: Bearer ` — which breaks local model servers and
+/// sponsor proxies that expect a truly tokenless request. `AuthData::None` is not a way out:
+/// it errors inside genai's `get_api_key` before any header is built. The only header-less
+/// path is `AuthData::RequestOverride`, which replaces the request URL **and** headers
+/// wholesale; we therefore rebuild the chat URL ([`chat_completions_url`]) and re-attach the
+/// capability tag here, because the override also bypasses genai's URL construction and the
+/// `ChatOptions::extra_headers` merge that normally carries it.
+fn genai_auth_for(endpoint: &ModelEndpointConfig) -> AuthData {
+    if let Some(token) = endpoint
+        .auth_token
+        .as_deref()
+        .filter(|token| !token.is_empty())
+    {
+        AuthData::from_single(token.to_string())
+    } else {
+        let mut headers: Vec<(String, String)> = Vec::new();
+        if let Some(tag) = endpoint.capability_tag.as_deref() {
+            headers.push((CAPABILITY_TAG_HEADER.to_string(), tag.to_string()));
+        }
+        AuthData::RequestOverride {
+            url: chat_completions_url(&endpoint.base_url),
+            headers: Headers::from(headers),
+        }
+    }
 }
 
 /// Parse the optional `SP42_INFERENCE_MODE` env value. Defaults to `local`; the mode is
@@ -471,6 +511,69 @@ mod tests {
         assert!(
             redirect_host_allowed(&Url::parse("http://localhost./").expect("valid URL"), true),
             "localhost. should be allowed with allow_private=true"
+        );
+    }
+
+    fn endpoint_config(
+        auth_token: Option<&str>,
+        capability_tag: Option<&str>,
+    ) -> ModelEndpointConfig {
+        ModelEndpointConfig {
+            mode: EndpointMode::Local,
+            base_url: "http://localhost:11434/v1".to_string(),
+            auth_token: auth_token.map(ToString::to_string),
+            capability_tag: capability_tag.map(ToString::to_string),
+        }
+    }
+
+    #[test]
+    fn genai_auth_for_uses_bearer_key_when_token_present() {
+        let auth = genai_auth_for(&endpoint_config(Some("secret-token"), None));
+        // A present token must keep the standard `Authorization: Bearer <token>` path.
+        assert!(matches!(auth, AuthData::Key(_)));
+        assert_eq!(
+            auth.single_key_value().ok().as_deref(),
+            Some("secret-token")
+        );
+    }
+
+    #[test]
+    fn genai_auth_for_sends_no_authorization_header_when_token_absent() {
+        // genai 0.6.5 always emits `Authorization: Bearer {key}` from a ServiceTarget key, so
+        // a tokenless endpoint must use `RequestOverride` to omit the header entirely (#44).
+        let auth = genai_auth_for(&endpoint_config(None, None));
+        let AuthData::RequestOverride { url, headers } = auth else {
+            panic!("tokenless endpoint must use RequestOverride, got {auth:?}");
+        };
+        assert_eq!(url, "http://localhost:11434/v1/chat/completions");
+        assert!(
+            !headers
+                .iter()
+                .any(|(name, _)| name.eq_ignore_ascii_case("authorization")),
+            "no Authorization header without a token"
+        );
+    }
+
+    #[test]
+    fn genai_auth_for_treats_an_empty_token_as_absent() {
+        // `SP42_INFERENCE_TOKEN=` (set but empty) must not become `Authorization: Bearer `.
+        let auth = genai_auth_for(&endpoint_config(Some(""), None));
+        assert!(matches!(auth, AuthData::RequestOverride { .. }));
+    }
+
+    #[test]
+    fn genai_auth_for_carries_capability_tag_in_override_headers() {
+        // RequestOverride replaces all headers, so the capability tag must ride here, not via
+        // the (discarded) ChatOptions extra_headers.
+        let auth = genai_auth_for(&endpoint_config(None, Some("citation-verify")));
+        let AuthData::RequestOverride { headers, .. } = auth else {
+            panic!("expected RequestOverride");
+        };
+        assert!(
+            headers
+                .iter()
+                .any(|(name, value)| name.as_str() == CAPABILITY_TAG_HEADER
+                    && value.as_str() == "citation-verify")
         );
     }
 }

@@ -1,6 +1,7 @@
 use std::convert::TryFrom;
 use std::io::{self, Read};
 use std::process::ExitCode;
+use std::time::Duration;
 
 use async_trait::async_trait;
 use futures::executor::block_on;
@@ -585,44 +586,83 @@ struct CliHttpClient {
     /// Allow loopback/private source hosts — a dev/test escape hatch for the loopback-serving
     /// benchmark harness (`SP42_FETCH_ALLOW_PRIVATE=1`). Off by default (SP42#34 SSRF floor).
     allow_private: bool,
+    /// Source-response body cap, enforced both against `Content-Length` and while streaming
+    /// (SP42#43). Production uses [`MAX_SOURCE_BYTES`]; tests inject a small value.
+    max_source_bytes: u64,
 }
 
-/// Basic source-response size cap, checked against `Content-Length`. Streaming enforcement
-/// (for chunked responses with no length) is deferred to the SP42#34 fetch-edge ADR.
+/// Source-response size cap (SP42#43): enforced against `Content-Length` *and* while reading
+/// the body stream, so a chunked / no-length response can't return an unbounded body.
 const MAX_SOURCE_BYTES: u64 = 8 * 1024 * 1024;
+
+/// How many redirect hops a source fetch will follow. Each hop's destination is re-checked
+/// against the SSRF floor before it is fetched (SP42#43).
+const MAX_SOURCE_REDIRECTS: u8 = 5;
 
 #[async_trait]
 impl HttpClient for CliHttpClient {
     async fn execute(&self, request: HttpRequest) -> Result<HttpResponse, HttpClientError> {
-        // SSRF floor (SP42#34): refuse a non-http(s) / loopback / private / link-local source
-        // host unless the dev/test escape hatch is set.
-        if !self.allow_private {
-            check_fetchable_source_url(&request.url)
-                .map_err(|message| HttpClientError::Transport { message })?;
-        }
         // Read-only source fetch: GET only.
         let HttpMethod::Get = request.method else {
             return Err(HttpClientError::Transport {
                 message: format!("source fetch only allows GET, got {:?}", request.method),
             });
         };
-        let mut builder = self.client.get(request.url.clone());
-        for (key, value) in request.headers {
-            builder = builder.header(&key, value);
-        }
-        let response = builder
-            .send()
-            .await
-            .map_err(|error| HttpClientError::Transport {
-                message: error.to_string(),
-            })?;
+        // Redirects are NOT auto-followed (the client uses `Policy::none()`); we follow them
+        // manually so every hop's destination passes the SSRF floor before we connect — a
+        // public-looking host must not be able to bounce us to loopback/private infrastructure.
+        let mut url = request.url.clone();
+        let mut redirects_left = MAX_SOURCE_REDIRECTS;
+        let mut response = loop {
+            // SSRF floor (SP42#34): refuse a non-http(s) / loopback / private / link-local host
+            // — on the initial URL and on every redirect destination — unless the escape hatch
+            // is set.
+            if !self.allow_private {
+                check_fetchable_source_url(&url)
+                    .map_err(|message| HttpClientError::Transport { message })?;
+            }
+            let mut builder = self.client.get(url.clone());
+            for (key, value) in &request.headers {
+                builder = builder.header(key, value);
+            }
+            let response = builder
+                .send()
+                .await
+                .map_err(|error| HttpClientError::Transport {
+                    message: error.to_string(),
+                })?;
+            if !response.status().is_redirection() {
+                break response;
+            }
+            let location =
+                redirect_location(&response).ok_or_else(|| HttpClientError::Transport {
+                    message: format!(
+                        "source redirect {} had no usable Location header",
+                        response.status().as_u16()
+                    ),
+                })?;
+            let next = url
+                .join(&location)
+                .map_err(|error| HttpClientError::Transport {
+                    message: format!("invalid redirect Location {location:?}: {error}"),
+                })?;
+            if redirects_left == 0 {
+                return Err(HttpClientError::Transport {
+                    message: format!("source fetch exceeded {MAX_SOURCE_REDIRECTS} redirects"),
+                });
+            }
+            redirects_left -= 1;
+            url = next;
+        };
+        // Fast-reject an honestly-declared oversized body before reading any of it.
         if response
             .content_length()
-            .is_some_and(|len| len > MAX_SOURCE_BYTES)
+            .is_some_and(|len| len > self.max_source_bytes)
         {
             return Err(HttpClientError::Transport {
                 message: format!(
-                    "source response exceeds {MAX_SOURCE_BYTES}-byte cap (Content-Length)"
+                    "source response exceeds {}-byte cap (Content-Length)",
+                    self.max_source_bytes
                 ),
             });
         }
@@ -637,19 +677,43 @@ impl HttpClient for CliHttpClient {
                     .map(|value| (name.as_str().to_lowercase(), value.to_string()))
             })
             .collect();
-        let body = response
-            .bytes()
-            .await
-            .map_err(|error| HttpClientError::Transport {
-                message: error.to_string(),
-            })?
-            .to_vec();
+        // Stream the body so a chunked / no-`Content-Length` response is capped too: stop as
+        // soon as the accumulated bytes would exceed the cap.
+        let mut body: Vec<u8> = Vec::new();
+        while let Some(chunk) =
+            response
+                .chunk()
+                .await
+                .map_err(|error| HttpClientError::Transport {
+                    message: error.to_string(),
+                })?
+        {
+            if body.len() as u64 + chunk.len() as u64 > self.max_source_bytes {
+                return Err(HttpClientError::Transport {
+                    message: format!(
+                        "source response exceeds {}-byte cap (streamed)",
+                        self.max_source_bytes
+                    ),
+                });
+            }
+            body.extend_from_slice(&chunk);
+        }
         Ok(HttpResponse {
             status,
             headers,
             body,
         })
     }
+}
+
+/// The `Location` header of a redirect response as a string, if present and valid UTF-8.
+fn redirect_location(response: &reqwest::Response) -> Option<String> {
+    response
+        .headers()
+        .get(reqwest::header::LOCATION)?
+        .to_str()
+        .ok()
+        .map(ToString::to_string)
 }
 
 /// Run the offline locate probe: report whether `quote` locates verbatim in `source` using
@@ -727,13 +791,20 @@ async fn run_verify(options: &VerifyCliOptions) -> Result<VerificationOutcome, S
     };
 
     // The source-fetch client carries no inference credential; the bearer is held only by
-    // the model adapter, so it can never reach a third-party source host.
-    // Uses a guarded client with per-hop SSRF validation (SP42#34).
+    // the model adapter, so it can never reach a third-party source host. Redirects are not
+    // auto-followed; `CliHttpClient::execute` follows them manually and re-checks every hop
+    // against the SSRF floor before connecting (SP42#34/#43).
     let allow_private = std::env::var("SP42_FETCH_ALLOW_PRIVATE").is_ok_and(|value| value == "1");
     let fetch_client = CliHttpClient {
-        client: sp42_inference::guarded_source_client(allow_private)
+        client: reqwest::Client::builder()
+            .user_agent(sp42_core::branding::USER_AGENT)
+            .connect_timeout(Duration::from_secs(10))
+            .timeout(Duration::from_secs(30))
+            .redirect(reqwest::redirect::Policy::none())
+            .build()
             .map_err(|error| format!("source http client failed to build: {error}"))?,
         allow_private,
+        max_source_bytes: MAX_SOURCE_BYTES,
     };
 
     let verify_options = CoreVerifyOptions {
@@ -3769,5 +3840,131 @@ mod tests {
             select_bare_url_proposal(&response, 1).expect_err("should fail for missing ordinal");
         assert!(error.contains("no bare-URL proposal for ordinal 1"));
         assert!(error.contains("declined: []"));
+    }
+}
+
+#[cfg(test)]
+mod fetch_tests {
+    use std::io::{Read, Write};
+    use std::net::SocketAddr;
+
+    use sp42_types::{HttpClient, HttpMethod, HttpRequest};
+    use url::Url;
+
+    use super::CliHttpClient;
+
+    /// Spawn a throwaway HTTP/1.1 server on loopback that replies with `response` to every
+    /// connection, returning its address. Runs on a std thread so the test needs no extra
+    /// tokio IO features.
+    fn spawn_raw_server(response: Vec<u8>) -> SocketAddr {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind loopback");
+        let addr = listener.local_addr().expect("local addr");
+        std::thread::spawn(move || {
+            for stream in listener.incoming() {
+                let Ok(mut stream) = stream else { continue };
+                let mut buf = [0u8; 2048];
+                let _ = stream.read(&mut buf); // drain the request line + headers
+                let _ = stream.write_all(&response);
+                let _ = stream.flush();
+            }
+        });
+        addr
+    }
+
+    /// A `CliHttpClient` whose `reqwest` client never auto-follows redirects and resolves
+    /// `host` to `addr`, so a floor-passing hostname can reach a loopback test server while the
+    /// SSRF floor stays active (`allow_private = false`).
+    fn client_resolving(host: &str, addr: SocketAddr, max_source_bytes: u64) -> CliHttpClient {
+        let client = reqwest::Client::builder()
+            .redirect(reqwest::redirect::Policy::none())
+            .resolve(host, addr)
+            .build()
+            .expect("build client");
+        CliHttpClient {
+            client,
+            allow_private: false,
+            max_source_bytes,
+        }
+    }
+
+    fn get(url: &str) -> HttpRequest {
+        HttpRequest {
+            method: HttpMethod::Get,
+            url: Url::parse(url).expect("valid url"),
+            headers: std::collections::BTreeMap::new(),
+            body: Vec::new(),
+        }
+    }
+
+    #[tokio::test]
+    async fn source_fetch_blocks_a_redirect_to_a_private_address() {
+        // A public-looking host that 302-redirects to loopback must be refused at the redirect
+        // hop, not followed (SP42#43).
+        let addr = spawn_raw_server(
+            b"HTTP/1.1 302 Found\r\nLocation: http://127.0.0.1:9/secret\r\nContent-Length: 0\r\n\r\n"
+                .to_vec(),
+        );
+        let client = client_resolving("source.test", addr, 8 * 1024 * 1024);
+        let error = client
+            .execute(get(&format!("http://source.test:{}/", addr.port())))
+            .await
+            .expect_err("redirect to a private address must be blocked");
+        let message = format!("{error:?}");
+        assert!(
+            message.contains("private/loopback"),
+            "expected SSRF refusal, got: {message}"
+        );
+    }
+
+    #[tokio::test]
+    async fn source_fetch_enforces_size_cap_on_chunked_response_without_content_length() {
+        // No Content-Length (chunked) means the cap must be enforced while reading the stream.
+        let addr = spawn_raw_server(
+            b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\nContent-Type: text/plain\r\n\r\n10\r\nAAAAAAAAAAAAAAAA\r\n0\r\n\r\n"
+                .to_vec(),
+        );
+        let client = client_resolving("source.test", addr, 8); // 8-byte cap, 16-byte body
+        let error = client
+            .execute(get(&format!("http://source.test:{}/", addr.port())))
+            .await
+            .expect_err("oversized chunked body must be rejected");
+        let message = format!("{error:?}");
+        assert!(
+            message.contains("cap"),
+            "expected size-cap error, got: {message}"
+        );
+    }
+
+    #[tokio::test]
+    async fn source_fetch_follows_an_allowed_redirect_and_reads_the_body() {
+        // Happy path: follow a redirect to another allowed host and stream a body under the cap.
+        let final_addr = spawn_raw_server(
+            b"HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 5\r\n\r\nhello"
+                .to_vec(),
+        );
+        let redirect_addr = spawn_raw_server(
+            format!(
+                "HTTP/1.1 301 Moved Permanently\r\nLocation: http://dest.test:{}/\r\nContent-Length: 0\r\n\r\n",
+                final_addr.port()
+            )
+            .into_bytes(),
+        );
+        let client = reqwest::Client::builder()
+            .redirect(reqwest::redirect::Policy::none())
+            .resolve("start.test", redirect_addr)
+            .resolve("dest.test", final_addr)
+            .build()
+            .expect("build client");
+        let client = CliHttpClient {
+            client,
+            allow_private: false,
+            max_source_bytes: 8 * 1024 * 1024,
+        };
+        let response = client
+            .execute(get(&format!("http://start.test:{}/", redirect_addr.port())))
+            .await
+            .expect("allowed redirect should be followed");
+        assert_eq!(response.status, 200);
+        assert_eq!(response.body, b"hello");
     }
 }

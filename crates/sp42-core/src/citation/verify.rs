@@ -39,7 +39,7 @@ use super::citoid::{
 use super::concurrency::map_with_concurrency;
 use super::locate_quote::{locate_quote, locate_quote_fuzzy};
 use super::parsing::{ParsedVerdict, parse_repair_response, parse_verdict_response};
-use super::prompts::{build_repair_prompt, build_verify_prompt};
+use super::prompts::{ClaimContext, build_repair_prompt, build_verify_prompt};
 use super::source_fetch::{html_to_text, looks_like_html, recover_wayback_body};
 use super::urls::rewrite_wayback_url;
 use super::verdict::{CitationFindingKind, CitationVerdict, SupportLevel, Verdict};
@@ -142,6 +142,31 @@ pub enum GroundingStatus {
     NotApplicable,
 }
 
+/// Why a `SourceUnavailable` verdict was reached. Derived from the fetch
+/// status; lets a reviewer tell a dead link from a source we fetched but
+/// could not read (PDF / JS shell / wrong page).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SourceUnavailableReason {
+    /// The source could not be fetched (missing / non-2xx status) — link rot.
+    Unreachable,
+    /// The source was fetched (2xx) but the panel could not use its content
+    /// (e.g. PDF, JavaScript viewer shell, or a wrong/redirected page).
+    Unusable,
+}
+
+impl SourceUnavailableReason {
+    /// Stable lowercase label (the single source of truth for the serde
+    /// `snake_case` rename and any human-facing rendering).
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Unreachable => "unreachable",
+            Self::Unusable => "unusable",
+        }
+    }
+}
+
 /// The read-only verification result — a Finding, never an action (ADR-0008 §2).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CitationFinding {
@@ -154,6 +179,10 @@ pub struct CitationFinding {
     /// Whether the support verdict was confirmed in the source (the grounding axis).
     #[serde(default)]
     pub grounding_status: GroundingStatus,
+    /// For a `SourceUnavailable` verdict, why the source was unavailable;
+    /// `None` for any other verdict.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_unavailable_reason: Option<SourceUnavailableReason>,
     /// Measured agreement among the panel's votes (ADR-0006).
     pub agreement: PanelAgreement,
     /// The winning verdict's located passage, or `None`.
@@ -166,6 +195,31 @@ pub struct CitationFinding {
     /// Document-order position of this use-site (ADR-0007 §2).
     #[serde(default)]
     pub use_site_ordinal: u32,
+    /// The originating ref's marker id (e.g. `cite_ref-ety_1-0`), so a verdict is
+    /// addressable back to the human-facing citation on the page. Empty for the
+    /// standalone single-claim path, which has no page ref; the page orchestrator
+    /// stamps it. Back-compatible (ADR-0009 replay).
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub ref_id: String,
+    /// The claim sentence this verdict judged, echoed so the report is
+    /// self-contained — a renderer can show "Claim: … → <verdict>" without
+    /// re-reading the page. Empty for the standalone path, where the caller
+    /// already holds the claim. Back-compatible (ADR-0009 replay).
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub claim: String,
+    /// The preceding-sentence context passed to the verifier for co-reference
+    /// (SIDE-style), echoed so the report can show what the claim was read
+    /// against. Empty when there was no context. Back-compatible.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub preceding_context: Vec<String>,
+    /// Set when this verdict was produced against an **archive** fallback because
+    /// the citation's live `url` was `SourceUnavailable`: the (unreachable) live
+    /// URL the archive stands in for. `None` for a verdict from the primary
+    /// source. Lets the report say "supported via archive of `<live url>`, which
+    /// needs repair" without sniffing `provenance.url`'s hostname. Back-compatible
+    /// (ADR-0009 replay).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub archive_of: Option<url::Url>,
     /// Schema version (Art. 9.1).
     pub schema_version: u32,
 }
@@ -240,6 +294,8 @@ pub struct VerifyModelInputs<'a> {
     pub source_url: &'a str,
     /// The optional bibliographic metadata sidecar (context only — never grounded).
     pub metadata: Option<&'a CitoidMetadata>,
+    /// The optional co-reference context window (context only — never grounded).
+    pub context: Option<&'a ClaimContext>,
 }
 
 /// Options for a verification run.
@@ -255,6 +311,10 @@ pub struct VerifyOptions {
     /// support-class vote whose quote failed to locate, asking for the exact shortest
     /// verbatim span (or `NO_SPAN`). Transcription only — never re-litigates the verdict.
     pub repair_turn: bool,
+    /// Pre-fetched source body. When `Some`, `verify_citation_use_site` uses it
+    /// instead of fetching — lets the page orchestrator fetch each distinct URL
+    /// once. `None` (the default) preserves the byte-identical single-claim path.
+    pub prefetched: Option<FetchedSource>,
 }
 
 impl Default for VerifyOptions {
@@ -264,6 +324,7 @@ impl Default for VerifyOptions {
             concurrency: 3,
             params: SamplingParams::deterministic(),
             repair_turn: true,
+            prefetched: None,
         }
     }
 }
@@ -300,6 +361,7 @@ fn build_verify_completion_request(
         inputs.source_text,
         inputs.source_url,
         inputs.metadata,
+        inputs.context,
     )
     .to_vec();
     let prompt_hash = sha256_hex(&serde_json::to_vec(&messages)?);
@@ -497,24 +559,34 @@ pub fn assemble_citation_finding(
             });
 
         return match located {
-            Some((quote, offset, grounding_status)) => CitationFinding {
-                kind: CitationFindingKind::CitationVerdict,
-                verdict: CitationVerdict::from(vote.winner),
-                grounding_status,
-                agreement: vote.agreement,
-                passage: Some(LocatedPassage {
-                    quote: quote.clone(),
-                    offset,
-                }),
-                provenance: provenance.clone(),
-                grounding: GroundingAssertion::LocatedQuote {
-                    quote,
-                    source_hash: provenance.content_hash.clone(),
-                    offset,
-                },
-                use_site_ordinal,
-                schema_version: SCHEMA_VERSION,
-            },
+            Some((quote, offset, grounding_status)) => {
+                let verdict = CitationVerdict::from(vote.winner);
+                CitationFinding {
+                    kind: CitationFindingKind::CitationVerdict,
+                    verdict,
+                    grounding_status,
+                    agreement: vote.agreement,
+                    passage: Some(LocatedPassage {
+                        quote: quote.clone(),
+                        offset,
+                    }),
+                    source_unavailable_reason: derive_source_unavailable_reason(
+                        verdict, provenance,
+                    ),
+                    provenance: provenance.clone(),
+                    grounding: GroundingAssertion::LocatedQuote {
+                        quote,
+                        source_hash: provenance.content_hash.clone(),
+                        offset,
+                    },
+                    use_site_ordinal,
+                    ref_id: String::new(),
+                    claim: String::new(),
+                    preceding_context: Vec::new(),
+                    archive_of: None,
+                    schema_version: SCHEMA_VERSION,
+                }
+            }
             // Layer 6: the support quote did not locate. Do NOT rewrite the verdict — surface
             // the panel's judgment marked `Unlocated` (unverified). Anti-fabrication is the
             // action gate's job ([`is_groundable_support`]), not a silent downgrade.
@@ -582,6 +654,21 @@ pub fn build_model_votes(votes: &[ModelVerdict], source_text: &str) -> Vec<Model
         .collect()
 }
 
+/// Derive the reason a `SourceUnavailable` verdict was reached from the verdict and
+/// provenance. Returns `None` for any other verdict.
+fn derive_source_unavailable_reason(
+    verdict: CitationVerdict,
+    provenance: &SourceProvenance,
+) -> Option<SourceUnavailableReason> {
+    if !matches!(verdict, CitationVerdict::SourceUnavailable) {
+        return None;
+    }
+    match provenance.http_status {
+        Some(status) if (200..=299).contains(&status) => Some(SourceUnavailableReason::Unusable),
+        _ => Some(SourceUnavailableReason::Unreachable),
+    }
+}
+
 /// A finding with no located passage, grounded on "the source was fetched".
 fn no_quote_finding(
     verdict: CitationVerdict,
@@ -596,24 +683,30 @@ fn no_quote_finding(
         grounding_status,
         agreement,
         passage: None,
+        source_unavailable_reason: derive_source_unavailable_reason(verdict, provenance),
         provenance: provenance.clone(),
         grounding: GroundingAssertion::SourceFetched {
             source_hash: provenance.content_hash.clone(),
         },
         use_site_ordinal,
+        ref_id: String::new(),
+        claim: String::new(),
+        preceding_context: Vec::new(),
+        archive_of: None,
         schema_version: SCHEMA_VERSION,
     }
 }
 
 /// A fetched source body plus the HTTP status it came from.
-struct FetchedSource {
-    text: String,
-    status: u16,
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FetchedSource {
+    pub text: String,
+    pub status: u16,
 }
 
 /// Fetch a source body (read-only GET), extracting text from HTML and recovering past a
 /// surviving Wayback banner. A non-2xx/3xx yields empty text (→ `SourceUnavailable`).
-async fn fetch_source<C>(
+pub(crate) async fn fetch_source<C>(
     client: &C,
     source_url: &str,
 ) -> Result<FetchedSource, CitationVerificationError>
@@ -688,12 +781,18 @@ where
 /// Returns [`CitationVerificationError`] for an empty panel or an unfetchable source URL.
 /// Individual model failures are recorded as `SourceUnavailable` panel votes so the
 /// configured panel size is preserved in the audit trail and agreement counts.
+// The injected edges (fetch/model/clock), the panel, the request, its optional context
+// window, the use-site ordinal, and the run options are all distinct, named inputs; bundling
+// them would obscure rather than clarify. The context rides a separate argument by design —
+// it is kept off `CitationVerificationRequest` (the clean claim+url record, ADR-0008 §1).
+#[allow(clippy::too_many_arguments)]
 pub async fn verify_citation_use_site<C, M>(
     fetch_client: &C,
     model_client: &M,
     clock: &dyn Clock,
     panel: &[ModelRef],
     request: &CitationVerificationRequest,
+    context: Option<&ClaimContext>,
     use_site_ordinal: u32,
     options: VerifyOptions,
 ) -> Result<VerificationOutcome, CitationVerificationError>
@@ -707,7 +806,10 @@ where
         });
     }
 
-    let fetched = fetch_source(fetch_client, request.source_url.as_str()).await?;
+    let fetched = match &options.prefetched {
+        Some(source) => source.clone(),
+        None => fetch_source(fetch_client, request.source_url.as_str()).await?,
+    };
     let provenance = SourceProvenance {
         url: request.source_url.clone(),
         content_hash: sha256_hex(fetched.text.as_bytes()),
@@ -743,6 +845,7 @@ where
         source_text: &fetched.text,
         source_url: request.source_url.as_str(),
         metadata: metadata.as_ref(),
+        context,
     };
 
     let params = &options.params;
@@ -816,9 +919,9 @@ mod tests {
     };
 
     use super::{
-        CitationVerificationRequest, GroundingAssertion, GroundingStatus, ModelVerdict,
-        RepairAttempt, SourceProvenance, VerifyModelInputs, VerifyOptions,
-        assemble_citation_finding, build_model_votes, execute_citation_repair,
+        CitationFinding, CitationVerificationRequest, ClaimContext, GroundingAssertion,
+        GroundingStatus, ModelVerdict, RepairAttempt, SourceProvenance, VerifyModelInputs,
+        VerifyOptions, assemble_citation_finding, build_model_votes, execute_citation_repair,
         execute_citation_verify, is_groundable_support, verify_citation_use_site,
     };
     use crate::citation::parsing::ParsedVerdict;
@@ -840,6 +943,7 @@ mod tests {
             source_text: source,
             source_url: "https://example.com",
             metadata: None,
+            context: None,
         }
     }
 
@@ -1106,6 +1210,7 @@ mod tests {
             &FixedClock::new(1000),
             &[model()],
             &request("The bridge opened in 1998", "https://example.com/bridge"),
+            None,
             3,
             VerifyOptions::default(),
         ))
@@ -1118,6 +1223,101 @@ mod tests {
         assert_eq!(outcome.finding.use_site_ordinal, 3);
         assert_eq!(outcome.votes.len(), 1);
         assert_eq!(outcome.votes[0].invocation.prompt_hash.len(), 64);
+    }
+
+    #[test]
+    fn prefetched_source_skips_http_fetch() {
+        // Empty HTTP queue: if the verifier tried to fetch, it would error.
+        let http = StubHttpClient::new([]);
+        let model_client = StubModelClient::new([Ok(completion(
+            r#"{"verdict": "SUPPORTED", "quote": "cats purr and sleep"}"#,
+        ))]);
+        let request = CitationVerificationRequest {
+            wiki_id: "enwiki".into(),
+            rev_id: 1,
+            title: "Cats".into(),
+            claim: "Cats purr.".into(),
+            source_url: url::Url::parse("https://example.test/a").unwrap(),
+        };
+        let mut options = VerifyOptions {
+            repair_turn: false,
+            ..VerifyOptions::default()
+        };
+        // Body must be ≥300 chars to pass usability check (SHORT_BODY_FLOOR in body_classifier.rs).
+        // The prose padding is repeated to ensure total length exceeds 300 characters.
+        let long_body =
+            "This is real article prose that gives the body enough length to be usable. ".repeat(8)
+                + "cats purr and sleep all day long. "
+                + "This is real article prose that gives the body enough length to be usable. ";
+        assert!(
+            long_body.chars().count() >= 300,
+            "test body must be >= 300 chars (SHORT_BODY_FLOOR)"
+        );
+        options.prefetched = Some(super::FetchedSource {
+            text: long_body,
+            status: 200,
+        });
+        let outcome = block_on(verify_citation_use_site(
+            &http,
+            &model_client,
+            &FixedClock::new(0),
+            &[model()],
+            &request,
+            None,
+            0,
+            options,
+        ))
+        .expect("verifies from prefetched source");
+        // CitationVerdict is `Judged(SupportLevel)` | `SourceUnavailable`
+        assert_eq!(
+            outcome.finding.verdict,
+            CitationVerdict::Judged(SupportLevel::Supported)
+        );
+    }
+
+    #[test]
+    fn empty_context_matches_no_context_finding() {
+        // The A/B control arm: supplying an empty ClaimContext must produce a finding
+        // identical to today's no-context path (the prompt is byte-identical, so the whole
+        // outcome is too). Drive the orchestration twice with the same stubbed source/model.
+        fn run(context: Option<&ClaimContext>) -> CitationFinding {
+            let fetch = StubHttpClient::new([Ok(HttpResponse {
+                status: 200,
+                headers: BTreeMap::from([("content-type".to_string(), "text/html".to_string())]),
+                body: long_html_with("the bridge opened in 1998"),
+            })]);
+            let model_client = StubModelClient::new([Ok(completion(
+                r#"{"verdict": "SUPPORTED", "quote": "the bridge opened in 1998"}"#,
+            ))]);
+            block_on(verify_citation_use_site(
+                &fetch,
+                &model_client,
+                &FixedClock::new(1000),
+                &[model()],
+                &request("The bridge opened in 1998", "https://example.com/bridge"),
+                context,
+                0,
+                VerifyOptions::default(),
+            ))
+            .expect("verifies")
+            .finding
+        }
+
+        let none = run(None);
+        let empty = run(Some(&ClaimContext::default()));
+        assert_eq!(none, empty);
+    }
+
+    #[test]
+    fn quote_only_in_context_does_not_ground() {
+        // Structural safety: the grounding gate only ever locates quotes in the source body,
+        // so a quote that lives in the context window (never passed here) cannot ground.
+        let source = "The bridge opened to traffic in 1998.";
+        let context_only_quote = "She joined the club in 1985."; // absent from the source
+        let votes = vec![model_verdict(Verdict::Supported, Some(context_only_quote))];
+        let finding = assemble_citation_finding(source, &provenance(), &votes, 0);
+        assert_eq!(finding.grounding_status, GroundingStatus::Unlocated);
+        assert!(finding.passage.is_none());
     }
 
     #[test]
@@ -1144,6 +1344,7 @@ mod tests {
             &FixedClock::new(1000),
             &[model(), model(), model()],
             &request("The bridge opened in 1998", "https://example.com/bridge"),
+            None,
             3,
             options,
         ))
@@ -1188,6 +1389,7 @@ mod tests {
             &FixedClock::new(1000),
             &[model(), model()],
             &request("The museum opened in 1850", "https://example.com/museum"),
+            None,
             0,
             options,
         ))
@@ -1220,6 +1422,7 @@ mod tests {
             &FixedClock::new(1),
             &[model()],
             &request("some claim", "https://example.com/missing"),
+            None,
             0,
             VerifyOptions::default(),
         ))
@@ -1251,6 +1454,7 @@ mod tests {
                 "The museum was founded in 1850",
                 "https://example.com/museum",
             ),
+            None,
             0,
             VerifyOptions::default(),
         ))
@@ -1277,6 +1481,7 @@ mod tests {
             &FixedClock::new(1),
             &[model()],
             &request("The museum opened in 1850", "https://example.com/museum"),
+            None,
             0,
             VerifyOptions::default(),
         ))
@@ -1472,6 +1677,7 @@ mod tests {
             &FixedClock::new(1),
             &[model()],
             &request("The bridge opened in 1998", "https://example.com/bridge"),
+            None,
             0,
             VerifyOptions::default(),
         ))
@@ -1520,6 +1726,7 @@ mod tests {
             &FixedClock::new(1),
             &[model()],
             &request("The bridge opened in 1998", "https://example.com/bridge"),
+            None,
             0,
             options,
         ))
@@ -1547,6 +1754,7 @@ mod tests {
             &FixedClock::new(1),
             &[model()],
             &request("The museum opened in 1850", "https://example.com/museum"),
+            None,
             0,
             VerifyOptions::default(),
         ))
@@ -1576,12 +1784,177 @@ mod tests {
             &FixedClock::new(1),
             &[model()],
             &request("The bridge opened in 1998", "https://example.com/bridge"),
+            None,
             0,
             VerifyOptions::default(),
         ))
         .expect("verifies");
         assert_eq!(outcome.finding.grounding_status, GroundingStatus::Located);
         assert!(outcome.votes[0].repair_invocation.is_none());
+    }
+
+    // --- source unavailable reason derivation ---
+
+    #[test]
+    fn su_reason_unusable_when_fetched_200() {
+        // A SourceUnavailable finding whose provenance http_status == Some(200)
+        // should have reason == Some(Unusable).
+        let source = "This is a PDF or JavaScript viewer shell.";
+        let mut provenance = provenance();
+        provenance.http_status = Some(200);
+        let finding = assemble_citation_finding(
+            source,
+            &provenance,
+            &[model_verdict(Verdict::SourceUnavailable, None)],
+            0,
+        );
+        assert_eq!(finding.verdict, CitationVerdict::SourceUnavailable);
+        assert_eq!(
+            finding.source_unavailable_reason,
+            Some(super::SourceUnavailableReason::Unusable)
+        );
+    }
+
+    #[test]
+    fn su_reason_unreachable_when_fetch_failed() {
+        // A SourceUnavailable finding whose provenance http_status == Some(404)
+        // should have reason == Some(Unreachable).
+        let source = "";
+        let mut provenance = provenance();
+        provenance.http_status = Some(404);
+        let finding = assemble_citation_finding(
+            source,
+            &provenance,
+            &[model_verdict(Verdict::SourceUnavailable, None)],
+            0,
+        );
+        assert_eq!(finding.verdict, CitationVerdict::SourceUnavailable);
+        assert_eq!(
+            finding.source_unavailable_reason,
+            Some(super::SourceUnavailableReason::Unreachable)
+        );
+    }
+
+    #[test]
+    fn su_reason_unreachable_when_http_status_none() {
+        // A SourceUnavailable finding whose provenance http_status == None
+        // (legacy snapshot) should default to Unreachable.
+        let source = "";
+        let mut provenance = provenance();
+        provenance.http_status = None;
+        let finding = assemble_citation_finding(
+            source,
+            &provenance,
+            &[model_verdict(Verdict::SourceUnavailable, None)],
+            0,
+        );
+        assert_eq!(finding.verdict, CitationVerdict::SourceUnavailable);
+        assert_eq!(
+            finding.source_unavailable_reason,
+            Some(super::SourceUnavailableReason::Unreachable)
+        );
+    }
+
+    #[test]
+    fn su_reason_none_for_supported() {
+        // A Supported finding should have source_unavailable_reason == None.
+        let source = "Acme Corp was established in 1985.";
+        let finding = assemble_citation_finding(
+            source,
+            &provenance(),
+            &[model_verdict(
+                Verdict::Supported,
+                Some("established in 1985"),
+            )],
+            0,
+        );
+        assert_eq!(
+            finding.verdict,
+            CitationVerdict::Judged(SupportLevel::Supported)
+        );
+        assert_eq!(finding.source_unavailable_reason, None);
+    }
+
+    #[test]
+    fn su_reason_none_for_not_supported() {
+        // A NotSupported finding should have source_unavailable_reason == None.
+        let source = "Acme Corp was established in 1985.";
+        let finding = assemble_citation_finding(
+            source,
+            &provenance(),
+            &[model_verdict(Verdict::NotSupported, None)],
+            0,
+        );
+        assert_eq!(
+            finding.verdict,
+            CitationVerdict::Judged(SupportLevel::NotSupported)
+        );
+        assert_eq!(finding.source_unavailable_reason, None);
+    }
+
+    #[test]
+    fn serde_back_compat_finding_without_reason_deserializes_to_none() {
+        // ADR-0009 replay: a finding JSON written before `source_unavailable_reason`
+        // existed must still load, with the field defaulting to None.
+        let legacy = r#"{
+            "kind":"citation_verdict",
+            "verdict":"supported",
+            "grounding_status":"located",
+            "agreement":{"winner_votes":2,"panel_size":2},
+            "passage":{"quote":"example","offset":0},
+            "provenance":{"url":"https://example.com/","content_hash":"abc","fetched_at":42,"http_status":200},
+            "grounding":{"kind":"located_quote","quote":"example","source_hash":"abc","offset":0},
+            "use_site_ordinal":0,
+            "schema_version":1
+        }"#;
+        let finding: CitationFinding =
+            serde_json::from_str(legacy).expect("legacy finding deserializes");
+        assert_eq!(finding.source_unavailable_reason, None);
+        assert_eq!(
+            finding.verdict,
+            CitationVerdict::Judged(SupportLevel::Supported)
+        );
+    }
+
+    #[test]
+    fn serde_finding_with_reason_serializes_correctly() {
+        // When a finding has source_unavailable_reason, it should serialize it.
+        let source = "";
+        let mut provenance = provenance();
+        provenance.http_status = Some(404);
+        let finding = assemble_citation_finding(
+            source,
+            &provenance,
+            &[model_verdict(Verdict::SourceUnavailable, None)],
+            0,
+        );
+        let json_str = serde_json::to_string(&finding).expect("serialize");
+        assert!(json_str.contains("unreachable"));
+
+        // Deserialize back and verify.
+        let deserialized: CitationFinding = serde_json::from_str(&json_str).expect("deserialize");
+        assert_eq!(
+            deserialized.source_unavailable_reason,
+            Some(super::SourceUnavailableReason::Unreachable)
+        );
+    }
+
+    #[test]
+    fn serde_finding_without_reason_omits_field_when_none() {
+        // When source_unavailable_reason is None (for a Supported finding),
+        // skip_serializing_if should omit it from the JSON.
+        let source = "Acme Corp was established in 1985.";
+        let finding = assemble_citation_finding(
+            source,
+            &provenance(),
+            &[model_verdict(
+                Verdict::Supported,
+                Some("established in 1985"),
+            )],
+            0,
+        );
+        let json_str = serde_json::to_string(&finding).expect("serialize");
+        assert!(!json_str.contains("source_unavailable_reason"));
     }
 
     proptest! {

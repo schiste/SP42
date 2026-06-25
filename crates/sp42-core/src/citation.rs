@@ -18,9 +18,12 @@
 pub mod body_classifier;
 pub mod citoid;
 pub mod concurrency;
+pub mod extract;
 pub mod locate_quote;
+pub mod page;
 pub mod parsing;
 pub mod prompts;
+pub mod segment;
 pub mod source_fetch;
 pub mod storage;
 pub mod urls;

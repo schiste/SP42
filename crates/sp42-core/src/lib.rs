@@ -81,11 +81,19 @@ pub use citation::citoid::{
     CitoidMetadata, build_citoid_header, build_citoid_request, parse_citoid_response,
 };
 pub use citation::concurrency::map_with_concurrency;
+pub use citation::extract::{
+    BlockFailure, CitationUseSite, ExtractOutcome, SkippedReason, SkippedRef, extract_use_sites,
+};
 pub use citation::locate_quote::{FuzzyLocate, locate_quote, locate_quote_fuzzy};
+pub use citation::page::{
+    PageVerificationReport, PageVerificationRequest, PageVerificationStats, verify_page,
+};
 pub use citation::parsing::{
     ParsedVerdict, canonicalize_verdict, parse_repair_response, parse_verdict_response,
 };
+pub use citation::prompts::ClaimContext;
 pub use citation::prompts::{build_repair_prompt, build_verify_prompt};
+pub use citation::segment::{Sentence, segment_sentences};
 pub use citation::source_fetch::{html_to_text, looks_like_html, recover_wayback_body};
 pub use citation::storage::{
     SnapshotEnvelope, VerdictEnvelope, build_snapshot, build_verdict_envelope, load_snapshot,
@@ -97,10 +105,11 @@ pub use citation::urls::{
 };
 pub use citation::verdict::{CitationFindingKind, CitationVerdict, SupportLevel, Verdict};
 pub use citation::verify::{
-    CitationFinding, CitationVerificationRequest, GroundingAssertion, GroundingStatus,
-    LocatedPassage, ModelVerdict, ModelVote, SourceProvenance, VerificationOutcome,
-    VerifyModelInputs, VerifyOptions, assemble_citation_finding, build_model_votes,
-    execute_citation_verify, is_groundable_support, sha256_hex, verify_citation_use_site,
+    CitationFinding, CitationVerificationRequest, FetchedSource, GroundingAssertion,
+    GroundingStatus, LocatedPassage, ModelVerdict, ModelVote, SourceProvenance,
+    SourceUnavailableReason, VerificationOutcome, VerifyModelInputs, VerifyOptions,
+    assemble_citation_finding, build_model_votes, execute_citation_verify, is_groundable_support,
+    sha256_hex, verify_citation_use_site,
 };
 pub use citation::voting::{BinaryVote, NClassVote, PanelAgreement, binary_vote, n_class_vote};
 pub use context_builder::{ContextInputs, build_scoring_context};
@@ -204,7 +213,8 @@ pub use wiki_storage::{
     render_wiki_storage_index_page, resolve_wiki_storage_document, save_wiki_storage_document,
 };
 pub use wikitext_editor::{
-    ScriptedEditorInvocation, ScriptedWikitextEditor, ScriptedWikitextNode, WikitextEditOutcome,
-    WikitextEditRefusal, WikitextEditor, WikitextEditorError, WikitextNodeDescriptor,
-    WikitextNodeKind, WikitextNodeLocator, WikitextPageRef, normalize_anchor_text,
+    BlockKind, BlockRef, CitedSource, ParsoidBlock, ScriptedEditorInvocation,
+    ScriptedWikitextEditor, ScriptedWikitextNode, WikitextEditOutcome, WikitextEditRefusal,
+    WikitextEditor, WikitextEditorError, WikitextNodeDescriptor, WikitextNodeKind,
+    WikitextNodeLocator, WikitextPageRef, normalize_anchor_text,
 };

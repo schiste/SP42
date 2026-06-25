@@ -74,6 +74,59 @@ pub struct WikitextNodeDescriptor {
     pub anchor_text: String,
 }
 
+/// Kind of prose-bearing block a citation can appear in.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BlockKind {
+    Paragraph,
+    ListItem,
+    TableCell,
+    /// Reserved for future block kinds; never produced by current implementations.
+    Other,
+}
+
+/// One cited source: a primary (live) URL plus archive fallbacks
+/// (e.g. `archive-url=`, Wayback/wikiwix), consulted only when the
+/// primary is unavailable.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CitedSource {
+    pub url: url::Url,
+    pub archive_urls: Vec<url::Url>,
+}
+
+/// One inline `<ref>` within a [`ParsoidBlock`], in document order.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BlockRef {
+    /// Byte offset into [`ParsoidBlock::text`] where the marker sat — the
+    /// position of the punctuation it follows. Anchors claim↔ref association.
+    pub offset: usize,
+    /// Stable cite id of the inline marker, e.g. `"cite_ref-smith_3-0"`.
+    pub ref_id: String,
+    /// Cited sources from this ref: primary URL + archive fallbacks.
+    /// One cite-template ⇒ one cited source (url + its archive-url).
+    /// A bare-URL `<ref>` ⇒ one cited source (url, no archives).
+    /// A bundled ref with multiple cite templates ⇒ multiple cited sources.
+    /// Empty ⇒ a non-URL ref (book/ISBN) that the core records as skipped.
+    pub sources: Vec<CitedSource>,
+    /// Rendered text of the marker (e.g. `"[3]"`), for provenance.
+    pub ref_text: String,
+    /// `true` when this is a reuse of a `<ref name="…">`.
+    pub named: bool,
+}
+
+/// A single prose-bearing block emitted by the editor's one DOM pass.
+/// Plain `Send` data: no DOM handles. Ref markers are removed from `text`
+/// but their positions are preserved as [`BlockRef::offset`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ParsoidBlock {
+    /// Visible text of the block with ref markers removed.
+    pub text: String,
+    /// Inline refs in this block, in document order.
+    pub refs: Vec<BlockRef>,
+    pub block_kind: BlockKind,
+    /// Document-order index of the block within the page.
+    pub block_ordinal: usize,
+}
+
 /// A structured edit that was refused without touching the page.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum WikitextEditRefusal {
@@ -331,6 +384,27 @@ pub trait WikitextEditor: Send + Sync {
         locator: &WikitextNodeLocator,
         params: &[(String, String)],
     ) -> Result<WikitextEditOutcome, WikitextEditorError>;
+
+    /// Extract prose-bearing blocks (paragraphs, list items, table cells) in
+    /// document order, with inline ref markers removed from text but their byte
+    /// offsets, ids, and source URLs recorded. Read-only.
+    ///
+    /// Defaults to "no blocks": only the Parsoid production editor understands
+    /// page structure, so non-Parsoid impls (scripted/test fakes) inherit the
+    /// empty default and need no changes.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`WikitextEditorError`] when the backend is unavailable, the
+    /// revision is missing, or the wiki has no editing backend configured.
+    async fn extract_blocks(
+        &self,
+        config: &WikiConfig,
+        page: &WikitextPageRef,
+    ) -> Result<Vec<ParsoidBlock>, WikitextEditorError> {
+        let _ = (config, page);
+        Ok(Vec::new())
+    }
 }
 
 #[async_trait]

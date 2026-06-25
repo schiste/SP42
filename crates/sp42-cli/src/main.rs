@@ -5,22 +5,16 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use futures::executor::block_on;
-use genai::Client;
-use genai::adapter::AdapterKind;
-use genai::chat::{ChatMessage as GenaiChatMessage, ChatOptions, ChatRequest};
-use genai::resolver::{AuthData, Endpoint};
-use genai::{Headers, ModelIden, ServiceTarget};
 use reqwest::header::COOKIE;
 use serde_json::Value;
 use sp42_core::routes as route_contracts;
 use sp42_core::{
-    ChatRole, CitationFinding, CitationVerificationRequest, DevAuthBootstrapRequest,
-    DevAuthSessionStatus, EndpointMode, GroundingStatus, ModelClient, ModelClientError,
-    ModelCompletion, ModelCompletionRequest, ModelEndpointConfig, ModelRef, QueuedEdit,
-    SamplingParams, SessionActionExecutionRequest, SessionActionExecutionResponse,
-    SessionActionKind, SystemClock, VerificationOutcome, VerifyOptions as CoreVerifyOptions,
-    build_dev_auth_bootstrap_request, check_fetchable_source_url, locate_quote, locate_quote_fuzzy,
-    parse_dev_auth_status, verify_citation_use_site,
+    CitationFinding, CitationVerificationRequest, ClaimContext, DevAuthBootstrapRequest,
+    DevAuthSessionStatus, GroundingStatus, QueuedEdit, SessionActionExecutionRequest,
+    SessionActionExecutionResponse, SessionActionKind, SystemClock, VerificationOutcome,
+    VerifyOptions as CoreVerifyOptions, build_dev_auth_bootstrap_request,
+    check_fetchable_source_url, locate_quote, locate_quote_fuzzy, parse_dev_auth_status,
+    verify_citation_use_site,
 };
 use sp42_devtools::{
     DEV_PREVIEW_SAMPLE_EVENTS, DEV_PREVIEW_WIKI_ID, DevContextOptions, DevWorkbenchOptions,
@@ -28,6 +22,7 @@ use sp42_devtools::{
     build_dev_context_preview, build_dev_coordination_preview, build_dev_queue,
     build_dev_stream_preview, build_dev_workbench, parse_default_dev_wiki_config,
 };
+use sp42_inference::{client_from_env, panel_from_env};
 use sp42_reporting::{
     PatrolScenarioReportInputs, ShellStateInputs, build_patrol_scenario_report,
     build_shell_state_model, render_patrol_scenario_markdown, render_patrol_scenario_text,
@@ -94,6 +89,9 @@ struct VerifyCliOptions {
     /// Run the bounded repair turn (SP42#25 layer 3); `--no-repair` turns it off (one fewer
     /// model call per unlocated support vote, for cost control and A/B measurement).
     repair: bool,
+    /// The SIDE co-reference context: preceding sentences (`--preceding-sentence`, repeatable),
+    /// in the order given. Empty by default, which keeps the verifier on its no-context path.
+    preceding_sentences: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -259,6 +257,7 @@ fn parse_options(args: impl IntoIterator<Item = String>) -> Result<CliOptions, S
     let mut verify_metadata = false;
     let mut verify_debug_votes = false;
     let mut verify_repair = true;
+    let mut verify_preceding: Vec<String> = Vec::new();
     let mut verdict_only = false;
     let mut probe_quote = None;
     let mut locate_probe_flag = false;
@@ -287,6 +286,7 @@ fn parse_options(args: impl IntoIterator<Item = String>) -> Result<CliOptions, S
             verify_metadata: &mut verify_metadata,
             verify_debug_votes: &mut verify_debug_votes,
             verify_repair: &mut verify_repair,
+            verify_preceding: &mut verify_preceding,
             verdict_only: &mut verdict_only,
             probe_quote: &mut probe_quote,
             locate_probe_flag: &mut locate_probe_flag,
@@ -308,6 +308,7 @@ fn parse_options(args: impl IntoIterator<Item = String>) -> Result<CliOptions, S
         verify_metadata,
         verify_debug_votes,
         verify_repair,
+        verify_preceding,
     )?;
     let locate_probe = if locate_probe_flag {
         Some(probe_quote.ok_or_else(|| "--locate-probe requires --quote".to_string())?)
@@ -342,6 +343,7 @@ fn build_verify_options(
     include_metadata: bool,
     debug_votes: bool,
     repair: bool,
+    preceding_sentences: Vec<String>,
 ) -> Result<Option<VerifyCliOptions>, String> {
     match (claim, source_url) {
         (Some(claim), Some(source_url)) => Ok(Some(VerifyCliOptions {
@@ -350,6 +352,7 @@ fn build_verify_options(
             include_metadata,
             debug_votes,
             repair,
+            preceding_sentences,
         })),
         (None, None) => Ok(None),
         _ => Err("citation verification requires both --claim and --source-url".to_string()),
@@ -379,6 +382,7 @@ struct CliParseState<'a> {
     verify_metadata: &'a mut bool,
     verify_debug_votes: &'a mut bool,
     verify_repair: &'a mut bool,
+    verify_preceding: &'a mut Vec<String>,
     verdict_only: &'a mut bool,
     probe_quote: &'a mut Option<String>,
     locate_probe_flag: &'a mut bool,
@@ -462,6 +466,11 @@ where
         }
         "--source-url" => {
             *state.verify_source_url = Some(next_option_value(args, "--source-url")?);
+        }
+        "--preceding-sentence" => {
+            state
+                .verify_preceding
+                .push(next_option_value(args, "--preceding-sentence")?);
         }
         "--with-metadata" => {
             *state.verify_metadata = true;
@@ -570,7 +579,7 @@ fn parse_liftwing_probability(value: &str) -> Result<f32, String> {
 // ----- Read-only citation verification (PRD-0001) -----
 
 /// A reqwest-backed `HttpClient` for the CLI's **source fetch** only. It deliberately holds
-/// no inference credential: the model bearer lives solely in [`GenaiModelClient`], so an API
+/// no inference credential: the model bearer lives solely in the inference client, so an API
 /// key can never leak to a third-party source site through this client.
 struct CliHttpClient {
     client: reqwest::Client,
@@ -707,156 +716,6 @@ fn redirect_location(response: &reqwest::Response) -> Option<String> {
         .map(ToString::to_string)
 }
 
-/// The transport header a sponsor proxy may gate per-call authorization on (ADR-0006
-/// Decision 6). It is authorization metadata only — never part of the model input.
-const CAPABILITY_TAG_HEADER: &str = "X-SP42-Capability";
-
-/// A `genai`-backed [`ModelClient`] adapter (ADR-0006 Decision 7). The concrete provider
-/// wire format lives here in the CLI shell; feature crates only ever see the neutral
-/// boundary, so swapping the adapter touches no domain code.
-///
-/// Per call it builds a `genai` `ServiceTarget` directly (endpoint + auth + model id),
-/// bypassing genai's provider auto-resolution, so the configured OpenAI-compatible endpoint
-/// — a local server, a direct provider, or a sponsor proxy — is used verbatim. The
-/// `capability_tag`, when set, rides as a transport header a sponsor proxy may gate on;
-/// it is never added to the model input.
-struct GenaiModelClient {
-    client: Client,
-    endpoint: ModelEndpointConfig,
-}
-
-/// Wall-clock bound on a single model call so a hung inference endpoint can't wedge the CLI
-/// (SP42#34). Applied via `tokio::time::timeout` because `genai` pins its own `reqwest`
-/// version, so its client can't be built from this crate's `reqwest`.
-const MODEL_CALL_TIMEOUT: Duration = Duration::from_mins(1);
-
-impl GenaiModelClient {
-    fn new(endpoint: ModelEndpointConfig) -> Self {
-        Self {
-            client: Client::default(),
-            endpoint,
-        }
-    }
-}
-
-#[async_trait]
-impl ModelClient for GenaiModelClient {
-    async fn complete(
-        &self,
-        request: &ModelCompletionRequest,
-    ) -> Result<ModelCompletion, ModelClientError> {
-        let messages = request
-            .messages
-            .iter()
-            .map(|message| match message.role {
-                ChatRole::System => GenaiChatMessage::system(message.content.clone()),
-                ChatRole::User => GenaiChatMessage::user(message.content.clone()),
-                ChatRole::Assistant => GenaiChatMessage::assistant(message.content.clone()),
-            })
-            .collect::<Vec<_>>();
-        let chat_request = ChatRequest::new(messages);
-
-        let target = ServiceTarget {
-            endpoint: Endpoint::from_owned(normalize_base_url(&self.endpoint.base_url)),
-            auth: genai_auth_for(&self.endpoint),
-            model: ModelIden::new(AdapterKind::OpenAI, request.model.model.clone()),
-        };
-        let options = genai_chat_options(&request.params, self.endpoint.capability_tag.as_deref());
-
-        let response = tokio::time::timeout(
-            MODEL_CALL_TIMEOUT,
-            self.client.exec_chat(target, chat_request, Some(&options)),
-        )
-        .await
-        .map_err(|_| ModelClientError::Transport {
-            message: format!("model request timed out after {MODEL_CALL_TIMEOUT:?}"),
-        })?
-        .map_err(|error| ModelClientError::Transport {
-            message: error.to_string(),
-        })?;
-
-        let text = response
-            .into_first_text()
-            .ok_or_else(|| ModelClientError::InvalidResponse {
-                message: "model response contained no text".to_string(),
-            })?;
-        Ok(ModelCompletion {
-            text,
-            served_model: None,
-        })
-    }
-}
-
-/// Translate our neutral [`SamplingParams`] into `genai` `ChatOptions`, attaching the
-/// capability tag as a transport header when present.
-fn genai_chat_options(params: &SamplingParams, capability_tag: Option<&str>) -> ChatOptions {
-    let mut options = ChatOptions::default();
-    if let Some(temperature) = params.temperature {
-        options = options.with_temperature(temperature);
-    }
-    if let Some(top_p) = params.top_p {
-        options = options.with_top_p(top_p);
-    }
-    if let Some(max_tokens) = params.max_tokens {
-        options = options.with_max_tokens(max_tokens);
-    }
-    if let Some(tag) = capability_tag {
-        options =
-            options.with_extra_headers([(CAPABILITY_TAG_HEADER.to_string(), tag.to_string())]);
-    }
-    options
-}
-
-/// Build the `genai` `AuthData` for an endpoint, sending **no** `Authorization` header when
-/// no token is configured (SP42#44).
-///
-/// With a (non-empty) token we use the standard `Authorization: Bearer <token>` path. Without
-/// one we cannot simply pass an empty key: `genai` 0.6.5's `OpenAI` chat adapter always emits
-/// `Authorization: Bearer {key}` built from the `ServiceTarget` key, so an absent token would
-/// otherwise become a literal `Authorization: Bearer ` — which breaks local model servers and
-/// sponsor proxies that expect a truly tokenless request. `AuthData::None` is not a way out:
-/// it errors inside genai's `get_api_key` before any header is built. The only header-less
-/// path is `AuthData::RequestOverride`, which replaces the request URL **and** headers
-/// wholesale; we therefore rebuild the chat URL ([`chat_completions_url`]) and re-attach the
-/// capability tag here, because the override also bypasses genai's URL construction and the
-/// `ChatOptions::extra_headers` merge that normally carries it.
-fn genai_auth_for(endpoint: &ModelEndpointConfig) -> AuthData {
-    if let Some(token) = endpoint
-        .auth_token
-        .as_deref()
-        .filter(|token| !token.is_empty())
-    {
-        AuthData::from_single(token.to_string())
-    } else {
-        let mut headers: Vec<(String, String)> = Vec::new();
-        if let Some(tag) = endpoint.capability_tag.as_deref() {
-            headers.push((CAPABILITY_TAG_HEADER.to_string(), tag.to_string()));
-        }
-        AuthData::RequestOverride {
-            url: chat_completions_url(&endpoint.base_url),
-            headers: Headers::from(headers),
-        }
-    }
-}
-
-/// The full OpenAI-compatible chat-completions URL `genai` would POST to, rebuilt here so the
-/// tokenless [`genai_auth_for`] `RequestOverride` path (which bypasses genai's URL build)
-/// targets the same endpoint. Mirrors genai's `base.join("chat/completions")` over our
-/// normalized base (which already carries the single trailing slash that join requires).
-fn chat_completions_url(base_url: &str) -> String {
-    format!("{}chat/completions", normalize_base_url(base_url))
-}
-
-/// Normalize an OpenAI-compatible base URL so `genai`'s adapter can join its
-/// `chat/completions` suffix: drop any trailing slash, tolerate a URL that already points at
-/// `.../chat/completions` by stripping that segment, then re-append a single trailing slash
-/// (reqwest's URL join requires the trailing slash to preserve the base path).
-fn normalize_base_url(raw: &str) -> String {
-    let trimmed = raw.trim_end_matches('/');
-    let base = trimmed.strip_suffix("/chat/completions").unwrap_or(trimmed);
-    format!("{base}/")
-}
-
 /// Run the offline locate probe: report whether `quote` locates verbatim in `source` using
 /// the real [`locate_quote`], plus the guarded-fuzzy axis when exact locate misses, as JSON
 /// `{"located": bool, "offset": <n>|null, "fuzzy": bool, "fuzzy_span": <s>|null,
@@ -916,26 +775,8 @@ fn render_verify(
 /// Reads the inference endpoint, model panel, and (optional) bearer token from the
 /// environment so no secret is hard-coded; performs only read-only GET/POST requests.
 async fn run_verify(options: &VerifyCliOptions) -> Result<VerificationOutcome, String> {
-    let base_url = std::env::var("SP42_INFERENCE_URL").map_err(|_| {
-        "set SP42_INFERENCE_URL to the model's OpenAI-compatible base URL".to_string()
-    })?;
-    let models = std::env::var("SP42_INFERENCE_MODELS").map_err(|_| {
-        "set SP42_INFERENCE_MODELS to a comma-separated list of model ids".to_string()
-    })?;
-    let provider =
-        std::env::var("SP42_INFERENCE_PROVIDER").unwrap_or_else(|_| "configured".to_string());
-    let panel: Vec<ModelRef> = models
-        .split(',')
-        .map(str::trim)
-        .filter(|model| !model.is_empty())
-        .map(|model| ModelRef::new(provider.clone(), model, model))
-        .collect();
-    if panel.is_empty() {
-        return Err("SP42_INFERENCE_MODELS is empty".to_string());
-    }
-    let auth_token = std::env::var("SP42_INFERENCE_TOKEN").ok();
-    let capability_tag = std::env::var("SP42_INFERENCE_CAPABILITY").ok();
-    let mode = parse_endpoint_mode(std::env::var("SP42_INFERENCE_MODE").ok().as_deref())?;
+    let panel = panel_from_env()?;
+    let model_client = client_from_env()?;
 
     let source_url = options
         .source_url
@@ -950,26 +791,21 @@ async fn run_verify(options: &VerifyCliOptions) -> Result<VerificationOutcome, S
     };
 
     // The source-fetch client carries no inference credential; the bearer is held only by
-    // the model adapter, so it can never reach a third-party source host.
+    // the model adapter, so it can never reach a third-party source host. Redirects are not
+    // auto-followed; `CliHttpClient::execute` follows them manually and re-checks every hop
+    // against the SSRF floor before connecting (SP42#34/#43).
+    let allow_private = std::env::var("SP42_FETCH_ALLOW_PRIVATE").is_ok_and(|value| value == "1");
     let fetch_client = CliHttpClient {
         client: reqwest::Client::builder()
             .user_agent(sp42_core::branding::USER_AGENT)
             .connect_timeout(Duration::from_secs(10))
             .timeout(Duration::from_secs(30))
-            // No auto-follow: `CliHttpClient::execute` follows redirects manually so each hop
-            // is re-checked against the SSRF floor before we connect (SP42#43).
             .redirect(reqwest::redirect::Policy::none())
             .build()
-            .map_err(|error| format!("http client failed to build: {error}"))?,
-        allow_private: std::env::var("SP42_FETCH_ALLOW_PRIVATE").is_ok_and(|value| value == "1"),
+            .map_err(|error| format!("source http client failed to build: {error}"))?,
+        allow_private,
         max_source_bytes: MAX_SOURCE_BYTES,
     };
-    let model_client = GenaiModelClient::new(ModelEndpointConfig {
-        mode,
-        base_url,
-        auth_token,
-        capability_tag,
-    });
 
     let verify_options = CoreVerifyOptions {
         include_metadata: options.include_metadata,
@@ -977,30 +813,33 @@ async fn run_verify(options: &VerifyCliOptions) -> Result<VerificationOutcome, S
         repair_turn: options.repair,
         ..Default::default()
     };
+    // SIDE-style co-reference context (article title unused on the claim+url CLI surface;
+    // the library API is the eval-corpus driver). Empty context stays on the no-context path.
+    let claim_context = {
+        let context = ClaimContext {
+            article_title: String::new(),
+            preceding_sentences: options.preceding_sentences.clone(),
+        };
+        if context.is_empty() {
+            None
+        } else {
+            Some(context)
+        }
+    };
+
     let outcome = verify_citation_use_site(
         &fetch_client,
         &model_client,
         &SystemClock,
         &panel,
         &request,
+        claim_context.as_ref(),
         0,
         verify_options,
     )
     .await
     .map_err(|error| error.to_string())?;
     Ok(outcome)
-}
-
-/// Parse the optional `SP42_INFERENCE_MODE` env value. Defaults to `local`; the mode is
-/// recorded on the endpoint config as advisory metadata (the adapter sends the bearer
-/// whenever a token is present, regardless of mode, in this CLI MVP).
-fn parse_endpoint_mode(value: Option<&str>) -> Result<EndpointMode, String> {
-    match value {
-        None | Some("local") => Ok(EndpointMode::Local),
-        Some("direct") => Ok(EndpointMode::Direct),
-        Some("sponsor_proxy" | "sponsor-proxy") => Ok(EndpointMode::SponsorProxy),
-        Some(other) => Err(format!("unsupported SP42_INFERENCE_MODE: {other}")),
-    }
 }
 
 /// Human-readable verdict block.
@@ -1047,136 +886,10 @@ mod verify_tests {
         LocatedPassage, PanelAgreement, SourceProvenance, SupportLevel,
     };
 
-    use super::{
-        EndpointMode, ModelEndpointConfig, SamplingParams, VerifyCliOptions, genai_auth_for,
-        genai_chat_options, normalize_base_url, parse_endpoint_mode, parse_options,
-        render_verify_text, run_locate_probe,
-    };
-    use genai::resolver::AuthData;
+    use super::{VerifyCliOptions, parse_options, render_verify_text, run_locate_probe};
 
     fn args(items: &[&str]) -> Vec<String> {
         items.iter().map(ToString::to_string).collect()
-    }
-
-    #[test]
-    fn normalize_base_url_ensures_single_trailing_slash() {
-        assert_eq!(
-            normalize_base_url("https://openrouter.ai/api/v1"),
-            "https://openrouter.ai/api/v1/"
-        );
-        assert_eq!(
-            normalize_base_url("https://openrouter.ai/api/v1/"),
-            "https://openrouter.ai/api/v1/"
-        );
-    }
-
-    #[test]
-    fn normalize_base_url_strips_a_chat_completions_suffix() {
-        assert_eq!(
-            normalize_base_url("https://openrouter.ai/api/v1/chat/completions"),
-            "https://openrouter.ai/api/v1/"
-        );
-        assert_eq!(
-            normalize_base_url("http://localhost:8080/v1/chat/completions/"),
-            "http://localhost:8080/v1/"
-        );
-    }
-
-    #[test]
-    fn parse_endpoint_mode_maps_known_values() {
-        assert_eq!(parse_endpoint_mode(None), Ok(EndpointMode::Local));
-        assert_eq!(parse_endpoint_mode(Some("local")), Ok(EndpointMode::Local));
-        assert_eq!(
-            parse_endpoint_mode(Some("direct")),
-            Ok(EndpointMode::Direct)
-        );
-        assert_eq!(
-            parse_endpoint_mode(Some("sponsor_proxy")),
-            Ok(EndpointMode::SponsorProxy)
-        );
-        assert_eq!(
-            parse_endpoint_mode(Some("sponsor-proxy")),
-            Ok(EndpointMode::SponsorProxy)
-        );
-        assert!(parse_endpoint_mode(Some("bogus")).is_err());
-    }
-
-    #[test]
-    fn genai_chat_options_attaches_capability_tag_header() {
-        let params = SamplingParams::deterministic();
-        let options = genai_chat_options(&params, Some("citation-verify"));
-        let headers = options.extra_headers.expect("capability header present");
-        assert!(headers.iter().any(
-            |(name, value)| name.as_str() == super::CAPABILITY_TAG_HEADER
-                && value.as_str() == "citation-verify"
-        ));
-    }
-
-    #[test]
-    fn genai_chat_options_omits_headers_without_a_capability_tag() {
-        let options = genai_chat_options(&SamplingParams::deterministic(), None);
-        assert!(options.extra_headers.is_none());
-    }
-
-    fn endpoint_config(
-        auth_token: Option<&str>,
-        capability_tag: Option<&str>,
-    ) -> ModelEndpointConfig {
-        ModelEndpointConfig {
-            mode: EndpointMode::Local,
-            base_url: "http://localhost:11434/v1".to_string(),
-            auth_token: auth_token.map(ToString::to_string),
-            capability_tag: capability_tag.map(ToString::to_string),
-        }
-    }
-
-    #[test]
-    fn genai_auth_for_uses_bearer_key_when_token_present() {
-        let auth = genai_auth_for(&endpoint_config(Some("secret-token"), None));
-        // A present token must keep the standard `Authorization: Bearer <token>` path.
-        assert!(matches!(auth, AuthData::Key(_)));
-        assert_eq!(
-            auth.single_key_value().ok().as_deref(),
-            Some("secret-token")
-        );
-    }
-
-    #[test]
-    fn genai_auth_for_sends_no_authorization_header_when_token_absent() {
-        // genai 0.6.5 always emits `Authorization: Bearer {key}` from a ServiceTarget key, so
-        // a tokenless endpoint must use `RequestOverride` to omit the header entirely (#44).
-        let auth = genai_auth_for(&endpoint_config(None, None));
-        let AuthData::RequestOverride { url, headers } = auth else {
-            panic!("tokenless endpoint must use RequestOverride, got {auth:?}");
-        };
-        assert_eq!(url, "http://localhost:11434/v1/chat/completions");
-        assert!(
-            !headers
-                .iter()
-                .any(|(name, _)| name.eq_ignore_ascii_case("authorization")),
-            "no Authorization header without a token"
-        );
-    }
-
-    #[test]
-    fn genai_auth_for_treats_an_empty_token_as_absent() {
-        // `SP42_INFERENCE_TOKEN=` (set but empty) must not become `Authorization: Bearer `.
-        let auth = genai_auth_for(&endpoint_config(Some(""), None));
-        assert!(matches!(auth, AuthData::RequestOverride { .. }));
-    }
-
-    #[test]
-    fn genai_auth_for_carries_capability_tag_in_override_headers() {
-        // RequestOverride replaces all headers, so the capability tag must ride here, not via
-        // the (discarded) ChatOptions extra_headers.
-        let auth = genai_auth_for(&endpoint_config(None, Some("citation-verify")));
-        let AuthData::RequestOverride { headers, .. } = auth else {
-            panic!("expected RequestOverride");
-        };
-        assert!(headers.iter().any(
-            |(name, value)| name.as_str() == super::CAPABILITY_TAG_HEADER
-                && value.as_str() == "citation-verify"
-        ));
     }
 
     #[test]
@@ -1198,9 +911,33 @@ mod verify_tests {
                 include_metadata: true,
                 debug_votes: false,
                 repair: true,
+                preceding_sentences: Vec::new(),
             }
         );
         assert!(!options.verdict_only);
+    }
+
+    #[test]
+    fn verify_collects_preceding_context() {
+        let options = parse_options(args(&[
+            "--claim",
+            "c",
+            "--source-url",
+            "https://example.com",
+            "--preceding-sentence",
+            "She joined in 1985.",
+            "--preceding-sentence",
+            "She scored twice.",
+        ]))
+        .expect("parses");
+        let verify = options.verify.expect("verify present");
+        assert_eq!(
+            verify.preceding_sentences,
+            vec![
+                "She joined in 1985.".to_string(),
+                "She scored twice.".to_string()
+            ]
+        );
     }
 
     #[test]
@@ -1299,6 +1036,7 @@ mod verify_tests {
                 quote: "opened in 1998".to_string(),
                 offset: 4,
             }),
+            source_unavailable_reason: None,
             provenance: SourceProvenance {
                 url: "https://example.com/bridge".parse().expect("url"),
                 content_hash: "abc123".to_string(),
@@ -1311,6 +1049,10 @@ mod verify_tests {
                 offset: 4,
             },
             use_site_ordinal: 0,
+            ref_id: String::new(),
+            claim: String::new(),
+            preceding_context: Vec::new(),
+            archive_of: None,
             schema_version: 1,
         }
     }

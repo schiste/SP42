@@ -10,10 +10,11 @@ use std::time::Duration;
 use sp42_core::{
     ActionError, ActionResponseSummary, BareUrlApplyRequest, BareUrlApplyResponse, BareUrlDeclined,
     BareUrlOutcome, BareUrlProposal, BareUrlProposalsRequest, BareUrlProposalsResponse, FlagState,
-    TokenKind, WikiPageSaveRequest, WikitextEditor, WikitextNodeKind, WikitextNodeLocator,
-    WikitextPageRef, bare_url_references, build_citoid_header, build_citoid_request,
-    citoid_language, execute_fetch_token, execute_wiki_page_save, parse_action_response_summary,
-    render_bare_url_citation,
+    PageVerificationReport, PageVerificationRequest, TokenKind, VerifyOptions, WikiPageSaveRequest,
+    WikitextEditor, WikitextNodeKind, WikitextNodeLocator, WikitextPageRef, bare_url_references,
+    build_citoid_header, build_citoid_request, citoid_language, execute_fetch_token,
+    execute_wiki_page_save, extract_use_sites, parse_action_response_summary,
+    render_bare_url_citation, verify_page,
 };
 
 use axum::{
@@ -32,11 +33,18 @@ use crate::action_routes::{
 use crate::config_for_state_wiki;
 use crate::http_errors::{forbidden_error, unauthorized_error};
 use crate::runtime_adapters::BearerHttpClient;
+use crate::runtime_adapters::PlainHttpClient;
 use crate::session_runtime::{current_session_snapshot, validate_csrf_header};
 use crate::state::AppState;
 
 /// Citoid etiquette: at most one request per second on the live service.
 const CITOID_PACE: Duration = Duration::from_secs(1);
+
+/// Page-level verify fan-out: how many use-sites verify concurrently on the
+/// verify-page route. Each runs its own `options.concurrency`-wide model panel,
+/// so keep `PAGE_VERIFY_CONCURRENCY * options.concurrency` within the model
+/// endpoint's rate limit.
+const PAGE_VERIFY_CONCURRENCY: usize = 8;
 
 /// Default edit summary when the operator supplies no note.
 const BARE_URL_DEFAULT_SUMMARY: &str = "SP42: bare-URL repair";
@@ -174,6 +182,79 @@ pub(crate) async fn post_bare_url_proposals(
     .await
     .map_err(|error| action_error_response(&error))?;
     Ok(Json(response))
+}
+
+/// `POST /dev/citation/verify-page` — read-only page-level citation verification.
+///
+/// Session + CSRF gated (like `post_bare_url_apply`). The route only reads from the
+/// wiki, but it spends the server's `SP42_INFERENCE_*` credentials on a
+/// caller-chosen page — so it is *not* equivalent to the credential-free proposal
+/// route and must not be reachable unauthenticated once the server is bound beyond
+/// loopback (ADR-0011 §5). The gate runs before any inference client is built.
+///
+/// Per-request inference edge from env (dev route). Resolves wiki config, then
+/// builds a model panel and client from inference environment variables. Extracts
+/// blocks via the editor (Parsoid), then use-sites, then runs `verify_page`, and
+/// returns a `PageVerificationReport`.
+pub(crate) async fn post_verify_page(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(payload): Json<PageVerificationRequest>,
+) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
+    let Some(session) = current_session_snapshot(&state, &headers, true).await else {
+        return Err(unauthorized_error(
+            "No authenticated bridge session is active.",
+        ));
+    };
+    validate_csrf_header(&headers, &session)?;
+    let config = config_for_state_wiki(&state, &payload.wiki_id)?;
+
+    // Per-request inference edge from env (dev route).
+    let panel = sp42_inference::panel_from_env().map_err(|error| {
+        (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(serde_json::json!({ "error": error })),
+        )
+    })?;
+    let model_client = sp42_inference::client_from_env().map_err(|error| {
+        (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(serde_json::json!({ "error": error })),
+        )
+    })?;
+
+    // Extract blocks via the editor (Parsoid), then use-sites, then verify.
+    let page_ref = WikitextPageRef {
+        title: payload.title.clone(),
+        rev_id: payload.rev_id,
+    };
+    let blocks = state
+        .wikitext_editor
+        .extract_blocks(&config, &page_ref)
+        .await
+        .map_err(|error| action_error_response(&action_error_from_editor(&error)))?;
+    let extract = extract_use_sites(&blocks, &payload);
+
+    let http_client = PlainHttpClient::new().map_err(|error| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": error })),
+        )
+    })?;
+    let options = VerifyOptions::default();
+    let report: PageVerificationReport = verify_page(
+        &http_client,
+        &model_client,
+        state.clock.as_ref(),
+        &panel,
+        &payload,
+        extract,
+        options,
+        PAGE_VERIFY_CONCURRENCY,
+    )
+    .await;
+
+    Ok(Json(report))
 }
 
 /// Replay one proposal verbatim: gate → CSRF token → node-anchored replace

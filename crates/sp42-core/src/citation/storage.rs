@@ -335,6 +335,7 @@ mod tests {
                 quote: "opened in 1850".to_string(),
                 offset: 11,
             }),
+            source_unavailable_reason: None,
             provenance: SourceProvenance {
                 url: url(),
                 content_hash: sha256_hex(b"the museum opened in 1850"),
@@ -347,6 +348,10 @@ mod tests {
                 offset: 11,
             },
             use_site_ordinal: 0,
+            ref_id: String::new(),
+            claim: String::new(),
+            preceding_context: Vec::new(),
+            archive_of: None,
             schema_version: crate::citation::verify::SCHEMA_VERSION,
         }
     }

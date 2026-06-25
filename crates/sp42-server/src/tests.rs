@@ -700,6 +700,239 @@ async fn bare_url_apply_route_requires_a_session() {
     assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
 }
 
+#[tokio::test]
+async fn verify_page_route_requires_a_session() {
+    // verify-page spends SP42_INFERENCE_* credentials on a caller-chosen page, so
+    // — unlike the credential-free proposal route — it must be session-gated. The
+    // gate runs before any inference client is built: an unauthenticated POST is
+    // rejected (401), not the 503 the inference-wiring step would yield when
+    // inference is absent (ADR-0011 §5).
+    unsafe {
+        std::env::remove_var("SP42_INFERENCE_MODELS");
+        std::env::remove_var("SP42_INFERENCE_URL");
+    }
+    let router = build_router(test_state());
+    let response = router
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/dev/citation/verify-page")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::json!({
+                        "wiki_id": "frwiki",
+                        "title": "Exemple",
+                        "rev_id": 42
+                    })
+                    .to_string(),
+                ))
+                .expect("request should build"),
+        )
+        .await
+        .expect("request should complete");
+
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn verify_page_route_is_registered() {
+    // Ensure inference env is absent so we hit the 503 wiring check deterministically.
+    unsafe {
+        std::env::remove_var("SP42_INFERENCE_MODELS");
+        std::env::remove_var("SP42_INFERENCE_URL");
+    }
+    let state = test_state();
+    let session_id = "verify-page-registered";
+    state.sessions.write().await.insert(
+        session_id.to_string(),
+        test_session("Example", "secret-token", now_ms()),
+    );
+    let cookie = format!("{SESSION_COOKIE_NAME}={session_id}");
+    let router = build_router(state);
+    let response = router
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/dev/citation/verify-page")
+                .header("content-type", "application/json")
+                .header(axum::http::header::COOKIE, cookie)
+                .header(CSRF_HEADER_NAME, "csrf-token")
+                .body(Body::from(
+                    serde_json::json!({
+                        "wiki_id": "frwiki",
+                        "title": "Exemple",
+                        "rev_id": 42
+                    })
+                    .to_string(),
+                ))
+                .expect("request should build"),
+        )
+        .await
+        .expect("request should complete");
+
+    // 503 (no inference configured) proves the route is registered and reached
+    // the inference-wiring step — not a 404 or 405. The route exists and is routable.
+    assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+}
+
+#[tokio::test]
+async fn verify_page_unknown_wiki_returns_400() {
+    // Unknown wiki_id should be rejected as a config resolution problem (400)
+    // before any model inference lookup, proving config-first ordering. Gated by a
+    // session so we test config ordering, not the auth gate (ADR-0011 §5).
+    unsafe {
+        std::env::remove_var("SP42_INFERENCE_MODELS");
+        std::env::remove_var("SP42_INFERENCE_URL");
+    }
+    let state = test_state();
+    let session_id = "verify-page-unknown-wiki";
+    state.sessions.write().await.insert(
+        session_id.to_string(),
+        test_session("Example", "secret-token", now_ms()),
+    );
+    let cookie = format!("{SESSION_COOKIE_NAME}={session_id}");
+    let router = build_router(state);
+    let response = router
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/dev/citation/verify-page")
+                .header("content-type", "application/json")
+                .header(axum::http::header::COOKIE, cookie)
+                .header(CSRF_HEADER_NAME, "csrf-token")
+                .body(Body::from(
+                    serde_json::json!({
+                        "wiki_id": "unknown_wiki_id_12345",
+                        "title": "Exemple",
+                        "rev_id": 42
+                    })
+                    .to_string(),
+                ))
+                .expect("request should build"),
+        )
+        .await
+        .expect("request should complete");
+
+    // 400 (config resolution failure) proves the route rejects unknown wikis
+    // before attempting inference wiring — config-first ordering is maintained.
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn plain_http_client_rejects_loopback_urls() {
+    // Unit test: PlainHttpClient must refuse loopback/private URLs unless
+    // SP42_FETCH_ALLOW_PRIVATE=1, proving SSRF floor (SP42#34). The initial URL
+    // check gates the request before the first hop.
+    use crate::runtime_adapters::PlainHttpClient;
+    use sp42_types::{HttpClient, HttpRequest};
+    use std::collections::BTreeMap;
+    use url::Url;
+
+    // Ensure dev escape hatch is OFF for this test
+    unsafe {
+        std::env::remove_var("SP42_FETCH_ALLOW_PRIVATE");
+    }
+
+    let plain_client = PlainHttpClient::new().expect("PlainHttpClient should build");
+
+    // Test loopback IPv4
+    let loopback_request = HttpRequest {
+        url: Url::parse("http://127.0.0.1/admin").expect("valid URL"),
+        method: sp42_types::HttpMethod::Get,
+        headers: BTreeMap::new(),
+        body: vec![],
+    };
+
+    let result = plain_client.execute(loopback_request).await;
+
+    // Must fail with transport error due to SSRF guard
+    assert!(
+        result.is_err(),
+        "PlainHttpClient should reject loopback URL without SP42_FETCH_ALLOW_PRIVATE"
+    );
+    if let Err(sp42_types::HttpClientError::Transport { message }) = result {
+        assert!(
+            message.contains("refusing to fetch"),
+            "Error message should indicate SSRF block: {message}"
+        );
+    }
+
+    // Test metadata endpoint
+    let metadata_request = HttpRequest {
+        url: Url::parse("http://169.254.169.254/latest/meta-data/").expect("valid URL"),
+        method: sp42_types::HttpMethod::Get,
+        headers: BTreeMap::new(),
+        body: vec![],
+    };
+
+    let result = plain_client.execute(metadata_request).await;
+
+    assert!(
+        result.is_err(),
+        "PlainHttpClient should reject cloud metadata endpoint"
+    );
+}
+
+#[tokio::test]
+async fn plain_http_client_caps_chunked_response_without_content_length() {
+    // verify-page fetches attacker-influenced citation URLs. A response with no
+    // Content-Length (chunked) skips the header size pre-check, so the cap must be
+    // enforced while streaming or a large/chunked body exhausts memory despite
+    // MAX_SOURCE_BYTES. Serve > 8 MiB chunked with no Content-Length and assert
+    // the fetch is refused.
+    use crate::runtime_adapters::PlainHttpClient;
+    use sp42_types::{HttpClient, HttpRequest};
+    use std::collections::BTreeMap;
+    use std::io::{Read, Write};
+    use url::Url;
+
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind test server");
+    let addr = listener.local_addr().expect("local addr");
+    let server = std::thread::spawn(move || {
+        if let Ok((mut stream, _)) = listener.accept() {
+            // Drain the request headers so the client can finish sending.
+            let mut buf = [0u8; 1024];
+            let _ = stream.read(&mut buf);
+            // Chunked response, deliberately no Content-Length header.
+            let _ = stream.write_all(
+                b"HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nTransfer-Encoding: chunked\r\n\r\n",
+            );
+            let chunk = vec![b'a'; 64 * 1024];
+            let chunk_header = format!("{:x}\r\n", chunk.len());
+            // 160 * 64 KiB = 10 MiB, past the 8 MiB cap. Stop early on broken pipe
+            // once the client aborts the read.
+            for _ in 0..160 {
+                if stream.write_all(chunk_header.as_bytes()).is_err()
+                    || stream.write_all(&chunk).is_err()
+                    || stream.write_all(b"\r\n").is_err()
+                {
+                    break;
+                }
+            }
+            let _ = stream.write_all(b"0\r\n\r\n");
+        }
+    });
+
+    let client =
+        PlainHttpClient::with_allow_private(true).expect("client should build for loopback test");
+    let request = HttpRequest {
+        url: Url::parse(&format!("http://{addr}/")).expect("valid URL"),
+        method: sp42_types::HttpMethod::Get,
+        headers: BTreeMap::new(),
+        body: vec![],
+    };
+
+    let result = client.execute(request).await;
+    let _ = server.join();
+
+    let error = result.expect_err("oversized chunked body must be refused");
+    let message = format!("{error:?}");
+    assert!(
+        message.contains("cap"),
+        "error should report the size cap, got: {message}"
+    );
+}
+
 #[test]
 fn vps_session_cookie_is_secure() {
     let mut state = test_state();
@@ -3312,7 +3545,11 @@ fn editor_errors_map_to_action_error_codes() {
         ..
     } = mapped;
     assert_eq!(code.as_deref(), Some("editor-not-configured"));
-    assert_eq!(http_status, Some(501), "configuration gaps surface as 501");
+    assert_eq!(
+        http_status,
+        Some(400),
+        "configuration gaps surface as client error (400)"
+    );
     assert!(!retryable);
 
     let error = sp42_core::WikitextEditorError::Unavailable {
@@ -3321,9 +3558,17 @@ fn editor_errors_map_to_action_error_codes() {
     };
     let mapped = crate::action_routes::action_error_from_editor(&error);
     let sp42_core::ActionError::Execution {
-        code, retryable, ..
+        code,
+        http_status,
+        retryable,
+        ..
     } = mapped;
     assert_eq!(code.as_deref(), Some("editor-unavailable"));
+    assert_eq!(
+        http_status,
+        Some(502),
+        "upstream unavailability surfaces as 502"
+    );
     assert!(retryable);
 }
 

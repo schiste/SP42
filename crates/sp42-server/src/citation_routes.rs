@@ -40,6 +40,12 @@ use crate::state::AppState;
 /// Citoid etiquette: at most one request per second on the live service.
 const CITOID_PACE: Duration = Duration::from_secs(1);
 
+/// Page-level verify fan-out: how many use-sites verify concurrently on the
+/// verify-page route. Each runs its own `options.concurrency`-wide model panel,
+/// so keep `PAGE_VERIFY_CONCURRENCY * options.concurrency` within the model
+/// endpoint's rate limit.
+const PAGE_VERIFY_CONCURRENCY: usize = 8;
+
 /// Default edit summary when the operator supplies no note.
 const BARE_URL_DEFAULT_SUMMARY: &str = "SP42: bare-URL repair";
 
@@ -231,6 +237,7 @@ pub(crate) async fn post_verify_page(
         &payload,
         extract,
         options,
+        PAGE_VERIFY_CONCURRENCY,
     )
     .await;
 

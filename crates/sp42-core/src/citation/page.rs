@@ -146,6 +146,18 @@ where
 /// per-use-site verifier with bounded concurrency, and assembles a read-only
 /// report. A per-use-site error becomes an extraction-failure entry, never a
 /// top-level error.
+///
+/// Concurrency is two-level and multiplicative: `page_concurrency` bounds how
+/// many use-sites (and distinct source fetches) are in flight at once, while
+/// `options.concurrency` bounds the model panel *within* each use-site. So the
+/// peak number of concurrent model calls is roughly
+/// `page_concurrency * options.concurrency` — size the two against the model
+/// endpoint's rate limit (e.g. 8 use-sites x a 3-model panel = 24 in flight).
+// `page_concurrency` is page-orchestrator-specific and deliberately separate from
+// the per-use-site `VerifyOptions` (where it would be a meaningless field on the
+// single-claim path), so it stays a parameter — same trade-off as
+// `verify_citation_use_site`.
+#[allow(clippy::too_many_arguments)]
 pub async fn verify_page<C, M>(
     fetch_client: &C,
     model_client: &M,
@@ -154,6 +166,7 @@ pub async fn verify_page<C, M>(
     page: &PageVerificationRequest,
     extract: ExtractOutcome,
     options: VerifyOptions,
+    page_concurrency: usize,
 ) -> PageVerificationReport
 where
     C: HttpClient + ?Sized,
@@ -187,11 +200,14 @@ where
             distinct.push(u);
         }
     }
-    let concurrency = options.concurrency;
-    let fetched_list = map_with_concurrency(distinct.clone(), concurrency, |url, _| async move {
-        (url.clone(), fetch_source(fetch_client, &url).await)
-    })
-    .await;
+    // Page-level concurrency: distinct fetches in flight. The per-use-site panel
+    // concurrency stays `options.concurrency` (applied inside verify_one_use_site).
+    let page_concurrency = page_concurrency.max(1);
+    let fetched_list =
+        map_with_concurrency(distinct.clone(), page_concurrency, |url, _| async move {
+            (url.clone(), fetch_source(fetch_client, &url).await)
+        })
+        .await;
     let mut bodies: HashMap<String, FetchedSource> = HashMap::new();
     for (url, result) in fetched_list {
         let source = match result {
@@ -215,7 +231,7 @@ where
     // Archive URLs are consulted on-demand only if the primary URL returns SourceUnavailable.
     let mut extraction_failures = failures;
     let mut findings = Vec::new();
-    let results = map_with_concurrency(use_sites, concurrency, |us, _| {
+    let results = map_with_concurrency(use_sites, page_concurrency, |us, _| {
         verify_one_use_site(
             fetch_client,
             model_client,
@@ -352,6 +368,7 @@ mod orchestrator_tests {
             &page(),
             two_use_sites_same_url(),
             options,
+            1,
         ));
         assert_eq!(report.findings.len(), 2);
         assert_eq!(report.stats.use_sites_verified, 2);
@@ -386,6 +403,7 @@ mod orchestrator_tests {
             &page(),
             two_use_sites_same_url(),
             options,
+            1,
         ));
         // Both use-sites should produce SourceUnavailable findings (not errors),
         // routed through the empty-text/status-0 sentinel → body-usability gate.
@@ -465,6 +483,7 @@ mod orchestrator_tests {
             &page(),
             extract,
             options,
+            1,
         ));
 
         // refs_seen should be 1 (one ref), but use_sites_verified should be 2 (two use-sites)
@@ -540,6 +559,7 @@ reject it as too short, allowing the verification process to proceed normally."
             &page(),
             extract,
             options,
+            1,
         ));
 
         // Should have one finding (the archive verify), not SourceUnavailable.
@@ -607,6 +627,7 @@ archive is fetched, the queue will be empty and the test will fail, proving the 
             &page(),
             extract,
             options,
+            1,
         ));
 
         // Should have one successful finding citing the primary URL.

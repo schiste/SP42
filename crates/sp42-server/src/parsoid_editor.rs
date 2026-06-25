@@ -1002,6 +1002,7 @@ mod tests {
             &page,
             extract,
             sp42_core::VerifyOptions::default(),
+            8,
         )
         .await;
 

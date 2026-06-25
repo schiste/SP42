@@ -180,6 +180,9 @@ pub fn client_from_env() -> Result<GenaiModelClient, String> {
 /// Check whether a URL host is safe to fetch from, honoring the `allow_private` escape hatch
 /// (SP42#34 SSRF floor). Used as the per-hop predicate in the redirect policy.
 ///
+/// Delegates to the canonical SSRF check in `sp42_core::check_fetchable_source_url` to avoid
+/// duplicating and drifting the security logic.
+///
 /// # Arguments
 ///
 /// * `url` - The URL to validate (typically from a redirect Location header).
@@ -190,64 +193,11 @@ pub fn client_from_env() -> Result<GenaiModelClient, String> {
 /// `true` if the URL host passes the SSRF check, `false` if it should be blocked.
 #[must_use]
 pub fn redirect_host_allowed(url: &reqwest::Url, allow_private: bool) -> bool {
-    use std::net::{Ipv4Addr, Ipv6Addr};
-
     if allow_private {
-        // Dev escape hatch: allow everything except non-http(s) schemes.
+        // Dev escape hatch: allow private/loopback hosts, but still only http(s).
         return matches!(url.scheme(), "http" | "https");
     }
-
-    // SSRF floor: check scheme and host
-    match url.scheme() {
-        "http" | "https" => {}
-        _ => return false, // Non-http(s) scheme
-    }
-
-    match url.host_str() {
-        None => false, // No host
-        Some(host) => {
-            // Remove brackets from IPv6 addresses (URL crate includes them)
-            let host_for_parse = host.trim_matches(|c| c == '[' || c == ']');
-
-            // Try to parse as IPv4
-            if let Ok(ip4) = host_for_parse.parse::<Ipv4Addr>() {
-                return !(ip4.is_loopback()
-                    || ip4.is_private()
-                    || ip4.is_link_local()
-                    || ip4.is_unspecified()
-                    || ip4.is_broadcast());
-            }
-
-            // Try to parse as IPv6
-            if let Ok(ip6) = host_for_parse.parse::<Ipv6Addr>() {
-                if ip6.is_loopback() || ip6.is_unspecified() {
-                    return false;
-                }
-                // Check IPv4-mapped IPv6
-                if let Some(mapped) = ip6.to_ipv4_mapped() {
-                    return !(mapped.is_loopback()
-                        || mapped.is_private()
-                        || mapped.is_link_local()
-                        || mapped.is_unspecified()
-                        || mapped.is_broadcast());
-                }
-                // Check unique-local (fc00::/7) and link-local (fe80::/10)
-                let first = ip6.segments()[0];
-                if (first & 0xfe00) == 0xfc00 || (first & 0xffc0) == 0xfe80 {
-                    return false;
-                }
-                return true;
-            }
-
-            // Domain name: check for localhost
-            let host_lower = host.to_ascii_lowercase();
-            if host_lower == "localhost" || host_lower.ends_with(".localhost") {
-                return false;
-            }
-
-            true
-        }
-    }
+    sp42_core::check_fetchable_source_url(url).is_ok()
 }
 
 /// Build a `reqwest::Client` configured for source fetches with per-hop SSRF validation (SP42#34).
@@ -406,6 +356,19 @@ mod tests {
             ".localhost should be blocked"
         );
 
+        // Trailing-dot localhost (FQDN notation, resolves to loopback) should be blocked
+        // This is a regression test for the drift bug: old code didn't trim_end_matches('.')
+        assert!(
+            !redirect_host_allowed(&Url::parse("http://localhost./").expect("valid URL"), false),
+            "localhost. with trailing dot should be blocked"
+        );
+
+        // Trailing-dot loopback IPv4 should be blocked
+        assert!(
+            !redirect_host_allowed(&Url::parse("http://127.0.0.1./").expect("valid URL"), false),
+            "127.0.0.1. with trailing dot should be blocked"
+        );
+
         // Loopback IPv6 should be blocked
         assert!(
             !redirect_host_allowed(&Url::parse("http://[::1]/").expect("valid URL"), false),
@@ -496,6 +459,18 @@ mod tests {
                 true
             ),
             "public domain should be allowed with allow_private=true"
+        );
+
+        // Even with allow_private=true, localhost should be allowed (it's private)
+        assert!(
+            redirect_host_allowed(&Url::parse("http://localhost/").expect("valid URL"), true),
+            "localhost should be allowed with allow_private=true"
+        );
+
+        // But trailing-dot localhost should still be allowed with allow_private=true (it's still private)
+        assert!(
+            redirect_host_allowed(&Url::parse("http://localhost./").expect("valid URL"), true),
+            "localhost. should be allowed with allow_private=true"
         );
     }
 }

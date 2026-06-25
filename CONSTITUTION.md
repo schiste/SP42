@@ -52,7 +52,7 @@
 
 ## Article 4 — Decisions live with the code
 
-**4.1** Architecture Decision Records (ADRs) in `docs/adr/NNNN-title.md`. Records: context, decision, alternatives, consequences. Immutable once merged — reversals get a new ADR that supersedes.
+**4.1** Architecture Decision Records (ADRs) live under `docs/platform/adr/NNNN-title.md` or `docs/domains/<domain>/adr/NNNN-title.md`, filed by the platform layer or domain they govern. ADR numbers (`NNNN`) are globally unique across folders. Records: context, decision, alternatives, consequences. Immutable once merged — reversals get a new ADR that supersedes.
 
 **4.2** No decisions in chat, email, or meetings only. "We decided in the meeting to use X" → "Link to the ADR or it didn't happen."
 

@@ -20,3 +20,6 @@ sp42-devtools = { path = "../sp42-devtools" }
 sp42-reporting = { path = "../sp42-reporting" }
 sp42-types = { path = "../sp42-types" }
 tokio.workspace = true
+
+[dev-dependencies]
+url.workspace = true

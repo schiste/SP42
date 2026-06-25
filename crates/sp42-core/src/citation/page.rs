@@ -4,8 +4,10 @@ use crate::citation::concurrency::map_with_concurrency;
 use crate::citation::extract::{BlockFailure, ExtractOutcome, SkippedRef};
 use crate::citation::verdict::{CitationVerdict, SupportLevel};
 use crate::citation::verify::{
-    CitationFinding, FetchedSource, VerifyOptions, fetch_source, verify_citation_use_site,
+    CitationFinding, FetchedSource, VerificationOutcome, VerifyOptions, fetch_source,
+    verify_citation_use_site,
 };
+use crate::errors::CitationVerificationError;
 use sp42_types::{Clock, HttpClient, ModelClient, ModelRef};
 use std::collections::{HashMap, HashSet};
 
@@ -42,11 +44,58 @@ pub struct PageVerificationReport {
     pub stats: PageVerificationStats,
 }
 
+/// Try archive fallbacks if the primary URL came back `SourceUnavailable`.
+/// Returns the original outcome if no archives work or if no archives exist.
+async fn try_archive_fallback<C, M>(
+    fetch_client: &C,
+    model_client: &M,
+    clock: &dyn Clock,
+    panel: &[ModelRef],
+    us: &crate::citation::extract::CitationUseSite,
+    outcome: Result<VerificationOutcome, CitationVerificationError>,
+    options: &VerifyOptions,
+) -> Result<VerificationOutcome, CitationVerificationError>
+where
+    C: HttpClient + ?Sized,
+    M: ModelClient + ?Sized,
+{
+    if let Ok(o) = &outcome
+        && matches!(o.finding.verdict, CitationVerdict::SourceUnavailable)
+        && !us.archive_urls.is_empty()
+    {
+        for archive in &us.archive_urls {
+            if let Ok(body) = fetch_source(fetch_client, archive.as_str()).await {
+                let mut alt_request = us.request.clone();
+                alt_request.source_url = archive.clone();
+                let mut alt_opts = options.clone();
+                alt_opts.prefetched = Some(body);
+                if let Ok(alt) = verify_citation_use_site(
+                    fetch_client,
+                    model_client,
+                    clock,
+                    panel,
+                    &alt_request,
+                    Some(&us.context),
+                    us.use_site_ordinal,
+                    alt_opts,
+                )
+                .await
+                    && !matches!(alt.finding.verdict, CitationVerdict::SourceUnavailable)
+                {
+                    return Ok(alt);
+                }
+            }
+        }
+    }
+    outcome
+}
+
 /// Verify every use-site in `extract` against its source. Fetches each distinct
 /// source URL once (shared via the prefetched option), fans the existing
 /// per-use-site verifier with bounded concurrency, and assembles a read-only
 /// report. A per-use-site error becomes an extraction-failure entry, never a
 /// top-level error.
+#[allow(clippy::too_many_lines)]
 pub async fn verify_page<C, M>(
     fetch_client: &C,
     model_client: &M,
@@ -113,6 +162,7 @@ where
     // 2. Fan verify over use-sites, sharing the prefetched body.
     // Every distinct URL is now in `bodies` (including sentinel entries for failed fetches),
     // so every use-site finds a prefetched body and never re-fetches.
+    // Archive URLs are consulted on-demand only if the primary URL returns SourceUnavailable.
     let mut extraction_failures = failures;
     let mut findings = Vec::new();
     let bodies_ref = &bodies;
@@ -131,6 +181,19 @@ where
             opts,
         )
         .await;
+
+        // Try archive fallbacks if primary came back unavailable.
+        let outcome = try_archive_fallback(
+            fetch_client,
+            model_client,
+            clock,
+            panel,
+            &us,
+            outcome,
+            options_ref,
+        )
+        .await;
+
         (us.ref_id, us.block_ordinal, outcome)
     })
     .await;
@@ -208,14 +271,20 @@ mod orchestrator_tests {
                 BlockRef {
                     offset: 10,
                     ref_id: "r1".into(),
-                    source_urls: vec![url::Url::parse("https://s.test/x").unwrap()],
+                    sources: vec![crate::wikitext_editor::CitedSource {
+                        url: url::Url::parse("https://s.test/x").unwrap(),
+                        archive_urls: vec![],
+                    }],
                     ref_text: "[1]".into(),
                     named: false,
                 },
                 BlockRef {
                     offset: 22,
                     ref_id: "r2".into(),
-                    source_urls: vec![url::Url::parse("https://s.test/x").unwrap()],
+                    sources: vec![crate::wikitext_editor::CitedSource {
+                        url: url::Url::parse("https://s.test/x").unwrap(),
+                        archive_urls: vec![],
+                    }],
                     ref_text: "[2]".into(),
                     named: false,
                 },
@@ -317,10 +386,16 @@ mod orchestrator_tests {
             refs: vec![BlockRef {
                 offset: 5,
                 ref_id: "ref_multi_url".into(),
-                // ONE ref with TWO source URLs → TWO use-sites in extract_use_sites
-                source_urls: vec![
-                    url::Url::parse("https://s.test/a").unwrap(),
-                    url::Url::parse("https://s.test/b").unwrap(),
+                // ONE ref with TWO cited sources → TWO use-sites in extract_use_sites
+                sources: vec![
+                    crate::wikitext_editor::CitedSource {
+                        url: url::Url::parse("https://s.test/a").unwrap(),
+                        archive_urls: vec![],
+                    },
+                    crate::wikitext_editor::CitedSource {
+                        url: url::Url::parse("https://s.test/b").unwrap(),
+                        archive_urls: vec![],
+                    },
                 ],
                 ref_text: "[1]".into(),
                 named: false,

@@ -25,6 +25,8 @@ pub struct CitationUseSite {
     pub context: ClaimContext,
     /// The originating ref's marker id, for provenance.
     pub ref_id: String,
+    /// Archive/fallback URLs, tried only if the primary `source_url` is unavailable.
+    pub archive_urls: Vec<url::Url>,
 }
 
 /// Why a ref produced no use-site.
@@ -74,7 +76,7 @@ pub fn extract_use_sites(
     for block in blocks {
         let sentences = segment_sentences(&block.text);
         for r in &block.refs {
-            if r.source_urls.is_empty() {
+            if r.sources.is_empty() {
                 skipped.push(SkippedRef {
                     ref_id: r.ref_id.clone(),
                     reason: SkippedReason::NonUrlSource,
@@ -111,7 +113,7 @@ pub fn extract_use_sites(
                 preceding_sentences: preceding,
             };
 
-            for source_url in &r.source_urls {
+            for source in &r.sources {
                 use_sites.push(CitationUseSite {
                     use_site_ordinal: ordinal,
                     block_ordinal: block.block_ordinal,
@@ -120,10 +122,11 @@ pub fn extract_use_sites(
                         rev_id: page.rev_id,
                         title: page.title.clone(),
                         claim: claim.clone(),
-                        source_url: source_url.clone(),
+                        source_url: source.url.clone(),
                     },
                     context: context.clone(),
                     ref_id: r.ref_id.clone(),
+                    archive_urls: source.archive_urls.clone(),
                 });
                 ordinal += 1;
             }
@@ -186,7 +189,13 @@ mod tests {
         BlockRef {
             offset,
             ref_id: format!("ref-{offset}"),
-            source_urls: urls.iter().map(|u| url(u)).collect(),
+            sources: urls
+                .iter()
+                .map(|u| crate::wikitext_editor::CitedSource {
+                    url: url(u),
+                    archive_urls: vec![],
+                })
+                .collect(),
             ref_text: "[1]".into(),
             named: false,
         }

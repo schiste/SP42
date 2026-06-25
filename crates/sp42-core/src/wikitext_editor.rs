@@ -84,6 +84,15 @@ pub enum BlockKind {
     Other,
 }
 
+/// One cited source: a primary (live) URL plus archive fallbacks
+/// (e.g. `archive-url=`, Wayback/wikiwix), consulted only when the
+/// primary is unavailable.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CitedSource {
+    pub url: url::Url,
+    pub archive_urls: Vec<url::Url>,
+}
+
 /// One inline `<ref>` within a [`ParsoidBlock`], in document order.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BlockRef {
@@ -92,11 +101,12 @@ pub struct BlockRef {
     pub offset: usize,
     /// Stable cite id of the inline marker, e.g. `"cite_ref-smith_3-0"`.
     pub ref_id: String,
-    /// Source URL(s) read from the ref's structured `data-mw` cite-template
-    /// params (`url=`, `archive-url=`) via the parsoid crate; for a bare-URL
-    /// ref with no template, from the structured `ExtLink` node. Empty ⇒ a
-    /// non-URL ref (book/ISBN) that the core records as skipped.
-    pub source_urls: Vec<url::Url>,
+    /// Cited sources from this ref: primary URL + archive fallbacks.
+    /// One cite-template ⇒ one cited source (url + its archive-url).
+    /// A bare-URL `<ref>` ⇒ one cited source (url, no archives).
+    /// A bundled ref with multiple cite templates ⇒ multiple cited sources.
+    /// Empty ⇒ a non-URL ref (book/ISBN) that the core records as skipped.
+    pub sources: Vec<CitedSource>,
     /// Rendered text of the marker (e.g. `"[3]"`), for provenance.
     pub ref_text: String,
     /// `true` when this is a reuse of a `<ref name="…">`.

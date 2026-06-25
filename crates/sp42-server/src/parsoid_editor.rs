@@ -1055,18 +1055,10 @@ mod tests {
                 Some((claim, section, _)) => (claim.clone(), section.clone()),
                 None => (String::new(), None),
             };
-            let verdict_with_reason = if verdict == "SOURCE_UNAVAILABLE" {
-                if let Some(reason) = finding.source_unavailable_reason {
-                    let reason_str = match reason {
-                        sp42_core::SourceUnavailableReason::Unreachable => "unreachable",
-                        sp42_core::SourceUnavailableReason::Unusable => "unusable",
-                    };
-                    format!("{verdict} ({reason_str})")
-                } else {
-                    verdict.to_string()
-                }
-            } else {
-                verdict.to_string()
+            // `source_unavailable_reason` is `Some` only for SOURCE_UNAVAILABLE.
+            let verdict_with_reason = match finding.source_unavailable_reason {
+                Some(reason) => format!("{verdict} ({})", reason.as_str()),
+                None => verdict.to_string(),
             };
             md.push_str(&format!(
                 "### {badge} {verdict_with_reason} · ord {} · grounding `{:?}` · agree {}/{}\n\n",

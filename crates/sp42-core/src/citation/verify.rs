@@ -155,6 +155,18 @@ pub enum SourceUnavailableReason {
     Unusable,
 }
 
+impl SourceUnavailableReason {
+    /// Stable lowercase label (the single source of truth for the serde
+    /// `snake_case` rename and any human-facing rendering).
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Unreachable => "unreachable",
+            Self::Unusable => "unusable",
+        }
+    }
+}
+
 /// The read-only verification result — a Finding, never an action (ADR-0008 §2).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CitationFinding {

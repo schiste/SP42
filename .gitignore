@@ -8,6 +8,8 @@
 /.env.local
 /.env.*.local
 /.claude
+/.chau7
+**/.chau7/
 /.tmp
 **/.tmp/
 /.sp42-runtime

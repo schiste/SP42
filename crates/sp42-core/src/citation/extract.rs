@@ -142,12 +142,23 @@ pub fn extract_use_sites(
 /// Index of the sentence a ref at byte `offset` attaches to: the sentence whose
 /// range contains `offset.saturating_sub(1)` (the marker sits just past the
 /// punctuation it follows). A ref at end-of-block attaches to the last sentence.
+///
+/// The probe can land in the inter-sentence whitespace gap when the marker follows a
+/// space (`Sentence one. <ref>` records the offset *after* the space, which
+/// `segment_sentences` excludes from the first sentence's range). In that case the ref
+/// belongs to the *preceding* sentence — the one it trails — not the one it precedes.
 fn attach_index(sentences: &[Sentence], offset: usize) -> Option<usize> {
     if sentences.is_empty() {
         return None;
     }
     let probe = offset.saturating_sub(1);
     for (idx, s) in sentences.iter().enumerate() {
+        // Probe lands before this sentence starts → it's in the gap after the previous
+        // sentence (or leading whitespace). Attach to the preceding sentence.
+        if probe < s.range.start {
+            return Some(idx.saturating_sub(1));
+        }
+        // Probe lands within this sentence's range.
         if probe < s.range.end {
             return Some(idx);
         }
@@ -224,6 +235,20 @@ mod tests {
         let us = &out.use_sites[0];
         assert_eq!(us.request.claim, "Cats purr.");
         assert_eq!(us.request.source_url, url("https://a.test"));
+    }
+
+    #[test]
+    fn ref_after_whitespace_attaches_to_preceding_sentence() {
+        // "Cats purr. Cats sleep." — a ref whose marker follows the inter-sentence space
+        // (offset 11, just before the second sentence). It must attach to "Cats purr.",
+        // the sentence it trails, not the following one.
+        let b = block(
+            "Cats purr. Cats sleep.",
+            vec![bref(11, &["https://a.test"])],
+        );
+        let out = extract_use_sites(&[b], &page());
+        assert_eq!(out.use_sites.len(), 1);
+        assert_eq!(out.use_sites[0].request.claim, "Cats purr.");
     }
 
     #[test]

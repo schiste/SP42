@@ -11,6 +11,12 @@ use crate::errors::CitationVerificationError;
 use sp42_types::{Clock, HttpClient, ModelClient, ModelRef};
 use std::collections::{HashMap, HashSet};
 
+/// Cap on the total bytes of prefetched source bodies retained at once during a page run.
+/// Beyond this, distinct sources are no longer cached up front (they are fetched per use-site
+/// instead), bounding peak memory on citation-heavy pages independent of the citation count.
+/// Sized to comfortably hold a typical page's HTML sources while capping a pathological one.
+const MAX_PREFETCH_CACHE_BYTES: usize = 64 * 1024 * 1024;
+
 /// Identity of the page to verify.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct PageVerificationRequest {
@@ -66,8 +72,14 @@ where
     C: HttpClient + ?Sized,
     M: ModelClient + ?Sized,
 {
+    // Only fall back to an archive when the live URL is *unreachable* (dead link). An
+    // `Unusable` source (fetched 2xx but a PDF/JS shell/wrong page) is a tool limitation, not
+    // a dead link (ADR-0011 §7) — archiving it would wrongly stamp `archive_of` and tell the
+    // reviewer to repair a live URL that is fine. It would also usually be futile (the archived
+    // copy is the same unreadable artifact).
     if let Ok(o) = &outcome
         && matches!(o.finding.verdict, CitationVerdict::SourceUnavailable)
+        && o.finding.source_unavailable_reason == Some(SourceUnavailableReason::Unreachable)
         && !us.archive_urls.is_empty()
     {
         for archive in &us.archive_urls {
@@ -264,26 +276,49 @@ where
     // Page-level concurrency: distinct fetches in flight. The per-use-site panel
     // concurrency stays `options.concurrency` (applied inside verify_one_use_site).
     let page_concurrency = page_concurrency.max(1);
-    let fetched_list =
-        map_with_concurrency(distinct.clone(), page_concurrency, |url, _| async move {
+    // Prefetch the distinct bodies once each and share them — but cap the retained bytes so a
+    // citation-heavy page can't OOM the server. We fetch in concurrency-sized chunks and stop
+    // *caching* once retained bodies reach `MAX_PREFETCH_CACHE_BYTES`; any URL past the budget
+    // is simply not prefetched, so `verify_one_use_site` lazily (re)fetches it on demand
+    // (un-deduped). Peak retained ≈ budget + `page_concurrency` * source cap. A proper
+    // evict-after-last-use fix is tracked in SP42#59.
+    let mut bodies: HashMap<String, FetchedSource> = HashMap::new();
+    let mut retained_bytes: usize = 0;
+    let mut budget_hit = false;
+    for chunk in distinct.chunks(page_concurrency) {
+        if retained_bytes >= MAX_PREFETCH_CACHE_BYTES {
+            budget_hit = true;
+            break;
+        }
+        let fetched = map_with_concurrency(chunk.to_vec(), page_concurrency, |url, _| async move {
             (url.clone(), fetch_source(fetch_client, &url).await)
         })
         .await;
-    let mut bodies: HashMap<String, FetchedSource> = HashMap::new();
-    for (url, result) in fetched_list {
-        let source = match result {
-            Ok(source) => source,
-            Err(_) => {
-                // Transport error: insert a sentinel (empty text, status 0) so no use-site
-                // re-fetches. The empty-text path routes to SourceUnavailable via the
-                // body-usability gate (body_classifier.rs).
-                FetchedSource {
-                    text: String::new(),
-                    status: 0,
+        for (url, result) in fetched {
+            let source = match result {
+                Ok(source) => source,
+                Err(_) => {
+                    // Transport error: insert a sentinel (empty text, status 0) so no use-site
+                    // re-fetches. The empty-text path routes to SourceUnavailable via the
+                    // body-usability gate (body_classifier.rs).
+                    FetchedSource {
+                        text: String::new(),
+                        status: 0,
+                    }
                 }
-            }
-        };
-        bodies.insert(url, source);
+            };
+            retained_bytes += source.text.len();
+            bodies.insert(url, source);
+        }
+    }
+    if budget_hit {
+        tracing::warn!(
+            distinct_sources = distinct.len(),
+            cached_sources = bodies.len(),
+            retained_bytes,
+            "verify_page source-body cache hit its byte budget; remaining sources will be \
+             re-fetched per use-site (un-deduped) to bound memory"
+        );
     }
 
     // 2. Fan verify over use-sites, sharing the prefetched body.
@@ -648,6 +683,67 @@ reject it as too short, allowing the verification process to proceed normally."
         );
         assert_eq!(report.stats.use_sites_verified, 1);
         assert!(report.extraction_failures.is_empty());
+    }
+
+    #[test]
+    fn archive_not_consulted_for_unusable_primary() {
+        use futures::executor::block_on;
+
+        // Primary returns 2xx but an unusably short body → SourceUnavailable (Unusable).
+        // The archive must NOT be consulted (Unusable is a tool limitation, not a dead link),
+        // so the finding keeps `archive_of == None` and is not stamped for repair.
+        let primary = url::Url::parse("https://s.test/primary").unwrap();
+        let archive = url::Url::parse("https://archive.org/web/20240101/s.test/primary").unwrap();
+        let b = ParsoidBlock {
+            text: "Test claim here.".into(),
+            refs: vec![BlockRef {
+                offset: 5,
+                ref_id: "r1".into(),
+                sources: vec![crate::wikitext_editor::CitedSource {
+                    url: primary.clone(),
+                    archive_urls: vec![archive.clone()],
+                }],
+                ref_text: "[1]".into(),
+                named: false,
+            }],
+            block_kind: BlockKind::Paragraph,
+            block_ordinal: 0,
+        };
+        let extract = extract_use_sites(&[b], &page());
+
+        // EXACTLY ONE HTTP response (primary, 200 but too short to be usable). If the archive
+        // were fetched the queue would drain — proving the fallback did not run.
+        let http = StubHttpClient::new([Ok(HttpResponse {
+            status: 200,
+            headers: std::collections::BTreeMap::new(),
+            body: b"too short".to_vec(),
+        })]);
+        // No model call: the body-usability gate short-circuits before model invocation.
+        let model = StubModelClient::new([]);
+        let report = block_on(verify_page(
+            &http,
+            &model,
+            &FixedClock::new(0),
+            &[model_ref()],
+            &page(),
+            extract,
+            VerifyOptions::default(),
+            1,
+        ));
+
+        assert_eq!(report.findings.len(), 1);
+        let finding = &report.findings[0];
+        assert_eq!(finding.verdict, super::CitationVerdict::SourceUnavailable);
+        assert_eq!(
+            finding.source_unavailable_reason,
+            Some(super::SourceUnavailableReason::Unusable),
+            "a 2xx-but-short body is Unusable, not Unreachable"
+        );
+        assert_eq!(
+            finding.archive_of, None,
+            "an Unusable primary must not be archive-repaired"
+        );
+        assert_eq!(report.stats.source_unavailable_unusable, 1);
     }
 
     #[test]

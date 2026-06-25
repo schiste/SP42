@@ -186,14 +186,27 @@ pub(crate) async fn post_bare_url_proposals(
 
 /// `POST /dev/citation/verify-page` — read-only page-level citation verification.
 ///
+/// Session + CSRF gated (like `post_bare_url_apply`). The route only reads from the
+/// wiki, but it spends the server's `SP42_INFERENCE_*` credentials on a
+/// caller-chosen page — so it is *not* equivalent to the credential-free proposal
+/// route and must not be reachable unauthenticated once the server is bound beyond
+/// loopback (ADR-0011 §5). The gate runs before any inference client is built.
+///
 /// Per-request inference edge from env (dev route). Resolves wiki config, then
 /// builds a model panel and client from inference environment variables. Extracts
 /// blocks via the editor (Parsoid), then use-sites, then runs `verify_page`, and
-/// returns a `PageVerificationReport`. No session gating; read-only throughout.
+/// returns a `PageVerificationReport`.
 pub(crate) async fn post_verify_page(
     State(state): State<AppState>,
+    headers: HeaderMap,
     Json(payload): Json<PageVerificationRequest>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
+    let Some(session) = current_session_snapshot(&state, &headers, true).await else {
+        return Err(unauthorized_error(
+            "No authenticated bridge session is active.",
+        ));
+    };
+    validate_csrf_header(&headers, &session)?;
     let config = config_for_state_wiki(&state, &payload.wiki_id)?;
 
     // Per-request inference edge from env (dev route).

@@ -701,8 +701,12 @@ async fn bare_url_apply_route_requires_a_session() {
 }
 
 #[tokio::test]
-async fn verify_page_route_is_registered() {
-    // Ensure inference env is absent so we hit the 503 wiring check deterministically.
+async fn verify_page_route_requires_a_session() {
+    // verify-page spends SP42_INFERENCE_* credentials on a caller-chosen page, so
+    // — unlike the credential-free proposal route — it must be session-gated. The
+    // gate runs before any inference client is built: an unauthenticated POST is
+    // rejected (401), not the 503 the inference-wiring step would yield when
+    // inference is absent (ADR-0011 §5).
     unsafe {
         std::env::remove_var("SP42_INFERENCE_MODELS");
         std::env::remove_var("SP42_INFERENCE_URL");
@@ -727,6 +731,45 @@ async fn verify_page_route_is_registered() {
         .await
         .expect("request should complete");
 
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn verify_page_route_is_registered() {
+    // Ensure inference env is absent so we hit the 503 wiring check deterministically.
+    unsafe {
+        std::env::remove_var("SP42_INFERENCE_MODELS");
+        std::env::remove_var("SP42_INFERENCE_URL");
+    }
+    let state = test_state();
+    let session_id = "verify-page-registered";
+    state.sessions.write().await.insert(
+        session_id.to_string(),
+        test_session("Example", "secret-token", now_ms()),
+    );
+    let cookie = format!("{SESSION_COOKIE_NAME}={session_id}");
+    let router = build_router(state);
+    let response = router
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/dev/citation/verify-page")
+                .header("content-type", "application/json")
+                .header(axum::http::header::COOKIE, cookie)
+                .header(CSRF_HEADER_NAME, "csrf-token")
+                .body(Body::from(
+                    serde_json::json!({
+                        "wiki_id": "frwiki",
+                        "title": "Exemple",
+                        "rev_id": 42
+                    })
+                    .to_string(),
+                ))
+                .expect("request should build"),
+        )
+        .await
+        .expect("request should complete");
+
     // 503 (no inference configured) proves the route is registered and reached
     // the inference-wiring step — not a 404 or 405. The route exists and is routable.
     assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
@@ -735,18 +778,28 @@ async fn verify_page_route_is_registered() {
 #[tokio::test]
 async fn verify_page_unknown_wiki_returns_400() {
     // Unknown wiki_id should be rejected as a config resolution problem (400)
-    // before any model inference lookup, proving config-first ordering.
+    // before any model inference lookup, proving config-first ordering. Gated by a
+    // session so we test config ordering, not the auth gate (ADR-0011 §5).
     unsafe {
         std::env::remove_var("SP42_INFERENCE_MODELS");
         std::env::remove_var("SP42_INFERENCE_URL");
     }
-    let router = build_router(test_state());
+    let state = test_state();
+    let session_id = "verify-page-unknown-wiki";
+    state.sessions.write().await.insert(
+        session_id.to_string(),
+        test_session("Example", "secret-token", now_ms()),
+    );
+    let cookie = format!("{SESSION_COOKIE_NAME}={session_id}");
+    let router = build_router(state);
     let response = router
         .oneshot(
             Request::builder()
                 .method(Method::POST)
                 .uri("/dev/citation/verify-page")
                 .header("content-type", "application/json")
+                .header(axum::http::header::COOKIE, cookie)
+                .header(CSRF_HEADER_NAME, "csrf-token")
                 .body(Body::from(
                     serde_json::json!({
                         "wiki_id": "unknown_wiki_id_12345",

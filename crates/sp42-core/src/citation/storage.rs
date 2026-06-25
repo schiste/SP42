@@ -335,6 +335,7 @@ mod tests {
                 quote: "opened in 1850".to_string(),
                 offset: 11,
             }),
+            source_unavailable_reason: None,
             provenance: SourceProvenance {
                 url: url(),
                 content_hash: sha256_hex(b"the museum opened in 1850"),

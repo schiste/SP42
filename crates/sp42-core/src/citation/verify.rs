@@ -142,6 +142,19 @@ pub enum GroundingStatus {
     NotApplicable,
 }
 
+/// Why a `SourceUnavailable` verdict was reached. Derived from the fetch
+/// status; lets a reviewer tell a dead link from a source we fetched but
+/// could not read (PDF / JS shell / wrong page).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SourceUnavailableReason {
+    /// The source could not be fetched (missing / non-2xx status) — link rot.
+    Unreachable,
+    /// The source was fetched (2xx) but the panel could not use its content
+    /// (e.g. PDF, JavaScript viewer shell, or a wrong/redirected page).
+    Unusable,
+}
+
 /// The read-only verification result — a Finding, never an action (ADR-0008 §2).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CitationFinding {
@@ -154,6 +167,10 @@ pub struct CitationFinding {
     /// Whether the support verdict was confirmed in the source (the grounding axis).
     #[serde(default)]
     pub grounding_status: GroundingStatus,
+    /// For a `SourceUnavailable` verdict, why the source was unavailable;
+    /// `None` for any other verdict.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_unavailable_reason: Option<SourceUnavailableReason>,
     /// Measured agreement among the panel's votes (ADR-0006).
     pub agreement: PanelAgreement,
     /// The winning verdict's located passage, or `None`.
@@ -505,24 +522,30 @@ pub fn assemble_citation_finding(
             });
 
         return match located {
-            Some((quote, offset, grounding_status)) => CitationFinding {
-                kind: CitationFindingKind::CitationVerdict,
-                verdict: CitationVerdict::from(vote.winner),
-                grounding_status,
-                agreement: vote.agreement,
-                passage: Some(LocatedPassage {
-                    quote: quote.clone(),
-                    offset,
-                }),
-                provenance: provenance.clone(),
-                grounding: GroundingAssertion::LocatedQuote {
-                    quote,
-                    source_hash: provenance.content_hash.clone(),
-                    offset,
-                },
-                use_site_ordinal,
-                schema_version: SCHEMA_VERSION,
-            },
+            Some((quote, offset, grounding_status)) => {
+                let verdict = CitationVerdict::from(vote.winner);
+                CitationFinding {
+                    kind: CitationFindingKind::CitationVerdict,
+                    verdict,
+                    grounding_status,
+                    agreement: vote.agreement,
+                    passage: Some(LocatedPassage {
+                        quote: quote.clone(),
+                        offset,
+                    }),
+                    source_unavailable_reason: derive_source_unavailable_reason(
+                        verdict, provenance,
+                    ),
+                    provenance: provenance.clone(),
+                    grounding: GroundingAssertion::LocatedQuote {
+                        quote,
+                        source_hash: provenance.content_hash.clone(),
+                        offset,
+                    },
+                    use_site_ordinal,
+                    schema_version: SCHEMA_VERSION,
+                }
+            }
             // Layer 6: the support quote did not locate. Do NOT rewrite the verdict — surface
             // the panel's judgment marked `Unlocated` (unverified). Anti-fabrication is the
             // action gate's job ([`is_groundable_support`]), not a silent downgrade.
@@ -590,6 +613,21 @@ pub fn build_model_votes(votes: &[ModelVerdict], source_text: &str) -> Vec<Model
         .collect()
 }
 
+/// Derive the reason a `SourceUnavailable` verdict was reached from the verdict and
+/// provenance. Returns `None` for any other verdict.
+fn derive_source_unavailable_reason(
+    verdict: CitationVerdict,
+    provenance: &SourceProvenance,
+) -> Option<SourceUnavailableReason> {
+    if !matches!(verdict, CitationVerdict::SourceUnavailable) {
+        return None;
+    }
+    match provenance.http_status {
+        Some(status) if (200..=299).contains(&status) => Some(SourceUnavailableReason::Unusable),
+        _ => Some(SourceUnavailableReason::Unreachable),
+    }
+}
+
 /// A finding with no located passage, grounded on "the source was fetched".
 fn no_quote_finding(
     verdict: CitationVerdict,
@@ -604,6 +642,7 @@ fn no_quote_finding(
         grounding_status,
         agreement,
         passage: None,
+        source_unavailable_reason: derive_source_unavailable_reason(verdict, provenance),
         provenance: provenance.clone(),
         grounding: GroundingAssertion::SourceFetched {
             source_hash: provenance.content_hash.clone(),
@@ -1707,6 +1746,170 @@ mod tests {
         .expect("verifies");
         assert_eq!(outcome.finding.grounding_status, GroundingStatus::Located);
         assert!(outcome.votes[0].repair_invocation.is_none());
+    }
+
+    // --- source unavailable reason derivation ---
+
+    #[test]
+    fn su_reason_unusable_when_fetched_200() {
+        // A SourceUnavailable finding whose provenance http_status == Some(200)
+        // should have reason == Some(Unusable).
+        let source = "This is a PDF or JavaScript viewer shell.";
+        let mut provenance = provenance();
+        provenance.http_status = Some(200);
+        let finding = assemble_citation_finding(
+            source,
+            &provenance,
+            &[model_verdict(Verdict::SourceUnavailable, None)],
+            0,
+        );
+        assert_eq!(finding.verdict, CitationVerdict::SourceUnavailable);
+        assert_eq!(
+            finding.source_unavailable_reason,
+            Some(super::SourceUnavailableReason::Unusable)
+        );
+    }
+
+    #[test]
+    fn su_reason_unreachable_when_fetch_failed() {
+        // A SourceUnavailable finding whose provenance http_status == Some(404)
+        // should have reason == Some(Unreachable).
+        let source = "";
+        let mut provenance = provenance();
+        provenance.http_status = Some(404);
+        let finding = assemble_citation_finding(
+            source,
+            &provenance,
+            &[model_verdict(Verdict::SourceUnavailable, None)],
+            0,
+        );
+        assert_eq!(finding.verdict, CitationVerdict::SourceUnavailable);
+        assert_eq!(
+            finding.source_unavailable_reason,
+            Some(super::SourceUnavailableReason::Unreachable)
+        );
+    }
+
+    #[test]
+    fn su_reason_unreachable_when_http_status_none() {
+        // A SourceUnavailable finding whose provenance http_status == None
+        // (legacy snapshot) should default to Unreachable.
+        let source = "";
+        let mut provenance = provenance();
+        provenance.http_status = None;
+        let finding = assemble_citation_finding(
+            source,
+            &provenance,
+            &[model_verdict(Verdict::SourceUnavailable, None)],
+            0,
+        );
+        assert_eq!(finding.verdict, CitationVerdict::SourceUnavailable);
+        assert_eq!(
+            finding.source_unavailable_reason,
+            Some(super::SourceUnavailableReason::Unreachable)
+        );
+    }
+
+    #[test]
+    fn su_reason_none_for_supported() {
+        // A Supported finding should have source_unavailable_reason == None.
+        let source = "Acme Corp was established in 1985.";
+        let finding = assemble_citation_finding(
+            source,
+            &provenance(),
+            &[model_verdict(
+                Verdict::Supported,
+                Some("established in 1985"),
+            )],
+            0,
+        );
+        assert_eq!(
+            finding.verdict,
+            CitationVerdict::Judged(SupportLevel::Supported)
+        );
+        assert_eq!(finding.source_unavailable_reason, None);
+    }
+
+    #[test]
+    fn su_reason_none_for_not_supported() {
+        // A NotSupported finding should have source_unavailable_reason == None.
+        let source = "Acme Corp was established in 1985.";
+        let finding = assemble_citation_finding(
+            source,
+            &provenance(),
+            &[model_verdict(Verdict::NotSupported, None)],
+            0,
+        );
+        assert_eq!(
+            finding.verdict,
+            CitationVerdict::Judged(SupportLevel::NotSupported)
+        );
+        assert_eq!(finding.source_unavailable_reason, None);
+    }
+
+    #[test]
+    fn serde_back_compat_finding_without_reason_deserializes_to_none() {
+        // ADR-0009 replay: a finding JSON written before `source_unavailable_reason`
+        // existed must still load, with the field defaulting to None.
+        let legacy = r#"{
+            "kind":"citation_verdict",
+            "verdict":"supported",
+            "grounding_status":"located",
+            "agreement":{"winner_votes":2,"panel_size":2},
+            "passage":{"quote":"example","offset":0},
+            "provenance":{"url":"https://example.com/","content_hash":"abc","fetched_at":42,"http_status":200},
+            "grounding":{"kind":"located_quote","quote":"example","source_hash":"abc","offset":0},
+            "use_site_ordinal":0,
+            "schema_version":1
+        }"#;
+        let finding: CitationFinding =
+            serde_json::from_str(legacy).expect("legacy finding deserializes");
+        assert_eq!(finding.source_unavailable_reason, None);
+        assert_eq!(
+            finding.verdict,
+            CitationVerdict::Judged(SupportLevel::Supported)
+        );
+    }
+
+    #[test]
+    fn serde_finding_with_reason_serializes_correctly() {
+        // When a finding has source_unavailable_reason, it should serialize it.
+        let source = "";
+        let mut provenance = provenance();
+        provenance.http_status = Some(404);
+        let finding = assemble_citation_finding(
+            source,
+            &provenance,
+            &[model_verdict(Verdict::SourceUnavailable, None)],
+            0,
+        );
+        let json_str = serde_json::to_string(&finding).expect("serialize");
+        assert!(json_str.contains("unreachable"));
+
+        // Deserialize back and verify.
+        let deserialized: CitationFinding = serde_json::from_str(&json_str).expect("deserialize");
+        assert_eq!(
+            deserialized.source_unavailable_reason,
+            Some(super::SourceUnavailableReason::Unreachable)
+        );
+    }
+
+    #[test]
+    fn serde_finding_without_reason_omits_field_when_none() {
+        // When source_unavailable_reason is None (for a Supported finding),
+        // skip_serializing_if should omit it from the JSON.
+        let source = "Acme Corp was established in 1985.";
+        let finding = assemble_citation_finding(
+            source,
+            &provenance(),
+            &[model_verdict(
+                Verdict::Supported,
+                Some("established in 1985"),
+            )],
+            0,
+        );
+        let json_str = serde_json::to_string(&finding).expect("serialize");
+        assert!(!json_str.contains("source_unavailable_reason"));
     }
 
     proptest! {

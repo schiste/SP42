@@ -107,9 +107,9 @@ pub use citation::verdict::{CitationFindingKind, CitationVerdict, SupportLevel, 
 pub use citation::verify::{
     CitationFinding, CitationVerificationRequest, FetchedSource, GroundingAssertion,
     GroundingStatus, LocatedPassage, ModelVerdict, ModelVote, SourceProvenance,
-    VerificationOutcome, VerifyModelInputs, VerifyOptions, assemble_citation_finding,
-    build_model_votes, execute_citation_verify, is_groundable_support, sha256_hex,
-    verify_citation_use_site,
+    SourceUnavailableReason, VerificationOutcome, VerifyModelInputs, VerifyOptions,
+    assemble_citation_finding, build_model_votes, execute_citation_verify, is_groundable_support,
+    sha256_hex, verify_citation_use_site,
 };
 pub use citation::voting::{BinaryVote, NClassVote, PanelAgreement, binary_vote, n_class_vote};
 pub use context_builder::{ContextInputs, build_scoring_context};

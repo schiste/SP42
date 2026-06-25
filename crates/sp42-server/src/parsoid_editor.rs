@@ -1055,8 +1055,21 @@ mod tests {
                 Some((claim, section, _)) => (claim.clone(), section.clone()),
                 None => (String::new(), None),
             };
+            let verdict_with_reason = if verdict == "SOURCE_UNAVAILABLE" {
+                if let Some(reason) = finding.source_unavailable_reason {
+                    let reason_str = match reason {
+                        sp42_core::SourceUnavailableReason::Unreachable => "unreachable",
+                        sp42_core::SourceUnavailableReason::Unusable => "unusable",
+                    };
+                    format!("{verdict} ({reason_str})")
+                } else {
+                    verdict.to_string()
+                }
+            } else {
+                verdict.to_string()
+            };
             md.push_str(&format!(
-                "### {badge} {verdict} · ord {} · grounding `{:?}` · agree {}/{}\n\n",
+                "### {badge} {verdict_with_reason} · ord {} · grounding `{:?}` · agree {}/{}\n\n",
                 finding.use_site_ordinal,
                 finding.grounding_status,
                 finding.agreement.winner_votes,

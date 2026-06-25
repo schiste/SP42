@@ -981,6 +981,7 @@ mod verify_tests {
                 quote: "opened in 1998".to_string(),
                 offset: 4,
             }),
+            source_unavailable_reason: None,
             provenance: SourceProvenance {
                 url: "https://example.com/bridge".parse().expect("url"),
                 content_hash: "abc123".to_string(),

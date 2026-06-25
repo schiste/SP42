@@ -17,9 +17,9 @@ use async_trait::async_trait;
 use parsoid::prelude::*;
 use parsoid::{Client, ImmutableWikicode};
 use sp42_core::{
-    BlockKind, BlockRef, ParsoidBlock, WikiConfig, WikitextEditOutcome, WikitextEditRefusal,
-    WikitextEditor, WikitextEditorError, WikitextNodeDescriptor, WikitextNodeKind,
-    WikitextNodeLocator, WikitextPageRef, normalize_anchor_text,
+    BlockKind, BlockRef, CitedSource, ParsoidBlock, WikiConfig, WikitextEditOutcome,
+    WikitextEditRefusal, WikitextEditor, WikitextEditorError, WikitextNodeDescriptor,
+    WikitextNodeKind, WikitextNodeLocator, WikitextPageRef, normalize_anchor_text,
 };
 use std::collections::HashMap;
 
@@ -297,11 +297,11 @@ fn blocks_from_revision(
 ) -> Result<Vec<ParsoidBlock>, WikitextEditorError> {
     let code = Wikicode::new(revision.html());
 
-    // Map Reference.id() -> source URLs, read structurally from cite templates
-    // and bare ExtLinks inside each reference's contents.
-    let mut ref_urls: HashMap<String, Vec<url::Url>> = HashMap::new();
+    // Map Reference.id() -> cited sources (primary URL + archive fallbacks),
+    // read structurally from cite templates and bare ExtLinks inside each reference's contents.
+    let mut ref_sources: HashMap<String, Vec<CitedSource>> = HashMap::new();
     for reference in code.filter_references() {
-        ref_urls.insert(reference.id(), urls_in_reference(&reference));
+        ref_sources.insert(reference.id(), urls_in_reference(&reference));
     }
 
     let mut blocks = Vec::new();
@@ -310,7 +310,7 @@ fn blocks_from_revision(
     walk(
         &code,
         &mut heading_stack,
-        &ref_urls,
+        &ref_sources,
         &mut blocks,
         &mut ordinal,
     );
@@ -321,7 +321,7 @@ fn blocks_from_revision(
 fn walk(
     node: &impl WikinodeIterator,
     headings: &mut Vec<(u32, String)>,
-    ref_urls: &HashMap<String, Vec<url::Url>>,
+    ref_sources: &HashMap<String, Vec<CitedSource>>,
     blocks: &mut Vec<ParsoidBlock>,
     ordinal: &mut usize,
 ) {
@@ -336,11 +336,17 @@ fn walk(
         }
         if let Some(kind) = block_kind(&child) {
             let section_path = headings.iter().map(|(_, t)| t.clone()).collect();
-            blocks.push(build_block(&child, kind, section_path, *ordinal, ref_urls));
+            blocks.push(build_block(
+                &child,
+                kind,
+                section_path,
+                *ordinal,
+                ref_sources,
+            ));
             *ordinal += 1;
             continue; // do not descend into an emitted block
         }
-        walk(&child, headings, ref_urls, blocks, ordinal);
+        walk(&child, headings, ref_sources, blocks, ordinal);
     }
 }
 
@@ -361,11 +367,11 @@ fn build_block(
     kind: BlockKind,
     section_path: Vec<String>,
     ordinal: usize,
-    ref_urls: &HashMap<String, Vec<url::Url>>,
+    ref_sources: &HashMap<String, Vec<CitedSource>>,
 ) -> ParsoidBlock {
     let mut text = String::new();
     let mut refs = Vec::new();
-    collect_block(node, &mut text, &mut refs, ref_urls);
+    collect_block(node, &mut text, &mut refs, ref_sources);
 
     // Adjust ref offsets from the untrimmed text to the trimmed text.
     // collect_block records offsets against the untrimmed accumulator,
@@ -390,18 +396,18 @@ fn collect_block(
     node: &impl WikinodeIterator,
     text: &mut String,
     refs: &mut Vec<BlockRef>,
-    ref_urls: &HashMap<String, Vec<url::Url>>,
+    ref_sources: &HashMap<String, Vec<CitedSource>>,
 ) {
     for child in node.children() {
         if let Some(ref_link) = child.as_reference_link() {
-            // Empty reference_id simply misses the ref_urls map, yielding empty
-            // source_urls for a parse-failed ref, without aliasing refs.
+            // Empty reference_id simply misses the ref_sources map, yielding empty
+            // sources for a parse-failed ref, without aliasing refs.
             let reference_id = ref_link.reference_id().unwrap_or_default();
-            let source_urls = ref_urls.get(&reference_id).cloned().unwrap_or_default();
+            let sources = ref_sources.get(&reference_id).cloned().unwrap_or_default();
             refs.push(BlockRef {
                 offset: text.len(),
                 ref_id: ref_link.id(),
-                source_urls,
+                sources,
                 ref_text: child.text_contents(),
                 named: ref_link.name().ok().flatten().is_some(),
             });
@@ -414,38 +420,56 @@ fn collect_block(
         }
         // Any other element: recurse so we keep inline formatting text and catch
         // nested ref markers in order.
-        collect_block(&child, text, refs, ref_urls);
+        collect_block(&child, text, refs, ref_sources);
     }
 }
 
-/// URL extraction from a reference's contents.
-fn urls_in_reference(reference: &Reference) -> Vec<url::Url> {
+/// Cited source extraction from a reference's contents.
+/// Returns one `CitedSource` per cite-template (primary url + archive fallbacks),
+/// plus `CitedSource` entries for bare `ExtLink`s not already present in templates.
+/// Preserves document order: template-derived sources first, then bare-ExtLink sources.
+fn urls_in_reference(reference: &Reference) -> Vec<CitedSource> {
     let contents = reference.contents();
-    let mut out = Vec::new();
+    let mut sources = Vec::new();
+    let mut seen_urls = std::collections::HashSet::new();
 
     // Cite-template params via data-mw.
     for span in contents.select("span[typeof~=\"mw:Transclusion\"]") {
         if let Some(element) = span.as_node().as_element()
             && let Some(data_mw) = element.attributes.borrow().get("data-mw")
         {
-            push_template_urls(data_mw, &mut out);
+            push_template_sources(data_mw, &mut sources, &mut seen_urls);
         }
     }
-    // Bare ExtLinks.
+
+    // Bare ExtLinks: add only if not already present (either as primary or archive).
     for node in contents.descendants() {
         if let Some(extlink) = node.as_extlink()
             && let Ok(u) = url::Url::parse(&extlink.target())
         {
-            out.push(u);
+            let url_str = u.to_string();
+            if !seen_urls.contains(url_str.as_str()) {
+                seen_urls.insert(url_str.clone());
+                sources.push(CitedSource {
+                    url: u,
+                    archive_urls: vec![],
+                });
+            }
         }
     }
-    out.sort_by(|a, b| a.as_str().cmp(b.as_str()));
-    out.dedup();
-    out
+
+    sources
 }
 
-/// Extract URLs from cite-template data-mw.
-fn push_template_urls(data_mw: &str, out: &mut Vec<url::Url>) {
+/// Extract cited sources from a cite-template data-mw.
+/// For each template part with a primary `url` param, builds one `CitedSource`
+/// with that url as primary and `archive-url`/`archiveurl` as fallbacks.
+/// Appends to sources and updates `seen_urls` with all URLs (primary + archives).
+fn push_template_sources(
+    data_mw: &str,
+    sources: &mut Vec<CitedSource>,
+    seen_urls: &mut std::collections::HashSet<String>,
+) {
     let Ok(value) = serde_json::from_str::<serde_json::Value>(data_mw) else {
         return;
     };
@@ -456,15 +480,39 @@ fn push_template_urls(data_mw: &str, out: &mut Vec<url::Url>) {
         let Some(params) = part.pointer("/template/params") else {
             continue;
         };
-        for key in ["url", "archive-url", "archiveurl"] {
+
+        // Extract primary url.
+        let Some(primary_url) = params
+            .pointer("/url/wt")
+            .and_then(|v| v.as_str())
+            .and_then(|wt| url::Url::parse(wt.trim()).ok())
+        else {
+            continue; // Skip templates without a primary url.
+        };
+
+        let primary_str = primary_url.to_string();
+        seen_urls.insert(primary_str.clone());
+
+        // Extract archive URLs (in order: archive-url first, then archiveurl).
+        let mut archive_urls = Vec::new();
+        for key in ["archive-url", "archiveurl"] {
             if let Some(wt) = params
                 .pointer(&format!("/{key}/wt"))
                 .and_then(|v| v.as_str())
                 && let Ok(u) = url::Url::parse(wt.trim())
             {
-                out.push(u);
+                let archive_str = u.to_string();
+                if !seen_urls.contains(&archive_str) {
+                    seen_urls.insert(archive_str);
+                    archive_urls.push(u);
+                }
             }
         }
+
+        sources.push(CitedSource {
+            url: primary_url,
+            archive_urls,
+        });
     }
 }
 
@@ -891,8 +939,8 @@ mod tests {
         clippy::doc_markdown
     )]
     async fn smoke_verify_page_live() {
-        let title = std::env::var("SMOKE_TITLE")
-            .unwrap_or_else(|_| "Thirst (Nothomb novel)".to_string());
+        let title =
+            std::env::var("SMOKE_TITLE").unwrap_or_else(|_| "Thirst (Nothomb novel)".to_string());
         let rev_id: u64 = std::env::var("SMOKE_REV")
             .ok()
             .and_then(|raw| raw.parse().ok())
@@ -939,8 +987,8 @@ mod tests {
             .expect("guarded source client should build");
         let model = sp42_inference::client_from_env()
             .expect("set SP42_INFERENCE_URL/TOKEN for the smoke test");
-        let panel = sp42_inference::panel_from_env()
-            .expect("set SP42_INFERENCE_MODELS for the smoke test");
+        let panel =
+            sp42_inference::panel_from_env().expect("set SP42_INFERENCE_MODELS for the smoke test");
         let clock = sp42_types::SystemClock;
 
         let mut report = sp42_core::verify_page(
@@ -970,16 +1018,27 @@ mod tests {
         md.push_str("## Summary\n\n");
         md.push_str("| metric | count |\n|---|---|\n");
         md.push_str(&format!("| refs seen | {} |\n", stats.refs_seen));
-        md.push_str(&format!("| use-sites verified | {} |\n", stats.use_sites_verified));
+        md.push_str(&format!(
+            "| use-sites verified | {} |\n",
+            stats.use_sites_verified
+        ));
         md.push_str(&format!("| ✅ supported | {} |\n", stats.supported));
         md.push_str(&format!("| ◐ partial | {} |\n", stats.partial));
         md.push_str(&format!("| ✗ not supported | {} |\n", stats.not_supported));
-        md.push_str(&format!("| — source unavailable | {} |\n", stats.source_unavailable));
+        md.push_str(&format!(
+            "| — source unavailable | {} |\n",
+            stats.source_unavailable
+        ));
         md.push_str(&format!("| skipped (non-URL) | {} |\n", stats.skipped));
-        md.push_str(&format!("| extraction failures | {} |\n\n", stats.extraction_failures));
+        md.push_str(&format!(
+            "| extraction failures | {} |\n\n",
+            stats.extraction_failures
+        ));
 
         md.push_str("## Findings\n\n");
-        report.findings.sort_by_key(|finding| finding.use_site_ordinal);
+        report
+            .findings
+            .sort_by_key(|finding| finding.use_site_ordinal);
         for finding in &report.findings {
             let verdict = smoke_verdict_str(&finding.verdict);
             let badge = match verdict {
@@ -1031,7 +1090,8 @@ mod tests {
             md.push('\n');
         }
 
-        let out = std::env::var("SMOKE_OUT").unwrap_or_else(|_| "/tmp/sp42-smoke-report.md".to_string());
+        let out =
+            std::env::var("SMOKE_OUT").unwrap_or_else(|_| "/tmp/sp42-smoke-report.md".to_string());
         std::fs::write(&out, &md).expect("write markdown report");
         let json = serde_json::to_string_pretty(&report).expect("serialize report");
         std::fs::write(format!("{out}.json"), &json).expect("write json report");
@@ -1207,10 +1267,15 @@ mod extract_tests {
         // First ref: cite-template with URL https://example.com/cat-origins
         let cite_ref = &etymology_block.refs[0];
         assert_eq!(cite_ref.ref_id, "cite_ref-ety_1-0");
-        assert_eq!(cite_ref.source_urls.len(), 1);
+        assert_eq!(cite_ref.sources.len(), 1);
         assert_eq!(
-            cite_ref.source_urls[0].as_str(),
+            cite_ref.sources[0].url.as_str(),
             "https://example.com/cat-origins"
+        );
+        assert_eq!(
+            cite_ref.sources[0].archive_urls.len(),
+            0,
+            "cite-template should have no archive URLs in this fixture"
         );
         // Offset should be at the position of "Felis catus" (roughly where [1] was)
         assert!(
@@ -1221,11 +1286,16 @@ mod extract_tests {
         // Second ref: bare ExtLink with an external URL https://www.etymonline.com/word/cat
         let extlink_ref = &etymology_block.refs[1];
         assert_eq!(extlink_ref.ref_id, "cite_ref-orig_2-0");
-        assert_eq!(extlink_ref.source_urls.len(), 1);
+        assert_eq!(extlink_ref.sources.len(), 1);
         assert_eq!(
-            extlink_ref.source_urls[0].as_str(),
+            extlink_ref.sources[0].url.as_str(),
             "https://www.etymonline.com/word/cat",
             "bare ExtLink URL should be extracted"
+        );
+        assert_eq!(
+            extlink_ref.sources[0].archive_urls.len(),
+            0,
+            "bare ExtLink should have no archive URLs"
         );
         assert!(
             extlink_ref.offset > 0 && extlink_ref.offset <= etymology_block.text.len(),

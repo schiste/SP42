@@ -487,7 +487,7 @@ fn push_template_sources(
             .and_then(|v| v.as_str())
             .and_then(|wt| url::Url::parse(wt.trim()).ok())
         else {
-            continue; // Skip templates without a primary url.
+            continue; // Skip parts with no primary url; an orphan archive-url is not a citable source.
         };
 
         let primary_str = primary_url.to_string();
@@ -1390,5 +1390,85 @@ mod extract_tests {
         // been ~12 (the position in the untrimmed string including the 2 leading spaces),
         // which after trim would incorrectly point into "Cats sleep" or past the text.
         // This assertion would fail on that buggy code, making the test red.
+    }
+
+    #[test]
+    fn push_template_sources_extracts_archive_url() {
+        // Test that push_template_sources correctly extracts primary URL and archive-url param
+        // from a cite template data-mw structure.
+        let data_mw = r#"{"parts":[{"template":{"target":{"wt":"cite web","href":"./Template:Cite_web"},"params":{"url":{"wt":"https://example.org/article"},"archive-url":{"wt":"https://web.archive.org/web/20240101/example.org/article"},"title":{"wt":"Example Article"}},"i":0}}]}"#;
+
+        let mut sources = Vec::new();
+        let mut seen_urls = std::collections::HashSet::new();
+        super::push_template_sources(data_mw, &mut sources, &mut seen_urls);
+
+        // Should extract exactly one CitedSource with primary URL and one archive URL.
+        assert_eq!(
+            sources.len(),
+            1,
+            "should extract one source from cite template"
+        );
+        assert_eq!(
+            sources[0].url.as_str(),
+            "https://example.org/article",
+            "primary URL should be extracted"
+        );
+        assert_eq!(
+            sources[0].archive_urls.len(),
+            1,
+            "should have one archive URL"
+        );
+        assert_eq!(
+            sources[0].archive_urls[0].as_str(),
+            "https://web.archive.org/web/20240101/example.org/article",
+            "archive-url param should be extracted"
+        );
+
+        // Both URLs should be in seen_urls for dedup purposes.
+        assert!(seen_urls.contains("https://example.org/article"));
+        assert!(seen_urls.contains("https://web.archive.org/web/20240101/example.org/article"));
+    }
+
+    #[test]
+    fn push_template_sources_handles_multiple_archives() {
+        // Test that both archive-url and archiveurl params are collected (in order).
+        let data_mw = r#"{"parts":[{"template":{"target":{"wt":"cite web","href":"./Template:Cite_web"},"params":{"url":{"wt":"https://example.org"},"archive-url":{"wt":"https://web.archive.org/web/20240101/example.org"},"archiveurl":{"wt":"https://archive.is/example.org"},"title":{"wt":"Example"}},"i":0}}]}"#;
+
+        let mut sources = Vec::new();
+        let mut seen_urls = std::collections::HashSet::new();
+        super::push_template_sources(data_mw, &mut sources, &mut seen_urls);
+
+        assert_eq!(sources.len(), 1);
+        assert_eq!(sources[0].archive_urls.len(), 2);
+        // archive-url comes first, archiveurl second.
+        assert_eq!(
+            sources[0].archive_urls[0].as_str(),
+            "https://web.archive.org/web/20240101/example.org"
+        );
+        assert_eq!(
+            sources[0].archive_urls[1].as_str(),
+            "https://archive.is/example.org"
+        );
+    }
+
+    #[test]
+    fn push_template_sources_skips_part_without_primary_url() {
+        // Test that parts without a primary url param are skipped entirely,
+        // including any orphan archive-url (an archive without a primary is not a citable source).
+        let data_mw = r#"{"parts":[{"template":{"target":{"wt":"cite","href":"./Template:Cite"},"params":{"archive-url":{"wt":"https://archive.org/web/example"},"title":{"wt":"No URL"}},"i":0}}]}"#;
+
+        let mut sources = Vec::new();
+        let mut seen_urls = std::collections::HashSet::new();
+        super::push_template_sources(data_mw, &mut sources, &mut seen_urls);
+
+        // Should extract nothing.
+        assert!(
+            sources.is_empty(),
+            "should not extract source without primary URL"
+        );
+        assert!(
+            seen_urls.is_empty(),
+            "archive URL without primary should not be recorded"
+        );
     }
 }

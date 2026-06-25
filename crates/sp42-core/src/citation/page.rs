@@ -68,6 +68,9 @@ where
                 let mut alt_request = us.request.clone();
                 alt_request.source_url = archive.clone();
                 let mut alt_opts = options.clone();
+                // Don't fetch Citoid metadata for archive verification; the body fetch is the only
+                // network call we want to make for fallback sources.
+                alt_opts.include_metadata = false;
                 alt_opts.prefetched = Some(body);
                 if let Ok(alt) = verify_citation_use_site(
                     fetch_client,
@@ -90,12 +93,59 @@ where
     outcome
 }
 
+/// Verify a single use-site, including archive fallback attempts if the primary
+/// URL is unavailable. Returns (`ref_id`, `block_ordinal`, `outcome`).
+async fn verify_one_use_site<C, M>(
+    fetch_client: &C,
+    model_client: &M,
+    clock: &dyn Clock,
+    panel: &[ModelRef],
+    us: crate::citation::extract::CitationUseSite,
+    bodies: &HashMap<String, FetchedSource>,
+    options: &VerifyOptions,
+) -> (
+    String,
+    usize,
+    Result<VerificationOutcome, CitationVerificationError>,
+)
+where
+    C: HttpClient + ?Sized,
+    M: ModelClient + ?Sized,
+{
+    let mut opts = options.clone();
+    opts.prefetched = bodies.get(&us.request.source_url.to_string()).cloned();
+    let outcome = verify_citation_use_site(
+        fetch_client,
+        model_client,
+        clock,
+        panel,
+        &us.request,
+        Some(&us.context),
+        us.use_site_ordinal,
+        opts,
+    )
+    .await;
+
+    // Try archive fallbacks if primary came back unavailable.
+    let outcome = try_archive_fallback(
+        fetch_client,
+        model_client,
+        clock,
+        panel,
+        &us,
+        outcome,
+        options,
+    )
+    .await;
+
+    (us.ref_id, us.block_ordinal, outcome)
+}
+
 /// Verify every use-site in `extract` against its source. Fetches each distinct
 /// source URL once (shared via the prefetched option), fans the existing
 /// per-use-site verifier with bounded concurrency, and assembles a read-only
 /// report. A per-use-site error becomes an extraction-failure entry, never a
 /// top-level error.
-#[allow(clippy::too_many_lines)]
 pub async fn verify_page<C, M>(
     fetch_client: &C,
     model_client: &M,
@@ -165,36 +215,16 @@ where
     // Archive URLs are consulted on-demand only if the primary URL returns SourceUnavailable.
     let mut extraction_failures = failures;
     let mut findings = Vec::new();
-    let bodies_ref = &bodies;
-    let options_ref = &options;
-    let results = map_with_concurrency(use_sites, concurrency, |us, _| async move {
-        let mut opts = options_ref.clone();
-        opts.prefetched = bodies_ref.get(&us.request.source_url.to_string()).cloned();
-        let outcome = verify_citation_use_site(
+    let results = map_with_concurrency(use_sites, concurrency, |us, _| {
+        verify_one_use_site(
             fetch_client,
             model_client,
             clock,
             panel,
-            &us.request,
-            Some(&us.context),
-            us.use_site_ordinal,
-            opts,
+            us,
+            &bodies,
+            &options,
         )
-        .await;
-
-        // Try archive fallbacks if primary came back unavailable.
-        let outcome = try_archive_fallback(
-            fetch_client,
-            model_client,
-            clock,
-            panel,
-            &us,
-            outcome,
-            options_ref,
-        )
-        .await;
-
-        (us.ref_id, us.block_ordinal, outcome)
     })
     .await;
 
@@ -446,6 +476,152 @@ mod orchestrator_tests {
             report.stats.use_sites_verified, 2,
             "use_sites_verified should count 2 use-sites"
         );
+    }
+
+    #[test]
+    fn archive_fallback_used_when_primary_unavailable() {
+        use futures::executor::block_on;
+
+        // Build a use-site with primary and archive URLs.
+        let primary = url::Url::parse("https://s.test/primary").unwrap();
+        let archive = url::Url::parse("https://archive.org/web/20240101/s.test/primary").unwrap();
+        let b = ParsoidBlock {
+            text: "Test claim here.".into(),
+            section_path: vec!["Section".into()],
+            refs: vec![BlockRef {
+                offset: 5,
+                ref_id: "r1".into(),
+                sources: vec![crate::wikitext_editor::CitedSource {
+                    url: primary.clone(),
+                    archive_urls: vec![archive.clone()],
+                }],
+                ref_text: "[1]".into(),
+                named: false,
+            }],
+            block_kind: BlockKind::Paragraph,
+            block_ordinal: 0,
+        };
+        let extract = extract_use_sites(&[b], &page());
+        assert_eq!(extract.use_sites.len(), 1);
+
+        // HTTP queue: primary returns 503 (unavailable), archive returns good body.
+        // The primary fetch is done in verify_page's dedupe pass; the archive fetch
+        // is on-demand in try_archive_fallback.
+        // Note: body must be >= 300 chars to pass the body-usability gate.
+        let archive_body = b"This is the archived version of the page with substantial content \
+that exceeds the minimum body length threshold. It contains enough text to demonstrate that \
+the archive was successfully fetched and verified. The content discusses various topics and \
+provides context about the cited material. This ensures that the body classifier will not \
+reject it as too short, allowing the verification process to proceed normally."
+            .to_vec();
+        let http = StubHttpClient::new([
+            // Primary fetch (dedupe pass in verify_page)
+            Ok(HttpResponse {
+                status: 503,
+                headers: std::collections::BTreeMap::new(),
+                body: vec![],
+            }),
+            // Archive fetch (fallback in try_archive_fallback)
+            Ok(HttpResponse {
+                status: 200,
+                headers: std::collections::BTreeMap::new(),
+                body: archive_body,
+            }),
+        ]);
+        // Model panel: one completion for the archive verify (SUPPORTED)
+        let model =
+            StubModelClient::new([Ok(completion(r#"{"verdict":"SUPPORTED","quote":"test"}"#))]);
+        let options = VerifyOptions::default();
+        let report = block_on(verify_page(
+            &http,
+            &model,
+            &FixedClock::new(0),
+            &[model_ref()],
+            &page(),
+            extract,
+            options,
+        ));
+
+        // Should have one finding (the archive verify), not SourceUnavailable.
+        assert_eq!(report.findings.len(), 1);
+        let finding = &report.findings[0];
+        assert!(
+            !matches!(finding.verdict, super::CitationVerdict::SourceUnavailable),
+            "finding should not be SourceUnavailable (archive was used)"
+        );
+        assert_eq!(
+            finding.provenance.url, archive,
+            "finding should cite the archive URL"
+        );
+        assert_eq!(report.stats.use_sites_verified, 1);
+        assert!(report.extraction_failures.is_empty());
+    }
+
+    #[test]
+    fn archive_not_fetched_when_primary_available() {
+        use futures::executor::block_on;
+
+        // Build a use-site with primary and archive URLs.
+        let primary = url::Url::parse("https://s.test/primary").unwrap();
+        let archive = url::Url::parse("https://archive.org/web/20240101/s.test/primary").unwrap();
+        let b = ParsoidBlock {
+            text: "Test claim here.".into(),
+            section_path: vec!["Section".into()],
+            refs: vec![BlockRef {
+                offset: 5,
+                ref_id: "r1".into(),
+                sources: vec![crate::wikitext_editor::CitedSource {
+                    url: primary.clone(),
+                    archive_urls: vec![archive.clone()],
+                }],
+                ref_text: "[1]".into(),
+                named: false,
+            }],
+            block_kind: BlockKind::Paragraph,
+            block_ordinal: 0,
+        };
+        let extract = extract_use_sites(&[b], &page());
+
+        // HTTP queue: EXACTLY ONE response (primary succeeds). If archive is fetched,
+        // the queue will be drained and cause an error. This proves the archive was NOT fetched.
+        // Note: body must be >= 300 chars to pass the body-usability gate.
+        let primary_body = b"This is the primary page with substantial content that exceeds the \
+minimum body length threshold for the classifier. It contains enough text to demonstrate that \
+the primary source was successfully fetched and verified. The content provides context about \
+the cited material and shows that the archive fallback was not needed. This ensures that if \
+archive is fetched, the queue will be empty and the test will fail, proving the archive was not accessed.".to_vec();
+        let http = StubHttpClient::new([Ok(HttpResponse {
+            status: 200,
+            headers: std::collections::BTreeMap::new(),
+            body: primary_body,
+        })]);
+        // Model panel: one completion (SUPPORTED from primary)
+        let model =
+            StubModelClient::new([Ok(completion(r#"{"verdict":"SUPPORTED","quote":"test"}"#))]);
+        let options = VerifyOptions::default();
+        let report = block_on(verify_page(
+            &http,
+            &model,
+            &FixedClock::new(0),
+            &[model_ref()],
+            &page(),
+            extract,
+            options,
+        ));
+
+        // Should have one successful finding citing the primary URL.
+        assert_eq!(report.findings.len(), 1);
+        let finding = &report.findings[0];
+        assert_eq!(
+            finding.provenance.url, primary,
+            "finding should cite the primary URL"
+        );
+        assert_eq!(
+            finding.verdict,
+            super::CitationVerdict::Judged(SupportLevel::Supported)
+        );
+        // No extraction failures (if archive had been fetched, queue drain would cause error).
+        assert!(report.extraction_failures.is_empty());
     }
 }
 

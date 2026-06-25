@@ -201,6 +201,19 @@ mod tests {
         }
     }
 
+    fn bref_archived(offset: usize, primary: &str, archives: &[&str]) -> BlockRef {
+        BlockRef {
+            offset,
+            ref_id: format!("ref-{offset}"),
+            sources: vec![crate::wikitext_editor::CitedSource {
+                url: url(primary),
+                archive_urls: archives.iter().map(|u| url(u)).collect(),
+            }],
+            ref_text: "[1]".into(),
+            named: false,
+        }
+    }
+
     #[test]
     fn ref_attaches_to_its_sentence() {
         // "Cats purr. Cats sleep a lot." — ref after the first period (offset 10).
@@ -274,5 +287,45 @@ mod tests {
         assert!(out.use_sites.is_empty());
         assert_eq!(out.failures.len(), 1);
         assert_eq!(out.failures[0].block_ordinal, 0);
+    }
+
+    #[test]
+    fn url_with_archive_yields_one_use_site_with_archive_list() {
+        // A single ref with primary URL and archive fallback should produce
+        // exactly ONE use-site (not two), with both URLs properly threaded.
+        let primary = "https://example.org/article";
+        let archive = "https://web.archive.org/web/20240101/example.org/article";
+        let b = block(
+            "Cats purr.",
+            &["Behaviour"],
+            vec![bref_archived(10, primary, &[archive])],
+        );
+        let out = extract_use_sites(&[b], &page());
+        assert_eq!(out.use_sites.len(), 1, "should yield exactly one use-site");
+        let us = &out.use_sites[0];
+        assert_eq!(us.request.claim, "Cats purr.");
+        assert_eq!(us.request.source_url, url(primary));
+        assert_eq!(us.archive_urls.len(), 1);
+        assert_eq!(us.archive_urls[0], url(archive));
+    }
+
+    #[test]
+    fn url_with_multiple_archives_preserved() {
+        // A single ref with primary URL and multiple archive fallbacks should
+        // preserve all archives in order.
+        let primary = "https://example.org/article";
+        let archive1 = "https://web.archive.org/web/20240101/example.org/article";
+        let archive2 = "https://archive.is/example.org/article";
+        let b = block(
+            "The fact is true.",
+            &["Facts"],
+            vec![bref_archived(16, primary, &[archive1, archive2])],
+        );
+        let out = extract_use_sites(&[b], &page());
+        assert_eq!(out.use_sites.len(), 1);
+        let us = &out.use_sites[0];
+        assert_eq!(us.archive_urls.len(), 2);
+        assert_eq!(us.archive_urls[0], url(archive1));
+        assert_eq!(us.archive_urls[1], url(archive2));
     }
 }

@@ -58,4 +58,21 @@ printf '\n== SP42 pre-push: release tree audit ==\n'
 printf '\n== SP42 pre-push: full CI-shaped checks ==\n'
 ./scripts/ci-all.sh
 
+printf '\n== SP42 pre-push: supply-chain (cargo-deny + cargo-audit) ==\n'
+./scripts/check-supply-chain.sh
+
+printf '\n== SP42 pre-push: coverage (sp42-core lines >= 90%%) ==\n'
+./scripts/check-coverage.sh
+
+# Wasm size is enforced in CI and the release flow, not here: it requires an
+# optimized (web-release) rebuild, which would be punishing on every push.
+printf '\n== SP42 pre-push: forbidden-pattern guard (added lines vs origin/main) ==\n'
+base="$(git merge-base origin/main HEAD 2>/dev/null || true)"
+if [[ -n "$base" ]]; then
+  ./scripts/check-forbidden-patterns.sh --range "$base..HEAD"
+else
+  printf 'no origin/main merge-base — running staged-mode guard.\n'
+  ./scripts/check-forbidden-patterns.sh --staged
+fi
+
 printf '\nSP42 pre-push checks passed.\n'

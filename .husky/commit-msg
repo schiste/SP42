@@ -1,0 +1,32 @@
+#!/usr/bin/env bash
+# Enforce Conventional Commits (CONSTITUTION Article 8.1):
+#   type(scope): description     types: feat|fix|refactor|test|docs|ci|perf|chore
+# Also tolerated: build, revert; an optional "!" for breaking changes; merge,
+# revert, and fixup/squash auto-messages.
+set -euo pipefail
+
+if [[ "${SP42_SKIP_GIT_HOOKS:-0}" == "1" ]]; then
+  exit 0
+fi
+
+msg_file="$1"
+# First non-comment, non-blank line is the subject.
+subject="$(grep -vE '^\s*#' "$msg_file" | grep -vE '^\s*$' | head -1 || true)"
+
+# Allow git-generated messages that don't follow the convention.
+case "$subject" in
+  "Merge "*|"Revert \""*|"fixup! "*|"squash! "*|"amend! "*) exit 0 ;;
+esac
+
+pattern='^(feat|fix|refactor|test|docs|ci|perf|chore|build|revert)(\([a-z0-9._-]+\))?!?: .+'
+if [[ ! "$subject" =~ $pattern ]]; then
+  {
+    printf 'SP42 commit-msg: subject is not a Conventional Commit.\n\n'
+    printf '  got:      %s\n\n' "$subject"
+    printf '  expected: type(scope): description\n'
+    printf '  types:    feat fix refactor test docs ci perf chore build revert\n'
+    printf '  example:  fix(scoring): clamp identity contribution cap\n\n'
+    printf '  bypass (emergency): SP42_SKIP_GIT_HOOKS=1\n'
+  } >&2
+  exit 1
+fi

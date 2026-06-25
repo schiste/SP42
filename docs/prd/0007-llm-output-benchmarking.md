@@ -2,7 +2,7 @@
 
 **Author:** Luis Villa (drafted with Claude)
 **Date:** 2026-06-09
-**State:** Draft
+**State:** Accepted
 **Discussion:** https://github.com/schiste/SP42/pull/37
 **Spawned ADRs:** none yet — the harness's structure (crate placement, the
 injected-clients import boundary, the corpus-loader/adoption-gate seam and its

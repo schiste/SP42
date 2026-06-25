@@ -426,8 +426,9 @@ fn collect_block(
 
 /// Cited source extraction from a reference's contents.
 /// Returns one `CitedSource` per cite-template (primary url + archive fallbacks),
-/// plus `CitedSource` entries for bare `ExtLink`s not already present in templates.
-/// Preserves document order: template-derived sources first, then bare-ExtLink sources.
+/// plus `CitedSource` entries for *literal* bare `ExtLink`s not already present in
+/// templates. Preserves document order: template-derived sources first, then
+/// bare-ExtLink sources.
 fn urls_in_reference(reference: &Reference) -> Vec<CitedSource> {
     let contents = reference.contents();
     let mut sources = Vec::new();
@@ -437,17 +438,31 @@ fn urls_in_reference(reference: &Reference) -> Vec<CitedSource> {
     // whichever element starts the transclusion — in real Parsoid output for a
     // citation that is a `<link typeof="mw:Extension/templatestyles mw:Transclusion">`,
     // not a `<span>` — so match any element bearing the `mw:Transclusion` typeof.
+    //
+    // We also record each transclusion's `about` id: Parsoid groups every DOM node a
+    // template rendered under one shared `about`. The cite template's *rendered*
+    // links (DOI/PMID/PMC resolvers it derives from `doi=`/`pmid=` params) live in
+    // that group but are not the `url=` param, so the bare-ExtLink pass below must
+    // exclude them — they are template output, not literal bare URLs in the ref.
+    let mut transclusion_abouts = std::collections::HashSet::new();
     for span in contents.select("[typeof~=\"mw:Transclusion\"]") {
-        if let Some(element) = span.as_node().as_element()
-            && let Some(data_mw) = element.attributes.borrow().get("data-mw")
-        {
-            push_template_sources(data_mw, &mut sources, &mut seen_urls);
+        if let Some(element) = span.as_node().as_element() {
+            let attributes = element.attributes.borrow();
+            if let Some(data_mw) = attributes.get("data-mw") {
+                push_template_sources(data_mw, &mut sources, &mut seen_urls);
+            }
+            if let Some(about) = attributes.get("about") {
+                transclusion_abouts.insert(about.to_string());
+            }
         }
     }
 
-    // Bare ExtLinks: add only if not already present (either as primary or archive).
+    // Bare ExtLinks: a *literal* URL typed into the ref, i.e. one outside every
+    // transclusion group. Add only if not already present (either as primary or
+    // archive) from the template pass above.
     for node in contents.descendants() {
         if let Some(extlink) = node.as_extlink()
+            && !in_transclusion(&node, &transclusion_abouts)
             && let Ok(u) = url::Url::parse(&extlink.target())
         {
             let url_str = u.to_string();
@@ -462,6 +477,27 @@ fn urls_in_reference(reference: &Reference) -> Vec<CitedSource> {
     }
 
     sources
+}
+
+/// True if `node` (or any ancestor) belongs to a transclusion group, i.e. carries
+/// an `about` id that a `mw:Transclusion` element in the same reference also bears.
+/// Such a node is rendered template output, not a literal bare URL.
+fn in_transclusion(
+    node: &impl WikinodeIterator,
+    transclusion_abouts: &std::collections::HashSet<String>,
+) -> bool {
+    if transclusion_abouts.is_empty() {
+        return false;
+    }
+    node.inclusive_ancestors().any(|ancestor| {
+        ancestor.as_node().as_element().is_some_and(|element| {
+            element
+                .attributes
+                .borrow()
+                .get("about")
+                .is_some_and(|about| transclusion_abouts.contains(about))
+        })
+    })
 }
 
 /// Extract cited sources from a cite-template data-mw.
@@ -1323,6 +1359,56 @@ mod extract_tests {
         assert!(
             extlink_ref.offset > 0 && extlink_ref.offset <= etymology_block.text.len(),
             "bare-URL ref offset should be inside text bounds"
+        );
+    }
+
+    #[test]
+    fn cite_template_resolver_links_are_not_extra_sources() {
+        // A {{cite journal}} renders resolver links (DOI/PMID/PMC) that are NOT the
+        // `url=` param. Parsoid groups the whole rendered citation under the
+        // transclusion's shared `about` id. Those links must not be counted as
+        // additional bare-URL sources — only a *literal* bare URL in the ref (one
+        // outside any transclusion group) is a separate source. Otherwise a single
+        // citation inflates use-site stats and model calls by verifying doi.org as a
+        // phantom second source.
+        let html = "<!DOCTYPE html>\n\
+<html prefix=\"dc: http://purl.org/dc/terms/ mw: http://mediawiki.org/rdf/\">\n\
+<head><meta charset=\"utf-8\"/></head>\n\
+<body class=\"mw-parser-output\">\n\
+<section data-mw-section-id=\"1\">\n\
+<h2>Findings</h2>\n\
+<p>A study reports a result.<sup about=\"#mwt1\" class=\"mw-ref reference\" id=\"cite_ref-j_1-0\" rel=\"dc:references\" typeof=\"mw:Extension/ref\" data-mw='{\"name\":\"ref\",\"attrs\":{\"name\":\"j\"},\"body\":{\"id\":\"mw-reference-text-cite_note-j-1\"}}'><a href=\"#cite_note-j-1\"><span class=\"mw-reflink-text\">[1]</span></a></sup></p>\n\
+</section>\n\
+<div class=\"mw-references-wrap\" typeof=\"mw:Extension/references\" about=\"#mwt-refs\" data-mw='{\"name\":\"references\",\"attrs\":{},\"autoGenerated\":true}'>\n\
+<ol class=\"mw-references references\">\n\
+<li about=\"#cite_note-j-1\" id=\"cite_note-j-1\"><a href=\"#cite_ref-j_1-0\" rel=\"mw:referencedBy\"><span class=\"mw-linkback-text\">↑</span></a> <span id=\"mw-reference-text-cite_note-j-1\" class=\"mw-reference-text\"><link rel=\"mw-deduplicated-inline-style\" href=\"mw-data:TemplateStyles:r1\" about=\"#mwt4\" typeof=\"mw:Extension/templatestyles mw:Transclusion\" data-mw='{\"parts\":[{\"template\":{\"target\":{\"wt\":\"cite journal\",\"href\":\"./Template:Cite_journal\"},\"params\":{\"title\":{\"wt\":\"Some Article\"},\"url\":{\"wt\":\"https://journal.example.org/article\"},\"doi\":{\"wt\":\"10.1234/abc\"}},\"i\":0}}]}'/><cite about=\"#mwt4\" class=\"citation journal\">&quot;Some Article&quot;. <a rel=\"mw:ExtLink nofollow\" href=\"https://journal.example.org/article\" class=\"external text\">journal.example.org</a>. <a rel=\"mw:ExtLink nofollow\" href=\"https://doi.org/10.1234/abc\" class=\"external text\">10.1234/abc</a>.</cite></span></li>\n\
+</ol>\n\
+</div>\n\
+</body>\n\
+</html>";
+
+        let revision = ImmutableWikicode::new(html);
+        let blocks = blocks_from_revision(&revision).expect("blocks");
+        let block = blocks
+            .iter()
+            .find(|b| b.text.contains("A study reports"))
+            .expect("should find the findings block");
+        assert_eq!(block.refs.len(), 1, "block should have one ref");
+        let r = &block.refs[0];
+
+        let urls: Vec<&str> = r.sources.iter().map(|s| s.url.as_str()).collect();
+        assert!(
+            !urls.iter().any(|u| u.contains("doi.org")),
+            "the template-rendered DOI resolver link must not become a source (got {urls:?})"
+        );
+        assert_eq!(
+            r.sources.len(),
+            1,
+            "cite template yields exactly one source — its url= param, not the rendered resolver links (got {urls:?})"
+        );
+        assert_eq!(
+            r.sources[0].url.as_str(),
+            "https://journal.example.org/article"
         );
     }
 

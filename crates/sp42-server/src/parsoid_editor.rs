@@ -475,9 +475,26 @@ fn in_transclusion(
     })
 }
 
+/// CS1/CS2 template parameters that carry a fetchable source URL, in priority
+/// order. `url` is the canonical one; the rest are chapter/section-level aliases
+/// used when a ref points at one part of a larger work and omits a top-level
+/// `url=`. The first present alias becomes the citation's primary source.
+const URL_PARAM_ALIASES: &[&str] = &[
+    "url",
+    "chapter-url",
+    "conference-url",
+    "contribution-url",
+    "article-url",
+    "section-url",
+    "entry-url",
+    "map-url",
+    "transcript-url",
+];
+
 /// Extract cited sources from a cite-template data-mw.
-/// For each template part with a primary `url` param, builds one `CitedSource`
-/// with that url as primary and `archive-url`/`archiveurl` as fallbacks.
+/// For each template part with a primary url param (`url` or a URL-valued alias),
+/// builds one `CitedSource` with that url as primary and
+/// `archive-url`/`archiveurl` as fallbacks.
 /// Appends to sources and updates `seen_urls` with all URLs (primary + archives).
 fn push_template_sources(
     data_mw: &str,
@@ -495,13 +512,18 @@ fn push_template_sources(
             continue;
         };
 
-        // Extract primary url.
-        let Some(primary_url) = params
-            .pointer("/url/wt")
-            .and_then(|v| v.as_str())
-            .and_then(|wt| url::Url::parse(wt.trim()).ok())
-        else {
-            continue; // Skip parts with no primary url; an orphan archive-url is not a citable source.
+        // Extract the primary url. CS1/CS2 cite templates carry the fetchable
+        // source in `url=` or, for chapter/section-level refs, in a URL-valued
+        // alias (`chapter-url=`, `conference-url=`, …). Check `url=` first, then
+        // the aliases in order, so an online citation without a top-level `url=`
+        // is still verified rather than dropped as a non-URL source.
+        let Some(primary_url) = URL_PARAM_ALIASES.iter().find_map(|key| {
+            params
+                .pointer(&format!("/{key}/wt"))
+                .and_then(|v| v.as_str())
+                .and_then(|wt| url::Url::parse(wt.trim()).ok())
+        }) else {
+            continue; // No url in any known alias; an orphan archive-url is not a citable source.
         };
 
         let primary_str = primary_url.to_string();
@@ -1533,5 +1555,28 @@ mod extract_tests {
             seen_urls.is_empty(),
             "archive URL without primary should not be recorded"
         );
+    }
+
+    #[test]
+    fn push_template_sources_uses_url_alias_when_no_top_level_url() {
+        // A cite template carrying its source in `chapter-url=` (no top-level
+        // `url=`) must still yield a citable source, not be dropped as non-URL.
+        let data_mw = r#"{"parts":[{"template":{"target":{"wt":"cite book"},"params":{"chapter-url":{"wt":"https://example.org/chapter"},"title":{"wt":"A Book"}},"i":0}}]}"#;
+        let mut sources = Vec::new();
+        let mut seen_urls = std::collections::HashSet::new();
+        super::push_template_sources(data_mw, &mut sources, &mut seen_urls);
+        assert_eq!(sources.len(), 1, "chapter-url should produce one source");
+        assert_eq!(sources[0].url.as_str(), "https://example.org/chapter");
+    }
+
+    #[test]
+    fn push_template_sources_prefers_top_level_url_over_alias() {
+        // When both `url=` and an alias are present, `url=` wins as primary.
+        let data_mw = r#"{"parts":[{"template":{"target":{"wt":"cite book"},"params":{"url":{"wt":"https://example.org/main"},"chapter-url":{"wt":"https://example.org/chapter"}},"i":0}}]}"#;
+        let mut sources = Vec::new();
+        let mut seen_urls = std::collections::HashSet::new();
+        super::push_template_sources(data_mw, &mut sources, &mut seen_urls);
+        assert_eq!(sources.len(), 1);
+        assert_eq!(sources[0].url.as_str(), "https://example.org/main");
     }
 }

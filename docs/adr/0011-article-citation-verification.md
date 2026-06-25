@@ -214,8 +214,14 @@ not expose to an unauthenticated caller.
   rather than buried.
 - The extractor is heuristic. Sentence segmentation and claim↔ref association
   are intentionally iterable; known limitations include single-letter initials
-  (`J.R. Ewing`) over-splitting and a whole-block claim fallback for
-  terminator-less list items.
+  (`J.R. Ewing`) over-splitting, a whole-block claim fallback for
+  terminator-less list items, and **terminal abbreviations under-splitting** — a
+  sentence that genuinely ends with a listed abbreviation (`Acme Inc.[1] It
+  expanded…`) suppresses the boundary, so the `[1]` claim absorbs the following
+  sentence. This is the classic `Inc.`-ends-a-sentence vs `U.S.`-mid-sentence
+  ambiguity; a token-boundary fix already handles the *substring* case
+  (`public.`/`c.`), but the genuine-sentence-final case is deferred to a future
+  segmentation pass rather than patched speculatively here.
 - Known source-readability gaps are tracked, not silently dropped: PDF (#52) and
   Google Books (#53) currently read as `SourceUnavailable (unusable)`.
 - The crate graph gains `sp42-inference`. The CLI's verify behavior is

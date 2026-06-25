@@ -857,6 +857,187 @@ mod tests {
         config
     }
 
+    #[allow(clippy::trivially_copy_pass_by_ref)]
+    fn smoke_verdict_str(verdict: &sp42_core::CitationVerdict) -> &'static str {
+        use sp42_core::{CitationVerdict, SupportLevel};
+        match verdict {
+            CitationVerdict::Judged(SupportLevel::Supported) => "SUPPORTED",
+            CitationVerdict::Judged(SupportLevel::Partial) => "PARTIAL",
+            CitationVerdict::Judged(SupportLevel::NotSupported) => "NOT_SUPPORTED",
+            CitationVerdict::SourceUnavailable => "SOURCE_UNAVAILABLE",
+        }
+    }
+
+    fn smoke_truncate(text: &str, limit: usize) -> String {
+        if text.chars().count() <= limit {
+            text.to_string()
+        } else {
+            let head: String = text.chars().take(limit).collect();
+            format!("{head}…")
+        }
+    }
+
+    /// Live smoke test of the whole pipeline against a real Parsoid wiki + a real
+    /// model panel. Ignored by default; opt in with `--ignored` and set:
+    ///   SP42_INFERENCE_URL, SP42_INFERENCE_TOKEN, SP42_INFERENCE_MODELS
+    ///   SMOKE_TITLE (canonical page title), SMOKE_REV (rev id)
+    ///   SMOKE_PARSOID_URL (default en.wikipedia /w/rest.php), SMOKE_WIKI (label)
+    #[tokio::test]
+    #[ignore = "live: needs network + SP42_INFERENCE_* credentials"]
+    #[allow(
+        clippy::too_many_lines,
+        clippy::format_push_string,
+        clippy::uninlined_format_args,
+        clippy::doc_markdown
+    )]
+    async fn smoke_verify_page_live() {
+        let title = std::env::var("SMOKE_TITLE")
+            .unwrap_or_else(|_| "Thirst (Nothomb novel)".to_string());
+        let rev_id: u64 = std::env::var("SMOKE_REV")
+            .ok()
+            .and_then(|raw| raw.parse().ok())
+            .unwrap_or(1_361_018_978);
+        let parsoid_url = std::env::var("SMOKE_PARSOID_URL")
+            .unwrap_or_else(|_| "https://en.wikipedia.org/w/rest.php".to_string());
+        let wiki_id = std::env::var("SMOKE_WIKI").unwrap_or_else(|_| "enwiki".to_string());
+
+        let config = config_with_parsoid(&parsoid_url);
+        let editor = super::ParsoidWikitextEditor::new();
+        let page_ref = WikitextPageRef {
+            title: title.clone(),
+            rev_id,
+        };
+        let blocks = editor
+            .extract_blocks(&config, &page_ref)
+            .await
+            .expect("extract_blocks should succeed against live Parsoid");
+
+        let page = sp42_core::PageVerificationRequest {
+            wiki_id,
+            title: title.clone(),
+            rev_id,
+        };
+        let extract = sp42_core::extract_use_sites(&blocks, &page);
+
+        // Capture per-use-site context before verify_page consumes `extract`.
+        let mut meta: std::collections::HashMap<u32, (String, Option<String>, String)> =
+            std::collections::HashMap::new();
+        for use_site in &extract.use_sites {
+            meta.insert(
+                use_site.use_site_ordinal,
+                (
+                    use_site.request.claim.clone(),
+                    use_site.context.section_title.clone(),
+                    use_site.request.source_url.to_string(),
+                ),
+            );
+        }
+        let block_count = blocks.len();
+        let use_site_count = extract.use_sites.len();
+
+        let http = crate::runtime_adapters::PlainHttpClient::new()
+            .expect("guarded source client should build");
+        let model = sp42_inference::client_from_env()
+            .expect("set SP42_INFERENCE_URL/TOKEN for the smoke test");
+        let panel = sp42_inference::panel_from_env()
+            .expect("set SP42_INFERENCE_MODELS for the smoke test");
+        let clock = sp42_types::SystemClock;
+
+        let mut report = sp42_core::verify_page(
+            &http,
+            &model,
+            &clock,
+            &panel,
+            &page,
+            extract,
+            sp42_core::VerifyOptions::default(),
+        )
+        .await;
+
+        let stats = &report.stats;
+        let mut md = String::new();
+        md.push_str(&format!("# Citation verification — {title}\n\n"));
+        md.push_str(&format!(
+            "_revision `{rev_id}` · wiki `{}` · panel: {} · {} blocks → {use_site_count} use-sites_\n\n",
+            report.wiki_id,
+            panel
+                .iter()
+                .map(|m| m.model.clone())
+                .collect::<Vec<_>>()
+                .join(", "),
+            block_count,
+        ));
+        md.push_str("## Summary\n\n");
+        md.push_str("| metric | count |\n|---|---|\n");
+        md.push_str(&format!("| refs seen | {} |\n", stats.refs_seen));
+        md.push_str(&format!("| use-sites verified | {} |\n", stats.use_sites_verified));
+        md.push_str(&format!("| ✅ supported | {} |\n", stats.supported));
+        md.push_str(&format!("| ◐ partial | {} |\n", stats.partial));
+        md.push_str(&format!("| ✗ not supported | {} |\n", stats.not_supported));
+        md.push_str(&format!("| — source unavailable | {} |\n", stats.source_unavailable));
+        md.push_str(&format!("| skipped (non-URL) | {} |\n", stats.skipped));
+        md.push_str(&format!("| extraction failures | {} |\n\n", stats.extraction_failures));
+
+        md.push_str("## Findings\n\n");
+        report.findings.sort_by_key(|finding| finding.use_site_ordinal);
+        for finding in &report.findings {
+            let verdict = smoke_verdict_str(&finding.verdict);
+            let badge = match verdict {
+                "SUPPORTED" => "✅",
+                "PARTIAL" => "◐",
+                "NOT_SUPPORTED" => "✗",
+                _ => "—",
+            };
+            let url = finding.provenance.url.to_string();
+            let (claim, section) = match meta.get(&finding.use_site_ordinal) {
+                Some((claim, section, _)) => (claim.clone(), section.clone()),
+                None => (String::new(), None),
+            };
+            md.push_str(&format!(
+                "### {badge} {verdict} · ord {} · grounding `{:?}` · agree {}/{}\n\n",
+                finding.use_site_ordinal,
+                finding.grounding_status,
+                finding.agreement.winner_votes,
+                finding.agreement.panel_size,
+            ));
+            if let Some(section) = &section {
+                md.push_str(&format!("*Section: {section}*\n\n"));
+            }
+            md.push_str(&format!("**Claim.** {claim}\n\n"));
+            md.push_str(&format!("**Source.** <{url}>\n\n"));
+            if let Some(passage) = &finding.passage {
+                md.push_str(&format!("> {}\n\n", smoke_truncate(&passage.quote, 400)));
+            }
+        }
+
+        if !report.skipped.is_empty() {
+            md.push_str("## Skipped (non-URL sources)\n\n");
+            for skipped in &report.skipped {
+                md.push_str(&format!(
+                    "- ref `{}` (block {}) — {:?}\n",
+                    skipped.ref_id, skipped.block_ordinal, skipped.reason
+                ));
+            }
+            md.push('\n');
+        }
+        if !report.extraction_failures.is_empty() {
+            md.push_str("## Extraction failures\n\n");
+            for failure in &report.extraction_failures {
+                md.push_str(&format!(
+                    "- block {} — {}\n",
+                    failure.block_ordinal, failure.reason
+                ));
+            }
+            md.push('\n');
+        }
+
+        let out = std::env::var("SMOKE_OUT").unwrap_or_else(|_| "/tmp/sp42-smoke-report.md".to_string());
+        std::fs::write(&out, &md).expect("write markdown report");
+        let json = serde_json::to_string_pretty(&report).expect("serialize report");
+        std::fs::write(format!("{out}.json"), &json).expect("write json report");
+        eprintln!("wrote {out} and {out}.json");
+    }
+
     fn fixture_page() -> WikitextPageRef {
         WikitextPageRef {
             title: "Test".to_string(),

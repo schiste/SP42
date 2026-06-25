@@ -1273,18 +1273,30 @@ mod extract_tests {
             "Etymology block should have 2 refs"
         );
 
-        // First ref: cite-template with URL https://example.com/cat-origins
+        // First ref: cite-template with primary URL https://example.com/cat-origins
+        // and archive-url https://web.archive.org/web/20240101/example.com/cat-origins
+        // (grouped in one CitedSource, not two separate sources)
         let cite_ref = &etymology_block.refs[0];
         assert_eq!(cite_ref.ref_id, "cite_ref-ety_1-0");
-        assert_eq!(cite_ref.sources.len(), 1);
+        assert_eq!(
+            cite_ref.sources.len(),
+            1,
+            "cite-template should yield exactly one CitedSource (primary + archives grouped)"
+        );
         assert_eq!(
             cite_ref.sources[0].url.as_str(),
-            "https://example.com/cat-origins"
+            "https://example.com/cat-origins",
+            "primary URL should be extracted from template"
         );
         assert_eq!(
             cite_ref.sources[0].archive_urls.len(),
-            0,
-            "cite-template should have no archive URLs in this fixture"
+            1,
+            "cite-template should have one archive URL grouped with primary"
+        );
+        assert_eq!(
+            cite_ref.sources[0].archive_urls[0].as_str(),
+            "https://web.archive.org/web/20240101/example.com/cat-origins",
+            "archive-url param should be grouped as archive fallback"
         );
         // Offset should be at the position of "Felis catus" (roughly where [1] was)
         assert!(
@@ -1293,6 +1305,8 @@ mod extract_tests {
         );
 
         // Second ref: bare ExtLink with an external URL https://www.etymonline.com/word/cat
+        // (the rendered live-url in the citation should NOT create a duplicate CitedSource
+        // because it was already seen in the template extraction)
         let extlink_ref = &etymology_block.refs[1];
         assert_eq!(extlink_ref.ref_id, "cite_ref-orig_2-0");
         assert_eq!(extlink_ref.sources.len(), 1);

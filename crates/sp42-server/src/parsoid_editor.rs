@@ -433,8 +433,11 @@ fn urls_in_reference(reference: &Reference) -> Vec<CitedSource> {
     let mut sources = Vec::new();
     let mut seen_urls = std::collections::HashSet::new();
 
-    // Cite-template params via data-mw.
-    for span in contents.select("span[typeof~=\"mw:Transclusion\"]") {
+    // Cite-template params via data-mw. The transclusion `data-mw` is carried on
+    // whichever element starts the transclusion — in real Parsoid output for a
+    // citation that is a `<link typeof="mw:Extension/templatestyles mw:Transclusion">`,
+    // not a `<span>` — so match any element bearing the `mw:Transclusion` typeof.
+    for span in contents.select("[typeof~=\"mw:Transclusion\"]") {
         if let Some(element) = span.as_node().as_element()
             && let Some(data_mw) = element.attributes.borrow().get("data-mw")
         {

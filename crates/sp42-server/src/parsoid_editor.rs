@@ -306,47 +306,24 @@ fn blocks_from_revision(
 
     let mut blocks = Vec::new();
     let mut ordinal = 0usize;
-    let mut heading_stack: Vec<(u32, String)> = Vec::new();
-    walk(
-        &code,
-        &mut heading_stack,
-        &ref_sources,
-        &mut blocks,
-        &mut ordinal,
-    );
+    walk(&code, &ref_sources, &mut blocks, &mut ordinal);
     Ok(blocks)
 }
 
-/// Recursive walker — track headings, emit blocks, don't recurse into a block once emitted.
+/// Recursive walker — emit blocks, don't recurse into a block once emitted.
 fn walk(
     node: &impl WikinodeIterator,
-    headings: &mut Vec<(u32, String)>,
     ref_sources: &HashMap<String, Vec<CitedSource>>,
     blocks: &mut Vec<ParsoidBlock>,
     ordinal: &mut usize,
 ) {
     for child in node.children() {
-        if let Some(heading) = child.as_heading() {
-            let level = heading.level();
-            while headings.last().is_some_and(|(l, _)| *l >= level) {
-                headings.pop();
-            }
-            headings.push((level, child.text_contents().trim().to_string()));
-            continue;
-        }
         if let Some(kind) = block_kind(&child) {
-            let section_path = headings.iter().map(|(_, t)| t.clone()).collect();
-            blocks.push(build_block(
-                &child,
-                kind,
-                section_path,
-                *ordinal,
-                ref_sources,
-            ));
+            blocks.push(build_block(&child, kind, *ordinal, ref_sources));
             *ordinal += 1;
             continue; // do not descend into an emitted block
         }
-        walk(&child, headings, ref_sources, blocks, ordinal);
+        walk(&child, ref_sources, blocks, ordinal);
     }
 }
 
@@ -365,7 +342,6 @@ fn block_kind(node: &Wikinode) -> Option<BlockKind> {
 fn build_block(
     node: &Wikinode,
     kind: BlockKind,
-    section_path: Vec<String>,
     ordinal: usize,
     ref_sources: &HashMap<String, Vec<CitedSource>>,
 ) -> ParsoidBlock {
@@ -384,7 +360,6 @@ fn build_block(
 
     ParsoidBlock {
         text: trimmed,
-        section_path,
         refs,
         block_kind: kind,
         block_ordinal: ordinal,
@@ -1005,20 +980,6 @@ mod tests {
             rev_id,
         };
         let extract = sp42_core::extract_use_sites(&blocks, &page);
-
-        // Capture per-use-site context before verify_page consumes `extract`.
-        let mut meta: std::collections::HashMap<u32, (String, Option<String>, String)> =
-            std::collections::HashMap::new();
-        for use_site in &extract.use_sites {
-            meta.insert(
-                use_site.use_site_ordinal,
-                (
-                    use_site.request.claim.clone(),
-                    use_site.context.section_title.clone(),
-                    use_site.request.source_url.to_string(),
-                ),
-            );
-        }
         let block_count = blocks.len();
         let use_site_count = extract.use_sites.len();
 
@@ -1088,10 +1049,7 @@ mod tests {
                 _ => "—",
             };
             let url = finding.provenance.url.to_string();
-            let (claim, section) = match meta.get(&finding.use_site_ordinal) {
-                Some((claim, section, _)) => (claim.clone(), section.clone()),
-                None => (String::new(), None),
-            };
+            let claim = &finding.claim;
             // `source_unavailable_reason` is `Some` only for SOURCE_UNAVAILABLE.
             let verdict_with_reason = match finding.source_unavailable_reason {
                 Some(reason) => format!("{verdict} ({})", reason.as_str()),
@@ -1104,9 +1062,6 @@ mod tests {
                 finding.agreement.winner_votes,
                 finding.agreement.panel_size,
             ));
-            if let Some(section) = &section {
-                md.push_str(&format!("*Section: {section}*\n\n"));
-            }
             md.push_str(&format!("**Claim.** {claim}\n\n"));
             md.push_str(&format!("**Source.** <{url}>\n\n"));
             if let Some(passage) = &finding.passage {
@@ -1275,12 +1230,11 @@ mod extract_tests {
         let blocks = blocks_from_revision(&fixture()).expect("blocks");
         assert!(!blocks.is_empty(), "should find prose blocks");
 
-        // Specific section path from the fixture: "Etymology"
+        // The Etymology prose block, found by its content.
         let etymology_block = blocks
             .iter()
-            .find(|b| b.section_path.contains(&"Etymology".to_string()))
+            .find(|b| b.text.contains("Felis catus"))
             .expect("should find Etymology block");
-        assert_eq!(etymology_block.section_path, vec!["Etymology"]);
 
         // The Etymology block contains the fixture text (ends with
         // "Felis catus" and "differ") minus the bracketed ref markers

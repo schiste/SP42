@@ -22,8 +22,6 @@ use super::citoid::CitoidMetadata;
 pub struct ClaimContext {
     /// The article title.
     pub article_title: String,
-    /// The section title, when known.
-    pub section_title: Option<String>,
     /// Preceding sentences, in document order (most useful for co-reference).
     pub preceding_sentences: Vec<String>,
 }
@@ -34,10 +32,6 @@ impl ClaimContext {
     #[must_use]
     pub fn is_empty(&self) -> bool {
         self.article_title.trim().is_empty()
-            && self
-                .section_title
-                .as_ref()
-                .is_none_or(|section| section.trim().is_empty())
             && self
                 .preceding_sentences
                 .iter()
@@ -181,11 +175,6 @@ fn context_section(context: &ClaimContext) -> String {
     if !context.article_title.trim().is_empty() {
         lines.push(format!("- article: {}", context.article_title));
     }
-    if let Some(section) = &context.section_title
-        && !section.trim().is_empty()
-    {
-        lines.push(format!("- section: {section}"));
-    }
     let preceding: Vec<&String> = context
         .preceding_sentences
         .iter()
@@ -217,7 +206,6 @@ mod tests {
         assert_eq!(context_section(&ClaimContext::default()), String::new());
         let blank = ClaimContext {
             article_title: "   ".to_string(),
-            section_title: Some(String::new()),
             preceding_sentences: vec!["  ".to_string()],
         };
         assert_eq!(context_section(&blank), String::new());
@@ -227,12 +215,10 @@ mod tests {
     fn context_section_renders_labeled_context_only_block() {
         let ctx = ClaimContext {
             article_title: "Ann Jansson".to_string(),
-            section_title: Some("Career".to_string()),
             preceding_sentences: vec!["She joined the club in 1985.".to_string()],
         };
         let rendered = context_section(&ctx);
         assert!(rendered.contains("Ann Jansson"));
-        assert!(rendered.contains("Career"));
         assert!(rendered.contains("She joined the club in 1985."));
         // Context-only discipline: the supporting quote must still come from the SOURCE.
         assert!(rendered.contains("DO NOT quote"));

@@ -4,8 +4,8 @@ use crate::citation::concurrency::map_with_concurrency;
 use crate::citation::extract::{BlockFailure, ExtractOutcome, SkippedRef};
 use crate::citation::verdict::{CitationVerdict, SupportLevel};
 use crate::citation::verify::{
-    CitationFinding, FetchedSource, VerificationOutcome, VerifyOptions, fetch_source,
-    verify_citation_use_site,
+    CitationFinding, FetchedSource, SourceUnavailableReason, VerificationOutcome, VerifyOptions,
+    fetch_source, verify_citation_use_site,
 };
 use crate::errors::CitationVerificationError;
 use sp42_types::{Clock, HttpClient, ModelClient, ModelRef};
@@ -30,6 +30,13 @@ pub struct PageVerificationStats {
     pub partial: usize,
     pub not_supported: usize,
     pub source_unavailable: usize,
+    /// Of `source_unavailable`: the link is dead (missing/non-2xx) — the citation
+    /// is actionable. Carried here so a reviewer summary can show the split
+    /// without re-aggregating findings (ADR-0011 §7).
+    pub source_unavailable_unreachable: usize,
+    /// Of `source_unavailable`: fetched 2xx but unreadable (PDF/JS/wrong page) — a
+    /// tool limitation, the citation may be fine.
+    pub source_unavailable_unusable: usize,
 }
 
 /// Read-only result of verifying every URL-bearing citation on a page.
@@ -72,7 +79,7 @@ where
                 // network call we want to make for fallback sources.
                 alt_opts.include_metadata = false;
                 alt_opts.prefetched = Some(body);
-                if let Ok(alt) = verify_citation_use_site(
+                if let Ok(mut alt) = verify_citation_use_site(
                     fetch_client,
                     model_client,
                     clock,
@@ -85,6 +92,9 @@ where
                 .await
                     && !matches!(alt.finding.verdict, CitationVerdict::SourceUnavailable)
                 {
+                    // The verdict came from the archive; record the unreachable live
+                    // URL it stands in for so the report can flag it for repair.
+                    alt.finding.archive_of = Some(us.request.source_url.clone());
                     return Ok(alt);
                 }
             }
@@ -138,7 +148,58 @@ where
     )
     .await;
 
+    // Stamp the page-provenance the report needs to be self-contained: which ref
+    // this verdict belongs to, the claim it judged, and the context it was read
+    // against. (`archive_of` is stamped inside try_archive_fallback.)
+    let outcome = outcome.map(|mut o| {
+        o.finding.ref_id.clone_from(&us.ref_id);
+        o.finding.claim.clone_from(&us.request.claim);
+        o.finding
+            .preceding_context
+            .clone_from(&us.context.preceding_sentences);
+        o
+    });
+
     (us.ref_id, us.block_ordinal, outcome)
+}
+
+/// Tally the page-level summary counts from the verified findings. The
+/// `source_unavailable` total is further split into `unreachable` (dead link,
+/// actionable) vs `unusable` (fetched but unreadable) so a reviewer summary can
+/// show the distinction without re-aggregating findings (ADR-0011 §7).
+fn tally_stats(
+    refs_seen: usize,
+    findings: &[CitationFinding],
+    skipped: usize,
+    extraction_failures: usize,
+) -> PageVerificationStats {
+    let mut stats = PageVerificationStats {
+        refs_seen,
+        use_sites_verified: findings.len(),
+        skipped,
+        extraction_failures,
+        ..PageVerificationStats::default()
+    };
+    for f in findings {
+        match f.verdict {
+            CitationVerdict::Judged(SupportLevel::Supported) => stats.supported += 1,
+            CitationVerdict::Judged(SupportLevel::Partial) => stats.partial += 1,
+            CitationVerdict::Judged(SupportLevel::NotSupported) => stats.not_supported += 1,
+            CitationVerdict::SourceUnavailable => {
+                stats.source_unavailable += 1;
+                match f.source_unavailable_reason {
+                    Some(SourceUnavailableReason::Unreachable) => {
+                        stats.source_unavailable_unreachable += 1;
+                    }
+                    Some(SourceUnavailableReason::Unusable) => {
+                        stats.source_unavailable_unusable += 1;
+                    }
+                    None => {}
+                }
+            }
+        }
+    }
+    stats
 }
 
 /// Verify every use-site in `extract` against its source. Fetches each distinct
@@ -255,21 +316,12 @@ where
     }
 
     // 3. Stats.
-    let mut stats = PageVerificationStats {
+    let stats = tally_stats(
         refs_seen,
-        use_sites_verified: findings.len(),
-        skipped: skipped.len(),
-        extraction_failures: extraction_failures.len(),
-        ..PageVerificationStats::default()
-    };
-    for f in &findings {
-        match f.verdict {
-            CitationVerdict::Judged(SupportLevel::Supported) => stats.supported += 1,
-            CitationVerdict::Judged(SupportLevel::Partial) => stats.partial += 1,
-            CitationVerdict::Judged(SupportLevel::NotSupported) => stats.not_supported += 1,
-            CitationVerdict::SourceUnavailable => stats.source_unavailable += 1,
-        }
-    }
+        &findings,
+        skipped.len(),
+        extraction_failures.len(),
+    );
 
     PageVerificationReport {
         wiki_id: page.wiki_id.clone(),
@@ -312,7 +364,6 @@ mod orchestrator_tests {
     fn two_use_sites_same_url() -> ExtractOutcome {
         let b = ParsoidBlock {
             text: "Cats purr. Cats sleep.".into(),
-            section_path: vec!["Behaviour".into()],
             refs: vec![
                 BlockRef {
                     offset: 10,
@@ -410,9 +461,24 @@ mod orchestrator_tests {
         assert_eq!(report.findings.len(), 2);
         assert_eq!(report.stats.use_sites_verified, 2);
         assert_eq!(report.stats.source_unavailable, 2);
+        // A transport failure → status-0 sentinel → Unreachable, so the summary
+        // split must attribute both to unreachable, none to unusable.
+        assert_eq!(report.stats.source_unavailable_unreachable, 2);
+        assert_eq!(report.stats.source_unavailable_unusable, 0);
         // No model invocations occurred, so no extraction failures from the model side.
         assert!(report.extraction_failures.is_empty());
-        // Verify both findings are SourceUnavailable.
+        // Verify both findings are SourceUnavailable and addressable back to their ref,
+        // each carrying the claim sentence it judged.
+        let by_ref: HashMap<&str, &str> = report
+            .findings
+            .iter()
+            .map(|f| (f.ref_id.as_str(), f.claim.as_str()))
+            .collect();
+        assert_eq!(
+            by_ref,
+            HashMap::from([("r1", "Cats purr."), ("r2", "Cats sleep.")]),
+            "each finding should carry its ref_id and the claim sentence it judged"
+        );
         for finding in &report.findings {
             assert_eq!(
                 finding.verdict,
@@ -430,7 +496,6 @@ mod orchestrator_tests {
         // produces multiple use-sites but should be counted as one ref.
         let block = ParsoidBlock {
             text: "Cats are animals.".into(),
-            section_path: vec!["Facts".into()],
             refs: vec![BlockRef {
                 offset: 5,
                 ref_id: "ref_multi_url".into(),
@@ -506,7 +571,6 @@ mod orchestrator_tests {
         let archive = url::Url::parse("https://archive.org/web/20240101/s.test/primary").unwrap();
         let b = ParsoidBlock {
             text: "Test claim here.".into(),
-            section_path: vec!["Section".into()],
             refs: vec![BlockRef {
                 offset: 5,
                 ref_id: "r1".into(),
@@ -573,6 +637,15 @@ reject it as too short, allowing the verification process to proceed normally."
             finding.provenance.url, archive,
             "finding should cite the archive URL"
         );
+        assert_eq!(
+            finding.archive_of.as_ref(),
+            Some(&primary),
+            "finding should record the unreachable live URL the archive stands in for"
+        );
+        assert_eq!(
+            finding.claim, "Test claim here.",
+            "finding should echo the claim it judged so the report is self-contained"
+        );
         assert_eq!(report.stats.use_sites_verified, 1);
         assert!(report.extraction_failures.is_empty());
     }
@@ -586,7 +659,6 @@ reject it as too short, allowing the verification process to proceed normally."
         let archive = url::Url::parse("https://archive.org/web/20240101/s.test/primary").unwrap();
         let b = ParsoidBlock {
             text: "Test claim here.".into(),
-            section_path: vec!["Section".into()],
             refs: vec![BlockRef {
                 offset: 5,
                 ref_id: "r1".into(),

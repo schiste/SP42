@@ -1,5 +1,15 @@
 # Article Citation Extractor & Page Orchestrator Design
 
+> **Implementation note (2026-06-25).** This is the pre-implementation design,
+> kept as the point-in-time record. Where building diverged, **[ADR-0011]** is
+> authoritative. Notably: the `section_title` context described below was
+> **removed** — SIDE feeds the section heading to *retrieval*, not *verification*,
+> and we have no retrieval step, so it had no precedent as verifier input (see
+> ADR-0011 Decision 4). The verifier context is now article title + preceding
+> sentences only, and the report echoes `claim` + `preceding_context` per finding.
+>
+> [ADR-0011]: ../adr/0011-article-citation-verification.md
+
 ## Summary
 
 SP42's existing citation verifier operates on a single use-site at a time: a

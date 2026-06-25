@@ -120,9 +120,6 @@ pub struct BlockRef {
 pub struct ParsoidBlock {
     /// Visible text of the block with ref markers removed.
     pub text: String,
-    /// Heading stack from page root to this block, outermost first
-    /// (e.g. `["History", "Early life"]`).
-    pub section_path: Vec<String>,
     /// Inline refs in this block, in document order.
     pub refs: Vec<BlockRef>,
     pub block_kind: BlockKind,

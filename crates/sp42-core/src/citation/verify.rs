@@ -195,6 +195,31 @@ pub struct CitationFinding {
     /// Document-order position of this use-site (ADR-0007 §2).
     #[serde(default)]
     pub use_site_ordinal: u32,
+    /// The originating ref's marker id (e.g. `cite_ref-ety_1-0`), so a verdict is
+    /// addressable back to the human-facing citation on the page. Empty for the
+    /// standalone single-claim path, which has no page ref; the page orchestrator
+    /// stamps it. Back-compatible (ADR-0009 replay).
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub ref_id: String,
+    /// The claim sentence this verdict judged, echoed so the report is
+    /// self-contained — a renderer can show "Claim: … → <verdict>" without
+    /// re-reading the page. Empty for the standalone path, where the caller
+    /// already holds the claim. Back-compatible (ADR-0009 replay).
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub claim: String,
+    /// The preceding-sentence context passed to the verifier for co-reference
+    /// (SIDE-style), echoed so the report can show what the claim was read
+    /// against. Empty when there was no context. Back-compatible.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub preceding_context: Vec<String>,
+    /// Set when this verdict was produced against an **archive** fallback because
+    /// the citation's live `url` was `SourceUnavailable`: the (unreachable) live
+    /// URL the archive stands in for. `None` for a verdict from the primary
+    /// source. Lets the report say "supported via archive of `<live url>`, which
+    /// needs repair" without sniffing `provenance.url`'s hostname. Back-compatible
+    /// (ADR-0009 replay).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub archive_of: Option<url::Url>,
     /// Schema version (Art. 9.1).
     pub schema_version: u32,
 }
@@ -555,6 +580,10 @@ pub fn assemble_citation_finding(
                         offset,
                     },
                     use_site_ordinal,
+                    ref_id: String::new(),
+                    claim: String::new(),
+                    preceding_context: Vec::new(),
+                    archive_of: None,
                     schema_version: SCHEMA_VERSION,
                 }
             }
@@ -660,6 +689,10 @@ fn no_quote_finding(
             source_hash: provenance.content_hash.clone(),
         },
         use_site_ordinal,
+        ref_id: String::new(),
+        claim: String::new(),
+        preceding_context: Vec::new(),
+        archive_of: None,
         schema_version: SCHEMA_VERSION,
     }
 }

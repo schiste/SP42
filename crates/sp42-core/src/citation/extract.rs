@@ -21,7 +21,7 @@ pub struct CitationUseSite {
     pub block_ordinal: usize,
     /// Claim + source URL + page identity for the verifier.
     pub request: CitationVerificationRequest,
-    /// Section title + preceding sentences passed alongside the claim.
+    /// Article title + preceding sentences passed alongside the claim.
     pub context: ClaimContext,
     /// The originating ref's marker id, for provenance.
     pub ref_id: String,
@@ -109,7 +109,6 @@ pub fn extract_use_sites(
 
             let context = ClaimContext {
                 article_title: page.title.clone(),
-                section_title: block.section_path.last().cloned(),
                 preceding_sentences: preceding,
             };
 
@@ -175,10 +174,9 @@ mod tests {
         Url::parse(u).unwrap()
     }
 
-    fn block(text: &str, section: &[&str], refs: Vec<BlockRef>) -> ParsoidBlock {
+    fn block(text: &str, refs: Vec<BlockRef>) -> ParsoidBlock {
         ParsoidBlock {
             text: text.into(),
-            section_path: section.iter().map(|s| (*s).to_string()).collect(),
             refs,
             block_kind: BlockKind::Paragraph,
             block_ordinal: 0,
@@ -219,14 +217,12 @@ mod tests {
         // "Cats purr. Cats sleep a lot." — ref after the first period (offset 10).
         let b = block(
             "Cats purr. Cats sleep a lot.",
-            &["Behaviour"],
             vec![bref(10, &["https://a.test"])],
         );
         let out = extract_use_sites(&[b], &page());
         assert_eq!(out.use_sites.len(), 1);
         let us = &out.use_sites[0];
         assert_eq!(us.request.claim, "Cats purr.");
-        assert_eq!(us.context.section_title.as_deref(), Some("Behaviour"));
         assert_eq!(us.request.source_url, url("https://a.test"));
     }
 
@@ -234,7 +230,6 @@ mod tests {
     fn multiple_refs_after_one_sentence_share_the_claim() {
         let b = block(
             "Cats purr.",
-            &["S"],
             vec![bref(10, &["https://a.test"]), bref(10, &["https://b.test"])],
         );
         let out = extract_use_sites(&[b], &page());
@@ -249,7 +244,7 @@ mod tests {
     fn preceding_sentences_become_context_capped_at_three() {
         let text = "A. B. C. D. E."; // five short sentences
         // ref after "E." (end of block).
-        let b = block(text, &["Sec"], vec![bref(text.len(), &["https://a.test"])]);
+        let b = block(text, vec![bref(text.len(), &["https://a.test"])]);
         let out = extract_use_sites(&[b], &page());
         let us = &out.use_sites[0];
         assert_eq!(us.request.claim, "E.");
@@ -259,7 +254,7 @@ mod tests {
 
     #[test]
     fn non_url_ref_is_skipped_not_verified() {
-        let b = block("Cats purr.", &["S"], vec![bref(10, &[])]);
+        let b = block("Cats purr.", vec![bref(10, &[])]);
         let out = extract_use_sites(&[b], &page());
         assert!(out.use_sites.is_empty());
         assert_eq!(out.skipped.len(), 1);
@@ -271,7 +266,6 @@ mod tests {
         // A list-item style fragment with no sentence terminator.
         let mut b = block(
             "ISO 4217 currency code",
-            &["Codes"],
             vec![bref(22, &["https://a.test"])],
         );
         b.block_kind = BlockKind::ListItem;
@@ -282,7 +276,7 @@ mod tests {
 
     #[test]
     fn empty_block_with_ref_is_a_failure() {
-        let b = block("   ", &["S"], vec![bref(0, &["https://a.test"])]);
+        let b = block("   ", vec![bref(0, &["https://a.test"])]);
         let out = extract_use_sites(&[b], &page());
         assert!(out.use_sites.is_empty());
         assert_eq!(out.failures.len(), 1);
@@ -295,11 +289,7 @@ mod tests {
         // exactly ONE use-site (not two), with both URLs properly threaded.
         let primary = "https://example.org/article";
         let archive = "https://web.archive.org/web/20240101/example.org/article";
-        let b = block(
-            "Cats purr.",
-            &["Behaviour"],
-            vec![bref_archived(10, primary, &[archive])],
-        );
+        let b = block("Cats purr.", vec![bref_archived(10, primary, &[archive])]);
         let out = extract_use_sites(&[b], &page());
         assert_eq!(out.use_sites.len(), 1, "should yield exactly one use-site");
         let us = &out.use_sites[0];
@@ -318,7 +308,6 @@ mod tests {
         let archive2 = "https://archive.is/example.org/article";
         let b = block(
             "The fact is true.",
-            &["Facts"],
             vec![bref_archived(16, primary, &[archive1, archive2])],
         );
         let out = extract_use_sites(&[b], &page());

@@ -546,7 +546,12 @@ mod tests {
     #[test]
     fn schema_org_marker_with_no_prose_is_flagged() {
         let raw = r#"<html><head><script type="application/ld+json">{"@type":"NewsArticle","isAccessibleForFree":false}</script></head><body>Home News Sections Account</body></html>"#;
-        let r = classify_source_usability("https://news.example.com/x", "text/html", Some(raw), Some("Home News Sections Account"));
+        let r = classify_source_usability(
+            "https://news.example.com/x",
+            "text/html",
+            Some(raw),
+            Some("Home News Sections Account"),
+        );
         assert!(!r.usable);
         assert_eq!(r.reason, BodyUsabilityReason::NavChromePaywall);
     }
@@ -559,7 +564,12 @@ mod tests {
         {"@type":"NewsArticle","isAccessibleForFree":true,
          "hasPart":{"@type":"WebPageElement","isAccessibleForFree":false,"cssSelector":".paywall"}}
         </script></head><body>Home News Sections Account</body></html>"#;
-        let r = classify_source_usability("https://news.example.com/x", "text/html", Some(raw), Some("Home News Sections Account"));
+        let r = classify_source_usability(
+            "https://news.example.com/x",
+            "text/html",
+            Some(raw),
+            Some("Home News Sections Account"),
+        );
         assert!(!r.usable);
         assert_eq!(r.reason, BodyUsabilityReason::NavChromePaywall);
     }
@@ -567,7 +577,12 @@ mod tests {
     #[test]
     fn vendor_fingerprint_with_no_prose_is_flagged() {
         let raw = r#"<html><head><script src="https://cdn.tinypass.com/api/tinypass.min.js"></script></head><body>Subscribe Menu Account</body></html>"#;
-        let r = classify_source_usability("https://news.example.com/x", "text/html", Some(raw), Some("Subscribe Menu Account"));
+        let r = classify_source_usability(
+            "https://news.example.com/x",
+            "text/html",
+            Some(raw),
+            Some("Subscribe Menu Account"),
+        );
         assert!(!r.usable);
         assert_eq!(r.reason, BodyUsabilityReason::NavChromePaywall);
     }
@@ -579,7 +594,12 @@ mod tests {
             "Home News Sections Account {} Subscribe to read the full article. Sign in to continue.",
             "Companies Pernod Ricard SA Brown-Forman ".repeat(20)
         );
-        let r = classify_source_usability("https://www.law360.com/articles/735000/x", "text/html", Some(&body), Some(&body));
+        let r = classify_source_usability(
+            "https://www.law360.com/articles/735000/x",
+            "text/html",
+            Some(&body),
+            Some(&body),
+        );
         assert!(!r.usable);
         assert_eq!(r.reason, BodyUsabilityReason::NavChromePaywall);
     }
@@ -587,14 +607,23 @@ mod tests {
     #[test]
     fn soft_paywall_with_full_text_is_not_flagged() {
         // isAccessibleForFree:false BUT the article text is present → high prose → verify it.
-        let article = "The bridge opened in 1998 after a decade of work. Engineers debated the design. \
+        let article =
+            "The bridge opened in 1998 after a decade of work. Engineers debated the design. \
         Officials praised the result. Traffic doubled within five years. Crews inspect it yearly. "
-        .repeat(4);
+                .repeat(4);
         let raw = format!(
             r#"<html><head><script type="application/ld+json">{{"isAccessibleForFree":false}}</script></head><body>{article}</body></html>"#
         );
-        let r = classify_source_usability("https://news.example.com/x", "text/html", Some(&raw), Some(&article));
-        assert!(r.usable, "paywalled page that still ships the text must stay verifiable");
+        let r = classify_source_usability(
+            "https://news.example.com/x",
+            "text/html",
+            Some(&raw),
+            Some(&article),
+        );
+        assert!(
+            r.usable,
+            "paywalled page that still ships the text must stay verifiable"
+        );
     }
 
     #[test]
@@ -603,7 +632,12 @@ mod tests {
         The terms reshaped the region. Historians debate it still. Some clauses were never enforced. "
         .repeat(4);
         let body = format!("{article} Subscribe to read more of our coverage.");
-        let r = classify_source_usability("https://news.example.com/x", "text/html", Some(&body), Some(&body));
+        let r = classify_source_usability(
+            "https://news.example.com/x",
+            "text/html",
+            Some(&body),
+            Some(&body),
+        );
         assert!(r.usable, "real article must not be flagged as paywall");
     }
 
@@ -612,7 +646,12 @@ mod tests {
         // A cookie-consent interstitial with a sign-in prompt but NO hard paywall marker.
         // The guard prevents calling a consent UI a paywall.
         let body = "We value your privacy. Accept all cookies. Manage cookies. Sign in to continue. Home Menu Account";
-        let r = classify_source_usability("https://news.example.com/x", "text/html", Some(body), Some(body));
+        let r = classify_source_usability(
+            "https://news.example.com/x",
+            "text/html",
+            Some(body),
+            Some(body),
+        );
         assert_ne!(r.reason, BodyUsabilityReason::NavChromePaywall);
     }
 
@@ -621,15 +660,29 @@ mod tests {
         // (label, body, expect_paywall)
         let nav = "Home News Topics Sections Account Menu Search Subscribe Login ";
         let walls = [
-            format!("{}{}Subscribe to read the full article.", nav, "Related coverage ".repeat(30)),
-            format!("{}This content is for subscribers. Sign in to continue.", nav.repeat(8)),
-            format!("{}Create a free account to continue reading.", "Topic Tag ".repeat(40)),
+            format!(
+                "{}{}Subscribe to read the full article.",
+                nav,
+                "Related coverage ".repeat(30)
+            ),
+            format!(
+                "{}This content is for subscribers. Sign in to continue.",
+                nav.repeat(8)
+            ),
+            format!(
+                "{}Create a free account to continue reading.",
+                "Topic Tag ".repeat(40)
+            ),
         ];
         let article_prose = "The treaty was signed in 1815 after long negotiation. \
         Delegates from five nations attended. The terms reshaped the region for a generation. \
         Historians still debate its consequences. Several clauses were never enforced. ";
         let articles = [
-            format!("{}{}", article_prose.repeat(5), "Subscribe to our newsletter."),
+            format!(
+                "{}{}",
+                article_prose.repeat(5),
+                "Subscribe to our newsletter."
+            ),
             article_prose.repeat(8),
             format!("News flash. {}", article_prose.repeat(6)),
         ];
@@ -651,7 +704,13 @@ mod tests {
             }
         }
         // Hard requirement: no real article flagged. Catches the bulk of walls.
-        assert_eq!(false_pos, 0, "real articles must not be flagged ({false_pos} were)");
-        assert!(false_neg <= 1, "should catch most paywall stubs ({false_neg}/3 missed)");
+        assert_eq!(
+            false_pos, 0,
+            "real articles must not be flagged ({false_pos} were)"
+        );
+        assert!(
+            false_neg <= 1,
+            "should catch most paywall stubs ({false_neg}/3 missed)"
+        );
     }
 }

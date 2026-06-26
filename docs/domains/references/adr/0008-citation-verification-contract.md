@@ -4,13 +4,6 @@
 **Date:** 2026-06-07
 **Author:** Luis Villa
 
-> **NOTE (post-merge, 2026-06-26):** The single-quote response shape
-> (`LocatedPassage { quote: String, offset }` — one passage from the winning
-> verdict) is being extended to carry **multiple located spans** (a `quotes` list),
-> to support *within-source synthesis* grounding — see issue #66. Each span still
-> re-checks verbatim against the fetched bytes (anti-fabrication unchanged). The
-> substantive contract update is pending discussion.
-
 ## Context
 
 PRD-0001 (citation verification — initial implementation, merged as PR #17) adds
@@ -155,7 +148,9 @@ The response is a **`CitationFinding`** carrying:
   absence.** `passage: Option<LocatedPassage>` where `LocatedPassage { quote:
   String, offset: usize }` is the verbatim substring located in the fetched
   source, with its byte offset — the quote from the **winning** verdict, not a
-  merge across models. `None` is the explicit *absence* record — the
+  merge across models. *(As of 2026-06-26 this is being extended to carry
+  **multiple** located passages — conceptually `Vec<LocatedPassage>` — for
+  within-source synthesis grounding; see Changelog and issue #66.)* `None` is the explicit *absence* record — the
   contract-level manifestation of abstention and of "I fetched it and it does not
   support this".
 - **Provenance of the really-fetched source.** `SourceProvenance { url: Url,
@@ -555,3 +550,16 @@ Cross-cutting effects:
 - **No change to the operator-confirmed action path** (ADR-0003) — verification
   produces a candidate the operator confirms, never a write.
 - **No PDF source types and no scoring integration in the first cut** (PRD-0001).
+
+## Changelog
+
+Per-ADR record of inline changes after merge (the ADR is edited in place; this logs
+what changed and when). Reversals still get a new superseding ADR (Constitution §4.1).
+
+- **2026-06-26 — Located-passage response shape extended from a single
+  `LocatedPassage` to multiple located passages** (the supporting evidence becomes a
+  list), for within-source synthesis grounding — claims supported only by combining
+  several passages of the same source. Each span still re-checks verbatim against the
+  fetched bytes; the grounding gate (`GroundingAssertion::LocatedQuote`) is unchanged
+  and applied **per-span**. Decision record and rule: issue #66. The substantive
+  contract rewrite is pending discussion with @schiste.

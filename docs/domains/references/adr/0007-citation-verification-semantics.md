@@ -4,16 +4,6 @@
 **Date:** 2026-06-07
 **Author:** Luis Villa
 
-> **NOTE (post-merge, 2026-06-26):** The single verbatim, in-session-locatable
-> quote required here (Decision 5 / the locatable-quote invariant) is being
-> extended to **multiple spans**, to support *within-source synthesis* grounding —
-> claims that are supported only by combining several passages of the **same**
-> source (neither passage sufficient alone). Per-span anti-fabrication is preserved
-> (each span must still verbatim-locate); outside-knowledge inference stays
-> forbidden. The precise rule ("entailed by the union of the spans alone, no
-> unstated premise") and the full rationale are in issue #66. The substantive
-> update to this ADR is pending discussion.
-
 ## Context
 
 PRD-0001 (*Citation verification — initial implementation*, merged as PR #17)
@@ -63,7 +53,9 @@ This ADR settles two things of deliberately different durability, kept separate 
 one can change without disturbing the other:
 
 - **The anti-fabrication invariant (§5)** — the load-bearing rule, set in stone:
-  no `Supported` without a verbatim, in-session-locatable passage. It does not
+  no `Supported` without a verbatim, in-session-locatable passage — **as of
+  2026-06-26, one or more such passages** (within-source synthesis grounding;
+  each span independently located, see Changelog and issue #66). It does not
   depend on the exact category names; it depends only on there being a gated
   "supported"-class outcome and an abstention outcome.
 - **The verdict value set (§1)** — the vocabulary the invariant operates over,
@@ -96,8 +88,8 @@ pub enum CitationVerdict {
 }
 
 pub enum SupportLevel {
-    Supported,     // the source contains all the claim's assertions   ┐ require a
-    Partial,       // some assertions, or only hedged/uncertain support ┘ located quote
+    Supported,     // the source contains all the claim's assertions   ┐ require ≥1
+    Partial,       // some assertions, or only hedged/uncertain support ┘ located span(s)
     NotSupported,  // addresses the topic but contradicts / lacks evidence — also the
                    // home of "support could not be established" (no separate "unclear")
 }
@@ -549,3 +541,17 @@ Cross-cutting:
   which uncited statements ought to have a citation, or harvesting claims from
   arbitrary prose not anchored to a citation marker; the first cut judges only claims
   an existing citation already points at.
+
+## Changelog
+
+Per-ADR record of inline changes after merge (the ADR is edited in place; this logs
+what changed and when). Reversals still get a new superseding ADR (Constitution §4.1).
+
+- **2026-06-26 — Grounding extended from a single located passage to one or more
+  within-source spans ("synthesis grounding").** A claim may be grounded by
+  combining multiple verbatim, independently-located passages of the *same* source,
+  valid only when the claim is entailed by the union of those spans alone with no
+  unstated or outside premise — outside-knowledge inference stays forbidden. The §5
+  anti-fabrication invariant is unchanged; it now holds **per-span**. Decision record
+  and full rule: issue #66. The substantive prose rewrite of the Decision sections is
+  pending discussion with @schiste.

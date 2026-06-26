@@ -71,9 +71,11 @@
   --radius-sm: 2px;
   --radius-md: 2px;
 
-  /* Fonts — Codex system sans + a mono fallback */
-  --font: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Inter",
-    "Helvetica", "Arial", sans-serif;
+  /* Fonts — system-only stack per FRONTEND_DESIGN_CONTRACT Rule 9.2.
+     Codex is itself a system-sans system; the "Noto Sans"/"Liberation Sans"
+     fallbacks are required for CJK/RTL coverage on Linux, so they stay. */
+  --font: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+    "Noto Sans", "Liberation Sans", sans-serif;
   --font-sans: var(--font);
   --mono: ui-monospace, SFMono-Regular, "Cascadia Code", "Liberation Mono",
     Menlo, Monaco, Consolas, monospace;

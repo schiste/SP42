@@ -39,8 +39,31 @@ The repo uses a Husky-compatible local hook layout in `.husky/`. The installer
 sets `core.hooksPath=.husky`, so the hooks run automatically:
 
 - `pre-commit`: staged/working-tree whitespace checks, `cargo fmt --all -- --check`,
-  docs consistency, release-tree audit, and `./scripts/check-focused.sh`.
-- `pre-push`: release-tree audit and `./scripts/ci-all.sh`.
+  the forbidden-pattern guard on added lines (§5.3), pedantic `clippy` on the
+  changed crates, docs consistency, release-tree audit, and
+  `./scripts/check-focused.sh`.
+- `commit-msg`: enforces Conventional Commits (§8.1).
+- `pre-push`: release-tree audit, `./scripts/ci-all.sh`, the supply-chain gate
+  (`cargo deny` + `cargo audit`), the `sp42-core` coverage gate (≥90% lines),
+  and the forbidden-pattern guard over the pushed range.
+
+These gates need a few extra tools installed once:
+
+```sh
+cargo install --locked cargo-deny cargo-audit cargo-llvm-cov
+```
+
+The same gates run in CI on every non-draft pull request (see
+`.github/workflows/ci.yml`), which additionally enforces the wasm bundle-size
+ceiling against the optimized build. The wasm-size gate is CI/release-only — it
+is not in `pre-push`, which would otherwise force an optimized rebuild on every
+push.
+
+> The supply-chain gate is currently red on `main` due to transitive advisories
+> with no available fix (`paste`/`proc-macro-error2` are Leptos build-time
+> proc-macros; `rand` RUSTSEC-2026-0097 has no patched 0.9.x). Until those clear
+> upstream, pushing requires `SP42_SKIP_GIT_HOOKS=1` and PR CI will show the
+> supply-chain step red. New advisories are still caught — this is deliberate.
 
 Documentation-only changes (every modified file is `.md`, `.log`, or `.txt`)
 skip the compile-heavy steps: `pre-commit` still runs the whitespace and docs

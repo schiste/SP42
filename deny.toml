@@ -6,7 +6,23 @@ targets = [
 ]
 
 [advisories]
-ignore = []
+# Documented acceptances of upstream-transitive advisories with no fix available
+# to us. Vulnerabilities, yanked crates, licenses, bans, and sources remain
+# hard-deny, and any NEW advisory still fails. Burn-down register + revisit
+# triggers: https://github.com/schiste/SP42/issues/63
+ignore = [
+    # paste (unmaintained): build-time proc-macro pulled by Leptos 0.8
+    # (leptos_macro/tachys/reactive_stores/either_of). No fix on stable Leptos;
+    # only 0.9.0-alpha drops it. Revisit when Leptos 0.9 ships stable. (#63)
+    { id = "RUSTSEC-2024-0436", reason = "transitive build-time proc-macro from Leptos 0.8; no stable fix; revisit on Leptos 0.9 stable (#63)" },
+    # proc-macro-error2 (unmaintained): build-time, transitive via Leptos 0.8
+    # macros + rstml. Same revisit trigger as RUSTSEC-2024-0436. (#63)
+    { id = "RUSTSEC-2026-0173", reason = "transitive build-time proc-macro from Leptos 0.8; no stable fix; revisit on Leptos 0.9 stable (#63)" },
+    # rand (unsound only with a custom logger calling rand::rng() — not our usage):
+    # no patched version; forced transitively by axum 0.8 -> tokio-tungstenite ->
+    # tungstenite. Revisit on a rand fix or tungstenite moving off rand 0.9. (#63)
+    { id = "RUSTSEC-2026-0097", reason = "no patched rand; transitive via axum/tungstenite; unsound path not exercised; revisit on upstream fix (#63)" },
+]
 yanked = "deny"
 
 [licenses]

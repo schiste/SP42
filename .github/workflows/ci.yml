@@ -1,0 +1,71 @@
+name: CI
+
+# Runs the full CI-shaped checks on pull requests, but only once a PR is marked
+# ready for review (draft PRs are skipped). Mirrors `./scripts/ci-all.sh` minus
+# the desktop/Tauri build, which is platform-specific and stays in
+# desktop-release.yml — keeping this Linux-only job free and fast on a public repo.
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  checks:
+    name: build · test · lint · gates
+    # Skip draft PRs; the ready_for_review event re-triggers this when un-drafted.
+    if: github.event.pull_request.draft == false
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout (full history for diff-scoped gates)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install pinned toolchain (rust-toolchain.toml)
+        run: rustup show
+
+      - name: Cache cargo + target
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install gate tools
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-deny,cargo-audit,cargo-llvm-cov,trunk
+
+      - name: Formatting
+        run: cargo fmt --all -- --check
+
+      - name: Build (workspace, all targets)
+        run: cargo ci-build
+
+      - name: Tests
+        run: cargo ci-test
+
+      - name: Clippy (pedantic = deny)
+        run: cargo ci-clippy
+
+      - name: Docs
+        run: cargo ci-doc
+
+      - name: Forbidden-pattern guard (added lines)
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: ./scripts/check-forbidden-patterns.sh --range "${BASE_SHA}..HEAD"
+
+      - name: Supply chain (cargo-deny + cargo-audit)
+        run: ./scripts/check-supply-chain.sh
+
+      - name: Coverage (sp42-core lines >= 90%)
+        run: ./scripts/check-coverage.sh
+
+      - name: Build optimized web bundle
+        run: ./scripts/build-web-release.sh
+
+      - name: Wasm size ceiling
+        run: ./scripts/check-wasm-size.sh

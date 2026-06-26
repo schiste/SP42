@@ -10,11 +10,11 @@ use serde_json::Value;
 use sp42_core::routes as route_contracts;
 use sp42_core::{
     CitationFinding, CitationVerificationRequest, ClaimContext, DevAuthBootstrapRequest,
-    DevAuthSessionStatus, GroundingStatus, QueuedEdit, SessionActionExecutionRequest,
-    SessionActionExecutionResponse, SessionActionKind, SystemClock, VerificationOutcome,
-    VerifyOptions as CoreVerifyOptions, build_dev_auth_bootstrap_request,
-    check_fetchable_source_url, locate_quote, locate_quote_fuzzy, parse_dev_auth_status,
-    verify_citation_use_site,
+    DevAuthSessionStatus, GroundingStatus, PageVerificationReport, PageVerificationRequest,
+    QueuedEdit, SessionActionExecutionRequest, SessionActionExecutionResponse, SessionActionKind,
+    SystemClock, VerificationOutcome, VerifyOptions as CoreVerifyOptions,
+    build_dev_auth_bootstrap_request, check_fetchable_source_url, locate_quote, locate_quote_fuzzy,
+    parse_dev_auth_status, verify_citation_use_site,
 };
 use sp42_devtools::{
     DEV_PREVIEW_SAMPLE_EVENTS, DEV_PREVIEW_WIKI_ID, DevContextOptions, DevWorkbenchOptions,
@@ -25,8 +25,9 @@ use sp42_devtools::{
 use sp42_inference::{client_from_env, panel_from_env};
 use sp42_reporting::{
     PatrolScenarioReportInputs, ShellStateInputs, build_patrol_scenario_report,
-    build_shell_state_model, render_patrol_scenario_markdown, render_patrol_scenario_text,
-    render_shell_state_markdown, render_shell_state_text,
+    build_shell_state_model, render_page_verification_markdown, render_page_verification_text,
+    render_patrol_scenario_markdown, render_patrol_scenario_text, render_shell_state_markdown,
+    render_shell_state_text,
 };
 use sp42_types::{HttpClient, HttpClientError, HttpMethod, HttpRequest, HttpResponse};
 use std::collections::{BTreeMap, BTreeSet};
@@ -70,6 +71,7 @@ struct CliOptions {
     bridge_base_url: String,
     bare_url: Option<BareUrlCliOptions>,
     verify: Option<VerifyCliOptions>,
+    verify_page: Option<VerifyPageCliOptions>,
     verdict_only: bool,
     /// `--locate-probe --quote <q>`: read a source body from STDIN and report whether the
     /// quote locates (offline, no model) — the deterministic locate-replay tool (SP42#25).
@@ -92,6 +94,17 @@ struct VerifyCliOptions {
     /// The SIDE co-reference context: preceding sentences (`--preceding-sentence`, repeatable),
     /// in the order given. Empty by default, which keeps the verifier on its no-context path.
     preceding_sentences: Vec<String>,
+}
+
+/// Article-level citation verification (`--verify-page`, PRD-0009 / ADR-0011): verify
+/// *every* URL-bearing citation on a revision and render the page report. Reuses the
+/// shared `--wiki`/`--title`/`--rev` flags. The route is session+CSRF gated, so the CLI
+/// bootstraps a bridge session (ADR-0002) before the call.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct VerifyPageCliOptions {
+    wiki_id: String,
+    title: String,
+    rev_id: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -164,6 +177,11 @@ fn run() -> Result<String, String> {
         return render_verify(verify, options.format, options.verdict_only);
     }
 
+    // Article-level verification: verify every citation on a revision via the bridge.
+    if let Some(verify_page) = &options.verify_page {
+        return render_verify_page(verify_page, &options.bridge_base_url, options.format);
+    }
+
     let input = read_stdin().map_err(|error| error.to_string())?;
     let payload = if input.trim().is_empty() {
         DEV_PREVIEW_SAMPLE_EVENTS
@@ -233,6 +251,7 @@ fn load_ranked_queue(
     build_dev_queue(config, payload).map_err(|error| error.to_string())
 }
 
+#[allow(clippy::too_many_lines)] // flat arg-parser; refactor tracked in SP42#80
 fn parse_options(args: impl IntoIterator<Item = String>) -> Result<CliOptions, String> {
     let mut args = args.into_iter();
     let mut format = OutputFormat::Text;
@@ -252,6 +271,7 @@ fn parse_options(args: impl IntoIterator<Item = String>) -> Result<CliOptions, S
     let mut bare_url_rev = None;
     let mut bare_url_ordinal = None;
     let mut bare_url_wiki = BARE_URL_DEFAULT_WIKI.to_string();
+    let mut verify_page_flag = false;
     let mut verify_claim = None;
     let mut verify_source_url = None;
     let mut verify_metadata = false;
@@ -281,6 +301,7 @@ fn parse_options(args: impl IntoIterator<Item = String>) -> Result<CliOptions, S
             bare_url_rev: &mut bare_url_rev,
             bare_url_ordinal: &mut bare_url_ordinal,
             bare_url_wiki: &mut bare_url_wiki,
+            verify_page_flag: &mut verify_page_flag,
             verify_claim: &mut verify_claim,
             verify_source_url: &mut verify_source_url,
             verify_metadata: &mut verify_metadata,
@@ -294,6 +315,14 @@ fn parse_options(args: impl IntoIterator<Item = String>) -> Result<CliOptions, S
         apply_cli_argument(&arg, &mut args, &mut state)?;
     }
 
+    // `--verify-page` reuses the shared --wiki/--title/--rev flags; capture them
+    // before `build_bare_url_options` consumes the owned strings.
+    let verify_page = build_verify_page_options(
+        verify_page_flag,
+        bare_url_wiki.clone(),
+        bare_url_title.clone(),
+        bare_url_rev,
+    )?;
     let bare_url = build_bare_url_options(
         bare_url_preview,
         bare_url_execute,
@@ -331,6 +360,7 @@ fn parse_options(args: impl IntoIterator<Item = String>) -> Result<CliOptions, S
         bridge_base_url,
         bare_url,
         verify,
+        verify_page,
         verdict_only,
         locate_probe,
     })
@@ -377,6 +407,7 @@ struct CliParseState<'a> {
     bare_url_rev: &'a mut Option<u64>,
     bare_url_ordinal: &'a mut Option<usize>,
     bare_url_wiki: &'a mut String,
+    verify_page_flag: &'a mut bool,
     verify_claim: &'a mut Option<String>,
     verify_source_url: &'a mut Option<String>,
     verify_metadata: &'a mut bool,
@@ -461,6 +492,9 @@ where
         "--wiki" => {
             *state.bare_url_wiki = next_option_value(args, "--wiki")?;
         }
+        "--verify-page" => {
+            *state.verify_page_flag = true;
+        }
         "--claim" => {
             *state.verify_claim = Some(next_option_value(args, "--claim")?);
         }
@@ -525,6 +559,26 @@ fn build_bare_url_options(
         wiki_id,
         title,
         rev_id,
+    }))
+}
+
+/// Assemble the `--verify-page` options. Requires --title and --rev (the page to
+/// verify); --wiki carries its shared default.
+fn build_verify_page_options(
+    enabled: bool,
+    wiki_id: String,
+    title: Option<String>,
+    rev_id: Option<u64>,
+) -> Result<Option<VerifyPageCliOptions>, String> {
+    if !enabled {
+        return Ok(None);
+    }
+    let title = title.ok_or_else(|| "--verify-page requires --title".to_string())?;
+    Ok(Some(VerifyPageCliOptions {
+        wiki_id,
+        title,
+        // No --rev means the latest revision; the server resolves 0 to a concrete id.
+        rev_id: rev_id.unwrap_or(0),
     }))
 }
 
@@ -2488,6 +2542,80 @@ async fn fetch_bare_url_proposals(
         .map_err(|error| format!("bare-url proposals payload was invalid: {error}"))
 }
 
+fn render_verify_page(
+    options: &VerifyPageCliOptions,
+    bridge_base_url: &str,
+    format: OutputFormat,
+) -> Result<String, String> {
+    // `reqwest` needs a Tokio reactor; drive the bridge calls on a real runtime
+    // (mirrors `run_verify`), not `futures::executor::block_on`.
+    let runtime = tokio::runtime::Runtime::new()
+        .map_err(|error| format!("failed to start async runtime: {error}"))?;
+    let report = runtime.block_on(fetch_page_report_via_bridge(bridge_base_url, options))?;
+    match format {
+        OutputFormat::Json => {
+            serde_json::to_string_pretty(&report).map_err(|error| error.to_string())
+        }
+        // The shared renderer already emits a full markdown document (`# Page citation
+        // report`), so it is not wrapped in render_markdown_section.
+        OutputFormat::Markdown => Ok(render_page_verification_markdown(&report)),
+        OutputFormat::Text => Ok(render_page_verification_text(&report)),
+    }
+}
+
+/// Verify every citation on a page through the bridge and return the report. The
+/// route is session+CSRF gated (it spends the server's inference credentials on a
+/// caller-chosen page), so bootstrap a session and send the cookie + CSRF token
+/// (ADR-0002), mirroring the bare-url apply path.
+async fn fetch_page_report_via_bridge(
+    bridge_base_url: &str,
+    options: &VerifyPageCliOptions,
+) -> Result<PageVerificationReport, String> {
+    let client = reqwest::Client::builder()
+        .user_agent(sp42_core::branding::USER_AGENT)
+        .build()
+        .map_err(|error| format!("bridge client failed to build: {error}"))?;
+    let bootstrap_request =
+        build_dev_auth_bootstrap_request(bridge_base_url, &DevAuthBootstrapRequest::default())
+            .map_err(|error| error.to_string())?;
+    let bootstrap_response = execute_local_http_request(&client, bootstrap_request).await?;
+    let bootstrap =
+        parse_dev_auth_status(&bootstrap_response.body).map_err(|error| error.to_string())?;
+    if !bootstrap.authenticated {
+        return Err("bridge bootstrap did not produce an authenticated session".to_string());
+    }
+    let session_cookie = session_cookie_from_headers(&bootstrap_response.headers)
+        .ok_or_else(|| "bridge bootstrap did not set a session cookie".to_string())?;
+    let csrf_token = bootstrap
+        .csrf_token
+        .clone()
+        .ok_or_else(|| "bridge bootstrap did not return a CSRF token".to_string())?;
+
+    let request = PageVerificationRequest {
+        wiki_id: options.wiki_id.clone(),
+        title: options.title.clone(),
+        rev_id: options.rev_id,
+    };
+    let request_url = format!(
+        "{bridge_base_url}{}",
+        route_contracts::DEV_CITATION_VERIFY_PAGE_PATH
+    );
+    let response = client
+        .post(&request_url)
+        .header(COOKIE, session_cookie.as_str())
+        .header(route_contracts::CSRF_HEADER_NAME, csrf_token.as_str())
+        .json(&request)
+        .send()
+        .await
+        .map_err(|error| format!("verify-page request failed: {error}"))?
+        .error_for_status()
+        .map_err(|error| format!("verify-page request failed: {error}"))?;
+    response
+        .json::<PageVerificationReport>()
+        .await
+        .map_err(|error| format!("verify-page payload was invalid: {error}"))
+}
+
 /// Select a proposal from the response by ordinal. Returns the proposal if
 /// found, or an error message listing declined entries.
 fn select_bare_url_proposal(
@@ -2928,11 +3056,12 @@ mod tests {
 
     use super::{
         BareUrlCliMode, BareUrlCliOptions, BareUrlExecuteReport, CliOptions, ContextPreviewOptions,
-        LOCAL_SERVER_BASE_URL, OutputFormat, PreviewMode, ShellMode, WorkbenchOptions,
-        parse_options, render_action_preview, render_backlog_preview, render_bare_url_execute,
-        render_bare_url_proposals, render_context_preview, render_coordination_preview,
-        render_parity_report, render_queue, render_scenario_report, render_session_digest,
-        render_stream_preview, render_workbench, select_bare_url_proposal, server_report_lines,
+        LOCAL_SERVER_BASE_URL, OutputFormat, PreviewMode, ShellMode, VerifyPageCliOptions,
+        WorkbenchOptions, parse_options, render_action_preview, render_backlog_preview,
+        render_bare_url_execute, render_bare_url_proposals, render_context_preview,
+        render_coordination_preview, render_parity_report, render_queue, render_scenario_report,
+        render_session_digest, render_stream_preview, render_workbench, select_bare_url_proposal,
+        server_report_lines,
     };
     use serde_json::json;
     use sp42_devtools::{
@@ -3017,6 +3146,50 @@ mod tests {
                 token: "token-123".to_string(),
                 actor: "Reviewer".to_string(),
                 note: "local workbench".to_string(),
+            })
+        );
+    }
+
+    #[test]
+    fn parses_verify_page_options() {
+        let options = parse_options([
+            "--verify-page".to_string(),
+            "--wiki".to_string(),
+            "enwiki".to_string(),
+            "--title".to_string(),
+            "Museum".to_string(),
+            "--rev".to_string(),
+            "12345".to_string(),
+        ])
+        .expect("verify-page options should parse");
+
+        assert_eq!(
+            options.verify_page,
+            Some(VerifyPageCliOptions {
+                wiki_id: "enwiki".to_string(),
+                title: "Museum".to_string(),
+                rev_id: 12345,
+            })
+        );
+    }
+
+    #[test]
+    fn verify_page_without_rev_defaults_to_latest() {
+        let options = parse_options([
+            "--verify-page".to_string(),
+            "--wiki".to_string(),
+            "enwiki".to_string(),
+            "--title".to_string(),
+            "Museum".to_string(),
+        ])
+        .expect("verify-page without --rev should default to latest");
+
+        assert_eq!(
+            options.verify_page,
+            Some(VerifyPageCliOptions {
+                wiki_id: "enwiki".to_string(),
+                title: "Museum".to_string(),
+                rev_id: 0,
             })
         );
     }
@@ -3119,6 +3292,7 @@ mod tests {
                 bridge_base_url: LOCAL_SERVER_BASE_URL.to_string(),
                 bare_url: None,
                 verify: None,
+                verify_page: None,
                 verdict_only: false,
                 locate_probe: None,
             },
@@ -3153,6 +3327,7 @@ mod tests {
                 bridge_base_url: LOCAL_SERVER_BASE_URL.to_string(),
                 bare_url: None,
                 verify: None,
+                verify_page: None,
                 verdict_only: false,
                 locate_probe: None,
             },
@@ -3185,6 +3360,7 @@ mod tests {
                 bridge_base_url: LOCAL_SERVER_BASE_URL.to_string(),
                 bare_url: None,
                 verify: None,
+                verify_page: None,
                 verdict_only: false,
                 locate_probe: None,
             },
@@ -3224,6 +3400,7 @@ mod tests {
             bridge_base_url: LOCAL_SERVER_BASE_URL.to_string(),
             bare_url: None,
             verify: None,
+            verify_page: None,
             verdict_only: false,
             locate_probe: None,
         };
@@ -3266,6 +3443,7 @@ mod tests {
             bridge_base_url: "http://127.0.0.1:8788".to_string(),
             bare_url: None,
             verify: None,
+            verify_page: None,
             verdict_only: false,
             locate_probe: None,
         };

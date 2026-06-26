@@ -30,6 +30,11 @@ fn prefetch_retained_bytes(source: &FetchedSource) -> usize {
 pub struct PageVerificationRequest {
     pub wiki_id: String,
     pub title: String,
+    /// The revision to verify. `0` (or an absent field) means **the latest
+    /// revision**: the server resolves it to a concrete id before verifying and
+    /// records that id in the report, so the result stays reproducible. `MediaWiki`
+    /// revision ids are always `>= 1`, so `0` is an unambiguous sentinel.
+    #[serde(default)]
     pub rev_id: u64,
 }
 
@@ -917,6 +922,22 @@ mod tests {
             raw_html: None,
         };
         assert_eq!(prefetch_retained_bytes(&text_only), 5);
+    }
+
+    #[test]
+    fn request_rev_id_defaults_to_zero_meaning_latest() {
+        // An absent rev_id deserializes to 0, the "latest revision" sentinel the
+        // server resolves before verifying.
+        let request: PageVerificationRequest =
+            serde_json::from_str(r#"{"wiki_id":"enwiki","title":"Example"}"#)
+                .expect("request without rev_id should deserialize");
+        assert_eq!(request.rev_id, 0);
+
+        // An explicit rev_id is preserved.
+        let pinned: PageVerificationRequest =
+            serde_json::from_str(r#"{"wiki_id":"enwiki","title":"Example","rev_id":123}"#)
+                .expect("request with rev_id should deserialize");
+        assert_eq!(pinned.rev_id, 123);
     }
 
     #[test]

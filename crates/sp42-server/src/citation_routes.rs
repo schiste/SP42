@@ -24,7 +24,7 @@ use axum::{
     response::IntoResponse,
 };
 
-use sp42_types::HttpResponse;
+use sp42_types::{HttpClient, HttpMethod, HttpRequest, HttpResponse};
 
 use crate::action_routes::{
     action_error_from_editor, action_error_response, patrol_original_edit_if_possible,
@@ -184,6 +184,66 @@ pub(crate) async fn post_bare_url_proposals(
     Ok(Json(response))
 }
 
+/// Resolve a page's current revision id via the wiki action API (a public read).
+/// Used when a verify-page request leaves `rev_id` at `0` ("latest").
+async fn fetch_latest_revid(
+    client: &(impl HttpClient + ?Sized),
+    config: &sp42_core::WikiConfig,
+    title: &str,
+) -> Result<u64, ActionError> {
+    let mut url = config.api_url.clone();
+    url.query_pairs_mut()
+        .append_pair("action", "query")
+        .append_pair("prop", "revisions")
+        .append_pair("titles", title)
+        .append_pair("rvprop", "ids")
+        .append_pair("rvlimit", "1")
+        .append_pair("format", "json")
+        .append_pair("formatversion", "2");
+
+    let response = client
+        .execute(HttpRequest {
+            method: HttpMethod::Get,
+            url,
+            headers: std::collections::BTreeMap::new(),
+            body: Vec::new(),
+        })
+        .await
+        .map_err(|error| ActionError::Execution {
+            message: format!("latest-revision lookup failed: {error}"),
+            code: None,
+            http_status: None,
+            retryable: true,
+        })?;
+
+    if !(200..300).contains(&response.status) {
+        return Err(ActionError::Execution {
+            message: format!("latest-revision lookup HTTP {}", response.status),
+            code: None,
+            http_status: Some(response.status),
+            retryable: response.status >= 500,
+        });
+    }
+
+    let value: serde_json::Value =
+        serde_json::from_slice(&response.body).map_err(|error| ActionError::Execution {
+            message: format!("latest-revision JSON failed: {error}"),
+            code: None,
+            http_status: None,
+            retryable: false,
+        })?;
+
+    value
+        .pointer("/query/pages/0/revisions/0/revid")
+        .and_then(serde_json::Value::as_u64)
+        .ok_or_else(|| ActionError::Execution {
+            message: format!("no current revision found for: {title}"),
+            code: Some("missing-revision".to_string()),
+            http_status: None,
+            retryable: false,
+        })
+}
+
 /// `POST /dev/citation/verify-page` — read-only page-level citation verification.
 ///
 /// Session + CSRF gated (like `post_bare_url_apply`). The route only reads from the
@@ -199,7 +259,7 @@ pub(crate) async fn post_bare_url_proposals(
 pub(crate) async fn post_verify_page(
     State(state): State<AppState>,
     headers: HeaderMap,
-    Json(payload): Json<PageVerificationRequest>,
+    Json(mut payload): Json<PageVerificationRequest>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
     let Some(session) = current_session_snapshot(&state, &headers, true).await else {
         return Err(unauthorized_error(
@@ -223,6 +283,25 @@ pub(crate) async fn post_verify_page(
         )
     })?;
 
+    let http_client = PlainHttpClient::new().map_err(|error| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": error })),
+        )
+    })?;
+
+    // `rev_id == 0` means "latest": resolve it to a concrete revision before
+    // verifying, so the report records the exact revision that was checked. Use the
+    // trusted wiki-API client (not the SSRF-guarded source client) so this works
+    // for loopback/private wiki configs the same way a pinned --rev does.
+    if payload.rev_id == 0 {
+        let wiki_client =
+            BearerHttpClient::new(state.http_client.clone(), session.access_token.clone());
+        payload.rev_id = fetch_latest_revid(&wiki_client, &config, &payload.title)
+            .await
+            .map_err(|error| action_error_response(&error))?;
+    }
+
     // Extract blocks via the editor (Parsoid), then use-sites, then verify.
     let page_ref = WikitextPageRef {
         title: payload.title.clone(),
@@ -235,12 +314,6 @@ pub(crate) async fn post_verify_page(
         .map_err(|error| action_error_response(&action_error_from_editor(&error)))?;
     let extract = extract_use_sites(&blocks, &payload);
 
-    let http_client = PlainHttpClient::new().map_err(|error| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(serde_json::json!({ "error": error })),
-        )
-    })?;
     let options = VerifyOptions::default();
     let report: PageVerificationReport = verify_page(
         &http_client,

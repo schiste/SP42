@@ -66,9 +66,11 @@ git commit -m "feat(citation): add PdfBody and ViewerShell usability reasons"
 ```rust
 #[test]
 fn pdf_by_content_type_is_flagged() {
+    // Correctly-typed PDF: not HTML, so raw_html is None and the %PDF text is `text`.
     let r = classify_source_usability(
         "https://example.com/report",
         "application/pdf",
+        None,
         Some("%PDF-1.7 ...binary..."),
     );
     assert!(!r.usable);
@@ -77,11 +79,14 @@ fn pdf_by_content_type_is_flagged() {
 
 #[test]
 fn pdf_by_magic_when_mislabeled_html() {
-    // Server lies with text/html, but the body is a PDF.
+    // Server lies with text/html, so fetch treats it as HTML: raw_html holds the
+    // %PDF bytes and `text` is whatever html_to_text made of them. Magic must be
+    // checked against the RAW body.
     let r = classify_source_usability(
         "https://example.com/x",
         "text/html",
         Some("%PDF-1.4\n%âãÏÓ\n1 0 obj"),
+        Some("garbage extracted text"),
     );
     assert!(!r.usable);
     assert_eq!(r.reason, BodyUsabilityReason::PdfBody);
@@ -90,7 +95,7 @@ fn pdf_by_magic_when_mislabeled_html() {
 #[test]
 fn non_pdf_html_is_not_pdf_flagged() {
     let prose = "The history of the bridge spans more than a century. ".repeat(10);
-    let r = classify_source_usability("https://example.com/x", "text/html", Some(&prose));
+    let r = classify_source_usability("https://example.com/x", "text/html", Some(&prose), Some(&prose));
     assert!(r.usable);
 }
 ```
@@ -108,22 +113,24 @@ In `classify_source_usability`, before delegating, add the PDF check. Replace th
 pub fn classify_source_usability(
     source_url: &str,
     content_type: &str,
+    raw_html: Option<&str>,
     text: Option<&str>,
 ) -> BodyUsability {
-    // 1. PDF: content-type or `%PDF-` magic (ASCII, survives from_utf8_lossy).
-    let is_pdf_ct = content_type
-        .to_ascii_lowercase()
-        .contains("application/pdf");
-    let is_pdf_magic = text
-        .map(|t| t.trim_start().starts_with("%PDF-"))
-        .unwrap_or(false);
-    if is_pdf_ct || is_pdf_magic {
+    // 1. PDF: content-type or `%PDF-` magic. Check the RAW body (a PDF mislabeled
+    //    text/html keeps its magic in raw_html, not the html_to_text output).
+    let has_pdf_magic = |s: Option<&str>| s.is_some_and(|t| t.trim_start().starts_with("%PDF-"));
+    let is_pdf = content_type.to_ascii_lowercase().contains("application/pdf")
+        || has_pdf_magic(raw_html)
+        || has_pdf_magic(text);
+    if is_pdf {
         return unusable(BodyUsabilityReason::PdfBody);
     }
 
     // 2. Special-case hosts (host-rule table) — added in Task 3.
 
-    // 3. Text-shape detectors.
+    // 3. Paywall / nav-chrome — added in Phase 3.
+
+    // 4. Text-shape detectors.
     classify_body_usability(text)
 }
 ```
@@ -157,7 +164,7 @@ fn google_books_host_is_viewer_shell() {
         "https://books.google.com/books?id=abc123",
         "https://books.google.es/books?id=xyz",
     ] {
-        let r = classify_source_usability(url, "text/html", Some("irrelevant body text"));
+        let r = classify_source_usability(url, "text/html", None, Some("irrelevant body text"));
         assert!(!r.usable, "{url}");
         assert_eq!(r.reason, BodyUsabilityReason::ViewerShell, "{url}");
     }
@@ -166,7 +173,12 @@ fn google_books_host_is_viewer_shell() {
 #[test]
 fn non_special_host_is_not_viewer_shell() {
     let prose = "The history of the bridge spans more than a century. ".repeat(10);
-    let r = classify_source_usability("https://en.wikipedia.org/wiki/Bridge", "text/html", Some(&prose));
+    let r = classify_source_usability(
+        "https://en.wikipedia.org/wiki/Bridge",
+        "text/html",
+        None,
+        Some(&prose),
+    );
     assert!(r.usable);
 }
 ```

@@ -4,7 +4,7 @@
 
 **Goal:** Plumb the "specific unusable reason" through the citation pipeline — add a unified usability entry point, carry content-type, and record the reason on the finding — without adding any new detectors yet (behavior-preserving).
 
-**Architecture:** `sp42-core` citation module. Today `classify_body_usability(text)` is text-only and the short-circuit in `verify_citation_use_site` discards its `reason`. This phase adds `classify_source_usability(url, content_type, text)` (delegating to the existing detectors for now), threads `content_type` through `FetchedSource`, adds `CitationFinding.unusable_reason: Option<BodyUsabilityReason>`, and sets it at the short-circuit. No new detectors, no verdict-enum change.
+**Architecture:** `sp42-core` citation module. Today `classify_body_usability(text)` is text-only and the short-circuit in `verify_citation_use_site` discards its `reason`. This phase adds `classify_source_usability(url, content_type, raw_html, text)` (delegating to the existing detectors for now), threads `content_type` and `raw_html` through `FetchedSource`, adds `CitationFinding.unusable_reason: Option<BodyUsabilityReason>`, and sets it at the short-circuit. No new detectors, no verdict-enum change.
 
 **Tech Stack:** Rust, `serde`, in-module `#[cfg(test)]` tests, `StubHttpClient`/`StubModelClient` FIFO test doubles.
 
@@ -58,12 +58,14 @@ git commit -m "feat(citation): add CitationFinding.unusable_reason (plumbing, de
 
 ---
 
-## Task 2: Carry `content_type` on `FetchedSource`
+## Task 2: Carry `content_type` and `raw_html` on `FetchedSource`
 
 **Files:**
 - Modify: `crates/sp42-core/src/citation/verify.rs` (`FetchedSource` ~700–705; `fetch_source` ~708–754)
 
-**Step 1: Add the field**
+The gate needs the response content-type (for PDF detection) and the pre-extraction HTML (for the deterministic paywall markers in Phase 3, whose JSON-LD/meta/script-src signals `html_to_text` strips). Both are already computed inside `fetch_source` and discarded; thread them out. `raw_html` is `Some` only for HTML responses.
+
+**Step 1: Add the fields**
 
 Change `FetchedSource` (~700–705) to:
 
@@ -73,42 +75,64 @@ pub struct FetchedSource {
     pub text: String,
     pub status: u16,
     pub content_type: String,
+    /// Pre-extraction HTML body, present only for HTML responses. Needed at the
+    /// usability gate for structured paywall markers; consumed there and not
+    /// retained downstream (grounding uses `text`).
+    pub raw_html: Option<String>,
 }
 ```
 
-**Step 2: Populate it in `fetch_source`**
+**Step 2: Populate them in `fetch_source`**
 
-`fetch_source` already computes `content_type` (~739). It has two `FetchedSource { … }` returns:
-- The non-2xx early return (~734): set `content_type: String::new()`.
-- The final return (~750): set `content_type` to the computed value. Because the computed `content_type` is currently moved into `looks_like_html`, clone it for the field:
-
-Final return becomes:
+`fetch_source` currently does (~744–752):
 ```rust
+    let body = String::from_utf8_lossy(&response.body).into_owned();
+    let text = if looks_like_html(&content_type, &body) {
+        html_to_text(&body)
+    } else {
+        body
+    };
     Ok(FetchedSource {
         text: recover_wayback_body(&text),
         status: response.status,
-        content_type,
     })
 ```
-The non-2xx early return becomes:
+Replace that with (keeps the raw HTML for the HTML case without cloning — `html_to_text` borrows `body`, then `body` moves into `raw_html`):
+```rust
+    let body = String::from_utf8_lossy(&response.body).into_owned();
+    let is_html = looks_like_html(&content_type, &body);
+    let (extracted, raw_html) = if is_html {
+        (html_to_text(&body), Some(body))
+    } else {
+        (body, None)
+    };
+    Ok(FetchedSource {
+        text: recover_wayback_body(&extracted),
+        status: response.status,
+        content_type,
+        raw_html,
+    })
+```
+The non-2xx early return (~734) becomes:
 ```rust
         return Ok(FetchedSource {
             text: String::new(),
             status: response.status,
             content_type: String::new(),
+            raw_html: None,
         });
 ```
 
 **Step 3: Fix other `FetchedSource` literals**
 
 Run: `cargo test -p sp42-core --no-run`
-Expected: the compiler flags any other `FetchedSource { … }` literals (e.g. in `try_archive_fallback`'s `prefetched` path or tests) missing `content_type`. Add `content_type: String::new()` (or the appropriate header value in tests) to each until it builds.
+Expected: the compiler flags any other `FetchedSource { … }` literals (e.g. in tests) missing the new fields. Add `content_type: String::new(), raw_html: None` (or the appropriate values in tests) to each until it builds.
 
 **Step 4: Commit**
 
 ```bash
 git add crates/sp42-core/src/citation/verify.rs
-git commit -m "feat(citation): thread fetched content-type through FetchedSource"
+git commit -m "feat(citation): thread content-type and raw HTML through FetchedSource"
 ```
 
 ---
@@ -126,13 +150,13 @@ The `#[cfg(test)]` module in `body_classifier.rs` imports its helpers via a `use
 ```rust
 #[test]
 fn classify_source_delegates_to_text_detectors() {
-    // No URL/content-type signal → behaves exactly like classify_body_usability.
+    // No URL/content-type/raw-HTML signal → behaves exactly like classify_body_usability.
     let prose = "The history of the bridge spans more than a century. ".repeat(10);
-    let usable = classify_source_usability("https://example.com/a", "text/html", Some(&prose));
+    let usable = classify_source_usability("https://example.com/a", "text/html", None, Some(&prose));
     assert!(usable.usable);
     assert_eq!(usable.reason, BodyUsabilityReason::Ok);
 
-    let short = classify_source_usability("https://example.com/a", "text/html", Some("tiny"));
+    let short = classify_source_usability("https://example.com/a", "text/html", None, Some("tiny"));
     assert!(!short.usable);
     assert_eq!(short.reason, BodyUsabilityReason::ShortBody);
 }
@@ -149,13 +173,15 @@ Add after `classify_body_usability`:
 
 ```rust
 /// Usability gate with full context: the source URL, the response content-type,
-/// and the extracted text. Phase 1 delegates to the text-only detectors; later
-/// phases add URL/content-type detectors (PDF, special-case hosts) ahead of this
-/// delegation. `_source_url` / `_content_type` are unused for now.
+/// the pre-extraction HTML (for structured paywall markers), and the extracted
+/// text. Phase 1 delegates to the text-only detectors; later phases add the
+/// URL/content-type/raw-HTML detectors (PDF, special-case hosts, paywall) ahead
+/// of this delegation. The leading params are unused for now.
 #[must_use]
 pub fn classify_source_usability(
     _source_url: &str,
     _content_type: &str,
+    _raw_html: Option<&str>,
     text: Option<&str>,
 ) -> BodyUsability {
     classify_body_usability(text)
@@ -230,8 +256,12 @@ Replace the short-circuit block (~820–836) so it calls the unified classifier 
     } else {
         Some(fetched.text.as_str())
     };
-    let usability =
-        classify_source_usability(request.source_url.as_str(), &fetched.content_type, body);
+    let usability = classify_source_usability(
+        request.source_url.as_str(),
+        &fetched.content_type,
+        fetched.raw_html.as_deref(),
+        body,
+    );
     if !usability.usable {
         let mut finding = no_quote_finding(
             CitationVerdict::SourceUnavailable,

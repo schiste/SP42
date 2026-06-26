@@ -2,9 +2,9 @@
 
 > **For Claude:** REQUIRED SUB-SKILL: Use ed3d-plan-and-execute:executing-an-implementation-plan to implement this plan task-by-task.
 
-**Goal:** Classify paywall / registration-wall stubs as `Unusable` so the #42 confabulated `partial` can no longer happen — using a conservative two-signal text heuristic tuned for *net value*, not zero false positives.
+**Goal:** Classify paywall / registration-wall stubs as `Unusable` so the #42 confabulated `partial` can no longer happen — using a layered, deterministic-first detector tuned for *net value*, not zero false positives.
 
-**Architecture:** Add `NavChromePaywall` to `BodyUsabilityReason`. Add a text-shape detector inside `classify_body_usability` (it must run on long bodies, since paywall stubs are large — placed after the Amazon stub, before the short-body floor). It fires only when **both** a registration/paywall marker is present **and** the body shows little real article prose. Reuses the Phase-1 short-circuit + reason plumbing.
+**Architecture:** Add `NavChromePaywall` to `BodyUsabilityReason`. Add the detector to `classify_source_usability` (the paywall slot from Phase 2, between host-rule and the text-shape delegation) — it lives here, not in `classify_body_usability`, because the deterministic markers need the `raw_html` threaded in Phase 1. It fires only when **(a) a paywall marker** (deterministic-first: schema.org `isAccessibleForFree`, `article:content_tier` meta, vendor `<script>` fingerprints — scanned in `raw_html` — then a registration-phrase fallback on the extracted text) **and (b) no substantial readable prose**. A consent-wall guard suppresses cookie/GDPR banners. The prose check (b) is load-bearing: a paywalled page that still ships the text stays verifiable. Reuses the Phase-1 short-circuit + reason plumbing.
 
 **Tech Stack:** Rust, `regex` with `LazyLock` statics (matching the existing `ANTI_BOT` / `JSON_LD_*` pattern in this file), in-module tests.
 
@@ -51,101 +51,178 @@ git commit -m "feat(citation): add NavChromePaywall usability reason"
 
 ---
 
-## Task 2: The two-signal paywall detector
+## Task 2: The layered paywall detector
 
 **Files:**
-- Modify: `crates/sp42-core/src/citation/body_classifier.rs` (statics near the top; detector in `classify_body_usability` after the Amazon stub `#6`, before short-body `#7`)
+- Modify: `crates/sp42-core/src/citation/body_classifier.rs` (statics near the top; the paywall slot in `classify_source_usability`, between the host-rule check and the text-shape delegation — comment `// 3. Paywall / nav-chrome` from Phase 2)
 - Test: same file, `#[cfg(test)]` module
+
+**Design:** Fire `NavChromePaywall` only when **(a) a paywall marker** and **(b) no substantial readable prose**. The prose check (b) is load-bearing — a paywalled page that still ships the article text reads as high-prose and is **not** flagged (we verify it; coverage win). Marker (a) is deterministic-first: schema.org `isAccessibleForFree`, `article:content_tier` meta, and paywall-vendor `<script>` srcs (all scanned in `raw_html`), then a registration-phrase regex on the extracted text as the weak fallback. A **consent-wall guard** stops cookie/GDPR banners (the top false-positive source) from tripping the weak fallback. The detector lives in `classify_source_usability` because the markers need `raw_html`.
 
 **Step 1: Write the failing tests**
 
 ```rust
 #[test]
-fn paywall_stub_with_marker_and_no_prose_is_flagged() {
-    // Nav chrome + a registration wall, almost no real sentences (Law360-shaped).
-    let body = format!(
-        "Home News Topics Sections Account {} Subscribe to read the full article. \
-         Sign in to continue. Create a free account.",
-        "Companies Pernod Ricard SA Brown-Forman ".repeat(20)
-    );
-    let r = classify_source_usability("https://www.law360.com/articles/735000/x", "text/html", Some(&body));
+fn schema_org_marker_with_no_prose_is_flagged() {
+    let raw = r#"<html><head><script type="application/ld+json">{"@type":"NewsArticle","isAccessibleForFree":false}</script></head><body>Home News Sections Account</body></html>"#;
+    let r = classify_source_usability("https://news.example.com/x", "text/html", Some(raw), Some("Home News Sections Account"));
     assert!(!r.usable);
     assert_eq!(r.reason, BodyUsabilityReason::NavChromePaywall);
 }
 
 #[test]
-fn real_article_with_a_subscribe_link_is_not_flagged() {
-    // A genuine article that happens to contain a "subscribe" prompt must NOT fire.
-    let article = "The bridge opened in 1998 after a decade of construction. \
-        Engineers had debated the design for years. Local officials praised the result. \
-        The span quickly became a regional landmark. Traffic doubled within five years. \
-        Maintenance crews inspect the cables annually. "
+fn vendor_fingerprint_with_no_prose_is_flagged() {
+    let raw = r#"<html><head><script src="https://cdn.tinypass.com/api/tinypass.min.js"></script></head><body>Subscribe Menu Account</body></html>"#;
+    let r = classify_source_usability("https://news.example.com/x", "text/html", Some(raw), Some("Subscribe Menu Account"));
+    assert!(!r.usable);
+    assert_eq!(r.reason, BodyUsabilityReason::NavChromePaywall);
+}
+
+#[test]
+fn registration_phrase_with_no_prose_is_flagged() {
+    // Law360-shaped: nav chrome + registration wall, almost no real sentences.
+    let body = format!(
+        "Home News Sections Account {} Subscribe to read the full article. Sign in to continue.",
+        "Companies Pernod Ricard SA Brown-Forman ".repeat(20)
+    );
+    let r = classify_source_usability("https://www.law360.com/articles/735000/x", "text/html", Some(&body), Some(&body));
+    assert!(!r.usable);
+    assert_eq!(r.reason, BodyUsabilityReason::NavChromePaywall);
+}
+
+#[test]
+fn soft_paywall_with_full_text_is_not_flagged() {
+    // isAccessibleForFree:false BUT the article text is present → high prose → verify it.
+    let article = "The bridge opened in 1998 after a decade of work. Engineers debated the design. \
+        Officials praised the result. Traffic doubled within five years. Crews inspect it yearly. "
+        .repeat(4);
+    let raw = format!(
+        r#"<html><head><script type="application/ld+json">{{"isAccessibleForFree":false}}</script></head><body>{article}</body></html>"#
+    );
+    let r = classify_source_usability("https://news.example.com/x", "text/html", Some(&raw), Some(&article));
+    assert!(r.usable, "paywalled page that still ships the text must stay verifiable");
+}
+
+#[test]
+fn real_article_with_subscribe_link_is_not_flagged() {
+    let article = "The treaty was signed in 1815 after long talks. Five nations attended. \
+        The terms reshaped the region. Historians debate it still. Some clauses were never enforced. "
         .repeat(4);
     let body = format!("{article} Subscribe to read more of our coverage.");
-    let r = classify_source_usability("https://news.example.com/bridge", "text/html", Some(&body));
+    let r = classify_source_usability("https://news.example.com/x", "text/html", Some(&body), Some(&body));
     assert!(r.usable, "real article must not be flagged as paywall");
 }
 
 #[test]
-fn nav_chrome_without_marker_is_not_paywall() {
-    // Little prose but no registration marker → not a paywall (may fall to short/usable).
-    let body = "Home News Topics Sections Account Menu Search ".repeat(10);
-    let r = classify_source_usability("https://example.com/x", "text/html", Some(&body));
+fn consent_wall_with_registration_phrase_is_suppressed() {
+    // A cookie-consent interstitial with a sign-in prompt but NO hard paywall marker.
+    // The guard prevents calling a consent UI a paywall.
+    let body = "We value your privacy. Accept all cookies. Manage cookies. Sign in to continue. Home Menu Account";
+    let r = classify_source_usability("https://news.example.com/x", "text/html", Some(body), Some(body));
     assert_ne!(r.reason, BodyUsabilityReason::NavChromePaywall);
 }
 ```
 
 **Step 2: Run tests to verify they fail**
 
-Run: `cargo test -p sp42-core paywall`  and  `cargo test -p sp42-core real_article_with_a_subscribe`
-Expected: the paywall test FAILs (not yet detected); the real-article test may already pass (nothing flags it yet) — it is the regression guard for Step 3.
+Run: `cargo test -p sp42-core _is_flagged`  (the three `*_is_flagged` tests)
+Expected: FAIL — no paywall detector yet. The `*_not_flagged` / `_suppressed` tests may already pass (nothing fires yet) and act as regression guards.
 
-**Step 3: Add the statics and the detector**
+**Step 3: Add the statics**
 
 Add near the other `LazyLock<Regex>` statics at the top of `body_classifier.rs`:
 
 ```rust
 /// Minimum count of sentence-like spans for a body to read as real article prose.
 /// Starting threshold — tune against the fixture sample (see plan tuning stance).
+/// Replaced by a dom_smoothie content-quality signal in a later (deferred) pass.
 const PROSE_SENTENCE_FLOOR: usize = 5;
 
-/// A registration / paywall prompt. Signal (a) of the two-signal detector.
-static PAYWALL_MARKER: LazyLock<Regex> = LazyLock::new(|| {
+/// schema.org paywall flag in JSON-LD: `"isAccessibleForFree": false`.
+static ACCESSIBLE_FOR_FREE_FALSE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r#"(?i)"isAccessibleForFree"\s*:\s*(false|"false")"#).expect("valid regex")
+});
+
+/// Open Graph content tier marking gated content.
+static CONTENT_TIER_GATED: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r#"(?i)property=["']article:content_tier["']\s+content=["'](locked|metered)["']"#)
+        .expect("valid regex")
+});
+
+/// Registration / paywall prompt in the extracted text — the weakest marker.
+static PAYWALL_PHRASE: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(
         r"(?i)(subscribe to (read|continue)|sign in to continue|create a free account|register to (read|continue)|to continue reading|subscribers? only|this (article|content) is for subscribers)",
     )
-    .expect("valid paywall marker regex")
+    .expect("valid regex")
 });
 
-/// A sentence-like span: a word ending in terminal punctuation. Signal (b) proxy —
-/// chrome/nav has few; real articles have many.
+/// Cookie / GDPR consent-banner markers — the top paywall false-positive source.
+static CONSENT_MARKER: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(
+        r"(?i)(accept all cookies|manage cookies|cookie (policy|consent|preferences|settings)|we value your privacy)",
+    )
+    .expect("valid regex")
+});
+
+/// A sentence-like span (proxy for real article prose); chrome has few, articles many.
 static SENTENCE_END: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"[A-Za-z]{3,}[.!?](\s|$)").expect("valid sentence-end regex"));
+    LazyLock::new(|| Regex::new(r"[A-Za-z]{3,}[.!?](\s|$)").expect("valid regex"));
+
+/// Paywall-platform (PaaS) hosts that appear in `<script>`/`<link>` srcs. Domains are
+/// facts (no license entanglement); cross-referenced against miscfilters/antipaywall.txt
+/// (GPL-3.0, compatible) for maintenance.
+const PAYWALL_VENDOR_HOSTS: &[&str] = &[
+    "piano.io",
+    "tinypass.com",
+    "npttech.com",
+    "poool.fr",
+    "poool.tech",
+    "zephr.com",
+    "arcpublishing.com",
+    "pelcro.com",
+    "evolok.com",
+    "wallkit.net",
+];
 ```
 
-In `classify_body_usability`, between detector `#6` (Amazon stub) and `#7` (short body), add:
+**Step 4: Add the detector to `classify_source_usability`**
+
+Replace the `// 3. Paywall / nav-chrome — added in Phase 3.` placeholder (from Phase 2) with:
 
 ```rust
-    // 6b. Nav-chrome / paywall stub: a registration marker AND little real prose.
-    //     Two-signal, conservative, tuned for balance (not zero false positives).
-    if PAYWALL_MARKER.is_match(trimmed) {
-        let prose_sentences = SENTENCE_END.find_iter(trimmed).count();
-        if prose_sentences < PROSE_SENTENCE_FLOOR {
+    // 3. Paywall / nav-chrome: a paywall marker AND no substantial readable prose.
+    //    Markers are deterministic-first (raw-HTML structured signals), then a
+    //    registration-phrase fallback guarded against consent banners. The prose
+    //    check is load-bearing: a paywalled page that still ships the article text
+    //    reads as high-prose and is NOT flagged.
+    let trimmed = text.map(str::trim).unwrap_or("");
+    let raw = raw_html.unwrap_or("");
+    let hard_marker = ACCESSIBLE_FOR_FREE_FALSE.is_match(raw)
+        || CONTENT_TIER_GATED.is_match(raw)
+        || PAYWALL_VENDOR_HOSTS.iter().any(|host| raw.contains(host));
+    let soft_marker = PAYWALL_PHRASE.is_match(trimmed);
+    let consent_wall = CONSENT_MARKER.is_match(raw) || CONSENT_MARKER.is_match(trimmed);
+    // A hard marker fires through anything; the weak registration phrase is suppressed
+    // when consent markers dominate and there is no hard signal (don't call a consent
+    // UI a paywall).
+    if hard_marker || (soft_marker && !consent_wall) {
+        if SENTENCE_END.find_iter(trimmed).count() < PROSE_SENTENCE_FLOOR {
             return unusable(BodyUsabilityReason::NavChromePaywall);
         }
     }
 ```
 
-**Step 4: Run tests to verify they pass**
+**Step 5: Run tests to verify they pass**
 
-Run: `cargo test -p sp42-core paywall`  and  `cargo test -p sp42-core real_article_with_a_subscribe`  and  `cargo test -p sp42-core nav_chrome_without_marker`
-Expected: all PASS. If the real-article test fails, the heuristic is over-firing — raise `PROSE_SENTENCE_FLOOR` or tighten `PAYWALL_MARKER` until both the paywall and the real-article cases are correct (balance, per the tuning stance).
+Run: `cargo test -p sp42-core _is_flagged`  and  `cargo test -p sp42-core _not_flagged`  and  `cargo test -p sp42-core _suppressed`
+Expected: all PASS. If a `*_not_flagged` test fails, the heuristic is over-firing (the worse error) — raise `PROSE_SENTENCE_FLOOR` or tighten markers toward balance per the tuning stance.
 
-**Step 5: Commit**
+**Step 6: Commit**
 
 ```bash
 git add crates/sp42-core/src/citation/body_classifier.rs
-git commit -m "feat(citation): two-signal nav-chrome/paywall detector (#42)"
+git commit -m "feat(citation): layered paywall detector — deterministic markers + prose + consent guard (#42)"
 ```
 
 ---
@@ -180,7 +257,7 @@ fn paywall_detector_fixture_sample_balance() {
 
     let mut false_neg = 0;
     for w in &walls {
-        if classify_source_usability("https://x/", "text/html", Some(w)).reason
+        if classify_source_usability("https://x/", "text/html", Some(w), Some(w)).reason
             != BodyUsabilityReason::NavChromePaywall
         {
             false_neg += 1;
@@ -188,7 +265,7 @@ fn paywall_detector_fixture_sample_balance() {
     }
     let mut false_pos = 0;
     for a in &articles {
-        if classify_source_usability("https://x/", "text/html", Some(a)).reason
+        if classify_source_usability("https://x/", "text/html", Some(a), Some(a)).reason
             == BodyUsabilityReason::NavChromePaywall
         {
             false_pos += 1;
@@ -280,5 +357,6 @@ git commit -m "test(citation): #42 Law360 paywall stub short-circuits before the
 
 - `cargo test -p sp42-core` passes.
 - The #42 Law360-shaped fixture → `Unusable` / `NavChromePaywall`, zero model calls.
+- Deterministic markers fire: schema.org `isAccessibleForFree:false` and a vendor `<script>` fingerprint each classify `NavChromePaywall` (with low prose); a soft paywall that still ships the full text stays usable; a consent wall with a sign-in phrase is suppressed.
 - Fixture-sample balance holds: zero false positives on real-article controls; catches most paywall stubs (both rates asserted/reported).
-- `PROSE_SENTENCE_FLOOR` / `PAYWALL_MARKER` are the documented tuning knobs; flag-and-tune-on-traffic is the fallback if fixtures prove insufficient.
+- `PROSE_SENTENCE_FLOOR` and the marker statics (`ACCESSIBLE_FOR_FREE_FALSE`, `CONTENT_TIER_GATED`, `PAYWALL_VENDOR_HOSTS`, `PAYWALL_PHRASE`, `CONSENT_MARKER`) are the documented tuning knobs; the `dom_smoothie` content-quality swap and flag-and-tune-on-traffic are the deferred escalations.

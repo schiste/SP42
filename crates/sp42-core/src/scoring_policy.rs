@@ -15,6 +15,8 @@ const ACTIVE_FRWIKI_VANDALISM_POLICY_YAML: &str =
     include_str!("../../../configs/scoring/active/frwiki-vandalism.yaml");
 const ACTIVE_TESTWIKI_VANDALISM_POLICY_YAML: &str =
     include_str!("../../../configs/scoring/active/testwiki-vandalism.yaml");
+const ACTIVE_ENWIKI_VANDALISM_POLICY_YAML: &str =
+    include_str!("../../../configs/scoring/active/enwiki-vandalism.yaml");
 const CANDIDATE_FRWIKI_TIGHTEN_IDENTITY_CAP_YAML: &str =
     include_str!("../../../configs/scoring/candidate/frwiki-vandalism-tighten-identity-cap.yaml");
 
@@ -509,6 +511,7 @@ fn embedded_policy_source(reference: &str) -> Option<&'static str> {
     match reference {
         "active/frwiki-vandalism" => Some(ACTIVE_FRWIKI_VANDALISM_POLICY_YAML),
         "active/testwiki-vandalism" => Some(ACTIVE_TESTWIKI_VANDALISM_POLICY_YAML),
+        "active/enwiki-vandalism" => Some(ACTIVE_ENWIKI_VANDALISM_POLICY_YAML),
         "candidate/frwiki-vandalism-tighten-identity-cap" => {
             Some(CANDIDATE_FRWIKI_TIGHTEN_IDENTITY_CAP_YAML)
         }
@@ -649,5 +652,13 @@ mod tests {
         assert_eq!(compiled.wiki_id, "frwiki");
         assert_eq!(compiled.policy_version, "v0.1");
         assert_eq!(compiled.scoring_config.identity.contribution_cap, Some(25));
+    }
+
+    #[test]
+    fn loads_embedded_enwiki_active_policy() {
+        let compiled = super::load_embedded_compiled_scoring_policy("active/enwiki-vandalism")
+            .expect("embedded enwiki policy should compile");
+
+        assert_eq!(compiled.wiki_id, "enwiki");
     }
 }

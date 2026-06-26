@@ -69,6 +69,13 @@ PWA packaging and offline installability are now effectively complete for local 
   slice: Citoid-backed citation proposals and verbatim-replay applies over
   `/dev/citation/*` bridge routes, with CLI preview/execute flag-modes
   (ADR-0010); the live test.wikipedia.org repair gate remains manual
+- article-level citation verification (ADR-0011) reads a revision and verifies
+  every URL-bearing citation into a `PageVerificationReport` over the read-only
+  `/dev/citation/verify-page` route; a shared `sp42-reporting` renderer turns it
+  into a per-citation report and the CLI `--verify-page` mode prints it
+  (text/markdown/json), defaulting to the latest revision. `frwiki`, `enwiki`,
+  and `testwiki` are registered. The browser Citations tab that renders the same
+  report is in review (PR #81).
 
 ## Current Verification
 

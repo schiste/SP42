@@ -18,14 +18,21 @@ constraints.
 - Keep secrets and personal Wikimedia credentials out of the repository
 - Prefer small, focused pull requests
 - Do not introduce new warnings
-- Keep shared logic in `sp42-core` when it is genuinely cross-target
+- Respect the layered architecture: **platform** owns reusable
+  mechanisms/primitives/frameworks/contracts; **domains** consume them; **shells**
+  compose. Reusable-by-design code goes to the platform, not domain→domain — see
+  [ADR-0013](docs/platform/adr/0013-layered-platform-domain-architecture.md). The
+  layer check (`./scripts/check-layering.sh`) enforces the dependency direction.
 - Avoid architecture drift unless the change is explicitly justified
 - Open an ADR for changes that affect crate boundaries, auth/session behavior,
   runtime deployment behavior, scoring policy, desktop packaging, or public
   contracts
 - Open a PRD for changes that alter operator- or editor-facing behavior
 - For crate extraction and ownership boundaries, follow
-  [ADR-0004](docs/platform/adr/0004-crate-boundary-collaboration-model.md)
+  [ADR-0004](docs/platform/adr/0004-crate-boundary-collaboration-model.md) and
+  [ADR-0013](docs/platform/adr/0013-layered-platform-domain-architecture.md); to
+  stand up a new domain, follow
+  [docs/process/adding-a-domain.md](docs/process/adding-a-domain.md)
 
 ## Local Checks
 
@@ -43,10 +50,11 @@ sets `core.hooksPath=.husky`, so the hooks run automatically:
   changed crates, docs consistency, the markdown link check, release-tree audit,
   and `./scripts/check-focused.sh`.
 - `commit-msg`: enforces Conventional Commits (§8.1).
-- `pre-push`: release-tree audit, the markdown link check, `./scripts/ci-all.sh`,
-  the supply-chain gate (`cargo deny` + `cargo audit`), the coverage gate
-  (`sp42-core` ≥90% lines and a workspace floor, excl. `xtask`), and the
-  forbidden-pattern guard over the pushed range.
+- `pre-push`: release-tree audit, the markdown link check, the layer check
+  (ADR-0013 dependency direction), `./scripts/ci-all.sh`, the supply-chain gate
+  (`cargo deny` + `cargo audit`), the coverage gate (`sp42-core` ≥90% lines and a
+  workspace floor, excl. `xtask`), and the forbidden-pattern guard over the pushed
+  range.
 
 These gates need a few extra tools installed once (all Rust):
 

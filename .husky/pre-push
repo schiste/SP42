@@ -27,6 +27,7 @@ all_docs() {
 
 docs_only=1
 saw_ref=0
+push_ranges=()
 zero="0000000000000000000000000000000000000000"
 while read -r _local_ref local_sha _remote_ref remote_sha; do
   [[ -z "${local_sha:-}" ]] && continue
@@ -34,13 +35,16 @@ while read -r _local_ref local_sha _remote_ref remote_sha; do
   saw_ref=1
   if [[ "$remote_sha" == "$zero" ]]; then
     base="$(git merge-base origin/main "$local_sha" 2>/dev/null || true)"
-    [[ -z "$base" ]] && { docs_only=0; break; }
+    [[ -z "$base" ]] && { docs_only=0; continue; }
     range="$base..$local_sha"
   else
     range="$remote_sha..$local_sha"
   fi
+  # Collect the exact pushed range so later gates scan the commits being pushed,
+  # not the current checkout. Keep scanning all refs (no early break).
+  push_ranges+=("$range")
   files="$(git diff --name-only "$range" 2>/dev/null || true)"
-  if ! all_docs "$files"; then docs_only=0; break; fi
+  all_docs "$files" || docs_only=0
 done
 [[ "$saw_ref" == "0" ]] && docs_only=0
 
@@ -66,12 +70,14 @@ printf '\n== SP42 pre-push: coverage (sp42-core lines >= 90%%) ==\n'
 
 # Wasm size is enforced in CI and the release flow, not here: it requires an
 # optimized (web-release) rebuild, which would be punishing on every push.
-printf '\n== SP42 pre-push: forbidden-pattern guard (added lines vs origin/main) ==\n'
-base="$(git merge-base origin/main HEAD 2>/dev/null || true)"
-if [[ -n "$base" ]]; then
-  ./scripts/check-forbidden-patterns.sh --range "$base..HEAD"
+printf '\n== SP42 pre-push: forbidden-pattern guard (added lines on the pushed refs) ==\n'
+if [[ ${#push_ranges[@]} -gt 0 ]]; then
+  for r in "${push_ranges[@]}"; do
+    printf '  scanning pushed range: %s\n' "$r"
+    ./scripts/check-forbidden-patterns.sh --range "$r"
+  done
 else
-  printf 'no origin/main merge-base — running staged-mode guard.\n'
+  printf 'no resolvable pushed range — running staged-mode guard.\n'
   ./scripts/check-forbidden-patterns.sh --staged
 fi
 

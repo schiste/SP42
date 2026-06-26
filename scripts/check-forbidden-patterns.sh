@@ -41,6 +41,37 @@ is_test_path() {
 # annotated allow/ignore/TODO per Article 5.3 ("without approved issue link").
 has_issue_ref() { [[ "$1" =~ \#[0-9]+ || "$1" == *http* ]]; }
 
+# File content at the revision being scanned (staged index, or the head of the
+# range) so test-context detection matches what is actually committed/pushed.
+cat_ref() {
+  if [[ "$mode" == "--staged" ]]; then
+    git show ":$1" 2>/dev/null
+  else
+    git show "${range#*..}:$1" 2>/dev/null
+  fi
+}
+
+# Is line `$2` of file `$1` inside a `#[cfg(test)]` module block? Used to exempt
+# inline unit-test code (which commonly uses unwrap()) from the production rules.
+in_test_module() {
+  local lines
+  lines=" $(cat_ref "$1" | perl -e '
+    my @l=<STDIN>; my ($in,$d,$pend)=(0,0,0); my @out;
+    for my $i (0..$#l){ my $ln=$i+1; my $s=$l[$i];
+      if($in){ $d += ($s=~tr/{//)-($s=~tr/}//); push @out,$ln; $in=0 if $d<=0; }
+      elsif($pend){ if($s=~/\bmod\b.*\{/){ $in=1; $d=($s=~tr/{//)-($s=~tr/}//); push @out,$ln; $pend=0; } elsif($s=~/\S/){ $pend=0; } }
+      if(!$in && !$pend && $s=~/#\[cfg\(test\)\]/){ $pend=1; }
+    }
+    print "@out";') "
+  [[ "$lines" == *" $2 "* ]]
+}
+
+# Does a `// SAFETY:` note sit on line `$2` or within the 3 lines above it?
+has_safety_context() {
+  local lo=$(( $2 > 3 ? $2 - 3 : 1 ))
+  cat_ref "$1" | sed -n "${lo},${2}p" | grep -q '// SAFETY:'
+}
+
 violations=0
 file=""
 newline=0
@@ -68,7 +99,8 @@ while IFS= read -r line; do
       newline=$((newline + 1))
 
       # .unwrap() in production code -> use expect("...") or ?
-      if [[ "$content" == *".unwrap()"* ]] && ! is_test_path "$file"; then
+      # Exempt test files (by path) and inline `#[cfg(test)]` modules.
+      if [[ "$content" == *".unwrap()"* ]] && ! is_test_path "$file" && ! in_test_module "$file" "$n"; then
         emit "$n" 'unwrap() in production code — use expect("…") or ?'
       fi
       # dbg! left in source
@@ -87,8 +119,10 @@ while IFS= read -r line; do
       if [[ "$content" == *"#[ignore"* ]] && ! has_issue_ref "$content"; then
         emit "$n" '#[ignore] without an issue link'
       fi
-      # unsafe without a // SAFETY: note on the same line
-      if [[ "$content" =~ (^|[^[:alnum:]_])unsafe([^[:alnum:]_]|$) ]] && [[ "$content" != *"// SAFETY:"* ]]; then
+      # unsafe without a // SAFETY: note on the same line or the 3 lines above
+      if [[ "$content" =~ (^|[^[:alnum:]_])unsafe([^[:alnum:]_]|$) ]] \
+        && [[ "$content" != *"// SAFETY:"* ]] \
+        && ! has_safety_context "$file" "$n"; then
         emit "$n" 'unsafe without a // SAFETY: justification'
       fi
       continue ;;

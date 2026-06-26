@@ -113,7 +113,10 @@ pub fn bootstrap_error_lines(error: &str) -> Vec<String> {
 mod tests {
     use super::{BrowserBootstrapSnapshot, bootstrap_error_lines, bootstrap_status_sections};
     use sp42_coordination::CoordinationSnapshot;
-    use sp42_core::{DevAuthCapabilityReport, DevAuthSessionStatus, LocalOAuthConfigStatus};
+    use sp42_core::{
+        DevAuthActionTokenAvailability, DevAuthCapabilityReport, DevAuthProbeAcceptance,
+        DevAuthSessionStatus, LocalOAuthConfigStatus,
+    };
     use sp42_reporting::ServerDebugSummary;
 
     #[test]

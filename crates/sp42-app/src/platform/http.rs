@@ -7,7 +7,7 @@ use gloo_net::http::{Request, RequestBuilder};
 use web_sys::RequestCredentials;
 
 #[cfg(target_arch = "wasm32")]
-const CSRF_HEADER_NAME: &str = "x-sp42-csrf-token";
+use sp42_core::routes::CSRF_HEADER_NAME;
 
 #[cfg(target_arch = "wasm32")]
 thread_local! {

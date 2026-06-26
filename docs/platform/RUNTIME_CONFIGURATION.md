@@ -21,6 +21,14 @@ The server reads these environment variables:
 - `SP42_WIKI_CONFIG_DIR` points at a directory containing top-level `*.yaml`
   wiki configs. It defaults to `configs/`, with an embedded `frwiki` fallback
   for local development and tests.
+  - Per-wiki YAML configs may set `parsoid_url` (the wiki's core REST endpoint,
+    for example `https://fr.wikipedia.org/w/rest.php`). It enables node-anchored
+    content edits (ADR-0003); when unset, those actions refuse with
+    `editor-not-configured`.
+  - Per-wiki YAML configs may set `templates.bare_url_citation` (for example
+    `"cite web"`). Its presence enables bare-URL reference repair (PRD-0008)
+    and names the citation template SP42 renders; when unset, the
+    `/dev/citation/bare-url-*` routes refuse with `bare-url-repair-not-enabled`.
 - `SP42_DEFAULT_WIKI_ID` selects the default active wiki from the loaded wiki
   registry. It defaults to the first loaded wiki config.
 - `SP42_SUPERVISOR_WIKIS` optionally overrides the comma-separated wiki list

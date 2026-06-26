@@ -603,6 +603,49 @@ struct TokenPayload {
     csrftoken: Option<String>,
 }
 
+/// Replace exactly one occurrence of `needle` within `haystack`.
+///
+/// ADR-0003 Decision 4: a literal-span content edit must never guess between
+/// multiple matches, so zero matches and multiple matches both refuse instead
+/// of silently editing the wrong span.
+///
+/// # Errors
+///
+/// Returns [`ActionError::Execution`] with code `invalid-input` when `needle`
+/// is empty, `text-not-found` when it does not occur in `haystack`, and
+/// `text-ambiguous` when it occurs more than once.
+pub fn replace_exactly_once(
+    haystack: &str,
+    needle: &str,
+    replacement: &str,
+) -> Result<String, ActionError> {
+    if needle.is_empty() {
+        return Err(ActionError::Execution {
+            message: "replacement target text must not be empty".to_string(),
+            code: Some("invalid-input".to_string()),
+            http_status: None,
+            retryable: false,
+        });
+    }
+    match haystack.matches(needle).count() {
+        0 => Err(ActionError::Execution {
+            message: "selected text not found in page content".to_string(),
+            code: Some("text-not-found".to_string()),
+            http_status: None,
+            retryable: false,
+        }),
+        1 => Ok(haystack.replacen(needle, replacement, 1)),
+        occurrences => Err(ActionError::Execution {
+            message: format!(
+                "selected text occurs {occurrences} times in page content; refusing ambiguous replacement"
+            ),
+            code: Some("text-ambiguous".to_string()),
+            http_status: None,
+            retryable: false,
+        }),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeMap;
@@ -613,10 +656,12 @@ mod tests {
         build_patrol_request, build_rollback_request, build_token_request, build_undo_request,
         build_wiki_page_save_request, execute_fetch_token, execute_patrol, execute_rollback,
         execute_undo, execute_wiki_page_save, parse_action_response_summary, parse_token_response,
+        replace_exactly_once,
     };
     use crate::action_contracts::{
         PatrolRequest, RollbackRequest, TokenKind, UndoRequest, WikiPageSaveRequest,
     };
+    use crate::errors::ActionError;
     use crate::test_fixtures::fixture_wiki_config;
     use crate::traits::StubHttpClient;
     use crate::types::{FlagState, HttpMethod, HttpResponse};
@@ -997,5 +1042,42 @@ mod tests {
             parse_action_response_summary(&response, "undo").expect("summary should parse");
 
         assert!(!summary.nochange);
+    }
+
+    #[test]
+    fn replace_exactly_once_replaces_single_occurrence() {
+        let result = replace_exactly_once("alpha beta gamma", "beta", "BETA")
+            .expect("single occurrence should replace");
+        assert_eq!(result, "alpha BETA gamma");
+    }
+
+    #[test]
+    fn replace_exactly_once_rejects_missing_needle() {
+        let error = replace_exactly_once("alpha beta", "delta", "DELTA")
+            .expect_err("missing needle should refuse");
+        let ActionError::Execution {
+            code, retryable, ..
+        } = error;
+        assert_eq!(code.as_deref(), Some("text-not-found"));
+        assert!(!retryable);
+    }
+
+    #[test]
+    fn replace_exactly_once_rejects_ambiguous_needle() {
+        let error = replace_exactly_once("ref one ref two", "ref", "REF")
+            .expect_err("ambiguous needle should refuse");
+        let ActionError::Execution { code, message, .. } = error;
+        assert_eq!(code.as_deref(), Some("text-ambiguous"));
+        assert!(
+            message.contains("2 times"),
+            "message should report the count: {message}"
+        );
+    }
+
+    #[test]
+    fn replace_exactly_once_rejects_empty_needle() {
+        let error = replace_exactly_once("alpha", "", "X").expect_err("empty needle should refuse");
+        let ActionError::Execution { code, .. } = error;
+        assert_eq!(code.as_deref(), Some("invalid-input"));
     }
 }

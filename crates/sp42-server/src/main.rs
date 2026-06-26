@@ -1,5 +1,6 @@
 mod action_routes;
 mod auth_routes;
+mod citation_routes;
 mod coordination;
 mod deployment;
 mod endpoint_manifest;
@@ -9,6 +10,7 @@ mod live_queue;
 mod local_env;
 mod oauth_runtime;
 mod operator_live;
+mod parsoid_editor;
 mod revision_artifacts;
 mod routes;
 pub(crate) mod runtime_adapters;
@@ -322,6 +324,7 @@ async fn main() -> Result<(), std::io::Error> {
         coordination: CoordinationRegistry::new(clock),
         deployment,
         wiki_registry,
+        wikitext_editor: Arc::new(parsoid_editor::ParsoidWikitextEditor::new()),
         next_client_id: Arc::new(AtomicU64::new(1)),
         next_session_id: Arc::new(AtomicU64::new(1)),
         started_at: Instant::now(),

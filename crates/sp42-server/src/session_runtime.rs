@@ -15,7 +15,7 @@ use crate::runtime_status::DevAuthBootstrapStatus;
 use crate::state::{AppState, PendingOAuthLogin, SessionSnapshot, StoredSession};
 
 pub(crate) const SESSION_COOKIE_NAME: &str = "sp42_dev_session";
-pub(crate) const CSRF_HEADER_NAME: &str = "x-sp42-csrf-token";
+pub(crate) use sp42_core::routes::CSRF_HEADER_NAME;
 pub(crate) const SESSION_IDLE_TIMEOUT_MS: i64 = 30 * 60 * 1000;
 const SESSION_ABSOLUTE_TIMEOUT_MS: i64 = 8 * 60 * 60 * 1000;
 const SESSION_COOKIE_MAX_AGE_SECONDS: i64 = SESSION_IDLE_TIMEOUT_MS / 1000;

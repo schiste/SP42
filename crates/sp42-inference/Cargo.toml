@@ -1,0 +1,18 @@
+[package]
+name = "sp42-inference"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+async-trait.workspace = true
+genai = "=0.6.5"
+reqwest.workspace = true
+sp42-core = { path = "../sp42-core" }
+sp42-types = { path = "../sp42-types" }
+tokio.workspace = true
+url.workspace = true

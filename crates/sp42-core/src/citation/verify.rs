@@ -32,7 +32,7 @@ use sha2::{Digest, Sha256};
 use sp42_types::{ModelClient, ModelCompletionRequest, ModelInvocation, ModelRef, SamplingParams};
 use url::Url;
 
-use super::body_classifier::{BodyUsabilityReason, classify_body_usability};
+use super::body_classifier::{BodyUsabilityReason, classify_source_usability};
 use super::citoid::{
     CitoidMetadata, build_citoid_header, build_citoid_request, parse_citoid_response,
 };
@@ -839,15 +839,23 @@ where
     } else {
         Some(fetched.text.as_str())
     };
-    if !classify_body_usability(body).usable {
+    let usability = classify_source_usability(
+        request.source_url.as_str(),
+        &fetched.content_type,
+        fetched.raw_html.as_deref(),
+        body,
+    );
+    if !usability.usable {
+        let mut finding = no_quote_finding(
+            CitationVerdict::SourceUnavailable,
+            GroundingStatus::NotApplicable,
+            PanelAgreement::new(0, 0),
+            &provenance,
+            use_site_ordinal,
+        );
+        finding.unusable_reason = Some(usability.reason);
         return Ok(VerificationOutcome {
-            finding: no_quote_finding(
-                CitationVerdict::SourceUnavailable,
-                GroundingStatus::NotApplicable,
-                PanelAgreement::new(0, 0),
-                &provenance,
-                use_site_ordinal,
-            ),
+            finding,
             votes: Vec::new(),
         });
     }
@@ -936,10 +944,11 @@ mod tests {
     };
 
     use super::{
-        CitationFinding, CitationVerificationRequest, ClaimContext, GroundingAssertion,
-        GroundingStatus, ModelVerdict, RepairAttempt, SourceProvenance, VerifyModelInputs,
-        VerifyOptions, assemble_citation_finding, build_model_votes, execute_citation_repair,
-        execute_citation_verify, is_groundable_support, verify_citation_use_site,
+        BodyUsabilityReason, CitationFinding, CitationVerificationRequest, ClaimContext,
+        GroundingAssertion, GroundingStatus, ModelVerdict, RepairAttempt, SourceProvenance,
+        VerifyModelInputs, VerifyOptions, assemble_citation_finding, build_model_votes,
+        execute_citation_repair, execute_citation_verify, is_groundable_support,
+        verify_citation_use_site,
     };
     use crate::citation::parsing::ParsedVerdict;
     use crate::citation::verdict::{CitationVerdict, SupportLevel, Verdict};
@@ -2032,5 +2041,32 @@ mod tests {
             prop_assert!(!is_groundable_support(&finding));
             prop_assert_ne!(finding.grounding_status, GroundingStatus::Located);
         }
+    }
+
+    #[test]
+    fn short_body_records_unusable_reason_and_skips_panel() {
+        let fetch = StubHttpClient::new([Ok(HttpResponse {
+            status: 200,
+            headers: BTreeMap::from([("content-type".to_string(), "text/html".to_string())]),
+            body: b"<html><body>tiny</body></html>".to_vec(),
+        })]);
+        let model_client = StubModelClient::new([]); // empty → any model call errors
+        let outcome = block_on(verify_citation_use_site(
+            &fetch,
+            &model_client,
+            &FixedClock::new(1000),
+            &[model()],
+            &request("Some claim", "https://example.com/tiny"),
+            None,
+            3,
+            VerifyOptions::default(),
+        ))
+        .expect("verifies");
+        assert_eq!(outcome.finding.verdict, CitationVerdict::SourceUnavailable);
+        assert_eq!(
+            outcome.finding.unusable_reason,
+            Some(BodyUsabilityReason::ShortBody)
+        );
+        assert!(outcome.votes.is_empty());
     }
 }

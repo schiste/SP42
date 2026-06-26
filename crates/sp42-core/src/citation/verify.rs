@@ -2141,4 +2141,38 @@ mod tests {
         );
         assert!(outcome.votes.is_empty());
     }
+
+    #[test]
+    fn law360_paywall_stub_short_circuits_no_partial() {
+        // The #42 case: a large nav-chrome/paywall body with the claim's entity in a
+        // sidebar. Must classify Unusable and never reach the panel (no confabulated partial).
+        let body = format!(
+            "Home News Sections Account {} Subscribe to read the full article. Sign in to continue.",
+            "Companies Pernod Ricard SA Gosling's Brown-Forman ".repeat(25)
+        )
+        .into_bytes();
+        let fetch = StubHttpClient::new([Ok(HttpResponse {
+            status: 200,
+            headers: BTreeMap::from([("content-type".to_string(), "text/html".to_string())]),
+            body,
+        })]);
+        let model_client = StubModelClient::new([]); // empty → any model call errors the test
+        let outcome = block_on(verify_citation_use_site(
+            &fetch,
+            &model_client,
+            &FixedClock::new(1000),
+            &[model()],
+            &request(
+                "Gosling's has litigated over the mark against Pernod Ricard",
+                "https://www.law360.com/articles/735000/x",
+            ),
+            None,
+            3,
+            VerifyOptions::default(),
+        ))
+        .expect("verifies");
+        assert_eq!(outcome.finding.verdict, CitationVerdict::SourceUnavailable);
+        assert_eq!(outcome.finding.unusable_reason, Some(BodyUsabilityReason::NavChromePaywall));
+        assert!(outcome.votes.is_empty(), "paywall stub must not reach the panel");
+    }
 }

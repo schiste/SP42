@@ -185,9 +185,24 @@ const fn unusable(reason: BodyUsabilityReason) -> BodyUsability {
     }
 }
 
+/// Usability gate with full context: the source URL, the response content-type,
+/// the pre-extraction HTML (for structured paywall markers), and the extracted
+/// text. Phase 1 delegates to the text-only detectors; later phases add the
+/// URL/content-type/raw-HTML detectors (PDF, special-case hosts, paywall) ahead
+/// of this delegation. The leading params are unused for now.
+#[must_use]
+pub fn classify_source_usability(
+    _source_url: &str,
+    _content_type: &str,
+    _raw_html: Option<&str>,
+    text: Option<&str>,
+) -> BodyUsability {
+    classify_body_usability(text)
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{BodyUsabilityReason, classify_body_usability};
+    use super::{BodyUsabilityReason, classify_body_usability, classify_source_usability};
 
     fn reason_of(text: &str) -> BodyUsabilityReason {
         classify_body_usability(Some(text)).reason
@@ -301,5 +316,20 @@ mod tests {
         let mut input = "{".repeat(5000);
         input.push_str(&"\"@context".repeat(2000));
         let _ = classify_body_usability(Some(&input));
+    }
+
+    #[test]
+    fn classify_source_delegates_to_text_detectors() {
+        // No URL/content-type/raw-HTML signal → behaves exactly like classify_body_usability.
+        let prose = "The history of the bridge spans more than a century. ".repeat(10);
+        let usable =
+            classify_source_usability("https://example.com/a", "text/html", None, Some(&prose));
+        assert!(usable.usable);
+        assert_eq!(usable.reason, BodyUsabilityReason::Ok);
+
+        let short =
+            classify_source_usability("https://example.com/a", "text/html", None, Some("tiny"));
+        assert!(!short.usable);
+        assert_eq!(short.reason, BodyUsabilityReason::ShortBody);
     }
 }

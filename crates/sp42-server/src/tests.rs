@@ -73,6 +73,13 @@ fn test_wiki_registry() -> WikiRegistry {
     WikiRegistry::embedded_default().expect("embedded wiki registry should load")
 }
 
+fn test_wikitext_editor() -> std::sync::Arc<dyn sp42_core::WikitextEditor> {
+    std::sync::Arc::new(sp42_core::ScriptedWikitextEditor::new(
+        Vec::new(),
+        String::new(),
+    ))
+}
+
 fn test_state() -> AppState {
     let clock: Arc<dyn Clock> = Arc::new(SystemClock);
     AppState {
@@ -94,6 +101,7 @@ fn test_state() -> AppState {
         coordination: CoordinationRegistry::new(clock),
         deployment: test_deployment(),
         wiki_registry: test_wiki_registry(),
+        wikitext_editor: test_wikitext_editor(),
         next_client_id: Arc::new(AtomicU64::new(1)),
         next_session_id: Arc::new(AtomicU64::new(1)),
         started_at: Instant::now(),
@@ -631,6 +639,300 @@ async fn bootstrap_session_is_disabled_outside_local_mode() {
     );
 }
 
+#[tokio::test]
+async fn bare_url_proposals_route_is_registered_and_gated() {
+    let router = build_router(test_state());
+    let response = router
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/dev/citation/bare-url-proposals")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::json!({
+                        "wiki_id": "frwiki",
+                        "title": "Exemple",
+                        "rev_id": 42
+                    })
+                    .to_string(),
+                ))
+                .expect("request should build"),
+        )
+        .await
+        .expect("request should complete");
+
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    let body = to_bytes(response.into_body(), usize::MAX)
+        .await
+        .expect("response body should read");
+    let json: serde_json::Value = serde_json::from_slice(&body).expect("body should be json");
+    assert_eq!(json["code"], "bare-url-repair-not-enabled");
+}
+
+#[tokio::test]
+async fn bare_url_apply_route_requires_a_session() {
+    let router = build_router(test_state());
+    let response = router
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/dev/citation/bare-url-apply")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::json!({
+                        "wiki_id": "frwiki",
+                        "title": "Exemple",
+                        "rev_id": 42,
+                        "locator": {
+                            "kind": "reference",
+                            "ordinal": 0,
+                            "expected_text": "https://example.org/article"
+                        },
+                        "replacement_wikitext": "{{cite web |url=https://example.org/article |title=T |access-date=2026-06-09}}"
+                    })
+                    .to_string(),
+                ))
+                .expect("request should build"),
+        )
+        .await
+        .expect("request should complete");
+
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn verify_page_route_requires_a_session() {
+    // verify-page spends SP42_INFERENCE_* credentials on a caller-chosen page, so
+    // — unlike the credential-free proposal route — it must be session-gated. The
+    // gate runs before any inference client is built: an unauthenticated POST is
+    // rejected (401), not the 503 the inference-wiring step would yield when
+    // inference is absent (ADR-0011 §5).
+    unsafe {
+        std::env::remove_var("SP42_INFERENCE_MODELS");
+        std::env::remove_var("SP42_INFERENCE_URL");
+    }
+    let router = build_router(test_state());
+    let response = router
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/dev/citation/verify-page")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::json!({
+                        "wiki_id": "frwiki",
+                        "title": "Exemple",
+                        "rev_id": 42
+                    })
+                    .to_string(),
+                ))
+                .expect("request should build"),
+        )
+        .await
+        .expect("request should complete");
+
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn verify_page_route_is_registered() {
+    // Ensure inference env is absent so we hit the 503 wiring check deterministically.
+    unsafe {
+        std::env::remove_var("SP42_INFERENCE_MODELS");
+        std::env::remove_var("SP42_INFERENCE_URL");
+    }
+    let state = test_state();
+    let session_id = "verify-page-registered";
+    state.sessions.write().await.insert(
+        session_id.to_string(),
+        test_session("Example", "secret-token", now_ms()),
+    );
+    let cookie = format!("{SESSION_COOKIE_NAME}={session_id}");
+    let router = build_router(state);
+    let response = router
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/dev/citation/verify-page")
+                .header("content-type", "application/json")
+                .header(axum::http::header::COOKIE, cookie)
+                .header(CSRF_HEADER_NAME, "csrf-token")
+                .body(Body::from(
+                    serde_json::json!({
+                        "wiki_id": "frwiki",
+                        "title": "Exemple",
+                        "rev_id": 42
+                    })
+                    .to_string(),
+                ))
+                .expect("request should build"),
+        )
+        .await
+        .expect("request should complete");
+
+    // 503 (no inference configured) proves the route is registered and reached
+    // the inference-wiring step — not a 404 or 405. The route exists and is routable.
+    assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+}
+
+#[tokio::test]
+async fn verify_page_unknown_wiki_returns_400() {
+    // Unknown wiki_id should be rejected as a config resolution problem (400)
+    // before any model inference lookup, proving config-first ordering. Gated by a
+    // session so we test config ordering, not the auth gate (ADR-0011 §5).
+    unsafe {
+        std::env::remove_var("SP42_INFERENCE_MODELS");
+        std::env::remove_var("SP42_INFERENCE_URL");
+    }
+    let state = test_state();
+    let session_id = "verify-page-unknown-wiki";
+    state.sessions.write().await.insert(
+        session_id.to_string(),
+        test_session("Example", "secret-token", now_ms()),
+    );
+    let cookie = format!("{SESSION_COOKIE_NAME}={session_id}");
+    let router = build_router(state);
+    let response = router
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/dev/citation/verify-page")
+                .header("content-type", "application/json")
+                .header(axum::http::header::COOKIE, cookie)
+                .header(CSRF_HEADER_NAME, "csrf-token")
+                .body(Body::from(
+                    serde_json::json!({
+                        "wiki_id": "unknown_wiki_id_12345",
+                        "title": "Exemple",
+                        "rev_id": 42
+                    })
+                    .to_string(),
+                ))
+                .expect("request should build"),
+        )
+        .await
+        .expect("request should complete");
+
+    // 400 (config resolution failure) proves the route rejects unknown wikis
+    // before attempting inference wiring — config-first ordering is maintained.
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn plain_http_client_rejects_loopback_urls() {
+    // Unit test: PlainHttpClient must refuse loopback/private URLs unless
+    // SP42_FETCH_ALLOW_PRIVATE=1, proving SSRF floor (SP42#34). The initial URL
+    // check gates the request before the first hop.
+    use crate::runtime_adapters::PlainHttpClient;
+    use sp42_types::{HttpClient, HttpRequest};
+    use std::collections::BTreeMap;
+    use url::Url;
+
+    // Ensure dev escape hatch is OFF for this test
+    unsafe {
+        std::env::remove_var("SP42_FETCH_ALLOW_PRIVATE");
+    }
+
+    let plain_client = PlainHttpClient::new().expect("PlainHttpClient should build");
+
+    // Test loopback IPv4
+    let loopback_request = HttpRequest {
+        url: Url::parse("http://127.0.0.1/admin").expect("valid URL"),
+        method: sp42_types::HttpMethod::Get,
+        headers: BTreeMap::new(),
+        body: vec![],
+    };
+
+    let result = plain_client.execute(loopback_request).await;
+
+    // Must fail with transport error due to SSRF guard
+    assert!(
+        result.is_err(),
+        "PlainHttpClient should reject loopback URL without SP42_FETCH_ALLOW_PRIVATE"
+    );
+    if let Err(sp42_types::HttpClientError::Transport { message }) = result {
+        assert!(
+            message.contains("refusing to fetch"),
+            "Error message should indicate SSRF block: {message}"
+        );
+    }
+
+    // Test metadata endpoint
+    let metadata_request = HttpRequest {
+        url: Url::parse("http://169.254.169.254/latest/meta-data/").expect("valid URL"),
+        method: sp42_types::HttpMethod::Get,
+        headers: BTreeMap::new(),
+        body: vec![],
+    };
+
+    let result = plain_client.execute(metadata_request).await;
+
+    assert!(
+        result.is_err(),
+        "PlainHttpClient should reject cloud metadata endpoint"
+    );
+}
+
+#[tokio::test]
+async fn plain_http_client_caps_chunked_response_without_content_length() {
+    // verify-page fetches attacker-influenced citation URLs. A response with no
+    // Content-Length (chunked) skips the header size pre-check, so the cap must be
+    // enforced while streaming or a large/chunked body exhausts memory despite
+    // MAX_SOURCE_BYTES. Serve > 8 MiB chunked with no Content-Length and assert
+    // the fetch is refused.
+    use crate::runtime_adapters::PlainHttpClient;
+    use sp42_types::{HttpClient, HttpRequest};
+    use std::collections::BTreeMap;
+    use std::io::{Read, Write};
+    use url::Url;
+
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind test server");
+    let addr = listener.local_addr().expect("local addr");
+    let server = std::thread::spawn(move || {
+        if let Ok((mut stream, _)) = listener.accept() {
+            // Drain the request headers so the client can finish sending.
+            let mut buf = [0u8; 1024];
+            let _ = stream.read(&mut buf);
+            // Chunked response, deliberately no Content-Length header.
+            let _ = stream.write_all(
+                b"HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nTransfer-Encoding: chunked\r\n\r\n",
+            );
+            let chunk = vec![b'a'; 64 * 1024];
+            let chunk_header = format!("{:x}\r\n", chunk.len());
+            // 160 * 64 KiB = 10 MiB, past the 8 MiB cap. Stop early on broken pipe
+            // once the client aborts the read.
+            for _ in 0..160 {
+                if stream.write_all(chunk_header.as_bytes()).is_err()
+                    || stream.write_all(&chunk).is_err()
+                    || stream.write_all(b"\r\n").is_err()
+                {
+                    break;
+                }
+            }
+            let _ = stream.write_all(b"0\r\n\r\n");
+        }
+    });
+
+    let client =
+        PlainHttpClient::with_allow_private(true).expect("client should build for loopback test");
+    let request = HttpRequest {
+        url: Url::parse(&format!("http://{addr}/")).expect("valid URL"),
+        method: sp42_types::HttpMethod::Get,
+        headers: BTreeMap::new(),
+        body: vec![],
+    };
+
+    let result = client.execute(request).await;
+    let _ = server.join();
+
+    let error = result.expect_err("oversized chunked body must be refused");
+    let message = format!("{error:?}");
+    assert!(
+        message.contains("cap"),
+        "error should report the size cap, got: {message}"
+    );
+}
+
 #[test]
 fn vps_session_cookie_is_secure() {
     let mut state = test_state();
@@ -710,6 +1012,7 @@ async fn healthz_reports_ready_when_local_token_is_loaded() {
         coordination: CoordinationRegistry::new(clock),
         deployment: test_deployment(),
         wiki_registry: test_wiki_registry(),
+        wikitext_editor: test_wikitext_editor(),
         next_client_id: Arc::new(AtomicU64::new(1)),
         next_session_id: Arc::new(AtomicU64::new(1)),
         started_at: Instant::now(),
@@ -1219,6 +1522,7 @@ async fn capability_route_uses_injected_targets() {
         coordination: CoordinationRegistry::new(clock),
         deployment: test_deployment(),
         wiki_registry: test_wiki_registry(),
+        wikitext_editor: test_wikitext_editor(),
         next_client_id: Arc::new(AtomicU64::new(1)),
         next_session_id: Arc::new(AtomicU64::new(1)),
         started_at: Instant::now(),
@@ -1287,6 +1591,7 @@ async fn live_operator_route_returns_canonical_operator_contract() {
         coordination: CoordinationRegistry::new(clock),
         deployment: test_deployment(),
         wiki_registry: test_wiki_registry(),
+        wikitext_editor: test_wikitext_editor(),
         next_client_id: Arc::new(AtomicU64::new(1)),
         next_session_id: Arc::new(AtomicU64::new(1)),
         started_at: Instant::now(),
@@ -1378,6 +1683,7 @@ async fn live_operator_route_surfaces_cached_backlog_state() {
         coordination: CoordinationRegistry::new(clock),
         deployment: test_deployment(),
         wiki_registry: test_wiki_registry(),
+        wikitext_editor: test_wikitext_editor(),
         next_client_id: Arc::new(AtomicU64::new(1)),
         next_session_id: Arc::new(AtomicU64::new(1)),
         started_at: Instant::now(),
@@ -1554,6 +1860,7 @@ async fn logical_storage_document_route_resolves_profile_page() {
         coordination: CoordinationRegistry::new(clock),
         deployment: test_deployment(),
         wiki_registry: test_wiki_registry(),
+        wikitext_editor: test_wikitext_editor(),
         next_client_id: Arc::new(AtomicU64::new(1)),
         next_session_id: Arc::new(AtomicU64::new(1)),
         started_at: Instant::now(),
@@ -1637,6 +1944,7 @@ async fn public_storage_document_route_returns_typed_preferences() {
         coordination: CoordinationRegistry::new(clock),
         deployment: test_deployment(),
         wiki_registry: test_wiki_registry(),
+        wikitext_editor: test_wikitext_editor(),
         next_client_id: Arc::new(AtomicU64::new(1)),
         next_session_id: Arc::new(AtomicU64::new(1)),
         started_at: Instant::now(),
@@ -1726,6 +2034,7 @@ async fn bootstrap_derives_username_and_scopes_from_validated_token() {
         coordination: CoordinationRegistry::new(clock),
         deployment: test_deployment(),
         wiki_registry: test_wiki_registry(),
+        wikitext_editor: test_wikitext_editor(),
         next_client_id: Arc::new(AtomicU64::new(1)),
         next_session_id: Arc::new(AtomicU64::new(1)),
         started_at: Instant::now(),
@@ -2699,4 +3008,613 @@ async fn reconnect_storm_keeps_room_counts_and_live_delivery_consistent() {
 
     let _ = alice.close(None).await;
     server.abort();
+}
+
+// Test helpers for validation and inline edit
+fn capability_report_allowing_edit() -> sp42_core::DevAuthCapabilityReport {
+    sp42_core::DevAuthCapabilityReport {
+        checked: true,
+        wiki_id: "frwiki".to_string(),
+        capabilities: sp42_core::DevAuthDerivedCapabilities {
+            editing: sp42_core::DevAuthEditCapabilities {
+                can_edit: true,
+                can_undo: true,
+            },
+            ..Default::default()
+        },
+        ..Default::default()
+    }
+}
+
+fn inline_edit_request(
+    node_locator: Option<sp42_core::WikitextNodeLocator>,
+    selected_text: Option<String>,
+    replacement_text: Option<String>,
+) -> sp42_core::SessionActionExecutionRequest {
+    sp42_core::SessionActionExecutionRequest {
+        wiki_id: "frwiki".to_string(),
+        kind: sp42_core::SessionActionKind::InlineEdit,
+        rev_id: 42,
+        title: Some("Exemple".to_string()),
+        target_user: None,
+        undo_after_rev_id: None,
+        summary: None,
+        selected_text,
+        batch_rev_ids: None,
+        replacement_text,
+        node_locator,
+    }
+}
+
+fn template_locator() -> sp42_core::WikitextNodeLocator {
+    sp42_core::WikitextNodeLocator {
+        kind: sp42_core::WikitextNodeKind::Template,
+        ordinal: 0,
+        expected_text: "{{cite web|url=https://example.org/a|title=Example A}}".to_string(),
+    }
+}
+
+#[test]
+fn validate_accepts_inline_edit_with_node_locator() {
+    let payload = inline_edit_request(
+        Some(template_locator()),
+        None,
+        Some("{{lang|fr|x}}".to_string()),
+    );
+    let report = capability_report_allowing_edit();
+    assert!(crate::action_routes::validate_action_request(&payload, &report).is_ok());
+}
+
+#[test]
+fn validate_rejects_inline_edit_without_selected_text_or_locator() {
+    let payload = inline_edit_request(None, None, Some("x".to_string()));
+    let report = capability_report_allowing_edit();
+    let (status, body) = crate::action_routes::validate_action_request(&payload, &report)
+        .expect_err("missing target must be rejected");
+    assert_eq!(status, axum::http::StatusCode::BAD_REQUEST);
+    assert!(
+        body.0["error"]
+            .as_str()
+            .expect("error body should carry a message")
+            .contains("selected_text or node_locator")
+    );
+}
+
+#[test]
+fn validate_rejects_node_locator_with_empty_expected_text() {
+    let mut locator = template_locator();
+    locator.expected_text = "   ".to_string();
+    let payload = inline_edit_request(Some(locator), None, Some("x".to_string()));
+    let report = capability_report_allowing_edit();
+    let (status, _body) = crate::action_routes::validate_action_request(&payload, &report)
+        .expect_err("empty expected_text must be rejected");
+    assert_eq!(status, axum::http::StatusCode::BAD_REQUEST);
+}
+
+#[test]
+fn validate_rejects_node_locator_without_replacement_text() {
+    let payload = inline_edit_request(Some(template_locator()), None, None);
+    let report = capability_report_allowing_edit();
+    let (status, body) = crate::action_routes::validate_action_request(&payload, &report)
+        .expect_err("missing replacement_text must be rejected");
+    assert_eq!(status, axum::http::StatusCode::BAD_REQUEST);
+    assert!(
+        body.0["error"]
+            .as_str()
+            .expect("error body should carry a message")
+            .contains("replacement_text")
+    );
+}
+
+#[test]
+fn validate_rejects_node_locator_for_citation_tagging() {
+    let mut payload = inline_edit_request(
+        Some(template_locator()),
+        Some("une phrase".to_string()),
+        None,
+    );
+    payload.kind = sp42_core::SessionActionKind::TagCitationNeeded;
+    let report = capability_report_allowing_edit();
+    let (status, body) = crate::action_routes::validate_action_request(&payload, &report)
+        .expect_err("citation tagging must reject locators");
+    assert_eq!(status, axum::http::StatusCode::BAD_REQUEST);
+    assert!(
+        body.0["error"]
+            .as_str()
+            .expect("error body should carry a message")
+            .contains("not supported")
+    );
+}
+
+// Mock wiki backend for testing node-anchored inline edits
+struct MockWikiBackend {
+    base_url: String,
+    edit_bodies: Arc<std::sync::Mutex<Vec<String>>>,
+    total_requests: Arc<std::sync::atomic::AtomicUsize>,
+}
+
+async fn spawn_mock_wiki_backend(page_wikitext: &'static str) -> MockWikiBackend {
+    let edit_bodies = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let total_requests = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let recorded = edit_bodies.clone();
+    let request_counter = total_requests.clone();
+    let handler = move |request: axum::extract::Request| {
+        let recorded = recorded.clone();
+        let request_counter = request_counter.clone();
+        async move {
+            request_counter.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            let query = request.uri().query().unwrap_or_default().to_string();
+            let body_bytes = axum::body::to_bytes(request.into_body(), usize::MAX)
+                .await
+                .expect("mock body should read");
+            let body = String::from_utf8_lossy(&body_bytes).to_string();
+            let json = if query.contains("meta=tokens") {
+                serde_json::json!({
+                    "batchcomplete": true,
+                    "query": { "tokens": {
+                        "csrftoken": "test-csrf-token+\\",
+                        "patroltoken": "test-patrol-token+\\"
+                    } }
+                })
+            } else if query.contains("prop=revisions") {
+                serde_json::json!({
+                    "batchcomplete": true,
+                    "query": { "pages": [ { "title": "Exemple", "revisions": [
+                        { "slots": { "main": { "content": page_wikitext } } }
+                    ] } ] }
+                })
+            } else if body.contains("action=edit") {
+                recorded
+                    .lock()
+                    .expect("mock edit log should lock")
+                    .push(body);
+                serde_json::json!({
+                    "edit": { "result": "Success", "pageid": 1, "title": "Exemple", "newrevid": 4243 }
+                })
+            } else if body.contains("action=patrol") {
+                serde_json::json!({ "patrol": { "rcid": 7, "ns": 0, "title": "Exemple" } })
+            } else {
+                serde_json::json!({ "error": { "code": "unmocked", "info": format!("query={query} body={body}") } })
+            };
+            axum::Json(json)
+        }
+    };
+    let app = axum::Router::new().fallback(handler);
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("mock wiki backend should bind");
+    let addr = listener
+        .local_addr()
+        .expect("mock wiki backend should expose addr");
+    tokio::spawn(async move {
+        axum::serve(listener, app)
+            .await
+            .expect("mock wiki backend should serve");
+    });
+    MockWikiBackend {
+        base_url: format!("http://{addr}"),
+        edit_bodies,
+        total_requests,
+    }
+}
+
+fn wiki_config_for_backend(base_url: &str) -> sp42_core::WikiConfig {
+    let mut config = test_wiki_registry().default_config();
+    config.api_url = format!("{base_url}/w/api.php")
+        .parse()
+        .expect("mock api url should parse");
+    config
+}
+
+#[tokio::test]
+async fn inline_edit_with_locator_saves_editor_output() {
+    let backend = spawn_mock_wiki_backend("unused page text").await;
+    let config = wiki_config_for_backend(&backend.base_url);
+    let editor = sp42_core::ScriptedWikitextEditor::new(
+        vec![sp42_core::ScriptedWikitextNode {
+            kind: sp42_core::WikitextNodeKind::Template,
+            anchor_text: "{{cite web|url=https://example.org/a|title=Example A}}".to_string(),
+        }],
+        "NEWPAGEWIKITEXT".to_string(),
+    );
+    let client = crate::runtime_adapters::BearerHttpClient::new(
+        reqwest::Client::new(),
+        "test-access-token".to_string(),
+    );
+    let payload = inline_edit_request(
+        Some(template_locator()),
+        None,
+        Some("{{cite web|url=https://example.org/b|title=Example B}}".to_string()),
+    );
+
+    let response =
+        crate::action_routes::execute_inline_edit_action(&client, &config, &payload, &editor)
+            .await
+            .expect("node-anchored inline edit should succeed");
+
+    assert_eq!(response.status, 200);
+    let invocations = editor.invocations();
+    assert_eq!(invocations.len(), 1);
+    assert_eq!(invocations[0].operation, "replace_node");
+    assert_eq!(
+        invocations[0].payload,
+        "{{cite web|url=https://example.org/b|title=Example B}}"
+    );
+    let edits = backend
+        .edit_bodies
+        .lock()
+        .expect("mock edit log should lock");
+    assert_eq!(edits.len(), 1, "exactly one save must reach the wiki");
+    assert!(
+        edits[0].contains("NEWPAGEWIKITEXT"),
+        "save must carry the editor output: {}",
+        edits[0]
+    );
+    assert!(
+        edits[0].contains("baserevid=42"),
+        "save must stay baserevid-guarded: {}",
+        edits[0]
+    );
+}
+
+#[tokio::test]
+async fn inline_edit_with_drifted_locator_refuses_without_saving() {
+    let backend = spawn_mock_wiki_backend("unused page text").await;
+    let config = wiki_config_for_backend(&backend.base_url);
+    let editor = sp42_core::ScriptedWikitextEditor::new(
+        vec![sp42_core::ScriptedWikitextNode {
+            kind: sp42_core::WikitextNodeKind::Template,
+            anchor_text: "{{cite web|url=https://example.org/DIFFERENT|title=Drifted}}".to_string(),
+        }],
+        "NEVERUSED".to_string(),
+    );
+    let client = crate::runtime_adapters::BearerHttpClient::new(
+        reqwest::Client::new(),
+        "test-access-token".to_string(),
+    );
+    let payload = inline_edit_request(Some(template_locator()), None, Some("x".to_string()));
+
+    let error =
+        crate::action_routes::execute_inline_edit_action(&client, &config, &payload, &editor)
+            .await
+            .expect_err("drifted locator must refuse");
+
+    let sp42_core::ActionError::Execution {
+        code,
+        http_status,
+        retryable,
+        ..
+    } = error;
+    assert_eq!(code.as_deref(), Some("node-drift"));
+    assert_eq!(http_status, Some(409));
+    assert!(!retryable);
+    assert!(
+        backend
+            .edit_bodies
+            .lock()
+            .expect("mock edit log should lock")
+            .is_empty(),
+        "a refused edit must never reach the wiki"
+    );
+}
+
+#[tokio::test]
+async fn inline_edit_without_locator_refuses_ambiguous_literal_target() {
+    let backend = spawn_mock_wiki_backend("le mot, le mot, deux fois").await;
+    let config = wiki_config_for_backend(&backend.base_url);
+    let editor = sp42_core::ScriptedWikitextEditor::new(Vec::new(), String::new());
+    let client = crate::runtime_adapters::BearerHttpClient::new(
+        reqwest::Client::new(),
+        "test-access-token".to_string(),
+    );
+    let payload = inline_edit_request(
+        None,
+        Some("le mot".to_string()),
+        Some("la phrase".to_string()),
+    );
+
+    let error =
+        crate::action_routes::execute_inline_edit_action(&client, &config, &payload, &editor)
+            .await
+            .expect_err("ambiguous literal target must refuse");
+
+    let sp42_core::ActionError::Execution { code, .. } = error;
+    assert_eq!(code.as_deref(), Some("text-ambiguous"));
+    assert!(
+        backend
+            .edit_bodies
+            .lock()
+            .expect("mock edit log should lock")
+            .is_empty()
+    );
+}
+
+fn bare_url_apply_payload(summary: Option<&str>) -> sp42_core::BareUrlApplyRequest {
+    sp42_core::BareUrlApplyRequest {
+        wiki_id: "frwiki".to_string(),
+        title: "Exemple".to_string(),
+        rev_id: 42,
+        locator: sp42_core::WikitextNodeLocator {
+            kind: sp42_core::WikitextNodeKind::Reference,
+            ordinal: 0,
+            expected_text: "https://example.org/article".to_string(),
+        },
+        replacement_wikitext:
+            "{{cite web |url=https://example.org/article |title=Headline |access-date=2026-06-09}}"
+                .to_string(),
+        summary: summary.map(ToString::to_string),
+    }
+}
+
+fn bare_url_test_editor(anchor: &str) -> sp42_core::ScriptedWikitextEditor {
+    sp42_core::ScriptedWikitextEditor::new(
+        vec![sp42_core::ScriptedWikitextNode {
+            kind: sp42_core::WikitextNodeKind::Reference,
+            anchor_text: anchor.to_string(),
+        }],
+        "NEWPAGEWIKITEXT".to_string(),
+    )
+}
+
+#[tokio::test]
+async fn bare_url_apply_saves_exact_replacement_with_baserevid() {
+    let backend = spawn_mock_wiki_backend("unused page text").await;
+    let mut config = wiki_config_for_backend(&backend.base_url);
+    config.templates.bare_url_citation = Some("cite web".to_string());
+    let editor = bare_url_test_editor("https://example.org/article");
+    let client = crate::runtime_adapters::BearerHttpClient::new(
+        reqwest::Client::new(),
+        "test-access-token".to_string(),
+    );
+    let payload = bare_url_apply_payload(None);
+
+    let response =
+        crate::citation_routes::execute_bare_url_apply(&client, &config, &payload, &editor)
+            .await
+            .expect("bare-url apply should succeed");
+
+    assert_eq!(response.status, 200);
+    let invocations = editor.invocations();
+    assert_eq!(invocations.len(), 1);
+    assert_eq!(invocations[0].operation, "replace_node");
+    assert_eq!(
+        invocations[0].payload, payload.replacement_wikitext,
+        "the proposed replacement must be replayed verbatim"
+    );
+    let edits = backend
+        .edit_bodies
+        .lock()
+        .expect("mock edit log should lock");
+    assert_eq!(edits.len(), 1, "exactly one save must reach the wiki");
+    assert!(
+        edits[0].contains("NEWPAGEWIKITEXT"),
+        "save must carry the editor output: {}",
+        edits[0]
+    );
+    assert!(
+        edits[0].contains("baserevid=42"),
+        "save must stay baserevid-guarded: {}",
+        edits[0]
+    );
+    assert!(
+        edits[0].contains("bare-URL+repair"),
+        "default summary should be applied: {}",
+        edits[0]
+    );
+}
+
+#[tokio::test]
+async fn bare_url_apply_operator_summary_wins() {
+    let backend = spawn_mock_wiki_backend("unused page text").await;
+    let mut config = wiki_config_for_backend(&backend.base_url);
+    config.templates.bare_url_citation = Some("cite web".to_string());
+    let editor = bare_url_test_editor("https://example.org/article");
+    let client = crate::runtime_adapters::BearerHttpClient::new(
+        reqwest::Client::new(),
+        "test-access-token".to_string(),
+    );
+    let payload = bare_url_apply_payload(Some("fixed ref per talk"));
+
+    crate::citation_routes::execute_bare_url_apply(&client, &config, &payload, &editor)
+        .await
+        .expect("bare-url apply should succeed");
+
+    let edits = backend
+        .edit_bodies
+        .lock()
+        .expect("mock edit log should lock");
+    assert_eq!(edits.len(), 1);
+    assert!(
+        edits[0].contains("fixed+ref+per+talk"),
+        "operator note must win over the default summary: {}",
+        edits[0]
+    );
+    assert!(
+        !edits[0].contains("bare-URL+repair"),
+        "default must not also apply: {}",
+        edits[0]
+    );
+}
+
+#[tokio::test]
+async fn bare_url_apply_drift_refuses_with_zero_writes() {
+    let backend = spawn_mock_wiki_backend("unused page text").await;
+    let mut config = wiki_config_for_backend(&backend.base_url);
+    config.templates.bare_url_citation = Some("cite web".to_string());
+    let editor = bare_url_test_editor("https://example.org/SOMETHING-ELSE");
+    let client = crate::runtime_adapters::BearerHttpClient::new(
+        reqwest::Client::new(),
+        "test-access-token".to_string(),
+    );
+    let payload = bare_url_apply_payload(None);
+
+    let error = crate::citation_routes::execute_bare_url_apply(&client, &config, &payload, &editor)
+        .await
+        .expect_err("drifted anchor must refuse");
+
+    let sp42_core::ActionError::Execution {
+        code,
+        http_status,
+        retryable,
+        ..
+    } = error;
+    assert_eq!(code.as_deref(), Some("node-drift"));
+    assert_eq!(http_status, Some(409));
+    assert!(!retryable);
+    assert!(
+        backend
+            .edit_bodies
+            .lock()
+            .expect("mock edit log should lock")
+            .is_empty(),
+        "a refused apply must never reach the wiki"
+    );
+}
+
+#[tokio::test]
+async fn bare_url_apply_out_of_range_refuses_with_zero_writes() {
+    let backend = spawn_mock_wiki_backend("unused page text").await;
+    let mut config = wiki_config_for_backend(&backend.base_url);
+    config.templates.bare_url_citation = Some("cite web".to_string());
+    let editor = sp42_core::ScriptedWikitextEditor::new(Vec::new(), "NEVERUSED".to_string());
+    let client = crate::runtime_adapters::BearerHttpClient::new(
+        reqwest::Client::new(),
+        "test-access-token".to_string(),
+    );
+    let payload = bare_url_apply_payload(None);
+
+    let error = crate::citation_routes::execute_bare_url_apply(&client, &config, &payload, &editor)
+        .await
+        .expect_err("missing ordinal must refuse");
+
+    let sp42_core::ActionError::Execution {
+        code, http_status, ..
+    } = error;
+    assert_eq!(code.as_deref(), Some("node-out-of-range"));
+    assert_eq!(http_status, Some(409));
+    assert!(
+        backend
+            .edit_bodies
+            .lock()
+            .expect("mock edit log should lock")
+            .is_empty(),
+        "a refused apply must never reach the wiki"
+    );
+}
+
+#[tokio::test]
+async fn bare_url_apply_gate_refuses_with_zero_writes() {
+    let backend = spawn_mock_wiki_backend("unused page text").await;
+    let config = wiki_config_for_backend(&backend.base_url);
+    let editor = bare_url_test_editor("https://example.org/article");
+    let client = crate::runtime_adapters::BearerHttpClient::new(
+        reqwest::Client::new(),
+        "test-access-token".to_string(),
+    );
+    let payload = bare_url_apply_payload(None);
+
+    let error = crate::citation_routes::execute_bare_url_apply(&client, &config, &payload, &editor)
+        .await
+        .expect_err("unconfigured wiki must refuse");
+
+    let sp42_core::ActionError::Execution { code, .. } = error;
+    assert_eq!(code.as_deref(), Some("bare-url-repair-not-enabled"));
+    assert!(
+        editor.invocations().is_empty(),
+        "gate refusal must not touch the editor"
+    );
+    assert_eq!(
+        backend
+            .total_requests
+            .load(std::sync::atomic::Ordering::SeqCst),
+        0,
+        "gate refusal must not reach the wiki at all"
+    );
+}
+
+#[test]
+fn editor_errors_map_to_action_error_codes() {
+    let error = sp42_core::WikitextEditorError::NotConfigured {
+        wiki_id: "frwiki".to_string(),
+    };
+    let mapped = crate::action_routes::action_error_from_editor(&error);
+    let sp42_core::ActionError::Execution {
+        code,
+        http_status,
+        retryable,
+        ..
+    } = mapped;
+    assert_eq!(code.as_deref(), Some("editor-not-configured"));
+    assert_eq!(
+        http_status,
+        Some(400),
+        "configuration gaps surface as client error (400)"
+    );
+    assert!(!retryable);
+
+    let error = sp42_core::WikitextEditorError::Unavailable {
+        message: "down".to_string(),
+        retryable: true,
+    };
+    let mapped = crate::action_routes::action_error_from_editor(&error);
+    let sp42_core::ActionError::Execution {
+        code,
+        http_status,
+        retryable,
+        ..
+    } = mapped;
+    assert_eq!(code.as_deref(), Some("editor-unavailable"));
+    assert_eq!(
+        http_status,
+        Some(502),
+        "upstream unavailability surfaces as 502"
+    );
+    assert!(retryable);
+}
+
+#[test]
+fn action_error_response_preserves_carried_status() {
+    let drift = sp42_core::ActionError::Execution {
+        message: "anchor drifted".to_string(),
+        code: Some("node-drift".to_string()),
+        http_status: Some(409),
+        retryable: false,
+    };
+    assert_eq!(
+        crate::action_routes::action_error_response(&drift).0,
+        axum::http::StatusCode::CONFLICT
+    );
+
+    let missing = sp42_core::ActionError::Execution {
+        message: "page gone".to_string(),
+        code: Some("editor-missing-target".to_string()),
+        http_status: Some(404),
+        retryable: false,
+    };
+    assert_eq!(
+        crate::action_routes::action_error_response(&missing).0,
+        axum::http::StatusCode::NOT_FOUND
+    );
+
+    let not_configured = sp42_core::ActionError::Execution {
+        message: "not configured".to_string(),
+        code: Some("editor-not-configured".to_string()),
+        http_status: Some(501),
+        retryable: false,
+    };
+    assert_eq!(
+        crate::action_routes::action_error_response(&not_configured).0,
+        axum::http::StatusCode::NOT_IMPLEMENTED
+    );
+
+    let no_status = sp42_core::ActionError::Execution {
+        message: "backend down".to_string(),
+        code: Some("editor-unavailable".to_string()),
+        http_status: None,
+        retryable: true,
+    };
+    assert_eq!(
+        crate::action_routes::action_error_response(&no_status).0,
+        axum::http::StatusCode::BAD_GATEWAY
+    );
 }

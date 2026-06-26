@@ -12,12 +12,14 @@ workspace = true
 async-trait.workspace = true
 axum.workspace = true
 futures.workspace = true
+parsoid.workspace = true
 rand.workspace = true
 reqwest.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 sp42-coordination = { path = "../sp42-coordination" }
 sp42-core = { path = "../sp42-core" }
+sp42-inference = { path = "../sp42-inference" }
 sp42-live = { path = "../sp42-live" }
 sp42-reporting = { path = "../sp42-reporting" }
 sp42-types = { path = "../sp42-types" }

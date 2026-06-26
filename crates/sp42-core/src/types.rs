@@ -400,6 +400,15 @@ pub struct WikiConfig {
     pub oauth_token_url: Url,
     pub liftwing_url: Option<Url>,
     pub coordination_url: Option<Url>,
+    /// Parsoid core REST endpoint (`…/w/rest.php`) used for node-anchored
+    /// content edits (ADR-0003). `None` disables the node-anchored path.
+    #[serde(default)]
+    pub parsoid_url: Option<Url>,
+    /// Optional inference endpoint for citation verification — the model panel's
+    /// OpenAI-compatible chat-completions URL (ADR-0006 §4, ADR-0008 §3). Default-absent,
+    /// exactly like `liftwing_url`; verification is skipped when unset.
+    #[serde(default)]
+    pub inference_url: Option<Url>,
     #[serde(default)]
     pub namespace_allowlist: Vec<i32>,
     #[serde(default = "default_scoring_policy_ref")]
@@ -420,12 +429,18 @@ fn default_scoring_policy_ref() -> String {
 pub struct WikiTemplates {
     #[serde(default = "default_citation_needed")]
     pub citation_needed: String,
+    /// Citation template rendered by bare-URL repair (PRD-0008), for example
+    /// `"cite web"`. Presence enables the feature for this wiki; when `None`,
+    /// the bare-URL routes refuse with `bare-url-repair-not-enabled`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bare_url_citation: Option<String>,
 }
 
 impl Default for WikiTemplates {
     fn default() -> Self {
         Self {
             citation_needed: default_citation_needed(),
+            bare_url_citation: None,
         }
     }
 }

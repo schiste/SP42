@@ -304,6 +304,8 @@ where
                     FetchedSource {
                         text: String::new(),
                         status: 0,
+                        content_type: String::new(),
+                        raw_html: None,
                     }
                 }
             };

@@ -709,6 +709,11 @@ fn no_quote_finding(
 pub struct FetchedSource {
     pub text: String,
     pub status: u16,
+    pub content_type: String,
+    /// Pre-extraction HTML body, present only for HTML responses. Needed at the
+    /// usability gate for structured paywall markers; consumed there and not
+    /// retained downstream (grounding uses `text`).
+    pub raw_html: Option<String>,
 }
 
 /// Fetch a source body (read-only GET), extracting text from HTML and recovering past a
@@ -741,6 +746,8 @@ where
         return Ok(FetchedSource {
             text: String::new(),
             status: response.status,
+            content_type: String::new(),
+            raw_html: None,
         });
     }
     let content_type = response
@@ -749,14 +756,17 @@ where
         .cloned()
         .unwrap_or_default();
     let body = String::from_utf8_lossy(&response.body).into_owned();
-    let text = if looks_like_html(&content_type, &body) {
-        html_to_text(&body)
+    let is_html = looks_like_html(&content_type, &body);
+    let (extracted, raw_html) = if is_html {
+        (html_to_text(&body), Some(body))
     } else {
-        body
+        (body, None)
     };
     Ok(FetchedSource {
-        text: recover_wayback_body(&text),
+        text: recover_wayback_body(&extracted),
         status: response.status,
+        content_type,
+        raw_html,
     })
 }
 
@@ -1263,6 +1273,8 @@ mod tests {
         options.prefetched = Some(super::FetchedSource {
             text: long_body,
             status: 200,
+            content_type: String::new(),
+            raw_html: None,
         });
         let outcome = block_on(verify_citation_use_site(
             &http,

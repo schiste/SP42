@@ -3200,6 +3200,7 @@ dependencies = [
  "sp42-core",
  "sp42-live",
  "sp42-wiki",
+ "url",
 ]
 
 [[package]]

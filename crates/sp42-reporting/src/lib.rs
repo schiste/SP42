@@ -2,6 +2,7 @@
 
 //! Shared SP42 reporting models, summaries, digests, and renderers.
 
+pub mod citation_page_report;
 pub mod debug_snapshot;
 pub mod live_operator_view;
 pub mod operator_summary;
@@ -11,6 +12,10 @@ pub mod report_document;
 pub mod server_debug_summary;
 pub mod shell_state;
 
+pub use citation_page_report::{
+    page_verification_report_to_document, render_page_verification_markdown,
+    render_page_verification_text,
+};
 pub use debug_snapshot::{
     DebugSnapshot, DebugSnapshotInputs, DecisionTrace, PerformanceMarker, TraceLevel,
     build_debug_snapshot,

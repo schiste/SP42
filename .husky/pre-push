@@ -64,6 +64,9 @@ printf '\n== SP42 pre-push: release tree audit ==\n'
 printf '\n== SP42 pre-push: markdown link check ==\n'
 ./scripts/check-links.sh
 
+printf '\n== SP42 pre-push: layer check (ADR-0013) ==\n'
+./scripts/check-layering.sh
+
 printf '\n== SP42 pre-push: full CI-shaped checks ==\n'
 ./scripts/ci-all.sh
 

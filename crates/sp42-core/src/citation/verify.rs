@@ -202,7 +202,7 @@ pub struct CitationFinding {
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub ref_id: String,
     /// The claim sentence this verdict judged, echoed so the report is
-    /// self-contained — a renderer can show "Claim: … → <verdict>" without
+    /// self-contained — a renderer can show `Claim: … → <verdict>` without
     /// re-reading the page. Empty for the standalone path, where the caller
     /// already holds the claim. Back-compatible (ADR-0009 replay).
     #[serde(default, skip_serializing_if = "String::is_empty")]

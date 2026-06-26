@@ -615,4 +615,43 @@ mod tests {
         let r = classify_source_usability("https://news.example.com/x", "text/html", Some(body), Some(body));
         assert_ne!(r.reason, BodyUsabilityReason::NavChromePaywall);
     }
+
+    #[test]
+    fn paywall_detector_fixture_sample_balance() {
+        // (label, body, expect_paywall)
+        let nav = "Home News Topics Sections Account Menu Search Subscribe Login ";
+        let walls = [
+            format!("{}{}Subscribe to read the full article.", nav, "Related coverage ".repeat(30)),
+            format!("{}This content is for subscribers. Sign in to continue.", nav.repeat(8)),
+            format!("{}Create a free account to continue reading.", "Topic Tag ".repeat(40)),
+        ];
+        let article_prose = "The treaty was signed in 1815 after long negotiation. \
+        Delegates from five nations attended. The terms reshaped the region for a generation. \
+        Historians still debate its consequences. Several clauses were never enforced. ";
+        let articles = [
+            format!("{}{}", article_prose.repeat(5), "Subscribe to our newsletter."),
+            article_prose.repeat(8),
+            format!("News flash. {}", article_prose.repeat(6)),
+        ];
+
+        let mut false_neg = 0;
+        for w in &walls {
+            if classify_source_usability("https://x/", "text/html", Some(w), Some(w)).reason
+                != BodyUsabilityReason::NavChromePaywall
+            {
+                false_neg += 1;
+            }
+        }
+        let mut false_pos = 0;
+        for a in &articles {
+            if classify_source_usability("https://x/", "text/html", Some(a), Some(a)).reason
+                == BodyUsabilityReason::NavChromePaywall
+            {
+                false_pos += 1;
+            }
+        }
+        // Hard requirement: no real article flagged. Catches the bulk of walls.
+        assert_eq!(false_pos, 0, "real articles must not be flagged ({false_pos} were)");
+        assert!(false_neg <= 1, "should catch most paywall stubs ({false_neg}/3 missed)");
+    }
 }

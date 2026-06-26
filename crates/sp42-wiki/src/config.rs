@@ -259,6 +259,15 @@ scoring_policy_ref: active/frwiki-vandalism
     }
 
     #[test]
+    fn parses_testwiki_config() {
+        let source = include_str!("../../../configs/testwiki.yaml");
+        let config = parse_wiki_config(source).expect("testwiki config should parse");
+
+        assert_eq!(config.wiki_id, "testwiki");
+        assert_eq!(config.scoring_policy_ref, "active/testwiki-vandalism");
+    }
+
+    #[test]
     fn rejects_blank_wiki_id() {
         let source = include_str!("../../../configs/frwiki.yaml")
             .replace("wiki_id: frwiki", "wiki_id: \"  \"");

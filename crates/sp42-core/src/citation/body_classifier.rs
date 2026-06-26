@@ -47,6 +47,12 @@ pub enum BodyUsabilityReason {
     AmazonStub,
     /// The body is shorter than the usable-length floor (also: a failed/empty fetch).
     ShortBody,
+    /// The response is a PDF (by content-type or `%PDF-` magic), not extractable
+    /// HTML — a tool limitation, not a bad citation.
+    PdfBody,
+    /// A host-specific viewer/embed shell (e.g. a Google Books JavaScript reader)
+    /// returned chrome instead of readable content.
+    ViewerShell,
 }
 
 impl BodyUsabilityReason {
@@ -63,6 +69,8 @@ impl BodyUsabilityReason {
             BodyUsabilityReason::WaybackChrome => "wayback_chrome",
             BodyUsabilityReason::AmazonStub => "amazon_stub",
             BodyUsabilityReason::ShortBody => "short_body",
+            BodyUsabilityReason::PdfBody => "pdf_body",
+            BodyUsabilityReason::ViewerShell => "viewer_shell",
         }
     }
 }

@@ -4,6 +4,7 @@ use leptos::prelude::*;
 enum WorkspaceView {
     Patrol,
     Article,
+    Citation,
 }
 
 #[component]
@@ -17,6 +18,10 @@ pub fn App() -> impl IntoView {
     let show_article = move |_| {
         set_workspace_hash(WorkspaceView::Article);
         set_active_view.set(WorkspaceView::Article);
+    };
+    let show_citation = move |_| {
+        set_workspace_hash(WorkspaceView::Citation);
+        set_active_view.set(WorkspaceView::Citation);
     };
 
     view! {
@@ -40,6 +45,14 @@ pub fn App() -> impl IntoView {
                     >
                         "Article"
                     </button>
+                    <button
+                        type="button"
+                        class=move || workspace_tab_class(active_view.get() == WorkspaceView::Citation)
+                        aria-selected=move || (active_view.get() == WorkspaceView::Citation).to_string()
+                        on:click=show_citation
+                    >
+                        "Citations"
+                    </button>
                 </div>
             </nav>
             <main class="workspace-body">
@@ -49,6 +62,9 @@ pub fn App() -> impl IntoView {
                     }.into_any(),
                     WorkspaceView::Article => view! {
                         <crate::pages::article::ArticleSurface />
+                    }.into_any(),
+                    WorkspaceView::Citation => view! {
+                        <crate::pages::citation::CitationSurface />
                     }.into_any(),
                 }}
             </main>
@@ -75,6 +91,8 @@ fn initial_workspace_view() -> WorkspaceView {
         };
         if hash.contains("view=article") {
             WorkspaceView::Article
+        } else if hash.contains("view=citation") {
+            WorkspaceView::Citation
         } else {
             WorkspaceView::Patrol
         }
@@ -92,6 +110,7 @@ fn set_workspace_hash(view: WorkspaceView) {
             let hash = match view {
                 WorkspaceView::Patrol => "view=patrol",
                 WorkspaceView::Article => "view=article",
+                WorkspaceView::Citation => "view=citation",
             };
             let _ = window.location().set_hash(hash);
         }

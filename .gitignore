@@ -8,6 +8,7 @@
 /.env
 /.env.local
 /.env.*.local
+/.envrc
 /.claude
 /.chau7
 **/.chau7/

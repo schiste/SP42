@@ -54,6 +54,9 @@ pub enum BodyUsabilityReason {
     /// A host-specific viewer/embed shell (e.g. a Google Books JavaScript reader)
     /// returned chrome instead of readable content.
     ViewerShell,
+    /// A paywall / registration-wall stub: navigation + a sign-in/subscribe
+    /// prompt, but no readable article body. Fetched 2xx, so otherwise invisible.
+    NavChromePaywall,
 }
 
 impl BodyUsabilityReason {
@@ -72,6 +75,7 @@ impl BodyUsabilityReason {
             BodyUsabilityReason::ShortBody => "short_body",
             BodyUsabilityReason::PdfBody => "pdf_body",
             BodyUsabilityReason::ViewerShell => "viewer_shell",
+            BodyUsabilityReason::NavChromePaywall => "nav_chrome_paywall",
         }
     }
 }

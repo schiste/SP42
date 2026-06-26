@@ -17,6 +17,14 @@ use std::collections::{HashMap, HashSet};
 /// Sized to comfortably hold a typical page's HTML sources while capping a pathological one.
 const MAX_PREFETCH_CACHE_BYTES: usize = 64 * 1024 * 1024;
 
+/// Bytes a prefetched source retains in the page cache: the extracted text plus the
+/// pre-extraction HTML kept for the usability gate. `raw_html` can dwarf `text` on
+/// chrome-heavy pages, so it must count against [`MAX_PREFETCH_CACHE_BYTES`] — otherwise
+/// the cache can hold far more than the intended cap.
+fn prefetch_retained_bytes(source: &FetchedSource) -> usize {
+    source.text.len() + source.raw_html.as_ref().map_or(0, String::len)
+}
+
 /// Identity of the page to verify.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct PageVerificationRequest {
@@ -304,10 +312,12 @@ where
                     FetchedSource {
                         text: String::new(),
                         status: 0,
+                        content_type: String::new(),
+                        raw_html: None,
                     }
                 }
             };
-            retained_bytes += source.text.len();
+            retained_bytes += prefetch_retained_bytes(&source);
             bodies.insert(url, source);
         }
     }
@@ -372,6 +382,7 @@ where
 #[cfg(test)]
 mod orchestrator_tests {
     use super::*;
+    use crate::citation::body_classifier::BodyUsabilityReason;
     use crate::citation::extract::extract_use_sites;
     use crate::wikitext_editor::{BlockKind, BlockRef, ParsoidBlock};
     use sp42_types::{FixedClock, HttpResponse, StubHttpClient, StubModelClient};
@@ -812,11 +823,101 @@ archive is fetched, the queue will be empty and the test will fail, proving the 
         // No extraction failures (if archive had been fetched, queue drain would cause error).
         assert!(report.extraction_failures.is_empty());
     }
+
+    #[test]
+    fn pdf_citation_carries_unusable_reason_through_page_report() {
+        use futures::executor::block_on;
+
+        // A single citation to a PDF. The finding should have unusable_reason == Some(PdfBody)
+        // and the PageVerificationReport should serialize/deserialize with the field intact.
+        let b = ParsoidBlock {
+            text: "Test claim here.".into(),
+            refs: vec![BlockRef {
+                offset: 5,
+                ref_id: "r1".into(),
+                sources: vec![crate::wikitext_editor::CitedSource {
+                    url: url::Url::parse("https://example.com/report.pdf").unwrap(),
+                    archive_urls: vec![],
+                }],
+                ref_text: "[1]".into(),
+                named: false,
+            }],
+            block_kind: BlockKind::Paragraph,
+            block_ordinal: 0,
+        };
+        let extract = extract_use_sites(&[b], &page());
+
+        // Fetch returns 200 with PDF body.
+        let http = StubHttpClient::new([Ok(HttpResponse {
+            status: 200,
+            headers: {
+                let mut m = std::collections::BTreeMap::new();
+                m.insert("content-type".to_string(), "application/pdf".to_string());
+                m
+            },
+            body: b"%PDF-1.7 body".to_vec(),
+        })]);
+        // No model call: body-usability gate short-circuits before model invocation.
+        let model = StubModelClient::new([]);
+        let report = block_on(verify_page(
+            &http,
+            &model,
+            &FixedClock::new(0),
+            &[model_ref()],
+            &page(),
+            extract,
+            VerifyOptions::default(),
+            1,
+        ));
+
+        assert_eq!(report.findings.len(), 1);
+        let finding = &report.findings[0];
+        assert_eq!(finding.verdict, super::CitationVerdict::SourceUnavailable);
+        assert_eq!(
+            finding.unusable_reason,
+            Some(BodyUsabilityReason::PdfBody),
+            "PDF source should have PdfBody as unusable_reason"
+        );
+
+        // The report serializes the per-finding reason (the reviewer-facing surface).
+        let json = serde_json::to_string(&report).expect("serialize report");
+        let back: PageVerificationReport = serde_json::from_str(&json).expect("deserialize report");
+        assert_eq!(
+            back.findings[0].unusable_reason,
+            Some(BodyUsabilityReason::PdfBody),
+            "unusable_reason should survive the page report round-trip"
+        );
+
+        // Confirm the stat still increments (no new stats fields are added).
+        assert_eq!(report.stats.source_unavailable_unusable, 1);
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn prefetch_retained_bytes_counts_raw_html() {
+        // The retained HTML can dwarf the extracted text on chrome-heavy pages, so
+        // the page-cache budget must count it — not just `text`.
+        let html_heavy = FetchedSource {
+            text: "abc".to_string(),
+            status: 200,
+            content_type: "text/html".to_string(),
+            raw_html: Some("x".repeat(100)),
+        };
+        assert_eq!(prefetch_retained_bytes(&html_heavy), 3 + 100);
+
+        // No retained HTML → just the text length (non-HTML body, or the sentinel).
+        let text_only = FetchedSource {
+            text: "hello".to_string(),
+            status: 200,
+            content_type: String::new(),
+            raw_html: None,
+        };
+        assert_eq!(prefetch_retained_bytes(&text_only), 5);
+    }
 
     #[test]
     fn report_round_trips_through_serde() {

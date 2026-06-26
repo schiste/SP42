@@ -1037,6 +1037,7 @@ mod verify_tests {
                 offset: 4,
             }),
             source_unavailable_reason: None,
+            unusable_reason: None,
             provenance: SourceProvenance {
                 url: "https://example.com/bridge".parse().expect("url"),
                 content_hash: "abc123".to_string(),

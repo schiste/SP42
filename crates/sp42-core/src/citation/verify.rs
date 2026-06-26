@@ -32,7 +32,7 @@ use sha2::{Digest, Sha256};
 use sp42_types::{ModelClient, ModelCompletionRequest, ModelInvocation, ModelRef, SamplingParams};
 use url::Url;
 
-use super::body_classifier::classify_body_usability;
+use super::body_classifier::{BodyUsabilityReason, classify_source_usability};
 use super::citoid::{
     CitoidMetadata, build_citoid_header, build_citoid_request, parse_citoid_response,
 };
@@ -183,6 +183,11 @@ pub struct CitationFinding {
     /// `None` for any other verdict.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub source_unavailable_reason: Option<SourceUnavailableReason>,
+    /// When the verdict is `SourceUnavailable` because the body was fetched but
+    /// unusable, the specific classifier reason (PDF, viewer shell, paywall, …).
+    /// `None` for usable sources and for unreachable (non-2xx) sources.
+    #[serde(default)]
+    pub unusable_reason: Option<BodyUsabilityReason>,
     /// Measured agreement among the panel's votes (ADR-0006).
     pub agreement: PanelAgreement,
     /// The winning verdict's located passage, or `None`.
@@ -573,6 +578,7 @@ pub fn assemble_citation_finding(
                     source_unavailable_reason: derive_source_unavailable_reason(
                         verdict, provenance,
                     ),
+                    unusable_reason: None,
                     provenance: provenance.clone(),
                     grounding: GroundingAssertion::LocatedQuote {
                         quote,
@@ -684,6 +690,7 @@ fn no_quote_finding(
         agreement,
         passage: None,
         source_unavailable_reason: derive_source_unavailable_reason(verdict, provenance),
+        unusable_reason: None,
         provenance: provenance.clone(),
         grounding: GroundingAssertion::SourceFetched {
             source_hash: provenance.content_hash.clone(),
@@ -697,11 +704,47 @@ fn no_quote_finding(
     }
 }
 
+/// Build a [`VerificationOutcome`] for an unusable source (short-circuit, no model call).
+/// This captures the pattern: source was fetched but marked unusable by the deterministic
+/// body-usability gate. The finding records the reason and marks grounding as [`GroundingStatus::NotApplicable`].
+fn unusable_source_outcome(
+    usability_reason: BodyUsabilityReason,
+    provenance: &SourceProvenance,
+    use_site_ordinal: u32,
+) -> VerificationOutcome {
+    let mut finding = no_quote_finding(
+        CitationVerdict::SourceUnavailable,
+        GroundingStatus::NotApplicable,
+        PanelAgreement::new(0, 0),
+        provenance,
+        use_site_ordinal,
+    );
+    // Record the specific body-usability reason only for sources that were actually
+    // fetched (2xx → `Unusable`). A non-2xx response is `Unreachable`, not
+    // fetched-but-unusable, so its empty body must not be mis-tagged (e.g. `ShortBody`);
+    // keep `unusable_reason` None there, matching the field contract.
+    if matches!(
+        finding.source_unavailable_reason,
+        Some(SourceUnavailableReason::Unusable)
+    ) {
+        finding.unusable_reason = Some(usability_reason);
+    }
+    VerificationOutcome {
+        finding,
+        votes: Vec::new(),
+    }
+}
+
 /// A fetched source body plus the HTTP status it came from.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FetchedSource {
     pub text: String,
     pub status: u16,
+    pub content_type: String,
+    /// Pre-extraction HTML body, present only for HTML responses. Needed at the
+    /// usability gate for structured paywall markers; consumed there and not
+    /// retained downstream (grounding uses `text`).
+    pub raw_html: Option<String>,
 }
 
 /// Fetch a source body (read-only GET), extracting text from HTML and recovering past a
@@ -734,6 +777,8 @@ where
         return Ok(FetchedSource {
             text: String::new(),
             status: response.status,
+            content_type: String::new(),
+            raw_html: None,
         });
     }
     let content_type = response
@@ -742,14 +787,17 @@ where
         .cloned()
         .unwrap_or_default();
     let body = String::from_utf8_lossy(&response.body).into_owned();
-    let text = if looks_like_html(&content_type, &body) {
-        html_to_text(&body)
+    let is_html = looks_like_html(&content_type, &body);
+    let (extracted, raw_html) = if is_html {
+        (html_to_text(&body), Some(body))
     } else {
-        body
+        (body, None)
     };
     Ok(FetchedSource {
-        text: recover_wayback_body(&text),
+        text: recover_wayback_body(&extracted),
         status: response.status,
+        content_type,
+        raw_html,
     })
 }
 
@@ -822,17 +870,18 @@ where
     } else {
         Some(fetched.text.as_str())
     };
-    if !classify_body_usability(body).usable {
-        return Ok(VerificationOutcome {
-            finding: no_quote_finding(
-                CitationVerdict::SourceUnavailable,
-                GroundingStatus::NotApplicable,
-                PanelAgreement::new(0, 0),
-                &provenance,
-                use_site_ordinal,
-            ),
-            votes: Vec::new(),
-        });
+    let usability = classify_source_usability(
+        request.source_url.as_str(),
+        &fetched.content_type,
+        fetched.raw_html.as_deref(),
+        body,
+    );
+    if !usability.usable {
+        return Ok(unusable_source_outcome(
+            usability.reason,
+            &provenance,
+            use_site_ordinal,
+        ));
     }
 
     let metadata = if options.include_metadata {
@@ -919,10 +968,11 @@ mod tests {
     };
 
     use super::{
-        CitationFinding, CitationVerificationRequest, ClaimContext, GroundingAssertion,
-        GroundingStatus, ModelVerdict, RepairAttempt, SourceProvenance, VerifyModelInputs,
-        VerifyOptions, assemble_citation_finding, build_model_votes, execute_citation_repair,
-        execute_citation_verify, is_groundable_support, verify_citation_use_site,
+        BodyUsabilityReason, CitationFinding, CitationVerificationRequest, ClaimContext,
+        GroundingAssertion, GroundingStatus, ModelVerdict, RepairAttempt, SourceProvenance,
+        VerifyModelInputs, VerifyOptions, assemble_citation_finding, build_model_votes,
+        execute_citation_repair, execute_citation_verify, is_groundable_support,
+        verify_citation_use_site,
     };
     use crate::citation::parsing::ParsedVerdict;
     use crate::citation::verdict::{CitationVerdict, SupportLevel, Verdict};
@@ -1256,6 +1306,8 @@ mod tests {
         options.prefetched = Some(super::FetchedSource {
             text: long_body,
             status: 200,
+            content_type: String::new(),
+            raw_html: None,
         });
         let outcome = block_on(verify_citation_use_site(
             &http,
@@ -2013,5 +2065,198 @@ mod tests {
             prop_assert!(!is_groundable_support(&finding));
             prop_assert_ne!(finding.grounding_status, GroundingStatus::Located);
         }
+    }
+
+    #[test]
+    fn short_body_records_unusable_reason_and_skips_panel() {
+        let fetch = StubHttpClient::new([Ok(HttpResponse {
+            status: 200,
+            headers: BTreeMap::from([("content-type".to_string(), "text/html".to_string())]),
+            body: b"<html><body>tiny</body></html>".to_vec(),
+        })]);
+        let model_client = StubModelClient::new([]); // empty → any model call errors
+        let outcome = block_on(verify_citation_use_site(
+            &fetch,
+            &model_client,
+            &FixedClock::new(1000),
+            &[model()],
+            &request("Some claim", "https://example.com/tiny"),
+            None,
+            3,
+            VerifyOptions::default(),
+        ))
+        .expect("verifies");
+        assert_eq!(outcome.finding.verdict, CitationVerdict::SourceUnavailable);
+        assert_eq!(
+            outcome.finding.unusable_reason,
+            Some(BodyUsabilityReason::ShortBody)
+        );
+        assert!(outcome.votes.is_empty());
+    }
+
+    #[test]
+    fn unreachable_source_has_no_unusable_reason() {
+        // A non-2xx fetch is Unreachable, not fetched-but-unusable: the verdict is
+        // SourceUnavailable with source_unavailable_reason == Unreachable, but
+        // unusable_reason must stay None (it is only for fetched 2xx bodies). The
+        // empty body would otherwise classify as ShortBody and mis-tag the reason.
+        let fetch = StubHttpClient::new([Ok(HttpResponse {
+            status: 404,
+            headers: BTreeMap::new(),
+            body: Vec::new(),
+        })]);
+        let model_client = StubModelClient::new([]); // empty → any model call errors
+        let outcome = block_on(verify_citation_use_site(
+            &fetch,
+            &model_client,
+            &FixedClock::new(1000),
+            &[model()],
+            &request("Some claim", "https://example.com/missing"),
+            None,
+            3,
+            VerifyOptions::default(),
+        ))
+        .expect("verifies");
+        assert_eq!(outcome.finding.verdict, CitationVerdict::SourceUnavailable);
+        assert_eq!(
+            outcome.finding.source_unavailable_reason,
+            Some(super::SourceUnavailableReason::Unreachable)
+        );
+        assert_eq!(outcome.finding.unusable_reason, None);
+        assert!(outcome.votes.is_empty());
+    }
+
+    #[test]
+    fn pdf_source_is_unusable_with_no_model_call() {
+        let fetch = StubHttpClient::new([Ok(HttpResponse {
+            status: 200,
+            headers: BTreeMap::from([("content-type".to_string(), "application/pdf".to_string())]),
+            body: b"%PDF-1.7\n...binary report body...".to_vec(),
+        })]);
+        let model_client = StubModelClient::new([]); // empty → any model call errors
+        let outcome = block_on(verify_citation_use_site(
+            &fetch,
+            &model_client,
+            &FixedClock::new(1000),
+            &[model()],
+            &request("Claim from a PDF", "https://example.com/report.pdf"),
+            None,
+            3,
+            VerifyOptions::default(),
+        ))
+        .expect("verifies");
+        assert_eq!(outcome.finding.verdict, CitationVerdict::SourceUnavailable);
+        assert_eq!(
+            outcome.finding.unusable_reason,
+            Some(BodyUsabilityReason::PdfBody)
+        );
+        assert!(outcome.votes.is_empty());
+    }
+
+    #[test]
+    fn google_books_source_is_unusable_with_no_model_call() {
+        let fetch = StubHttpClient::new([Ok(HttpResponse {
+            status: 200,
+            headers: BTreeMap::from([("content-type".to_string(), "text/html".to_string())]),
+            body: long_html_with("Pernod Ricard"), // chrome with the entity name present
+        })]);
+        let model_client = StubModelClient::new([]);
+        let outcome = block_on(verify_citation_use_site(
+            &fetch,
+            &model_client,
+            &FixedClock::new(1000),
+            &[model()],
+            &request(
+                "Some claim about a book",
+                "https://books.google.com/books?id=abc",
+            ),
+            None,
+            3,
+            VerifyOptions::default(),
+        ))
+        .expect("verifies");
+        assert_eq!(outcome.finding.verdict, CitationVerdict::SourceUnavailable);
+        assert_eq!(
+            outcome.finding.unusable_reason,
+            Some(BodyUsabilityReason::ViewerShell)
+        );
+        assert!(outcome.votes.is_empty());
+    }
+
+    #[test]
+    fn law360_paywall_stub_short_circuits_no_partial() {
+        // The #42 case: a large nav-chrome/paywall body with the claim's entity in a
+        // sidebar. Must classify Unusable and never reach the panel (no confabulated partial).
+        let body = format!(
+            "Home News Sections Account {} Subscribe to read the full article. Sign in to continue.",
+            "Companies Pernod Ricard SA Gosling's Brown-Forman ".repeat(25)
+        )
+        .into_bytes();
+        let fetch = StubHttpClient::new([Ok(HttpResponse {
+            status: 200,
+            headers: BTreeMap::from([("content-type".to_string(), "text/html".to_string())]),
+            body,
+        })]);
+        let model_client = StubModelClient::new([]); // empty → any model call errors the test
+        let outcome = block_on(verify_citation_use_site(
+            &fetch,
+            &model_client,
+            &FixedClock::new(1000),
+            &[model()],
+            &request(
+                "Gosling's has litigated over the mark against Pernod Ricard",
+                "https://www.law360.com/articles/735000/x",
+            ),
+            None,
+            3,
+            VerifyOptions::default(),
+        ))
+        .expect("verifies");
+        assert_eq!(outcome.finding.verdict, CitationVerdict::SourceUnavailable);
+        assert_eq!(
+            outcome.finding.unusable_reason,
+            Some(BodyUsabilityReason::NavChromePaywall)
+        );
+        assert!(
+            outcome.votes.is_empty(),
+            "paywall stub must not reach the panel"
+        );
+    }
+
+    #[test]
+    fn unusable_reason_round_trips_and_legacy_defaults_to_none() {
+        let fetch = StubHttpClient::new([Ok(HttpResponse {
+            status: 200,
+            headers: BTreeMap::from([("content-type".to_string(), "application/pdf".to_string())]),
+            body: b"%PDF-1.7 body bytes".to_vec(),
+        })]);
+        let model_client = StubModelClient::new([]);
+        let finding = block_on(verify_citation_use_site(
+            &fetch,
+            &model_client,
+            &FixedClock::new(1000),
+            &[model()],
+            &request("A claim", "https://example.com/x.pdf"),
+            None,
+            3,
+            VerifyOptions::default(),
+        ))
+        .expect("verifies")
+        .finding;
+        assert_eq!(finding.unusable_reason, Some(BodyUsabilityReason::PdfBody));
+
+        // Round-trip preserves the reason.
+        let json = serde_json::to_string(&finding).expect("serialize");
+        let back: CitationFinding = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(back.unusable_reason, Some(BodyUsabilityReason::PdfBody));
+
+        // Legacy record (field absent) deserializes to None via #[serde(default)].
+        let mut value: serde_json::Value = serde_json::from_str(&json).expect("to value");
+        value
+            .as_object_mut()
+            .expect("object")
+            .remove("unusable_reason");
+        let legacy: CitationFinding = serde_json::from_value(value).expect("legacy deserialize");
+        assert_eq!(legacy.unusable_reason, None);
     }
 }

@@ -26,3 +26,5 @@
 *.swp
 *.swo
 *.log
+__pycache__/
+*.pyc

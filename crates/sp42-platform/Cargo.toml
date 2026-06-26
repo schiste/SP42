@@ -1,9 +1,14 @@
 [package]
-name = "sp42-core"
+name = "sp42-platform"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
+
+[features]
+# Exposes `test_fixtures` to other workspace crates' test builds. Used by
+# sp42-core's domain tests during the platform/domain migration (ADR-0013).
+test-support = []
 
 [lints]
 workspace = true
@@ -18,7 +23,6 @@ serde_json.workspace = true
 serde_yaml.workspace = true
 sha2.workspace = true
 similar.workspace = true
-sp42-platform = { path = "../sp42-platform" }
 sp42-types = { path = "../sp42-types" }
 thiserror.workspace = true
 tracing.workspace = true
@@ -27,5 +31,3 @@ url.workspace = true
 
 [dev-dependencies]
 proptest = "1.9.0"
-# test-support exposes sp42_platform::test_fixtures to this crate's domain tests.
-sp42-platform = { path = "../sp42-platform", features = ["test-support"] }

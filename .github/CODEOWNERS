@@ -12,6 +12,7 @@
 
 # --- Platform (leads) -------------------------------------------------------
 /crates/sp42-types/                 @schiste
+/crates/sp42-platform/              @schiste
 /crates/sp42-core/                  @schiste
 /crates/sp42-coordination/          @schiste
 /crates/sp42-wiki/                  @schiste

@@ -3129,6 +3129,7 @@ dependencies = [
  "serde_yaml",
  "sha2",
  "similar",
+ "sp42-platform",
  "sp42-types",
  "thiserror 2.0.18",
  "tracing",
@@ -3187,6 +3188,27 @@ dependencies = [
  "sp42-core",
  "sp42-types",
  "sp42-wiki",
+]
+
+[[package]]
+name = "sp42-platform"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "base64",
+ "futures",
+ "proptest",
+ "regex",
+ "serde",
+ "serde_json",
+ "serde_yaml",
+ "sha2",
+ "similar",
+ "sp42-types",
+ "thiserror 2.0.18",
+ "tracing",
+ "unicode-normalization",
+ "url",
 ]
 
 [[package]]

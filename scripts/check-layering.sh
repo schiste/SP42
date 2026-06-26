@@ -44,6 +44,7 @@ members = {p["name"]: p for p in meta["packages"]}
 LAYER = {
     # platform
     "sp42-types": "platform",
+    "sp42-platform": "platform",
     "sp42-coordination": "platform",
     "sp42-wiki": "platform",
     "sp42-inference": "platform",
@@ -57,10 +58,10 @@ LAYER = {
     "sp42-devtools": "shell",
     # tooling (exempt)
     "xtask": "tooling",
-    # hybrid — being split into sp42-platform + sp42-patrol + sp42-citation.
+    # hybrid — sp42-platform extracted (phase 2); patrol + citation still here,
+    # split out in later phases.
     "sp42-core": "hybrid",
     # future, post-extraction:
-    #   "sp42-platform": "platform",
     #   "sp42-patrol":   "domain",
     #   "sp42-citation": "domain",
 }

@@ -40,6 +40,9 @@ git diff --check
 printf '\n== SP42 pre-commit: docs consistency ==\n'
 bash scripts/check-doc-consistency.sh
 
+printf '\n== SP42 pre-commit: markdown link check ==\n'
+./scripts/check-links.sh
+
 if [[ "$docs_only" == "1" ]]; then
   printf '\nSP42 pre-commit: docs-only change (.md/.log/.txt) — skipping rustfmt, release-tree audit, and focused build.\n'
   printf 'SP42 pre-commit checks passed.\n'

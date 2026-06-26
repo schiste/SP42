@@ -51,6 +51,8 @@ done
 if [[ "$docs_only" == "1" ]]; then
   printf '\n== SP42 pre-push: docs consistency ==\n'
   bash scripts/check-doc-consistency.sh
+  printf '\n== SP42 pre-push: markdown link check ==\n'
+  ./scripts/check-links.sh
   printf '\nSP42 pre-push: docs-only push (.md/.log/.txt) — skipping release-tree audit and ci-all.\n'
   printf 'SP42 pre-push checks passed.\n'
   exit 0
@@ -58,6 +60,9 @@ fi
 
 printf '\n== SP42 pre-push: release tree audit ==\n'
 ./scripts/audit-release-tree.sh
+
+printf '\n== SP42 pre-push: markdown link check ==\n'
+./scripts/check-links.sh
 
 printf '\n== SP42 pre-push: full CI-shaped checks ==\n'
 ./scripts/ci-all.sh

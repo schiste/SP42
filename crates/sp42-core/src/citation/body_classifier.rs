@@ -114,7 +114,7 @@ static AMAZON_STUB: LazyLock<Regex> = LazyLock::new(|| {
 });
 
 /// Hosts whose pages are viewer/embed shells under generic extraction (no readable
-/// article body). Matched as a suffix on the URL host. Extension point: add hosts here.
+/// article body). Matched as a case-insensitive substring of the URL host. Extension point: add hosts here.
 const SPECIAL_CASE_HOSTS: &[&str] = &["books.google."];
 
 /// `true` if the URL's host matches a special-case viewer-shell host.
@@ -214,9 +214,9 @@ const fn unusable(reason: BodyUsabilityReason) -> BodyUsability {
 
 /// Usability gate with full context: the source URL, the response content-type,
 /// the pre-extraction HTML (for structured paywall markers), and the extracted
-/// text. Phase 1 delegates to the text-only detectors; later phases add the
-/// URL/content-type/raw-HTML detectors (PDF, special-case hosts, paywall) ahead
-/// of this delegation. The leading params are unused for now.
+/// text. This function runs the PDF detector and special-case-host detector ahead
+/// of delegating to the text-shape detectors; only the paywall slot remains as a
+/// Phase-3 placeholder.
 #[must_use]
 pub fn classify_source_usability(
     source_url: &str,

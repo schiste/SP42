@@ -2,6 +2,7 @@
 
 //! Shared SP42 reporting models, summaries, digests, and renderers.
 
+pub mod citation_finding;
 pub mod citation_page_report;
 pub mod debug_snapshot;
 pub mod live_operator_view;
@@ -12,6 +13,10 @@ pub mod report_document;
 pub mod server_debug_summary;
 pub mod shell_state;
 
+pub use citation_finding::{
+    GroundingCaveat, body_usability_label, finding_is_problem, finding_severity_rank,
+    grounding_caveat, is_support, panel_agreement_label, source_unavailable_detail,
+};
 pub use citation_page_report::{
     page_verification_report_to_document, render_page_verification_markdown,
     render_page_verification_text,

@@ -1,10 +1,12 @@
 use leptos::prelude::*;
 use sp42_core::{
-    BodyUsabilityReason, CitationFinding, CitationVerdict, DevAuthBootstrapRequest,
-    GroundingStatus, PageVerificationReport, PanelAgreement, SourceUnavailableReason, SupportLevel,
+    CitationFinding, CitationVerdict, DevAuthBootstrapRequest, GroundingStatus,
+    PageVerificationReport, SupportLevel,
 };
 use sp42_reporting::{
-    ReportSection, page_verification_report_to_document, render_page_verification_text,
+    ReportSection, finding_is_problem, finding_severity_rank, grounding_caveat,
+    page_verification_report_to_document, panel_agreement_label, render_page_verification_text,
+    source_unavailable_detail,
 };
 
 use crate::components::{StatusBadge, StatusTone};
@@ -200,11 +202,11 @@ fn PageReportView(report: PageVerificationReport) -> impl IntoView {
     // support, dead links, partials) float to the top regardless of document
     // position, so a reviewer is not hunting through dozens of clean citations.
     let mut findings = report.findings.clone();
-    findings.sort_by_key(|finding| (severity_rank(finding), finding.use_site_ordinal));
+    findings.sort_by_key(|finding| (finding_severity_rank(finding), finding.use_site_ordinal));
     let total = findings.len();
     let problem_count = findings
         .iter()
-        .filter(|finding| is_problem(finding))
+        .filter(|finding| finding_is_problem(finding))
         .count();
     let findings = StoredValue::new(findings);
     let (problems_only, set_problems_only) = signal(false);
@@ -269,7 +271,7 @@ fn PageReportView(report: PageVerificationReport) -> impl IntoView {
                         let only = problems_only.get();
                         findings.with_value(|all| {
                             all.iter()
-                                .filter(|finding| !only || is_problem(finding))
+                                .filter(|finding| !only || finding_is_problem(finding))
                                 .cloned()
                                 .map(|finding| view! { <FindingCard finding=finding /> })
                                 .collect_view()
@@ -301,8 +303,8 @@ fn PageReportView(report: PageVerificationReport) -> impl IntoView {
 fn FindingCard(finding: CitationFinding) -> impl IntoView {
     let (verdict_label, verdict_tone) = verdict_meta(&finding);
     let grounding = grounding_flag(finding.grounding_status);
-    let agreement = agreement_label(finding.agreement);
-    let reason = unavailable_label(&finding);
+    let agreement = panel_agreement_label(finding.agreement);
+    let reason = source_unavailable_detail(&finding);
     let ordinal = finding.use_site_ordinal;
     let ref_id = finding.ref_id.clone();
     let url = finding.provenance.url.to_string();
@@ -397,104 +399,19 @@ fn verdict_meta(finding: &CitationFinding) -> (String, StatusTone) {
     }
 }
 
-/// A support-class verdict (the panel judged the source to back the claim).
-fn is_support(verdict: CitationVerdict) -> bool {
-    matches!(
-        verdict,
-        CitationVerdict::Judged(SupportLevel::Supported | SupportLevel::Partial)
-    )
-}
-
-/// Ordering weight for problem-first sorting — lower sorts earlier. The tiers,
-/// most urgent first: refuted (`NotSupported`), support whose quote could not be
-/// located (unverified), a dead live link, a partial, an unusable source (tool
-/// limitation), and finally a grounded `Supported`.
-fn severity_rank(finding: &CitationFinding) -> u8 {
-    match finding.verdict {
-        CitationVerdict::Judged(SupportLevel::NotSupported) => 0,
-        _ if is_support(finding.verdict)
-            && finding.grounding_status == GroundingStatus::Unlocated =>
-        {
-            1
-        }
-        CitationVerdict::SourceUnavailable
-            if finding.source_unavailable_reason == Some(SourceUnavailableReason::Unreachable) =>
-        {
-            2
-        }
-        CitationVerdict::Judged(SupportLevel::Partial) => 3,
-        CitationVerdict::SourceUnavailable => 4,
-        CitationVerdict::Judged(SupportLevel::Supported) => 5,
-    }
-}
-
-/// A finding a reviewer likely needs to act on: refuted, unverified support, a
-/// dead link, or a partial. Unusable sources (PDF/paywall) and grounded support
-/// are not surfaced by the "problems only" filter.
-fn is_problem(finding: &CitationFinding) -> bool {
-    severity_rank(finding) <= 3
-}
-
-/// The measured panel agreement, shown only when it carries information (a panel
-/// of at least two models — ADR-0006 §3).
-fn agreement_label(agreement: PanelAgreement) -> Option<String> {
-    agreement
-        .is_meaningful()
-        .then(|| format!("{}/{} agree", agreement.winner_votes, agreement.panel_size))
-}
-
-/// The grounding axis as a reviewer-facing flag. Crucially, an `Unlocated`
-/// support is surfaced as *unverified* (amber) rather than hidden behind a green
-/// verdict — the panel claimed support but the quote was not found in the source.
+/// The grounding axis as a styled flag. The classification and labels are shared
+/// (`sp42_reporting::grounding_caveat`); this maps the caution signal to a tone
+/// so an `Unlocated` support reads as *unverified* (amber), not a clean green
+/// pass. `None` when no supporting quote is expected.
 fn grounding_flag(status: GroundingStatus) -> Option<(&'static str, StatusTone)> {
-    match status {
-        GroundingStatus::Located => Some(("quote located in source", StatusTone::Success)),
-        GroundingStatus::LocatedFuzzy => Some(("quote located (fuzzy match)", StatusTone::Warning)),
-        GroundingStatus::Unlocated => Some((
-            "unverified — quote not found in source",
-            StatusTone::Warning,
-        )),
-        GroundingStatus::NotApplicable => None,
-    }
-}
-
-/// A human-readable reason for a `SourceUnavailable` verdict: a dead link (with
-/// its HTTP status when known) or a fetched-but-unreadable body (with the
-/// classifier detail). `None` for any other verdict.
-fn unavailable_label(finding: &CitationFinding) -> Option<String> {
-    match finding.source_unavailable_reason? {
-        SourceUnavailableReason::Unreachable => {
-            let status = finding
-                .provenance
-                .http_status
-                .map_or_else(String::new, |status| format!(" (HTTP {status})"));
-            Some(format!("source unavailable — dead link{status}"))
-        }
-        SourceUnavailableReason::Unusable => Some(format!(
-            "source unavailable — {}",
-            finding
-                .unusable_reason
-                .map_or("could not read content", humanize_unusable)
-        )),
-    }
-}
-
-/// Plain-language rendering of a body-classifier reason (the `{:?}` debug form is
-/// not reviewer-facing).
-fn humanize_unusable(reason: BodyUsabilityReason) -> &'static str {
-    match reason {
-        BodyUsabilityReason::Ok => "usable",
-        BodyUsabilityReason::JsonLdLeak => "page returned metadata, not article text",
-        BodyUsabilityReason::CssLeak => "page returned a stylesheet, not article text",
-        BodyUsabilityReason::AntiBotChallenge => "blocked by an anti-bot challenge",
-        BodyUsabilityReason::WaybackRedirectNotice => "archive returned a redirect notice",
-        BodyUsabilityReason::WaybackChrome => "archive returned only toolbar chrome",
-        BodyUsabilityReason::AmazonStub => "Amazon boilerplate, not article text",
-        BodyUsabilityReason::ShortBody => "body too short to verify",
-        BodyUsabilityReason::PdfBody => "PDF — not machine-readable here",
-        BodyUsabilityReason::ViewerShell => "JavaScript viewer shell, no readable text",
-        BodyUsabilityReason::NavChromePaywall => "paywall / sign-in wall",
-    }
+    grounding_caveat(status).map(|caveat| {
+        let tone = if caveat.is_caution() {
+            StatusTone::Warning
+        } else {
+            StatusTone::Success
+        };
+        (caveat.label(), tone)
+    })
 }
 
 #[component]
@@ -541,158 +458,4 @@ fn input_value(ev: &leptos::ev::Event) -> String {
 #[cfg(not(target_arch = "wasm32"))]
 fn input_value(_ev: &leptos::ev::Event) -> String {
     String::new()
-}
-
-#[cfg(test)]
-mod tests {
-    use super::{
-        agreement_label, grounding_flag, humanize_unusable, is_problem, severity_rank,
-        unavailable_label,
-    };
-    use crate::components::StatusTone;
-    use sp42_core::{
-        BodyUsabilityReason, CitationFinding, CitationFindingKind, CitationVerdict,
-        GroundingAssertion, GroundingStatus, PanelAgreement, SourceProvenance,
-        SourceUnavailableReason, SupportLevel,
-    };
-
-    fn finding(verdict: CitationVerdict, grounding: GroundingStatus) -> CitationFinding {
-        CitationFinding {
-            kind: CitationFindingKind::CitationVerdict,
-            verdict,
-            grounding_status: grounding,
-            source_unavailable_reason: None,
-            unusable_reason: None,
-            agreement: PanelAgreement::new(3, 3),
-            passage: None,
-            provenance: SourceProvenance {
-                url: url::Url::parse("https://example.org/a").expect("test url"),
-                content_hash: "hash".to_string(),
-                fetched_at: 0,
-                http_status: Some(200),
-            },
-            grounding: GroundingAssertion::SourceFetched {
-                source_hash: "hash".to_string(),
-            },
-            use_site_ordinal: 0,
-            ref_id: "ref".to_string(),
-            claim: "claim".to_string(),
-            preceding_context: Vec::new(),
-            archive_of: None,
-            schema_version: 1,
-        }
-    }
-
-    fn unreachable(http_status: Option<u16>) -> CitationFinding {
-        let mut f = finding(
-            CitationVerdict::SourceUnavailable,
-            GroundingStatus::NotApplicable,
-        );
-        f.source_unavailable_reason = Some(SourceUnavailableReason::Unreachable);
-        f.provenance.http_status = http_status;
-        f
-    }
-
-    fn unusable(reason: Option<BodyUsabilityReason>) -> CitationFinding {
-        let mut f = finding(
-            CitationVerdict::SourceUnavailable,
-            GroundingStatus::NotApplicable,
-        );
-        f.source_unavailable_reason = Some(SourceUnavailableReason::Unusable);
-        f.unusable_reason = reason;
-        f
-    }
-
-    #[test]
-    fn severity_orders_problems_before_clean_citations() {
-        let not_supported = finding(
-            CitationVerdict::Judged(SupportLevel::NotSupported),
-            GroundingStatus::NotApplicable,
-        );
-        let unverified = finding(
-            CitationVerdict::Judged(SupportLevel::Supported),
-            GroundingStatus::Unlocated,
-        );
-        let supported = finding(
-            CitationVerdict::Judged(SupportLevel::Supported),
-            GroundingStatus::Located,
-        );
-
-        // Refuted < unverified-support < dead link < partial < unusable < supported.
-        assert!(severity_rank(&not_supported) < severity_rank(&unverified));
-        assert!(severity_rank(&unverified) < severity_rank(&unreachable(None)));
-        assert!(severity_rank(&unreachable(None)) < severity_rank(&unusable(None)));
-        assert!(severity_rank(&unusable(None)) < severity_rank(&supported));
-    }
-
-    #[test]
-    fn problem_filter_keeps_actionable_drops_clean() {
-        assert!(is_problem(&finding(
-            CitationVerdict::Judged(SupportLevel::NotSupported),
-            GroundingStatus::NotApplicable
-        )));
-        // A "supported" whose quote did not locate is unverified — still a problem.
-        assert!(is_problem(&finding(
-            CitationVerdict::Judged(SupportLevel::Supported),
-            GroundingStatus::Unlocated
-        )));
-        assert!(is_problem(&unreachable(None)));
-        assert!(is_problem(&finding(
-            CitationVerdict::Judged(SupportLevel::Partial),
-            GroundingStatus::Located
-        )));
-
-        // A grounded "supported" and a tool-limited unusable source are not.
-        assert!(!is_problem(&finding(
-            CitationVerdict::Judged(SupportLevel::Supported),
-            GroundingStatus::Located
-        )));
-        assert!(!is_problem(&unusable(Some(BodyUsabilityReason::PdfBody))));
-    }
-
-    #[test]
-    fn agreement_shows_only_for_a_real_panel() {
-        assert_eq!(
-            agreement_label(PanelAgreement::new(3, 2)),
-            Some("2/3 agree".to_string())
-        );
-        // A single-model "panel" carries no agreement signal.
-        assert_eq!(agreement_label(PanelAgreement::new(1, 1)), None);
-    }
-
-    #[test]
-    fn unlocated_support_is_flagged_unverified() {
-        let (label, tone) = grounding_flag(GroundingStatus::Unlocated).expect("flag present");
-        assert!(label.contains("unverified"));
-        assert_eq!(tone, StatusTone::Warning);
-        // No quote expected → no flag (would be noise).
-        assert!(grounding_flag(GroundingStatus::NotApplicable).is_none());
-    }
-
-    #[test]
-    fn unavailable_label_carries_http_status_and_reason() {
-        assert_eq!(
-            unavailable_label(&unreachable(Some(404))),
-            Some("source unavailable — dead link (HTTP 404)".to_string())
-        );
-        let pdf = unavailable_label(&unusable(Some(BodyUsabilityReason::PdfBody)))
-            .expect("unusable label");
-        assert!(pdf.contains("PDF"));
-        // A grounded support has nothing unavailable to report.
-        assert_eq!(
-            unavailable_label(&finding(
-                CitationVerdict::Judged(SupportLevel::Supported),
-                GroundingStatus::Located
-            )),
-            None
-        );
-    }
-
-    #[test]
-    fn humanize_unusable_is_plain_language() {
-        assert_eq!(
-            humanize_unusable(BodyUsabilityReason::NavChromePaywall),
-            "paywall / sign-in wall"
-        );
-    }
 }

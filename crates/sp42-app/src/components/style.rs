@@ -20,6 +20,7 @@ pub fn wiki_base_url(wiki_id: &str) -> &'static str {
         "frwiki" => "https://fr.wikipedia.org",
         "enwiki" => "https://en.wikipedia.org",
         "dewiki" => "https://de.wikipedia.org",
+        "testwiki" => "https://test.wikipedia.org",
         _ => "https://fr.wikipedia.org",
     }
 }

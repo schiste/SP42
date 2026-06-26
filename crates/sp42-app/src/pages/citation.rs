@@ -8,6 +8,7 @@ use sp42_reporting::{
     panel_agreement_label, render_page_verification_text, source_unavailable_detail,
 };
 
+use crate::components::style::wiki_base_url;
 use crate::components::{StatusBadge, StatusTone};
 use crate::platform::auth::{bootstrap_dev_auth_session, fetch_dev_auth_session_status};
 use crate::platform::citation::fetch_page_report;
@@ -236,8 +237,8 @@ fn PageReportView(report: PageVerificationReport) -> impl IntoView {
         <div class="article-inventory">
             <header class="article-inventory-header">
                 <div>
-                    <span class="section-header">{wiki}" · rev "{rev}</span>
-                    <h1>{title}</h1>
+                    <span class="section-header">{wiki.clone()}" · rev "{rev}</span>
+                    <h1>{title.clone()}</h1>
                 </div>
                 <div style="display:flex;gap:6px;flex-wrap:wrap;">
                     {chips
@@ -258,7 +259,13 @@ fn PageReportView(report: PageVerificationReport) -> impl IntoView {
                 {grouped
                     .into_iter()
                     .map(|(group, items)| view! {
-                        <FindingGroupSection group=group findings=items />
+                        <FindingGroupSection
+                            group=group
+                            findings=items
+                            wiki_id=wiki.clone()
+                            title=title.clone()
+                            rev_id=rev
+                        />
                     })
                     .collect_view()}
             </div>
@@ -286,12 +293,18 @@ fn PageReportView(report: PageVerificationReport) -> impl IntoView {
 /// count, color-coded by a left border. Problem groups open by default; the
 /// confirmed-`Supported` group starts collapsed.
 #[component]
-fn FindingGroupSection(group: FindingGroup, findings: Vec<CitationFinding>) -> impl IntoView {
+fn FindingGroupSection(
+    group: FindingGroup,
+    findings: Vec<CitationFinding>,
+    wiki_id: String,
+    title: String,
+    rev_id: u64,
+) -> impl IntoView {
     let count = findings.len();
     let open = !group.collapsed_by_default();
     let tone = group_tone(group);
     let border = group_border(group);
-    let title = group.title().to_string();
+    let group_title = group.title().to_string();
     let hint = group.hint();
 
     view! {
@@ -302,7 +315,7 @@ fn FindingGroupSection(group: FindingGroup, findings: Vec<CitationFinding>) -> i
             )
         >
             <summary style="cursor:pointer;display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
-                <StatusBadge label=format!("{title} · {count}") tone=tone />
+                <StatusBadge label=format!("{group_title} · {count}") tone=tone />
                 {hint.map(|text| view! {
                     <span class="article-reference-meta">{text}</span>
                 })}
@@ -310,15 +323,39 @@ fn FindingGroupSection(group: FindingGroup, findings: Vec<CitationFinding>) -> i
             <div class="article-reference-list" style="margin-top:10px;">
                 {findings
                     .into_iter()
-                    .map(|finding| view! { <FindingCard finding=finding /> })
+                    .map(|finding| {
+                        let article_url =
+                            article_anchor_url(&wiki_id, &title, rev_id, &finding.ref_id);
+                        view! { <FindingCard finding=finding article_url=article_url /> }
+                    })
                     .collect_view()}
             </div>
         </details>
     }
 }
 
+/// A deep link to the citation's inline marker on the verified revision, so an
+/// editor can jump from a finding to where the claim sits in the article. `ref_id`
+/// is the `cite_ref-…` anchor MediaWiki renders for the `[n]` marker; `None` when
+/// the finding has no page ref (the standalone single-claim path).
+fn article_anchor_url(wiki_id: &str, title: &str, rev_id: u64, ref_id: &str) -> Option<String> {
+    if ref_id.is_empty() {
+        return None;
+    }
+    let mut url = url::Url::parse(&format!("{}/w/index.php", wiki_base_url(wiki_id))).ok()?;
+    {
+        let mut query = url.query_pairs_mut();
+        query.append_pair("title", title);
+        if rev_id != 0 {
+            query.append_pair("oldid", &rev_id.to_string());
+        }
+    }
+    url.set_fragment(Some(ref_id));
+    Some(url.to_string())
+}
+
 #[component]
-fn FindingCard(finding: CitationFinding) -> impl IntoView {
+fn FindingCard(finding: CitationFinding, article_url: Option<String>) -> impl IntoView {
     // The verdict is carried by the enclosing group section + color, so the card
     // leads with the claim (the thing to check) and keeps the long evidence quote
     // behind a disclosure so rows stay compact while scanning.
@@ -359,6 +396,19 @@ fn FindingCard(finding: CitationFinding) -> impl IntoView {
             </div>
 
             <p style="color:#eff4ff;margin:0;">{claim}</p>
+
+            {article_url.map(|href| view! {
+                <div class="article-reference-meta">
+                    <a
+                        href=href
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        style="color:#7cc4ff;font-weight:600;"
+                    >
+                        "↗ show citation in article"
+                    </a>
+                </div>
+            })}
 
             {reason.map(|value| view! { <div class="article-reference-meta">{value}</div> })}
 

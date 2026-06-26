@@ -200,11 +200,28 @@ const fn unusable(reason: BodyUsabilityReason) -> BodyUsability {
 /// of this delegation. The leading params are unused for now.
 #[must_use]
 pub fn classify_source_usability(
-    _source_url: &str,
-    _content_type: &str,
-    _raw_html: Option<&str>,
+    _source_url: &str, // unused until Task 3 (host-rule); `_`-prefixed to satisfy -D warnings
+    content_type: &str,
+    raw_html: Option<&str>,
     text: Option<&str>,
 ) -> BodyUsability {
+    // 1. PDF: content-type or `%PDF-` magic. Check the RAW body (a PDF mislabeled
+    //    text/html keeps its magic in raw_html, not the html_to_text output).
+    let has_pdf_magic = |s: Option<&str>| s.is_some_and(|t| t.trim_start().starts_with("%PDF-"));
+    let is_pdf = content_type
+        .to_ascii_lowercase()
+        .contains("application/pdf")
+        || has_pdf_magic(raw_html)
+        || has_pdf_magic(text);
+    if is_pdf {
+        return unusable(BodyUsabilityReason::PdfBody);
+    }
+
+    // 2. Special-case hosts (host-rule table) — added in Task 3.
+
+    // 3. Paywall / nav-chrome — added in Phase 3.
+
+    // 4. Text-shape detectors.
     classify_body_usability(text)
 }
 
@@ -339,5 +356,45 @@ mod tests {
             classify_source_usability("https://example.com/a", "text/html", None, Some("tiny"));
         assert!(!short.usable);
         assert_eq!(short.reason, BodyUsabilityReason::ShortBody);
+    }
+
+    #[test]
+    fn pdf_by_content_type_is_flagged() {
+        // Correctly-typed PDF: not HTML, so raw_html is None and the %PDF text is `text`.
+        let r = classify_source_usability(
+            "https://example.com/report",
+            "application/pdf",
+            None,
+            Some("%PDF-1.7 ...binary..."),
+        );
+        assert!(!r.usable);
+        assert_eq!(r.reason, BodyUsabilityReason::PdfBody);
+    }
+
+    #[test]
+    fn pdf_by_magic_when_mislabeled_html() {
+        // Server lies with text/html, so fetch treats it as HTML: raw_html holds the
+        // %PDF bytes and `text` is whatever html_to_text made of them. Magic must be
+        // checked against the RAW body.
+        let r = classify_source_usability(
+            "https://example.com/x",
+            "text/html",
+            Some("%PDF-1.4\n%âãÏÓ\n1 0 obj"),
+            Some("garbage extracted text"),
+        );
+        assert!(!r.usable);
+        assert_eq!(r.reason, BodyUsabilityReason::PdfBody);
+    }
+
+    #[test]
+    fn non_pdf_html_is_not_pdf_flagged() {
+        let prose = "The history of the bridge spans more than a century. ".repeat(10);
+        let r = classify_source_usability(
+            "https://example.com/x",
+            "text/html",
+            Some(&prose),
+            Some(&prose),
+        );
+        assert!(r.usable);
     }
 }

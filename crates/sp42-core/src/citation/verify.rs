@@ -2172,7 +2172,50 @@ mod tests {
         ))
         .expect("verifies");
         assert_eq!(outcome.finding.verdict, CitationVerdict::SourceUnavailable);
-        assert_eq!(outcome.finding.unusable_reason, Some(BodyUsabilityReason::NavChromePaywall));
-        assert!(outcome.votes.is_empty(), "paywall stub must not reach the panel");
+        assert_eq!(
+            outcome.finding.unusable_reason,
+            Some(BodyUsabilityReason::NavChromePaywall)
+        );
+        assert!(
+            outcome.votes.is_empty(),
+            "paywall stub must not reach the panel"
+        );
+    }
+
+    #[test]
+    fn unusable_reason_round_trips_and_legacy_defaults_to_none() {
+        let fetch = StubHttpClient::new([Ok(HttpResponse {
+            status: 200,
+            headers: BTreeMap::from([("content-type".to_string(), "application/pdf".to_string())]),
+            body: b"%PDF-1.7 body bytes".to_vec(),
+        })]);
+        let model_client = StubModelClient::new([]);
+        let finding = block_on(verify_citation_use_site(
+            &fetch,
+            &model_client,
+            &FixedClock::new(1000),
+            &[model()],
+            &request("A claim", "https://example.com/x.pdf"),
+            None,
+            3,
+            VerifyOptions::default(),
+        ))
+        .expect("verifies")
+        .finding;
+        assert_eq!(finding.unusable_reason, Some(BodyUsabilityReason::PdfBody));
+
+        // Round-trip preserves the reason.
+        let json = serde_json::to_string(&finding).expect("serialize");
+        let back: CitationFinding = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(back.unusable_reason, Some(BodyUsabilityReason::PdfBody));
+
+        // Legacy record (field absent) deserializes to None via #[serde(default)].
+        let mut value: serde_json::Value = serde_json::from_str(&json).expect("to value");
+        value
+            .as_object_mut()
+            .expect("object")
+            .remove("unusable_reason");
+        let legacy: CitationFinding = serde_json::from_value(value).expect("legacy deserialize");
+        assert_eq!(legacy.unusable_reason, None);
     }
 }

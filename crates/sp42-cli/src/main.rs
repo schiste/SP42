@@ -1,15 +1,20 @@
 use std::convert::TryFrom;
 use std::io::{self, Read};
 use std::process::ExitCode;
+use std::time::Duration;
 
+use async_trait::async_trait;
 use futures::executor::block_on;
 use reqwest::header::COOKIE;
 use serde_json::Value;
 use sp42_core::routes as route_contracts;
 use sp42_core::{
-    DevAuthBootstrapRequest, DevAuthSessionStatus, QueuedEdit, SessionActionExecutionRequest,
-    SessionActionExecutionResponse, SessionActionKind, build_dev_auth_bootstrap_request,
-    parse_dev_auth_status,
+    CitationFinding, CitationVerificationRequest, ClaimContext, DevAuthBootstrapRequest,
+    DevAuthSessionStatus, GroundingStatus, QueuedEdit, SessionActionExecutionRequest,
+    SessionActionExecutionResponse, SessionActionKind, SystemClock, VerificationOutcome,
+    VerifyOptions as CoreVerifyOptions, build_dev_auth_bootstrap_request,
+    check_fetchable_source_url, locate_quote, locate_quote_fuzzy, parse_dev_auth_status,
+    verify_citation_use_site,
 };
 use sp42_devtools::{
     DEV_PREVIEW_SAMPLE_EVENTS, DEV_PREVIEW_WIKI_ID, DevContextOptions, DevWorkbenchOptions,
@@ -17,12 +22,13 @@ use sp42_devtools::{
     build_dev_context_preview, build_dev_coordination_preview, build_dev_queue,
     build_dev_stream_preview, build_dev_workbench, parse_default_dev_wiki_config,
 };
+use sp42_inference::{client_from_env, panel_from_env};
 use sp42_reporting::{
     PatrolScenarioReportInputs, ShellStateInputs, build_patrol_scenario_report,
     build_shell_state_model, render_patrol_scenario_markdown, render_patrol_scenario_text,
     render_shell_state_markdown, render_shell_state_text,
 };
-use sp42_types::{HttpMethod, HttpRequest, HttpResponse};
+use sp42_types::{HttpClient, HttpClientError, HttpMethod, HttpRequest, HttpResponse};
 use std::collections::{BTreeMap, BTreeSet};
 
 const LOCAL_SERVER_BASE_URL: &str = "http://127.0.0.1:8788";
@@ -34,6 +40,24 @@ enum OutputFormat {
     Markdown,
 }
 
+/// Which bare-URL flag-mode was selected (PRD-0008 CLI surface).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum BareUrlCliMode {
+    Preview,
+    Execute { ordinal: usize },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct BareUrlCliOptions {
+    mode: BareUrlCliMode,
+    wiki_id: String,
+    title: String,
+    rev_id: u64,
+}
+
+/// The MVP's only enabled wiki; overridable with --wiki.
+const BARE_URL_DEFAULT_WIKI: &str = "testwiki";
+
 #[derive(Debug, Clone, PartialEq)]
 struct CliOptions {
     format: OutputFormat,
@@ -44,6 +68,30 @@ struct CliOptions {
     action_note: Option<String>,
     action_kind: SessionActionKind,
     bridge_base_url: String,
+    bare_url: Option<BareUrlCliOptions>,
+    verify: Option<VerifyCliOptions>,
+    verdict_only: bool,
+    /// `--locate-probe --quote <q>`: read a source body from STDIN and report whether the
+    /// quote locates (offline, no model) — the deterministic locate-replay tool (SP42#25).
+    locate_probe: Option<String>,
+}
+
+/// Read-only citation-verification request (PRD-0001). The first cut supports the ad-hoc
+/// (claim + source URL) mode; article/revision/index modes await the article parser.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct VerifyCliOptions {
+    claim: String,
+    source_url: String,
+    include_metadata: bool,
+    /// Emit the full `VerificationOutcome` (finding + per-model votes incl. raw claimed
+    /// quotes) as JSON, for the deterministic locate-replay harness (SP42#25).
+    debug_votes: bool,
+    /// Run the bounded repair turn (SP42#25 layer 3); `--no-repair` turns it off (one fewer
+    /// model call per unlocated support vote, for cost control and A/B measurement).
+    repair: bool,
+    /// The SIDE co-reference context: preceding sentences (`--preceding-sentence`, repeatable),
+    /// in the order given. Empty by default, which keeps the verifier on its no-context path.
+    preceding_sentences: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -100,6 +148,22 @@ fn main() -> ExitCode {
 
 fn run() -> Result<String, String> {
     let options = parse_options(std::env::args().skip(1))?;
+    if let Some(bare_url) = &options.bare_url {
+        return render_bare_url_mode(bare_url, &options, options.format);
+    }
+
+    // Offline locate probe: read a source body from STDIN, report whether the quote locates.
+    // No model, no fetch — the deterministic locate-replay tool (SP42#25).
+    if let Some(quote) = &options.locate_probe {
+        let source = read_stdin().map_err(|error| error.to_string())?;
+        return run_locate_probe(quote, &source);
+    }
+
+    // Read-only citation verification is independent of the dev-queue payload.
+    if let Some(verify) = &options.verify {
+        return render_verify(verify, options.format, options.verdict_only);
+    }
+
     let input = read_stdin().map_err(|error| error.to_string())?;
     let payload = if input.trim().is_empty() {
         DEV_PREVIEW_SAMPLE_EVENTS
@@ -182,6 +246,21 @@ fn parse_options(args: impl IntoIterator<Item = String>) -> Result<CliOptions, S
     let mut action_kind = SessionActionKind::Patrol;
     let mut bridge_base_url = LOCAL_SERVER_BASE_URL.to_string();
     let mut preview_modes = BTreeSet::new();
+    let mut bare_url_preview = false;
+    let mut bare_url_execute = false;
+    let mut bare_url_title = None;
+    let mut bare_url_rev = None;
+    let mut bare_url_ordinal = None;
+    let mut bare_url_wiki = BARE_URL_DEFAULT_WIKI.to_string();
+    let mut verify_claim = None;
+    let mut verify_source_url = None;
+    let mut verify_metadata = false;
+    let mut verify_debug_votes = false;
+    let mut verify_repair = true;
+    let mut verify_preceding: Vec<String> = Vec::new();
+    let mut verdict_only = false;
+    let mut probe_quote = None;
+    let mut locate_probe_flag = false;
 
     while let Some(arg) = args.next() {
         let mut state = CliParseState {
@@ -196,9 +275,46 @@ fn parse_options(args: impl IntoIterator<Item = String>) -> Result<CliOptions, S
             action_kind: &mut action_kind,
             bridge_base_url: &mut bridge_base_url,
             preview_modes: &mut preview_modes,
+            bare_url_preview: &mut bare_url_preview,
+            bare_url_execute: &mut bare_url_execute,
+            bare_url_title: &mut bare_url_title,
+            bare_url_rev: &mut bare_url_rev,
+            bare_url_ordinal: &mut bare_url_ordinal,
+            bare_url_wiki: &mut bare_url_wiki,
+            verify_claim: &mut verify_claim,
+            verify_source_url: &mut verify_source_url,
+            verify_metadata: &mut verify_metadata,
+            verify_debug_votes: &mut verify_debug_votes,
+            verify_repair: &mut verify_repair,
+            verify_preceding: &mut verify_preceding,
+            verdict_only: &mut verdict_only,
+            probe_quote: &mut probe_quote,
+            locate_probe_flag: &mut locate_probe_flag,
         };
         apply_cli_argument(&arg, &mut args, &mut state)?;
     }
+
+    let bare_url = build_bare_url_options(
+        bare_url_preview,
+        bare_url_execute,
+        bare_url_wiki,
+        bare_url_title,
+        bare_url_rev,
+        bare_url_ordinal,
+    )?;
+    let verify = build_verify_options(
+        verify_claim,
+        verify_source_url,
+        verify_metadata,
+        verify_debug_votes,
+        verify_repair,
+        verify_preceding,
+    )?;
+    let locate_probe = if locate_probe_flag {
+        Some(probe_quote.ok_or_else(|| "--locate-probe requires --quote".to_string())?)
+    } else {
+        None
+    };
 
     Ok(CliOptions {
         format,
@@ -213,7 +329,34 @@ fn parse_options(args: impl IntoIterator<Item = String>) -> Result<CliOptions, S
         action_note,
         action_kind,
         bridge_base_url,
+        bare_url,
+        verify,
+        verdict_only,
+        locate_probe,
     })
+}
+
+/// Assemble the verify options, requiring both the claim and the source URL together.
+fn build_verify_options(
+    claim: Option<String>,
+    source_url: Option<String>,
+    include_metadata: bool,
+    debug_votes: bool,
+    repair: bool,
+    preceding_sentences: Vec<String>,
+) -> Result<Option<VerifyCliOptions>, String> {
+    match (claim, source_url) {
+        (Some(claim), Some(source_url)) => Ok(Some(VerifyCliOptions {
+            claim,
+            source_url,
+            include_metadata,
+            debug_votes,
+            repair,
+            preceding_sentences,
+        })),
+        (None, None) => Ok(None),
+        _ => Err("citation verification requires both --claim and --source-url".to_string()),
+    }
 }
 
 struct CliParseState<'a> {
@@ -228,6 +371,21 @@ struct CliParseState<'a> {
     action_kind: &'a mut SessionActionKind,
     bridge_base_url: &'a mut String,
     preview_modes: &'a mut BTreeSet<PreviewMode>,
+    bare_url_preview: &'a mut bool,
+    bare_url_execute: &'a mut bool,
+    bare_url_title: &'a mut Option<String>,
+    bare_url_rev: &'a mut Option<u64>,
+    bare_url_ordinal: &'a mut Option<usize>,
+    bare_url_wiki: &'a mut String,
+    verify_claim: &'a mut Option<String>,
+    verify_source_url: &'a mut Option<String>,
+    verify_metadata: &'a mut bool,
+    verify_debug_votes: &'a mut bool,
+    verify_repair: &'a mut bool,
+    verify_preceding: &'a mut Vec<String>,
+    verdict_only: &'a mut bool,
+    probe_quote: &'a mut Option<String>,
+    locate_probe_flag: &'a mut bool,
 }
 
 fn apply_cli_argument<I>(
@@ -275,10 +433,99 @@ where
         "--bridge-base-url" => {
             *state.bridge_base_url = next_option_value(args, "--bridge-base-url")?;
         }
+        "--bare-url-preview" => {
+            *state.bare_url_preview = true;
+        }
+        "--bare-url-execute" => {
+            *state.bare_url_execute = true;
+        }
+        "--title" => {
+            *state.bare_url_title = Some(next_option_value(args, "--title")?);
+        }
+        "--rev" => {
+            let value = next_option_value(args, "--rev")?;
+            *state.bare_url_rev = Some(
+                value
+                    .parse()
+                    .map_err(|_| format!("--rev expects a revision id, got: {value}"))?,
+            );
+        }
+        "--ordinal" => {
+            let value = next_option_value(args, "--ordinal")?;
+            *state.bare_url_ordinal = Some(
+                value
+                    .parse()
+                    .map_err(|_| format!("--ordinal expects a zero-based index, got: {value}"))?,
+            );
+        }
+        "--wiki" => {
+            *state.bare_url_wiki = next_option_value(args, "--wiki")?;
+        }
+        "--claim" => {
+            *state.verify_claim = Some(next_option_value(args, "--claim")?);
+        }
+        "--source-url" => {
+            *state.verify_source_url = Some(next_option_value(args, "--source-url")?);
+        }
+        "--preceding-sentence" => {
+            state
+                .verify_preceding
+                .push(next_option_value(args, "--preceding-sentence")?);
+        }
+        "--with-metadata" => {
+            *state.verify_metadata = true;
+        }
+        "--debug-votes" => {
+            *state.verify_debug_votes = true;
+        }
+        "--no-repair" => {
+            *state.verify_repair = false;
+        }
+        "--quote" => {
+            *state.probe_quote = Some(next_option_value(args, "--quote")?);
+        }
+        "--locate-probe" => {
+            *state.locate_probe_flag = true;
+        }
+        "--verdict-only" => {
+            *state.verdict_only = true;
+        }
         _ => return Err(format!("unsupported argument: {arg}")),
     }
 
     Ok(())
+}
+
+/// Assemble the bare-URL flag-mode options. Both modes need --title and
+/// --rev; --bare-url-execute additionally needs --ordinal.
+fn build_bare_url_options(
+    preview: bool,
+    execute: bool,
+    wiki_id: String,
+    title: Option<String>,
+    rev_id: Option<u64>,
+    ordinal: Option<usize>,
+) -> Result<Option<BareUrlCliOptions>, String> {
+    if preview && execute {
+        return Err("--bare-url-preview and --bare-url-execute are mutually exclusive".to_string());
+    }
+    if !preview && !execute {
+        return Ok(None);
+    }
+    let title = title.ok_or_else(|| "bare-url modes require --title".to_string())?;
+    let rev_id = rev_id.ok_or_else(|| "bare-url modes require --rev".to_string())?;
+    let mode = if execute {
+        let ordinal = ordinal.ok_or_else(|| "--bare-url-execute requires --ordinal".to_string())?;
+        BareUrlCliMode::Execute { ordinal }
+    } else {
+        BareUrlCliMode::Preview
+    };
+    Ok(Some(BareUrlCliOptions {
+        mode,
+        wiki_id,
+        title,
+        rev_id,
+    }))
 }
 
 fn build_context_preview(
@@ -327,6 +574,497 @@ fn parse_liftwing_probability(value: &str) -> Result<f32, String> {
     value
         .parse::<f32>()
         .map_err(|_| "--context-liftwing must be a valid float".to_string())
+}
+
+// ----- Read-only citation verification (PRD-0001) -----
+
+/// A reqwest-backed `HttpClient` for the CLI's **source fetch** only. It deliberately holds
+/// no inference credential: the model bearer lives solely in the inference client, so an API
+/// key can never leak to a third-party source site through this client.
+struct CliHttpClient {
+    client: reqwest::Client,
+    /// Allow loopback/private source hosts — a dev/test escape hatch for the loopback-serving
+    /// benchmark harness (`SP42_FETCH_ALLOW_PRIVATE=1`). Off by default (SP42#34 SSRF floor).
+    allow_private: bool,
+    /// Source-response body cap, enforced both against `Content-Length` and while streaming
+    /// (SP42#43). Production uses [`MAX_SOURCE_BYTES`]; tests inject a small value.
+    max_source_bytes: u64,
+}
+
+/// Source-response size cap (SP42#43): enforced against `Content-Length` *and* while reading
+/// the body stream, so a chunked / no-length response can't return an unbounded body.
+const MAX_SOURCE_BYTES: u64 = 8 * 1024 * 1024;
+
+/// How many redirect hops a source fetch will follow. Each hop's destination is re-checked
+/// against the SSRF floor before it is fetched (SP42#43).
+const MAX_SOURCE_REDIRECTS: u8 = 5;
+
+#[async_trait]
+impl HttpClient for CliHttpClient {
+    async fn execute(&self, request: HttpRequest) -> Result<HttpResponse, HttpClientError> {
+        // Read-only source fetch: GET only.
+        let HttpMethod::Get = request.method else {
+            return Err(HttpClientError::Transport {
+                message: format!("source fetch only allows GET, got {:?}", request.method),
+            });
+        };
+        // Redirects are NOT auto-followed (the client uses `Policy::none()`); we follow them
+        // manually so every hop's destination passes the SSRF floor before we connect — a
+        // public-looking host must not be able to bounce us to loopback/private infrastructure.
+        let mut url = request.url.clone();
+        let mut redirects_left = MAX_SOURCE_REDIRECTS;
+        let mut response = loop {
+            // SSRF floor (SP42#34): refuse a non-http(s) / loopback / private / link-local host
+            // — on the initial URL and on every redirect destination — unless the escape hatch
+            // is set.
+            if !self.allow_private {
+                check_fetchable_source_url(&url)
+                    .map_err(|message| HttpClientError::Transport { message })?;
+            }
+            let mut builder = self.client.get(url.clone());
+            for (key, value) in &request.headers {
+                builder = builder.header(key, value);
+            }
+            let response = builder
+                .send()
+                .await
+                .map_err(|error| HttpClientError::Transport {
+                    message: error.to_string(),
+                })?;
+            if !response.status().is_redirection() {
+                break response;
+            }
+            let location =
+                redirect_location(&response).ok_or_else(|| HttpClientError::Transport {
+                    message: format!(
+                        "source redirect {} had no usable Location header",
+                        response.status().as_u16()
+                    ),
+                })?;
+            let next = url
+                .join(&location)
+                .map_err(|error| HttpClientError::Transport {
+                    message: format!("invalid redirect Location {location:?}: {error}"),
+                })?;
+            if redirects_left == 0 {
+                return Err(HttpClientError::Transport {
+                    message: format!("source fetch exceeded {MAX_SOURCE_REDIRECTS} redirects"),
+                });
+            }
+            redirects_left -= 1;
+            url = next;
+        };
+        // Fast-reject an honestly-declared oversized body before reading any of it.
+        if response
+            .content_length()
+            .is_some_and(|len| len > self.max_source_bytes)
+        {
+            return Err(HttpClientError::Transport {
+                message: format!(
+                    "source response exceeds {}-byte cap (Content-Length)",
+                    self.max_source_bytes
+                ),
+            });
+        }
+        let status = response.status().as_u16();
+        let headers = response
+            .headers()
+            .iter()
+            .filter_map(|(name, value)| {
+                value
+                    .to_str()
+                    .ok()
+                    .map(|value| (name.as_str().to_lowercase(), value.to_string()))
+            })
+            .collect();
+        // Stream the body so a chunked / no-`Content-Length` response is capped too: stop as
+        // soon as the accumulated bytes would exceed the cap.
+        let mut body: Vec<u8> = Vec::new();
+        while let Some(chunk) =
+            response
+                .chunk()
+                .await
+                .map_err(|error| HttpClientError::Transport {
+                    message: error.to_string(),
+                })?
+        {
+            if body.len() as u64 + chunk.len() as u64 > self.max_source_bytes {
+                return Err(HttpClientError::Transport {
+                    message: format!(
+                        "source response exceeds {}-byte cap (streamed)",
+                        self.max_source_bytes
+                    ),
+                });
+            }
+            body.extend_from_slice(&chunk);
+        }
+        Ok(HttpResponse {
+            status,
+            headers,
+            body,
+        })
+    }
+}
+
+/// The `Location` header of a redirect response as a string, if present and valid UTF-8.
+fn redirect_location(response: &reqwest::Response) -> Option<String> {
+    response
+        .headers()
+        .get(reqwest::header::LOCATION)?
+        .to_str()
+        .ok()
+        .map(ToString::to_string)
+}
+
+/// Run the offline locate probe: report whether `quote` locates verbatim in `source` using
+/// the real [`locate_quote`], plus the guarded-fuzzy axis when exact locate misses, as JSON
+/// `{"located": bool, "offset": <n>|null, "fuzzy": bool, "fuzzy_span": <s>|null,
+/// "fuzzy_offset": <n>|null}`. No model, no network — lets a harness replay a frozen corpus
+/// of model quotes through the actual Rust matcher to measure locate changes exactly (SP42#25).
+fn run_locate_probe(quote: &str, source: &str) -> Result<String, String> {
+    let offset = locate_quote(quote, source);
+    // The fuzzy axis (SP42#25 layer 5) is reported only when exact locate misses, mirroring
+    // the gate's exact-first order, so the harness measures layer 5's marginal recovery.
+    let fuzzy = if offset.is_some() {
+        None
+    } else {
+        locate_quote_fuzzy(quote, source)
+    };
+    serde_json::to_string(&serde_json::json!({
+        "located": offset.is_some(),
+        "offset": offset,
+        "fuzzy": fuzzy.is_some(),
+        "fuzzy_span": fuzzy.as_ref().map(|hit| hit.span.as_str()),
+        "fuzzy_offset": fuzzy.as_ref().map(|hit| hit.offset),
+    }))
+    .map_err(|error| error.to_string())
+}
+
+/// Render a citation verdict in the requested format (or terse verdict-only).
+fn render_verify(
+    options: &VerifyCliOptions,
+    format: OutputFormat,
+    verdict_only: bool,
+) -> Result<String, String> {
+    // genai (and reqwest) require a Tokio reactor, so the verify path runs on its own
+    // runtime rather than the futures executor the dev-preview paths use.
+    let runtime = tokio::runtime::Runtime::new()
+        .map_err(|error| format!("failed to start async runtime: {error}"))?;
+    let outcome = runtime.block_on(run_verify(options))?;
+    // --debug-votes emits the full outcome (finding + per-model votes incl. the raw claimed
+    // quotes) so the offline locate-replay harness can capture model outputs once (SP42#25).
+    if options.debug_votes {
+        return serde_json::to_string_pretty(&outcome).map_err(|error| error.to_string());
+    }
+    let finding = &outcome.finding;
+    if verdict_only {
+        return Ok(finding.verdict.as_wire().to_string());
+    }
+    match format {
+        OutputFormat::Json => serde_json::to_string_pretty(finding).map_err(|e| e.to_string()),
+        OutputFormat::Markdown => Ok(render_markdown_section(
+            "Citation verdict",
+            &render_verify_text(finding),
+        )),
+        OutputFormat::Text => Ok(render_verify_text(finding)),
+    }
+}
+
+/// Execute one ad-hoc (claim, source URL) verification against the configured panel.
+///
+/// Reads the inference endpoint, model panel, and (optional) bearer token from the
+/// environment so no secret is hard-coded; performs only read-only GET/POST requests.
+async fn run_verify(options: &VerifyCliOptions) -> Result<VerificationOutcome, String> {
+    let panel = panel_from_env()?;
+    let model_client = client_from_env()?;
+
+    let source_url = options
+        .source_url
+        .parse()
+        .map_err(|_| format!("invalid --source-url: {}", options.source_url))?;
+    let request = CitationVerificationRequest {
+        wiki_id: String::new(),
+        rev_id: 0,
+        title: String::new(),
+        claim: options.claim.clone(),
+        source_url,
+    };
+
+    // The source-fetch client carries no inference credential; the bearer is held only by
+    // the model adapter, so it can never reach a third-party source host. Redirects are not
+    // auto-followed; `CliHttpClient::execute` follows them manually and re-checks every hop
+    // against the SSRF floor before connecting (SP42#34/#43).
+    let allow_private = std::env::var("SP42_FETCH_ALLOW_PRIVATE").is_ok_and(|value| value == "1");
+    let fetch_client = CliHttpClient {
+        client: reqwest::Client::builder()
+            .user_agent(sp42_core::branding::USER_AGENT)
+            .connect_timeout(Duration::from_secs(10))
+            .timeout(Duration::from_secs(30))
+            .redirect(reqwest::redirect::Policy::none())
+            .build()
+            .map_err(|error| format!("source http client failed to build: {error}"))?,
+        allow_private,
+        max_source_bytes: MAX_SOURCE_BYTES,
+    };
+
+    let verify_options = CoreVerifyOptions {
+        include_metadata: options.include_metadata,
+        concurrency: 3,
+        repair_turn: options.repair,
+        ..Default::default()
+    };
+    // SIDE-style co-reference context (article title unused on the claim+url CLI surface;
+    // the library API is the eval-corpus driver). Empty context stays on the no-context path.
+    let claim_context = {
+        let context = ClaimContext {
+            article_title: String::new(),
+            preceding_sentences: options.preceding_sentences.clone(),
+        };
+        if context.is_empty() {
+            None
+        } else {
+            Some(context)
+        }
+    };
+
+    let outcome = verify_citation_use_site(
+        &fetch_client,
+        &model_client,
+        &SystemClock,
+        &panel,
+        &request,
+        claim_context.as_ref(),
+        0,
+        verify_options,
+    )
+    .await
+    .map_err(|error| error.to_string())?;
+    Ok(outcome)
+}
+
+/// Human-readable verdict block.
+fn render_verify_text(finding: &CitationFinding) -> String {
+    let mut lines = vec![
+        format!("verdict: {}", finding.verdict.as_wire()),
+        format!("source: {}", finding.provenance.url),
+    ];
+    match finding.grounding_status {
+        GroundingStatus::Located => {
+            lines.push("verification: quote located in source".to_string());
+        }
+        GroundingStatus::LocatedFuzzy => lines.push(
+            "verification: passage located by guarded fuzzy match (shown text is the source's own) — please confirm"
+                .to_string(),
+        ),
+        GroundingStatus::Unlocated => lines.push(
+            "verification: UNVERIFIED — model claims support but its quote was not found in the source"
+                .to_string(),
+        ),
+        GroundingStatus::NotApplicable => {}
+    }
+    if finding.agreement.is_meaningful() {
+        lines.push(format!(
+            "agreement: {}/{} models",
+            finding.agreement.winner_votes, finding.agreement.panel_size
+        ));
+    }
+    match &finding.passage {
+        Some(passage) => lines.push(format!("supporting passage: \"{}\"", passage.quote)),
+        None => lines.push("supporting passage: (none located)".to_string()),
+    }
+    lines.push(format!(
+        "source content hash: {}",
+        finding.provenance.content_hash
+    ));
+    lines.join("\n")
+}
+
+#[cfg(test)]
+mod verify_tests {
+    use sp42_core::{
+        CitationFinding, CitationFindingKind, CitationVerdict, GroundingAssertion, GroundingStatus,
+        LocatedPassage, PanelAgreement, SourceProvenance, SupportLevel,
+    };
+
+    use super::{VerifyCliOptions, parse_options, render_verify_text, run_locate_probe};
+
+    fn args(items: &[&str]) -> Vec<String> {
+        items.iter().map(ToString::to_string).collect()
+    }
+
+    #[test]
+    fn parses_ad_hoc_verify_flags() {
+        let options = parse_options(args(&[
+            "--claim",
+            "the bridge opened in 1998",
+            "--source-url",
+            "https://example.com/bridge",
+            "--with-metadata",
+        ]))
+        .expect("parses");
+        let verify = options.verify.expect("verify present");
+        assert_eq!(
+            verify,
+            VerifyCliOptions {
+                claim: "the bridge opened in 1998".to_string(),
+                source_url: "https://example.com/bridge".to_string(),
+                include_metadata: true,
+                debug_votes: false,
+                repair: true,
+                preceding_sentences: Vec::new(),
+            }
+        );
+        assert!(!options.verdict_only);
+    }
+
+    #[test]
+    fn verify_collects_preceding_context() {
+        let options = parse_options(args(&[
+            "--claim",
+            "c",
+            "--source-url",
+            "https://example.com",
+            "--preceding-sentence",
+            "She joined in 1985.",
+            "--preceding-sentence",
+            "She scored twice.",
+        ]))
+        .expect("parses");
+        let verify = options.verify.expect("verify present");
+        assert_eq!(
+            verify.preceding_sentences,
+            vec![
+                "She joined in 1985.".to_string(),
+                "She scored twice.".to_string()
+            ]
+        );
+    }
+
+    #[test]
+    fn no_repair_flag_disables_the_repair_turn() {
+        let options = parse_options(args(&[
+            "--claim",
+            "c",
+            "--source-url",
+            "https://example.com",
+            "--no-repair",
+        ]))
+        .expect("parses");
+        assert!(!options.verify.expect("verify present").repair);
+    }
+
+    #[test]
+    fn debug_votes_flag_is_recognized() {
+        let options = parse_options(args(&[
+            "--claim",
+            "c",
+            "--source-url",
+            "https://example.com",
+            "--debug-votes",
+        ]))
+        .expect("parses");
+        assert!(options.verify.expect("verify present").debug_votes);
+    }
+
+    #[test]
+    fn verdict_only_flag_is_recognized() {
+        let options = parse_options(args(&[
+            "--claim",
+            "c",
+            "--source-url",
+            "https://example.com",
+            "--verdict-only",
+        ]))
+        .expect("parses");
+        assert!(options.verdict_only);
+    }
+
+    #[test]
+    fn verify_requires_both_claim_and_source_url() {
+        assert!(parse_options(args(&["--claim", "only a claim"])).is_err());
+        assert!(parse_options(args(&["--source-url", "https://example.com"])).is_err());
+    }
+
+    #[test]
+    fn locate_probe_flags_parse_and_carry_the_quote() {
+        let options =
+            parse_options(args(&["--locate-probe", "--quote", "the Nobel Prize"])).expect("parses");
+        assert_eq!(options.locate_probe.as_deref(), Some("the Nobel Prize"));
+    }
+
+    #[test]
+    fn locate_probe_requires_a_quote() {
+        assert!(parse_options(args(&["--locate-probe"])).is_err());
+    }
+
+    #[test]
+    fn run_locate_probe_reports_found_and_not_found() {
+        let hit = run_locate_probe("Nobel Prize", "won the Nobel Prize").expect("ok");
+        assert!(hit.contains("\"located\":true"));
+        let miss = run_locate_probe("absent span", "a completely different text").expect("ok");
+        assert!(miss.contains("\"located\":false"));
+    }
+
+    #[test]
+    fn run_locate_probe_reports_the_fuzzy_fallback() {
+        // Exact locate fails (one reworded token), the guarded fuzzy path recovers: the
+        // probe reports both axes so the offline harness can measure layer 5 (SP42#25).
+        let source = "In 1985 the Acme Corporation was established in Springfield by a group \
+                      of local investors led by John Smith.";
+        let quote = "the Acme Corporation was founded in Springfield by a group of local investors";
+        let report = run_locate_probe(quote, source).expect("ok");
+        assert!(report.contains("\"located\":false"));
+        assert!(report.contains("\"fuzzy\":true"));
+        assert!(report.contains("established in Springfield"));
+        // A fabricated quote is neither located nor fuzzy.
+        let miss = run_locate_probe(
+            "the museum acquired seventeen paintings from the private collection",
+            source,
+        )
+        .expect("ok");
+        assert!(miss.contains("\"located\":false"));
+        assert!(miss.contains("\"fuzzy\":false"));
+    }
+
+    fn fixture_finding() -> CitationFinding {
+        CitationFinding {
+            kind: CitationFindingKind::CitationVerdict,
+            verdict: CitationVerdict::Judged(SupportLevel::Supported),
+            grounding_status: GroundingStatus::Located,
+            agreement: PanelAgreement::new(3, 2),
+            passage: Some(LocatedPassage {
+                quote: "opened in 1998".to_string(),
+                offset: 4,
+            }),
+            source_unavailable_reason: None,
+            provenance: SourceProvenance {
+                url: "https://example.com/bridge".parse().expect("url"),
+                content_hash: "abc123".to_string(),
+                fetched_at: 1,
+                http_status: Some(200),
+            },
+            grounding: GroundingAssertion::LocatedQuote {
+                quote: "opened in 1998".to_string(),
+                source_hash: "abc123".to_string(),
+                offset: 4,
+            },
+            use_site_ordinal: 0,
+            ref_id: String::new(),
+            claim: String::new(),
+            preceding_context: Vec::new(),
+            archive_of: None,
+            schema_version: 1,
+        }
+    }
+
+    #[test]
+    fn renders_human_verdict_block() {
+        let text = render_verify_text(&fixture_finding());
+        assert!(text.contains("verdict: supported"));
+        assert!(text.contains("agreement: 2/3 models"));
+        assert!(text.contains("opened in 1998"));
+        assert!(text.contains("https://example.com/bridge"));
+    }
 }
 
 fn preview_mode_flag(flag: &str) -> Option<PreviewMode> {
@@ -391,6 +1129,195 @@ fn parse_action_kind(value: &str) -> Result<SessionActionKind, String> {
         "patrol" => Ok(SessionActionKind::Patrol),
         "undo" => Ok(SessionActionKind::Undo),
         _ => Err(format!("unsupported action kind: {value}")),
+    }
+}
+
+/// One executed bare-URL repair, for rendering.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct BareUrlExecuteReport {
+    bridge_base_url: String,
+    wiki_id: String,
+    title: String,
+    rev_id: u64,
+    ordinal: usize,
+    proposal: sp42_core::BareUrlProposal,
+    response: sp42_core::BareUrlApplyResponse,
+}
+
+fn bare_url_proposal_lines(response: &sp42_core::BareUrlProposalsResponse) -> Vec<String> {
+    response
+        .proposals
+        .iter()
+        .map(|proposal| {
+            format!(
+                "#{} url={} replacement={}",
+                proposal.locator.ordinal, proposal.url, proposal.replacement_wikitext
+            )
+        })
+        .collect()
+}
+
+fn bare_url_declined_lines(response: &sp42_core::BareUrlProposalsResponse) -> Vec<String> {
+    response
+        .declined
+        .iter()
+        .map(|declined| {
+            format!(
+                "#{} url={} declined={}",
+                declined.ordinal,
+                declined.url,
+                declined.reason.code()
+            )
+        })
+        .collect()
+}
+
+fn render_bare_url_proposals(
+    bare_url: &BareUrlCliOptions,
+    bridge_base_url: &str,
+    response: &sp42_core::BareUrlProposalsResponse,
+    format: OutputFormat,
+) -> Result<String, String> {
+    match format {
+        OutputFormat::Text => {
+            let mut lines = vec![format!(
+                "bare-url preview bridge={bridge_base_url} wiki={} title=\"{}\" rev_id={} proposals={} declined={}",
+                bare_url.wiki_id,
+                bare_url.title,
+                bare_url.rev_id,
+                response.proposals.len(),
+                response.declined.len(),
+            )];
+            lines.extend(bare_url_proposal_lines(response));
+            lines.extend(bare_url_declined_lines(response));
+            Ok(lines.join("\n"))
+        }
+        OutputFormat::Markdown => {
+            let proposals = bare_url_proposal_lines(response);
+            let declined = bare_url_declined_lines(response);
+            Ok([
+                render_markdown_section(
+                    "Bare-URL proposals",
+                    &if proposals.is_empty() {
+                        "(none)".to_string()
+                    } else {
+                        proposals.join("\n")
+                    },
+                ),
+                render_markdown_section(
+                    "Declined references",
+                    &if declined.is_empty() {
+                        "(none)".to_string()
+                    } else {
+                        declined.join("\n")
+                    },
+                ),
+            ]
+            .join("\n\n"))
+        }
+        OutputFormat::Json => serde_json::to_string_pretty(&serde_json::json!({
+            "bridge_base_url": bridge_base_url,
+            "wiki_id": bare_url.wiki_id,
+            "title": bare_url.title,
+            "rev_id": bare_url.rev_id,
+            "proposals": response.proposals,
+            "declined": response.declined,
+        }))
+        .map_err(|error| error.to_string()),
+    }
+}
+
+fn render_bare_url_execute(
+    report: &BareUrlExecuteReport,
+    format: OutputFormat,
+) -> Result<String, String> {
+    let status = report
+        .response
+        .http_status
+        .map_or_else(|| "none".to_string(), |status| status.to_string());
+    match format {
+        OutputFormat::Text => Ok([
+            format!(
+                "bare-url execute bridge={} wiki={} title=\"{}\" rev_id={} ordinal={}",
+                report.bridge_base_url, report.wiki_id, report.title, report.rev_id, report.ordinal
+            ),
+            format!(
+                "proposal url={} replacement={}",
+                report.proposal.url, report.proposal.replacement_wikitext
+            ),
+            format!(
+                "apply accepted={} http_status={status} message={}",
+                report.response.accepted,
+                report.response.message.as_deref().unwrap_or("none"),
+            ),
+        ]
+        .join("\n")),
+        OutputFormat::Markdown => Ok([
+            render_markdown_section(
+                "Bare-URL execute",
+                &format!(
+                    "bridge={} wiki={} title=\"{}\" rev_id={} ordinal={}",
+                    report.bridge_base_url,
+                    report.wiki_id,
+                    report.title,
+                    report.rev_id,
+                    report.ordinal
+                ),
+            ),
+            render_markdown_section(
+                "Proposal",
+                &format!(
+                    "url={} replacement={}",
+                    report.proposal.url, report.proposal.replacement_wikitext
+                ),
+            ),
+            render_markdown_section(
+                "Apply result",
+                &format!(
+                    "accepted={} http_status={status} message={}",
+                    report.response.accepted,
+                    report.response.message.as_deref().unwrap_or("none"),
+                ),
+            ),
+        ]
+        .join("\n\n")),
+        OutputFormat::Json => serde_json::to_string_pretty(&serde_json::json!({
+            "bridge_base_url": report.bridge_base_url,
+            "wiki_id": report.wiki_id,
+            "title": report.title,
+            "rev_id": report.rev_id,
+            "ordinal": report.ordinal,
+            "proposal": report.proposal,
+            "response": report.response,
+        }))
+        .map_err(|error| error.to_string()),
+    }
+}
+
+/// Run the selected bare-URL flag-mode against the bridge and render it.
+fn render_bare_url_mode(
+    bare_url: &BareUrlCliOptions,
+    options: &CliOptions,
+    format: OutputFormat,
+) -> Result<String, String> {
+    match bare_url.mode {
+        BareUrlCliMode::Preview => {
+            let response = block_on(fetch_bare_url_proposals(
+                &options.bridge_base_url,
+                &bare_url_proposals_request(bare_url),
+            ))?;
+            render_bare_url_proposals(bare_url, &options.bridge_base_url, &response, format)
+        }
+        BareUrlCliMode::Execute { ordinal } => {
+            let note = action_note(options);
+            let report = block_on(execute_bare_url_via_bridge(
+                &options.bridge_base_url,
+                bare_url,
+                ordinal,
+                note.as_deref(),
+            ))?;
+            render_bare_url_execute(&report, format)
+        }
     }
 }
 
@@ -1526,6 +2453,138 @@ async fn execute_bridge_action(
     })
 }
 
+fn bare_url_proposals_request(bare_url: &BareUrlCliOptions) -> sp42_core::BareUrlProposalsRequest {
+    sp42_core::BareUrlProposalsRequest {
+        wiki_id: bare_url.wiki_id.clone(),
+        title: bare_url.title.clone(),
+        rev_id: bare_url.rev_id,
+    }
+}
+
+async fn fetch_bare_url_proposals(
+    base_url: &str,
+    request: &sp42_core::BareUrlProposalsRequest,
+) -> Result<sp42_core::BareUrlProposalsResponse, String> {
+    let client = reqwest::Client::builder()
+        .user_agent(sp42_core::branding::USER_AGENT)
+        .build()
+        .map_err(|error| format!("bridge client failed to build: {error}"))?;
+    let request_url = format!(
+        "{base_url}{}",
+        route_contracts::DEV_CITATION_BARE_URL_PROPOSALS_PATH
+    );
+    let response = client
+        .post(&request_url)
+        .json(request)
+        .send()
+        .await
+        .map_err(|error| format!("bare-url proposals request failed: {error}"))?
+        .error_for_status()
+        .map_err(|error| format!("bare-url proposals request failed: {error}"))?;
+    response
+        .json::<sp42_core::BareUrlProposalsResponse>()
+        .await
+        .map_err(|error| format!("bare-url proposals payload was invalid: {error}"))
+}
+
+/// Select a proposal from the response by ordinal. Returns the proposal if
+/// found, or an error message listing declined entries.
+fn select_bare_url_proposal(
+    proposals: &sp42_core::BareUrlProposalsResponse,
+    ordinal: usize,
+) -> Result<sp42_core::BareUrlProposal, String> {
+    proposals
+        .proposals
+        .iter()
+        .find(|proposal| proposal.locator.ordinal == ordinal)
+        .cloned()
+        .ok_or_else(|| {
+            let declined = proposals
+                .declined
+                .iter()
+                .map(|entry| format!("#{} {} ({})", entry.ordinal, entry.url, entry.reason.code()))
+                .collect::<Vec<_>>()
+                .join(", ");
+            format!("no bare-URL proposal for ordinal {ordinal}; declined: [{declined}]")
+        })
+}
+
+/// Re-fetch proposals, select ordinal K, and replay it against the apply
+/// route. The fresh fetch re-anchors the locator, narrowing the TOCTOU
+/// window; the server's anti-drift re-check and `baserevid` guard close it.
+/// Auth rides the bridge session (ADR-0002): bootstrap, then send the
+/// session cookie *and* the bootstrap-reported CSRF token.
+async fn execute_bare_url_via_bridge(
+    bridge_base_url: &str,
+    bare_url_options: &BareUrlCliOptions,
+    ordinal: usize,
+    note: Option<&str>,
+) -> Result<BareUrlExecuteReport, String> {
+    let proposals = fetch_bare_url_proposals(
+        bridge_base_url,
+        &bare_url_proposals_request(bare_url_options),
+    )
+    .await?;
+    let proposal = select_bare_url_proposal(&proposals, ordinal)?;
+
+    let client = reqwest::Client::builder()
+        .user_agent(sp42_core::branding::USER_AGENT)
+        .build()
+        .map_err(|error| format!("bridge client failed to build: {error}"))?;
+    let bootstrap_request =
+        build_dev_auth_bootstrap_request(bridge_base_url, &DevAuthBootstrapRequest::default())
+            .map_err(|error| error.to_string())?;
+    let bootstrap_response = execute_local_http_request(&client, bootstrap_request).await?;
+    let bootstrap =
+        parse_dev_auth_status(&bootstrap_response.body).map_err(|error| error.to_string())?;
+    if !bootstrap.authenticated {
+        return Err("bridge bootstrap did not produce an authenticated session".to_string());
+    }
+    let session_cookie = session_cookie_from_headers(&bootstrap_response.headers)
+        .ok_or_else(|| "bridge bootstrap did not set a session cookie".to_string())?;
+    let csrf_token = bootstrap
+        .csrf_token
+        .clone()
+        .ok_or_else(|| "bridge bootstrap did not return a CSRF token".to_string())?;
+
+    let apply_request = sp42_core::BareUrlApplyRequest {
+        wiki_id: bare_url_options.wiki_id.clone(),
+        title: bare_url_options.title.clone(),
+        rev_id: bare_url_options.rev_id,
+        locator: proposal.locator.clone(),
+        replacement_wikitext: proposal.replacement_wikitext.clone(),
+        summary: note.map(ToString::to_string),
+    };
+    let request_url = format!(
+        "{bridge_base_url}{}",
+        route_contracts::DEV_CITATION_BARE_URL_APPLY_PATH
+    );
+    let response = client
+        .post(&request_url)
+        .header(COOKIE, session_cookie.as_str())
+        .header(route_contracts::CSRF_HEADER_NAME, csrf_token.as_str())
+        .json(&apply_request)
+        .send()
+        .await
+        .map_err(|error| format!("bare-url apply request failed: {error}"))?
+        .error_for_status()
+        .map_err(|error| format!("bare-url apply request failed: {error}"))?;
+    let apply = response
+        .json::<sp42_core::BareUrlApplyResponse>()
+        .await
+        .map_err(|error| format!("bare-url apply payload was invalid: {error}"))?;
+
+    Ok(BareUrlExecuteReport {
+        bridge_base_url: bridge_base_url.to_string(),
+        wiki_id: bare_url_options.wiki_id.clone(),
+        title: bare_url_options.title.clone(),
+        rev_id: bare_url_options.rev_id,
+        ordinal,
+        proposal,
+        response: apply,
+    })
+}
+
 async fn execute_local_http_request(
     client: &reqwest::Client,
     request: HttpRequest,
@@ -1867,11 +2926,12 @@ mod tests {
     use serde_json::Value;
 
     use super::{
-        CliOptions, ContextPreviewOptions, LOCAL_SERVER_BASE_URL, OutputFormat, PreviewMode,
-        ShellMode, WorkbenchOptions, parse_options, render_action_preview, render_backlog_preview,
-        render_context_preview, render_coordination_preview, render_parity_report, render_queue,
-        render_scenario_report, render_session_digest, render_stream_preview, render_workbench,
-        server_report_lines,
+        BareUrlCliMode, BareUrlCliOptions, BareUrlExecuteReport, CliOptions, ContextPreviewOptions,
+        LOCAL_SERVER_BASE_URL, OutputFormat, PreviewMode, ShellMode, WorkbenchOptions,
+        parse_options, render_action_preview, render_backlog_preview, render_bare_url_execute,
+        render_bare_url_proposals, render_context_preview, render_coordination_preview,
+        render_parity_report, render_queue, render_scenario_report, render_session_digest,
+        render_stream_preview, render_workbench, select_bare_url_proposal, server_report_lines,
     };
     use serde_json::json;
     use sp42_devtools::{
@@ -2056,6 +3116,10 @@ mod tests {
                 action_note: None,
                 action_kind: sp42_core::SessionActionKind::Patrol,
                 bridge_base_url: LOCAL_SERVER_BASE_URL.to_string(),
+                bare_url: None,
+                verify: None,
+                verdict_only: false,
+                locate_probe: None,
             },
             OutputFormat::Text,
         )
@@ -2086,6 +3150,10 @@ mod tests {
                 action_note: None,
                 action_kind: sp42_core::SessionActionKind::Patrol,
                 bridge_base_url: LOCAL_SERVER_BASE_URL.to_string(),
+                bare_url: None,
+                verify: None,
+                verdict_only: false,
+                locate_probe: None,
             },
             OutputFormat::Markdown,
         )
@@ -2114,6 +3182,10 @@ mod tests {
                 action_note: None,
                 action_kind: sp42_core::SessionActionKind::Patrol,
                 bridge_base_url: LOCAL_SERVER_BASE_URL.to_string(),
+                bare_url: None,
+                verify: None,
+                verdict_only: false,
+                locate_probe: None,
             },
             OutputFormat::Json,
         )
@@ -2149,6 +3221,10 @@ mod tests {
             action_note: None,
             action_kind: sp42_core::SessionActionKind::Patrol,
             bridge_base_url: LOCAL_SERVER_BASE_URL.to_string(),
+            bare_url: None,
+            verify: None,
+            verdict_only: false,
+            locate_probe: None,
         };
 
         let text = render_session_digest(&config, &ranked, &options, OutputFormat::Text)
@@ -2187,6 +3263,10 @@ mod tests {
             action_note: Some("inspect".to_string()),
             action_kind: sp42_core::SessionActionKind::Patrol,
             bridge_base_url: "http://127.0.0.1:8788".to_string(),
+            bare_url: None,
+            verify: None,
+            verdict_only: false,
+            locate_probe: None,
         };
 
         let text = render_action_preview(&config, &ranked, &options, OutputFormat::Text)
@@ -2543,5 +3623,348 @@ mod tests {
 
         assert!(markdown.contains("## Localhost operator report"));
         assert!(markdown.contains("- operator report ready_for_local_testing=true"));
+    }
+
+    fn parse(arguments: &[&str]) -> Result<CliOptions, String> {
+        parse_options(arguments.iter().map(ToString::to_string))
+    }
+
+    #[test]
+    fn parses_bare_url_preview_flags() {
+        let options = parse(&["--bare-url-preview", "--title", "Sandbox", "--rev", "123"])
+            .expect("preview flags should parse");
+        let bare_url = options.bare_url.expect("bare-url mode should be selected");
+        assert_eq!(bare_url.mode, BareUrlCliMode::Preview);
+        assert_eq!(bare_url.wiki_id, "testwiki");
+        assert_eq!(bare_url.title, "Sandbox");
+        assert_eq!(bare_url.rev_id, 123);
+    }
+
+    #[test]
+    fn parses_bare_url_execute_flags_with_wiki_override() {
+        let options = parse(&[
+            "--bare-url-execute",
+            "--title",
+            "Sandbox",
+            "--rev",
+            "123",
+            "--ordinal",
+            "2",
+            "--wiki",
+            "frwiki",
+        ])
+        .expect("execute flags should parse");
+        let bare_url = options.bare_url.expect("bare-url mode should be selected");
+        assert_eq!(bare_url.mode, BareUrlCliMode::Execute { ordinal: 2 });
+        assert_eq!(bare_url.wiki_id, "frwiki");
+    }
+
+    #[test]
+    fn bare_url_modes_are_mutually_exclusive_and_validated() {
+        assert!(
+            parse(&[
+                "--bare-url-preview",
+                "--bare-url-execute",
+                "--title",
+                "T",
+                "--rev",
+                "1"
+            ])
+            .is_err()
+        );
+        assert!(
+            parse(&["--bare-url-preview", "--rev", "1"]).is_err(),
+            "missing --title"
+        );
+        assert!(
+            parse(&["--bare-url-preview", "--title", "T"]).is_err(),
+            "missing --rev"
+        );
+        assert!(
+            parse(&["--bare-url-execute", "--title", "T", "--rev", "1"]).is_err(),
+            "execute requires --ordinal"
+        );
+        assert!(parse(&["--bare-url-preview", "--title", "T", "--rev", "abc"]).is_err());
+        assert!(parse(&[]).expect("no flags is fine").bare_url.is_none());
+    }
+
+    fn fixture_bare_url_options() -> BareUrlCliOptions {
+        BareUrlCliOptions {
+            mode: BareUrlCliMode::Preview,
+            wiki_id: "testwiki".to_string(),
+            title: "Sandbox".to_string(),
+            rev_id: 123,
+        }
+    }
+
+    fn fixture_proposals_response() -> sp42_core::BareUrlProposalsResponse {
+        sp42_core::BareUrlProposalsResponse {
+            proposals: vec![sp42_core::BareUrlProposal {
+                locator: sp42_core::WikitextNodeLocator {
+                    kind: sp42_core::WikitextNodeKind::Reference,
+                    ordinal: 0,
+                    expected_text: "https://example.org/article".to_string(),
+                },
+                url: "https://example.org/article".to_string(),
+                current_anchor: "https://example.org/article".to_string(),
+                replacement_wikitext:
+                    "{{cite web |url=https://example.org/article |title=Headline |access-date=2026-06-09}}"
+                        .to_string(),
+            }],
+            declined: vec![sp42_core::BareUrlDeclined {
+                ordinal: 3,
+                url: "https://fail.example/b".to_string(),
+                reason: sp42_core::BareUrlDeclineReason::MetadataUnavailable,
+            }],
+        }
+    }
+
+    #[test]
+    fn renders_bare_url_proposals_in_all_formats() {
+        let options = fixture_bare_url_options();
+        let response = fixture_proposals_response();
+
+        let text = render_bare_url_proposals(
+            &options,
+            "http://127.0.0.1:8788",
+            &response,
+            OutputFormat::Text,
+        )
+        .expect("text render should work");
+        assert!(text.contains("bare-url preview"));
+        assert!(text.contains("wiki=testwiki"));
+        assert!(text.contains("#0 url=https://example.org/article"));
+        assert!(text.contains("|title=Headline"));
+        assert!(text.contains("#3 url=https://fail.example/b declined=metadata-unavailable"));
+
+        let markdown = render_bare_url_proposals(
+            &options,
+            "http://127.0.0.1:8788",
+            &response,
+            OutputFormat::Markdown,
+        )
+        .expect("markdown render should work");
+        assert!(markdown.contains("## Bare-URL proposals"));
+        assert!(markdown.contains("## Declined references"));
+
+        let json = render_bare_url_proposals(
+            &options,
+            "http://127.0.0.1:8788",
+            &response,
+            OutputFormat::Json,
+        )
+        .expect("json render should work");
+        let value: serde_json::Value = serde_json::from_str(&json).expect("json should parse");
+        assert_eq!(value["wiki_id"], "testwiki");
+        assert_eq!(value["proposals"][0]["locator"]["ordinal"], 0);
+        assert_eq!(value["declined"][0]["reason"], "metadata-unavailable");
+    }
+
+    #[test]
+    fn renders_bare_url_execute_report_in_all_formats() {
+        let response = fixture_proposals_response();
+        let report = BareUrlExecuteReport {
+            bridge_base_url: "http://127.0.0.1:8788".to_string(),
+            wiki_id: "testwiki".to_string(),
+            title: "Sandbox".to_string(),
+            rev_id: 123,
+            ordinal: 0,
+            proposal: response.proposals[0].clone(),
+            response: sp42_core::BareUrlApplyResponse {
+                wiki_id: "testwiki".to_string(),
+                rev_id: 123,
+                accepted: true,
+                actor: Some("Example".to_string()),
+                http_status: Some(200),
+                api_code: None,
+                retryable: false,
+                warnings: Vec::new(),
+                result: Some("Success".to_string()),
+                message: Some("MediaWiki HTTP 200".to_string()),
+            },
+        };
+
+        let text =
+            render_bare_url_execute(&report, OutputFormat::Text).expect("text render should work");
+        assert!(text.contains("bare-url execute"));
+        assert!(text.contains("ordinal=0"));
+        assert!(text.contains("accepted=true"));
+
+        let markdown = render_bare_url_execute(&report, OutputFormat::Markdown)
+            .expect("markdown render should work");
+        assert!(markdown.contains("## Bare-URL execute"));
+        assert!(markdown.contains("## Apply result"));
+
+        let json =
+            render_bare_url_execute(&report, OutputFormat::Json).expect("json render should work");
+        let value: serde_json::Value = serde_json::from_str(&json).expect("json should parse");
+        assert_eq!(value["ordinal"], 0);
+        assert_eq!(value["response"]["accepted"], true);
+    }
+
+    #[test]
+    fn selects_bare_url_proposal_by_matching_ordinal() {
+        let response = fixture_proposals_response();
+        let proposal = select_bare_url_proposal(&response, 0).expect("should find ordinal 0");
+        assert_eq!(proposal.locator.ordinal, 0);
+        assert_eq!(proposal.url, "https://example.org/article");
+    }
+
+    #[test]
+    fn select_bare_url_proposal_returns_error_for_missing_ordinal() {
+        let response = fixture_proposals_response();
+        let error =
+            select_bare_url_proposal(&response, 99).expect_err("should fail for missing ordinal");
+        assert!(error.contains("no bare-URL proposal for ordinal 99"));
+        assert!(error.contains("declined: [#3"));
+        assert!(error.contains("https://fail.example/b"));
+        assert!(error.contains("metadata-unavailable"));
+    }
+
+    #[test]
+    fn select_bare_url_proposal_handles_empty_declined_list() {
+        let response = sp42_core::BareUrlProposalsResponse {
+            proposals: vec![sp42_core::BareUrlProposal {
+                locator: sp42_core::WikitextNodeLocator {
+                    kind: sp42_core::WikitextNodeKind::Reference,
+                    ordinal: 0,
+                    expected_text: "https://example.org/article".to_string(),
+                },
+                url: "https://example.org/article".to_string(),
+                current_anchor: "https://example.org/article".to_string(),
+                replacement_wikitext: "{{cite web |url=https://example.org/article}}".to_string(),
+            }],
+            declined: vec![],
+        };
+        let error =
+            select_bare_url_proposal(&response, 1).expect_err("should fail for missing ordinal");
+        assert!(error.contains("no bare-URL proposal for ordinal 1"));
+        assert!(error.contains("declined: []"));
+    }
+}
+
+#[cfg(test)]
+mod fetch_tests {
+    use std::io::{Read, Write};
+    use std::net::SocketAddr;
+
+    use sp42_types::{HttpClient, HttpMethod, HttpRequest};
+    use url::Url;
+
+    use super::CliHttpClient;
+
+    /// Spawn a throwaway HTTP/1.1 server on loopback that replies with `response` to every
+    /// connection, returning its address. Runs on a std thread so the test needs no extra
+    /// tokio IO features.
+    fn spawn_raw_server(response: Vec<u8>) -> SocketAddr {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind loopback");
+        let addr = listener.local_addr().expect("local addr");
+        std::thread::spawn(move || {
+            for stream in listener.incoming() {
+                let Ok(mut stream) = stream else { continue };
+                let mut buf = [0u8; 2048];
+                let _ = stream.read(&mut buf); // drain the request line + headers
+                let _ = stream.write_all(&response);
+                let _ = stream.flush();
+            }
+        });
+        addr
+    }
+
+    /// A `CliHttpClient` whose `reqwest` client never auto-follows redirects and resolves
+    /// `host` to `addr`, so a floor-passing hostname can reach a loopback test server while the
+    /// SSRF floor stays active (`allow_private = false`).
+    fn client_resolving(host: &str, addr: SocketAddr, max_source_bytes: u64) -> CliHttpClient {
+        let client = reqwest::Client::builder()
+            .redirect(reqwest::redirect::Policy::none())
+            .resolve(host, addr)
+            .build()
+            .expect("build client");
+        CliHttpClient {
+            client,
+            allow_private: false,
+            max_source_bytes,
+        }
+    }
+
+    fn get(url: &str) -> HttpRequest {
+        HttpRequest {
+            method: HttpMethod::Get,
+            url: Url::parse(url).expect("valid url"),
+            headers: std::collections::BTreeMap::new(),
+            body: Vec::new(),
+        }
+    }
+
+    #[tokio::test]
+    async fn source_fetch_blocks_a_redirect_to_a_private_address() {
+        // A public-looking host that 302-redirects to loopback must be refused at the redirect
+        // hop, not followed (SP42#43).
+        let addr = spawn_raw_server(
+            b"HTTP/1.1 302 Found\r\nLocation: http://127.0.0.1:9/secret\r\nContent-Length: 0\r\n\r\n"
+                .to_vec(),
+        );
+        let client = client_resolving("source.test", addr, 8 * 1024 * 1024);
+        let error = client
+            .execute(get(&format!("http://source.test:{}/", addr.port())))
+            .await
+            .expect_err("redirect to a private address must be blocked");
+        let message = format!("{error:?}");
+        assert!(
+            message.contains("private/loopback"),
+            "expected SSRF refusal, got: {message}"
+        );
+    }
+
+    #[tokio::test]
+    async fn source_fetch_enforces_size_cap_on_chunked_response_without_content_length() {
+        // No Content-Length (chunked) means the cap must be enforced while reading the stream.
+        let addr = spawn_raw_server(
+            b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\nContent-Type: text/plain\r\n\r\n10\r\nAAAAAAAAAAAAAAAA\r\n0\r\n\r\n"
+                .to_vec(),
+        );
+        let client = client_resolving("source.test", addr, 8); // 8-byte cap, 16-byte body
+        let error = client
+            .execute(get(&format!("http://source.test:{}/", addr.port())))
+            .await
+            .expect_err("oversized chunked body must be rejected");
+        let message = format!("{error:?}");
+        assert!(
+            message.contains("cap"),
+            "expected size-cap error, got: {message}"
+        );
+    }
+
+    #[tokio::test]
+    async fn source_fetch_follows_an_allowed_redirect_and_reads_the_body() {
+        // Happy path: follow a redirect to another allowed host and stream a body under the cap.
+        let final_addr = spawn_raw_server(
+            b"HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 5\r\n\r\nhello"
+                .to_vec(),
+        );
+        let redirect_addr = spawn_raw_server(
+            format!(
+                "HTTP/1.1 301 Moved Permanently\r\nLocation: http://dest.test:{}/\r\nContent-Length: 0\r\n\r\n",
+                final_addr.port()
+            )
+            .into_bytes(),
+        );
+        let client = reqwest::Client::builder()
+            .redirect(reqwest::redirect::Policy::none())
+            .resolve("start.test", redirect_addr)
+            .resolve("dest.test", final_addr)
+            .build()
+            .expect("build client");
+        let client = CliHttpClient {
+            client,
+            allow_private: false,
+            max_source_bytes: 8 * 1024 * 1024,
+        };
+        let response = client
+            .execute(get(&format!("http://start.test:{}/", redirect_addr.port())))
+            .await
+            .expect("allowed redirect should be followed");
+        assert_eq!(response.status, 200);
+        assert_eq!(response.body, b"hello");
     }
 }

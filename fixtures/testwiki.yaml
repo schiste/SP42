@@ -6,9 +6,11 @@ oauth_authorize_url: https://meta.wikimedia.org/w/rest.php/oauth2/authorize
 oauth_token_url: https://meta.wikimedia.org/w/rest.php/oauth2/access_token
 liftwing_url:
 coordination_url:
+parsoid_url: https://test.wikipedia.org/w/rest.php
 namespace_allowlist:
   - 0
   - 1
 scoring_policy_ref: active/testwiki-vandalism
 templates:
   citation_needed: "Citation needed"
+  bare_url_citation: "cite web"

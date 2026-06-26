@@ -10,9 +10,10 @@ use sp42_core::{
     ActionError, ActionExecutionHistoryReport, ActionExecutionLogEntry,
     ActionExecutionStatusReport, ActionResponseSummary, DevAuthCapabilityReport, FlagState,
     PatrolRequest, RollbackRequest, SessionActionExecutionRequest, SessionActionExecutionResponse,
-    SessionActionKind, TokenKind, UndoRequest, WikiPageSaveRequest, execute_fetch_token,
+    SessionActionKind, TokenKind, UndoRequest, WikiPageSaveRequest, WikitextEditOutcome,
+    WikitextEditor, WikitextEditorError, WikitextNodeLocator, WikitextPageRef, execute_fetch_token,
     execute_patrol, execute_rollback, execute_undo, execute_wiki_page_save,
-    parse_action_response_summary,
+    parse_action_response_summary, replace_exactly_once,
 };
 use sp42_types::HttpResponse;
 
@@ -68,7 +69,6 @@ pub(crate) async fn post_execute_action(
     let config = config_for_state_wiki(&state, &payload.wiki_id)?;
     let client = BearerHttpClient::new(state.http_client.clone(), session.access_token.clone());
     let executed_at_ms = state.clock.now_ms();
-    let outcome = execute_session_action(&client, &config, &payload).await;
     info!(
         session_id = session.session_id.as_str(),
         wiki_id = payload.wiki_id.as_str(),
@@ -76,6 +76,8 @@ pub(crate) async fn post_execute_action(
         kind = ?payload.kind,
         "executing session action"
     );
+    let outcome =
+        execute_session_action(&client, &config, &payload, state.wikitext_editor.as_ref()).await;
 
     match outcome {
         Ok(response) => {
@@ -249,6 +251,7 @@ async fn execute_session_action(
     client: &BearerHttpClient,
     config: &sp42_core::WikiConfig,
     payload: &SessionActionExecutionRequest,
+    editor: &dyn WikitextEditor,
 ) -> Result<HttpResponse, ActionError> {
     match payload.kind {
         SessionActionKind::Rollback => {
@@ -319,7 +322,9 @@ async fn execute_session_action(
         SessionActionKind::TagCitationNeeded => {
             execute_tag_citation_needed_action(client, config, payload).await
         }
-        SessionActionKind::InlineEdit => execute_inline_edit_action(client, config, payload).await,
+        SessionActionKind::InlineEdit => {
+            execute_inline_edit_action(client, config, payload, editor).await
+        }
     }
 }
 
@@ -367,33 +372,30 @@ async fn execute_tag_citation_needed_action(
     Ok(save_response)
 }
 
-async fn execute_inline_edit_action(
+pub(crate) async fn execute_inline_edit_action(
     client: &BearerHttpClient,
     config: &sp42_core::WikiConfig,
     payload: &SessionActionExecutionRequest,
+    editor: &dyn WikitextEditor,
 ) -> Result<HttpResponse, ActionError> {
     let token = execute_fetch_token(client, config, TokenKind::Csrf).await?;
     let title = payload.title.clone().unwrap_or_default();
-    let original = payload.selected_text.clone().unwrap_or_default();
-    let replacement = payload.replacement_text.clone().unwrap_or_default();
-    if original.trim().is_empty() {
-        return Err(ActionError::Execution {
-            message: "selected_text (original) is required for inline edit".to_string(),
-            code: Some("invalid-input".to_string()),
-            http_status: None,
-            retryable: false,
-        });
-    }
-    let page_text = crate::fetch_page_wikitext(client, config, &title).await?;
-    let updated_text = page_text.replacen(&original, &replacement, 1);
-    if updated_text == page_text {
-        return Err(ActionError::Execution {
-            message: "original text not found in page content".to_string(),
-            code: Some("text-not-found".to_string()),
-            http_status: None,
-            retryable: false,
-        });
-    }
+    let updated_text = if let Some(locator) = payload.node_locator.as_ref() {
+        node_anchored_replacement(config, &title, payload, locator, editor).await?
+    } else {
+        let original = payload.selected_text.clone().unwrap_or_default();
+        let replacement = payload.replacement_text.clone().unwrap_or_default();
+        if original.trim().is_empty() {
+            return Err(ActionError::Execution {
+                message: "selected_text (original) is required for inline edit".to_string(),
+                code: Some("invalid-input".to_string()),
+                http_status: None,
+                retryable: false,
+            });
+        }
+        let page_text = crate::fetch_page_wikitext(client, config, &title).await?;
+        replace_exactly_once(&page_text, &original, &replacement)?
+    };
     let summary = payload
         .summary
         .clone()
@@ -418,6 +420,73 @@ async fn execute_inline_edit_action(
     Ok(save_response)
 }
 
+/// Dispatches only `replace_node` today. `set_template_params` is deferred to
+/// the citation-repair integration path (ADR-0008; tracked in SP42#26).
+async fn node_anchored_replacement(
+    config: &sp42_core::WikiConfig,
+    title: &str,
+    payload: &SessionActionExecutionRequest,
+    locator: &WikitextNodeLocator,
+    editor: &dyn WikitextEditor,
+) -> Result<String, ActionError> {
+    let Some(replacement) = payload.replacement_text.clone() else {
+        return Err(ActionError::Execution {
+            message: "replacement_text is required for node-anchored inline edit".to_string(),
+            code: Some("invalid-input".to_string()),
+            http_status: Some(400),
+            retryable: false,
+        });
+    };
+    replace_node_or_refuse(config, title, payload.rev_id, locator, &replacement, editor).await
+}
+
+/// Replace one node-anchored target, mapping editor failures to `editor-*`
+/// codes and ADR-0003 refusals (drift / out-of-range) to a 409-in-body
+/// `ActionError` — shared by inline edits and bare-URL repair (PRD-0008).
+pub(crate) async fn replace_node_or_refuse(
+    config: &sp42_core::WikiConfig,
+    title: &str,
+    rev_id: u64,
+    locator: &WikitextNodeLocator,
+    replacement: &str,
+    editor: &dyn WikitextEditor,
+) -> Result<String, ActionError> {
+    let page = WikitextPageRef {
+        title: title.to_string(),
+        rev_id,
+    };
+    let outcome = editor
+        .replace_node(config, &page, locator, replacement)
+        .await
+        .map_err(|e| action_error_from_editor(&e))?;
+    match outcome {
+        WikitextEditOutcome::Applied { new_wikitext } => Ok(new_wikitext),
+        WikitextEditOutcome::Refused(refusal) => Err(ActionError::Execution {
+            message: refusal.message(),
+            code: Some(refusal.code().to_string()),
+            http_status: Some(409),
+            retryable: false,
+        }),
+    }
+}
+
+pub(crate) fn action_error_from_editor(error: &WikitextEditorError) -> ActionError {
+    let (code, http_status, retryable) = match error {
+        WikitextEditorError::Unavailable { retryable, .. } => {
+            ("editor-unavailable", Some(502), *retryable)
+        }
+        WikitextEditorError::MissingTarget { .. } => ("editor-missing-target", Some(404), false),
+        WikitextEditorError::NotConfigured { .. } => ("editor-not-configured", Some(400), false),
+        WikitextEditorError::Unsupported { .. } => ("editor-unsupported", Some(400), false),
+    };
+    ActionError::Execution {
+        message: error.to_string(),
+        code: Some(code.to_string()),
+        http_status,
+        retryable,
+    }
+}
+
 fn apply_citation_template(
     page_text: &str,
     selected_text: &str,
@@ -430,25 +499,16 @@ fn apply_citation_template(
         selected_text.to_string()
     };
     let tagged = format!("{{{{{template}|{text_param}|date={date}}}}}");
-    let updated_text = page_text.replacen(selected_text, &tagged, 1);
-    if updated_text == page_text {
-        return Err(ActionError::Execution {
-            message: "selected text not found in page content".to_string(),
-            code: Some("text-not-found".to_string()),
-            http_status: None,
-            retryable: false,
-        });
-    }
-    Ok(updated_text)
+    replace_exactly_once(page_text, selected_text, &tagged)
 }
 
-async fn patrol_original_edit_if_possible(
+pub(crate) async fn patrol_original_edit_if_possible(
     client: &BearerHttpClient,
     config: &sp42_core::WikiConfig,
     rev_id: u64,
 ) {
-    if let Ok(patrol_token) = execute_fetch_token(client, config, TokenKind::Patrol).await {
-        let _ = execute_patrol(
+    if let Ok(patrol_token) = execute_fetch_token(client, config, TokenKind::Patrol).await
+        && let Err(error) = execute_patrol(
             client,
             config,
             &PatrolRequest {
@@ -456,7 +516,9 @@ async fn patrol_original_edit_if_possible(
                 token: patrol_token,
             },
         )
-        .await;
+        .await
+    {
+        tracing::warn!(rev_id, %error, "auto-patrol failed; revision left unpatrolled");
     }
 }
 
@@ -823,6 +885,11 @@ pub(crate) fn validate_action_request(
                     "selected_text is required for citation tagging",
                 ));
             }
+            if payload.node_locator.is_some() {
+                return Err(invalid_payload(
+                    "node_locator is not supported for citation tagging",
+                ));
+            }
             if !capabilities.capabilities.editing.can_edit {
                 return Err(forbidden_error(
                     "The authenticated session does not currently have edit capability on this wiki.",
@@ -833,8 +900,26 @@ pub(crate) fn validate_action_request(
             if payload.title.as_deref().is_none_or(str::is_empty) {
                 return Err(invalid_payload("title is required for inline edit"));
             }
-            if payload.selected_text.as_deref().is_none_or(str::is_empty) {
-                return Err(invalid_payload("selected_text is required for inline edit"));
+            match payload.node_locator.as_ref() {
+                Some(locator) => {
+                    if locator.expected_text.trim().is_empty() {
+                        return Err(invalid_payload(
+                            "node_locator.expected_text must not be empty",
+                        ));
+                    }
+                    if payload.replacement_text.is_none() {
+                        return Err(invalid_payload(
+                            "replacement_text is required for node-anchored inline edit",
+                        ));
+                    }
+                }
+                None => {
+                    if payload.selected_text.as_deref().is_none_or(str::is_empty) {
+                        return Err(invalid_payload(
+                            "selected_text or node_locator is required for inline edit",
+                        ));
+                    }
+                }
             }
             if !capabilities.capabilities.editing.can_edit {
                 return Err(forbidden_error(
@@ -858,8 +943,8 @@ pub(crate) fn action_error_response(error: &ActionError) -> (StatusCode, Json<se
     };
     (
         match http_status {
-            Some(400..=499) => StatusCode::BAD_REQUEST,
-            _ => StatusCode::BAD_GATEWAY,
+            Some(status) => StatusCode::from_u16(status).unwrap_or(StatusCode::BAD_GATEWAY),
+            None => StatusCode::BAD_GATEWAY,
         },
         Json(serde_json::json!({
             "error": format!("wiki action failed: {message}"),
@@ -892,8 +977,8 @@ fn action_error_message(body: &Json<serde_json::Value>) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::action_feedback_for_entry;
-    use sp42_core::{ActionExecutionLogEntry, SessionActionKind};
+    use super::{action_feedback_for_entry, apply_citation_template};
+    use sp42_core::{ActionError, ActionExecutionLogEntry, SessionActionKind};
 
     #[test]
     fn action_feedback_includes_rationale_summary() {
@@ -918,5 +1003,46 @@ mod tests {
         let feedback = action_feedback_for_entry(&entry);
 
         assert!(feedback.contains("SP42 rationale: obvious-vandalism"));
+    }
+
+    #[test]
+    fn apply_citation_template_tags_unique_selected_text() {
+        let updated = apply_citation_template(
+            "Une phrase sans source.",
+            "phrase sans source",
+            "Référence nécessaire",
+            "juin 2026",
+        )
+        .expect("unique selected text should tag");
+        assert_eq!(
+            updated,
+            "Une {{Référence nécessaire|phrase sans source|date=juin 2026}}."
+        );
+    }
+
+    #[test]
+    fn apply_citation_template_refuses_ambiguous_selected_text() {
+        let error = apply_citation_template(
+            "mot répété, mot répété.",
+            "mot répété",
+            "Référence nécessaire",
+            "juin 2026",
+        )
+        .expect_err("ambiguous selected text should refuse");
+        let ActionError::Execution { code, .. } = error;
+        assert_eq!(code.as_deref(), Some("text-ambiguous"));
+    }
+
+    #[test]
+    fn apply_citation_template_refuses_missing_selected_text() {
+        let error = apply_citation_template(
+            "Une phrase sans source.",
+            "texte absent",
+            "Référence nécessaire",
+            "juin 2026",
+        )
+        .expect_err("missing selected text should refuse");
+        let ActionError::Execution { code, .. } = error;
+        assert_eq!(code.as_deref(), Some("text-not-found"));
     }
 }

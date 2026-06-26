@@ -1,6 +1,6 @@
 # ADR-0006: Using LLMs in SP42 — model panel, measured agreement, and the inference endpoint
 
-**Status:** Proposed
+**Status:** Accepted
 **Date:** 2026-06-08
 **Author:** Luis Villa
 

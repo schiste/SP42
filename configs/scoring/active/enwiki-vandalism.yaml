@@ -1,0 +1,149 @@
+domain: vandalism_patrol
+wiki_id: enwiki
+policy_version: v0.1
+evaluation_profile: vandalism_patrol_default
+inherits_from:
+lifecycle: active
+
+dimensions:
+  content: 1.0
+  actor: 0.45
+  subject: 0.35
+  context: 0.60
+  temporal: 0.40
+  policy: 0.30
+  external_evaluation: 0.35
+
+identity:
+  contribution_cap: 25
+  anonymous_modifier_enabled: true
+  temporary_modifier_enabled: true
+  account_age_modifier_enabled: false
+
+queue:
+  default_limit: 25
+  max_limit: 250
+  min_score_cutoff: 0
+
+signal_parameters:
+  large_content_removal_threshold: -500
+  massive_blanking_threshold: -900
+  repeated_character_run_threshold: 5
+  profanity_markers:
+    - fuck
+    - merde
+    - shit
+    - putain
+  link_markers:
+    - http://
+    - https://
+  trusted_tags:
+    - mw-manual-revert
+    - mw-rollback
+    - trusted
+  revert_tags:
+    - mw-reverted
+    - mw-undo
+  suspicious_comment_markers:
+    - rvv
+    - vandalisme
+    - vandalism
+    - blanking
+    - nonsense
+    - self revert
+
+rules:
+  anonymous_user:
+    enabled: true
+    weight: 25
+  temporary_account:
+    enabled: true
+    weight: 20
+  new_page:
+    enabled: true
+    weight: 20
+  reverted_before:
+    enabled: true
+    weight: 30
+  large_content_removal:
+    enabled: true
+    weight: 15
+    threshold: -500
+  link_addition:
+    enabled: true
+    weight: -12
+    notes: constructive linkification that only adds wikilink wrappers should lower patrol priority
+  reference_addition:
+    enabled: true
+    weight: -14
+    notes: adding only references or citation templates should lower patrol priority
+  category_addition:
+    enabled: true
+    weight: -10
+    notes: adding only category links is usually constructive maintenance
+  interwiki_addition:
+    enabled: true
+    weight: -10
+    notes: adding only interwiki or language links is usually constructive maintenance
+  mass_blanking:
+    enabled: true
+    weight: 25
+    notes: substantial deletion with little replacement should raise patrol priority
+  inserted_profanity:
+    enabled: true
+    weight: 35
+    notes: profanity in inserted diff text is a strong vandalism signal
+  repeated_character_noise:
+    enabled: true
+    weight: 20
+    notes: repeated-character noise in inserted diff text should raise patrol priority
+  profanity:
+    enabled: true
+    weight: 30
+  link_spam:
+    enabled: true
+    weight: 20
+  trusted_user:
+    enabled: true
+    weight: -40
+  bot_like_edit:
+    enabled: true
+    weight: -50
+  liftwing_risk:
+    enabled: true
+    weight: 35
+  warning_history:
+    enabled: true
+    weight: 25
+  obvious_vandalism:
+    enabled: true
+    weight: 35
+  duplicate_pattern:
+    enabled: true
+    weight: 18
+    max_bonus: 18
+
+combination_rules:
+  - slug: warning_history_and_large_removal
+    enabled: true
+    weight: 12
+    when_all:
+      - warning_history
+      - large_content_removal
+  - slug: duplicate_pattern_and_obvious_vandalism
+    enabled: true
+    weight: 15
+    when_all:
+      - duplicate_pattern
+      - obvious_vandalism
+
+external_evaluation_config:
+  liftwing:
+    enabled: true
+    role: supporting_signal
+    max_contribution: 35
+
+fairness:
+  max_newcomer_fp_regression_bps: 50
+  max_temporary_fp_regression_bps: 50
+  max_anonymous_fp_regression_bps: 50

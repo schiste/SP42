@@ -22,7 +22,7 @@ pub(super) fn AuthRequiredView(
 ) -> impl IntoView {
     view! {
         <div style="display:grid;place-items:center;height:100vh;\
-                    background:#08111f;color:#eff4ff;padding:27px;">
+                    background:var(--bg);color:var(--text);padding:27px;">
             <div style="max-width:440px;text-align:center;">
                 <h1 style="font-size:21px;margin:0 0 10px;">
                     "Authentication required"
@@ -30,25 +30,25 @@ pub(super) fn AuthRequiredView(
                 {move || {
                     if bootstrap_attempted.get() {
                         view! {
-                            <p style="color:#f59e0b;font-size:13px;margin:0 0 10px;">
+                            <p style="color:var(--warning);font-size:13px;margin:0 0 10px;">
                                 {bootstrap_error.get().unwrap_or_else(|| "Auto-bootstrap did not produce an authenticated session.".to_string())}
                             </p>
                         }.into_any()
                     } else {
                         view! {
-                            <p style="color:#8b9fc0;margin:0 0 10px;">
+                            <p style="color:var(--muted);margin:0 0 10px;">
                                 "Bootstrapping session from local token bridge..."
                             </p>
                         }.into_any()
                     }
                 }}
-                <div style="font-size:12px;color:#8b9fc0;margin:0 0 17px;display:grid;gap:4px;">
+                <div style="font-size:12px;color:var(--muted);margin:0 0 17px;display:grid;gap:4px;">
                     <div>{format!("Bridge mode: {bridge_mode}")}</div>
                     <div>{format!("Local token: {}", if has_token { "present" } else { "missing" })}</div>
                 </div>
                 {if !has_token {
                     view! {
-                        <p style="color:#ef4444;font-size:12px;margin:0 0 17px;">
+                        <p style="color:var(--danger);font-size:12px;margin:0 0 17px;">
                             "No WIKIMEDIA_ACCESS_TOKEN found. Create a .env.wikimedia.local file with your token and restart the server."
                         </p>
                     }.into_any()
@@ -58,7 +58,7 @@ pub(super) fn AuthRequiredView(
                 <div style="display:flex;gap:10px;justify-content:center;">
                     <button
                         class="btn"
-                        style="border-color:rgba(59,130,246,.5);background:rgba(59,130,246,.15);"
+                        style="border-color:var(--accent-border);background:var(--accent-bg);"
                         on:click=move |_| {
                             set_bootstrap_attempted.set(false);
                             load_action.dispatch_local(());
@@ -147,7 +147,7 @@ pub(super) fn BackofficeModal(
                             }.into_any()
                         } else {
                             view! {
-                                <p style="color:#8b9fc0;">"Load the patrol queue first."</p>
+                                <p style="color:var(--muted);">"Load the patrol queue first."</p>
                             }.into_any()
                         }}
                     </div>
@@ -173,17 +173,17 @@ pub(super) fn ActionHistoryPanel(
             <div style="display:grid;gap:4px;">
                 {history_entries.into_iter().map(|entry| {
                     let label = entry.kind.label().to_string();
-                    let status_color = if entry.accepted { "#22c55e" } else { "#ef4444" };
+                    let status_color = if entry.accepted { "var(--success)" } else { "var(--danger)" };
                     let status_text = if entry.accepted { "OK" } else { "Failed" };
                     let detail = entry.error.or(entry.api_code).unwrap_or_default();
                     view! {
                         <div style="display:flex;align-items:center;gap:7px;\
                                     font-size:12px;padding:4px 0;\
-                                    border-block-end:1px solid rgba(148,163,184,.12);">
-                            <span style="font-weight:700;color:#eff4ff;text-transform:capitalize;">
+                                    border-block-end:1px solid var(--border-light);">
+                            <span style="font-weight:700;color:var(--text);text-transform:capitalize;">
                                 {label}
                             </span>
-                            <span style="color:#8b9fc0;">
+                            <span style="color:var(--muted);">
                                 {format!("r{}", entry.rev_id)}
                             </span>
                             <span style=format!("color:{status_color};font-weight:700;")>
@@ -191,7 +191,7 @@ pub(super) fn ActionHistoryPanel(
                             </span>
                             {if !detail.is_empty() {
                                 view! {
-                                    <span style="color:#f59e0b;font-size:11px;">
+                                    <span style="color:var(--warning);font-size:11px;">
                                         {detail}
                                     </span>
                                 }.into_any()
@@ -286,7 +286,7 @@ pub(super) fn QueuePane(
                 .into_any()
             } else if let Some(error) = load_error.get() {
                 view! {
-                    <div style="padding:17px;color:#ef4444;">
+                    <div style="padding:17px;color:var(--danger);">
                         <p style="font-weight:700;">"Queue unavailable"</p>
                         <p style="font-size:12px;">{error}</p>
                         <button
@@ -301,7 +301,7 @@ pub(super) fn QueuePane(
                 .into_any()
             } else {
                 view! {
-                    <div style="padding:17px;color:#8b9fc0;">
+                    <div style="padding:17px;color:var(--muted);">
                         "Loading queue..."
                     </div>
                 }
@@ -451,8 +451,8 @@ pub(super) fn ActionFooter(
 fn shortcut_row(label: &'static str, key: &'static str) -> impl IntoView {
     view! {
         <div style="display:flex;justify-content:space-between;">
-            <span style="color:#8b9fc0;">{label}</span>
-            <kbd style="color:#eff4ff;font-weight:700;">{key}</kbd>
+            <span style="color:var(--muted);">{label}</span>
+            <kbd style="color:var(--text);font-weight:700;">{key}</kbd>
         </div>
     }
 }

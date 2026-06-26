@@ -29,7 +29,7 @@ pub fn DebugPanel(lines: Vec<String>) -> impl IntoView {
                     <StatusBadge label="Debug Panel".to_string() tone=StatusTone::Accent />
                     <StatusBadge label=format!("{} lines", queue_depth) tone=StatusTone::Info />
                 </div>
-                <p style="margin:0;color:#8b9fc0;">
+                <p style="margin:0;color:var(--muted);">
                     "Structured state snapshot for the current dashboard view."
                 </p>
             </header>

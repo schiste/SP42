@@ -44,12 +44,12 @@ fn InspectorEntryRow(entry: InspectorEntry) -> impl IntoView {
     view! {
         <article
             class="sp42-inspector-entry"
-            style="display:grid;gap:4px;padding:10px;border-radius:4px;border:1px solid rgba(148,163,184,.18);background:rgba(15,23,42,.5);"
+            style="display:grid;gap:4px;padding:10px;border-radius:4px;border:1px solid var(--border);background:var(--panel-deep);"
         >
             <div style="display:flex;align-items:center;gap:7px;flex-wrap:wrap;">
                 <StatusBadge label=label.to_string() tone=tone />
             </div>
-            <p style="margin:0;font-family:ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;font-size:.94rem;line-height:1.5;white-space:pre-wrap;word-break:break-word;color:#eff4ff;">
+            <p style="margin:0;font-family:ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;font-size:.94rem;line-height:1.5;white-space:pre-wrap;word-break:break-word;color:var(--text);">
                 {entry.text}
             </p>
         </article>

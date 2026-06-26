@@ -18,7 +18,7 @@ pub fn StatusBadge(label: String, tone: StatusTone) -> impl IntoView {
         <span
             class="sp42-status-badge"
             style=format!(
-                "display:inline-flex;align-items:center;gap:4px;padding:4px 10px;border-radius:4px;border:1px solid {border};background:{background};color:{foreground};font-size:.78rem;line-height:1.1;font-weight:700;letter-spacing:.02em;text-transform:uppercase;"
+                "display:inline-flex;align-items:center;gap:4px;padding:4px 10px;border-radius:var(--radius-sm);border:1px solid {border};background:{background};color:{foreground};font-size:.78rem;line-height:1.1;font-weight:700;letter-spacing:.02em;text-transform:uppercase;"
             )
         >
             {label}
@@ -26,21 +26,36 @@ pub fn StatusBadge(label: String, tone: StatusTone) -> impl IntoView {
     }
 }
 
+/// Tone -> (background, foreground, border) as CSS custom property references,
+/// so badges follow the active Codex theme. Token values live in
+/// `static/style.css` (`--tone-*`).
 #[must_use]
 pub fn tone_colors(tone: StatusTone) -> (&'static str, &'static str, &'static str) {
     match tone {
         StatusTone::Neutral => (
-            "rgba(255,255,255,0.08)",
-            "#dce4f2",
-            "rgba(220,228,242,0.25)",
+            "var(--tone-neutral-bg)",
+            "var(--tone-neutral-text)",
+            "var(--tone-neutral-border)",
         ),
-        StatusTone::Info => ("rgba(63,127,255,0.16)", "#d6e4ff", "rgba(63,127,255,0.35)"),
-        StatusTone::Success => ("rgba(61,185,125,0.16)", "#dff8e9", "rgba(61,185,125,0.36)"),
-        StatusTone::Warning => ("rgba(224,160,0,0.18)", "#fff0bf", "rgba(224,160,0,0.38)"),
+        StatusTone::Info => (
+            "var(--tone-info-bg)",
+            "var(--tone-info-text)",
+            "var(--tone-info-border)",
+        ),
+        StatusTone::Success => (
+            "var(--tone-positive-bg)",
+            "var(--tone-positive-text)",
+            "var(--tone-positive-border)",
+        ),
+        StatusTone::Warning => (
+            "var(--tone-caution-bg)",
+            "var(--tone-caution-text)",
+            "var(--tone-caution-border)",
+        ),
         StatusTone::Accent => (
-            "rgba(143,183,255,0.14)",
-            "#d6e4ff",
-            "rgba(143,183,255,0.35)",
+            "var(--accent-bg)",
+            "var(--tone-info-text)",
+            "var(--accent-border)",
         ),
         StatusTone::Danger => ("rgba(239,68,68,0.18)", "#fecaca", "rgba(239,68,68,0.4)"),
     }

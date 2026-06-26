@@ -2,13 +2,16 @@
 
 /// Map a composite risk score to a (color, icon) pair for consistent tier
 /// rendering across the queue column and context sidebar.
+///
+/// The colour is a CSS custom property reference (not a literal) so the tier
+/// follows the active Codex theme — see `static/style.css`.
 pub fn score_tier(score: i32) -> (&'static str, &'static str) {
     if score >= 70 {
-        ("#ef4444", "!!")
+        ("var(--danger)", "!!")
     } else if score >= 30 {
-        ("#f59e0b", "?")
+        ("var(--warning)", "?")
     } else {
-        ("#22c55e", "\u{2713}")
+        ("var(--success)", "\u{2713}")
     }
 }
 
@@ -31,9 +34,9 @@ mod tests {
 
     #[test]
     fn score_tier_maps_thresholds() {
-        assert_eq!(score_tier(70).0, "#ef4444");
-        assert_eq!(score_tier(30).0, "#f59e0b");
-        assert_eq!(score_tier(0).0, "#22c55e");
+        assert_eq!(score_tier(70).0, "var(--danger)");
+        assert_eq!(score_tier(30).0, "var(--warning)");
+        assert_eq!(score_tier(0).0, "var(--success)");
     }
 
     #[test]

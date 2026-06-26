@@ -22,7 +22,7 @@ pub fn PatrolSessionDigestPanel(report: PatrolScenarioReport) -> impl IntoView {
                         .map(|(label, tone)| view! { <StatusBadge label=label tone=tone /> })
                         .collect_view()}
                 </div>
-                <p style="margin:0;color:#8b9fc0;">
+                <p style="margin:0;color:var(--muted);">
                     "A patrol-first summary that turns the live queue into a quick review decision before the action rail and diff."
                 </p>
             </header>
@@ -48,7 +48,7 @@ pub fn PatrolSessionDigestPanel(report: PatrolScenarioReport) -> impl IntoView {
                             tone={finding_summary_tone(&findings)}
                         />
                     </div>
-                    <ul style="margin:0;padding-inline-start:17px;color:#eff4ff;display:grid;gap:4px;">
+                    <ul style="margin:0;padding-inline-start:17px;color:var(--text);display:grid;gap:4px;">
                         {findings
                             .into_iter()
                             .map(|finding| view! { <li>{finding_summary_line(&finding)}</li> })

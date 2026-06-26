@@ -8,6 +8,8 @@ pub mod components;
 pub mod pages;
 #[cfg(target_arch = "wasm32")]
 pub mod platform;
+#[cfg(target_arch = "wasm32")]
+pub mod theme;
 
 #[cfg(target_arch = "wasm32")]
 pub fn run_app() {

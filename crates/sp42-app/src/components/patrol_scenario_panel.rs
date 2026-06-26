@@ -26,7 +26,7 @@ pub fn PatrolScenarioPanel(report: PatrolScenarioReport) -> impl IntoView {
                         .map(|(label, tone)| view! { <StatusBadge label=label tone=tone /> })
                         .collect_view()}
                 </div>
-                <p style="margin:0;color:#8b9fc0;">
+                <p style="margin:0;color:var(--muted);">
                     "Typed patrol scenario summary derived from the live queue, context, diff, action, stream, backlog, and coordination inputs."
                 </p>
             </header>
@@ -72,11 +72,11 @@ pub fn PatrolScenarioPanel(report: PatrolScenarioReport) -> impl IntoView {
             </div>
 
             <details
-                style="padding:10px 17px;border-radius:4px;border:1px solid rgba(148,163,184,.14);background:rgba(8,15,29,.58);"
+                style="padding:10px 17px;border-radius:4px;border:1px solid var(--border);background:var(--panel-inner);"
             >
                 <summary style="cursor:pointer;font-weight:700;">"Technical snapshot"</summary>
                 <pre
-                    style="margin:.75rem 0 0;overflow:auto;white-space:pre-wrap;word-break:break-word;font-family:ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;font-size:.9rem;line-height:1.55;color:#eff4ff;"
+                    style="margin:.75rem 0 0;overflow:auto;white-space:pre-wrap;word-break:break-word;font-family:ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;font-size:.9rem;line-height:1.55;color:var(--text);"
                 >{report_text}</pre>
             </details>
         </section>
@@ -89,13 +89,13 @@ fn FindingCard(finding: PatrolScenarioFinding) -> impl IntoView {
 
     view! {
         <article
-            style="display:grid;gap:4px;padding:10px;border-radius:4px;border:1px solid rgba(148,163,184,.18);background:rgba(8,15,29,.44);"
+            style="display:grid;gap:4px;padding:10px;border-radius:4px;border:1px solid var(--border);background:var(--panel-deep);"
         >
             <div style="display:flex;align-items:center;gap:7px;flex-wrap:wrap;">
                 <StatusBadge label=label.to_string() tone=tone />
-                <span style="color:#dce4f2;font-size:.82rem;font-weight:600;">{finding.code}</span>
+                <span style="color:var(--text);font-size:.82rem;font-weight:600;">{finding.code}</span>
             </div>
-            <p style="margin:0;color:#d6e4ff;line-height:1.5;">{finding.message}</p>
+            <p style="margin:0;color:var(--accent);line-height:1.5;">{finding.message}</p>
         </article>
     }
 }
@@ -110,7 +110,7 @@ fn ScenarioSectionCard(section: PatrolScenarioSection) -> impl IntoView {
 
     view! {
         <article
-            style="display:grid;gap:7px;padding:10px;border-radius:4px;border:1px solid rgba(148,163,184,.18);background:rgba(8,15,29,.42);"
+            style="display:grid;gap:7px;padding:10px;border-radius:4px;border:1px solid var(--border);background:var(--panel-deep);"
         >
             <div style="display:flex;align-items:center;justify-content:space-between;gap:7px;flex-wrap:wrap;">
                 <StatusBadge label=section.name.clone() tone=tone />
@@ -119,7 +119,7 @@ fn ScenarioSectionCard(section: PatrolScenarioSection) -> impl IntoView {
                     tone=if section.available { StatusTone::Success } else { StatusTone::Warning }
                 />
             </div>
-            <ul style="margin:0;padding-inline-start:17px;color:#eff4ff;display:grid;gap:4px;">
+            <ul style="margin:0;padding-inline-start:17px;color:var(--text);display:grid;gap:4px;">
                 {section
                     .summary_lines
                     .into_iter()

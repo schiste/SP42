@@ -538,8 +538,8 @@ fn render_rendered_hunk_preview(
                 .into_any()
             } else if let Some(error) = rendered_hunks.error(hunk_index) {
                 view! {
-                    <div class="card" style="padding:10px;gap:6px;border-color:rgba(239,68,68,.3);">
-                        <strong style="font-size:11px;color:#fca5a5;">"Rendered preview unavailable"</strong>
+                    <div class="card" style="padding:10px;gap:6px;border-color:var(--danger-border);">
+                        <strong style="font-size:11px;color:var(--danger-light);">"Rendered preview unavailable"</strong>
                         <div style="font-size:11px;color:var(--muted);">{error}</div>
                     </div>
                 }
@@ -557,7 +557,7 @@ fn render_rendered_hunk_preview(
                         <div style="display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:10px;">
                             <div style="display:grid;gap:6px;min-width:0;">
                                 <div class="section-header">{"Before · "}{before.section_label.clone()}</div>
-                                <div class="card" style="padding:8px;background:rgba(255,255,255,0.02);min-width:0;">
+                                <div class="card" style="padding:8px;background:var(--row-tint);min-width:0;">
                                     <RenderedHtmlPane
                                         html=before.html.clone()
                                         highlight_phrases=before_highlights.clone()
@@ -567,7 +567,7 @@ fn render_rendered_hunk_preview(
                             </div>
                             <div style="display:grid;gap:6px;min-width:0;">
                                 <div class="section-header">{"After · "}{after.section_label.clone()}</div>
-                                <div class="card" style="padding:8px;background:rgba(255,255,255,0.02);min-width:0;">
+                                <div class="card" style="padding:8px;background:var(--row-tint);min-width:0;">
                                     <RenderedHtmlPane
                                         html=after.html.clone()
                                         highlight_phrases=after_highlights.clone()
@@ -663,7 +663,7 @@ fn render_hunk_header(
                             view! {
                                 <span
                                     style="padding:1px 5px;border-radius:999px;font-size:9px;line-height:1.2;\
-                                           background:rgba(59,130,246,.12);color:#bfdbfe;border:1px solid rgba(59,130,246,.22);"
+                                           background:var(--accent-bg);color:var(--accent);border:1px solid var(--accent-border);"
                                 >
                                     {badge}
                                 </span>
@@ -679,7 +679,7 @@ fn render_hunk_header(
                         view! {
                             <span
                                 style="padding:1px 5px;border-radius:999px;font-size:9px;line-height:1.2;\
-                                       background:rgba(248,250,252,.05);color:var(--muted);border:1px solid var(--border-light);"
+                                       background:var(--row-tint);color:var(--muted);border:1px solid var(--border-light);"
                             >
                                 {label}
                             </span>
@@ -822,8 +822,8 @@ fn render_side_by_side_cell(
     let Some(cell) = cell else {
         return view! {
             <div
-                style="min-height:1.2em;border-radius:var(--radius-sm);background:rgba(255,255,255,0.02);\
-                       border:1px solid rgba(255,255,255,0.03);"
+                style="min-height:1.2em;border-radius:var(--radius-sm);background:var(--row-tint);\
+                       border:1px solid var(--row-tint);"
             ></div>
         }
         .into_any();
@@ -1117,8 +1117,12 @@ fn inline_highlight_style(span: &InlineSpan) -> &'static str {
     }
 
     match span.kind {
-        DiffSegmentKind::Delete => "background:rgba(239,68,68,.35);border-radius:2px;",
-        DiffSegmentKind::Insert => "background:rgba(34,197,94,.35);border-radius:2px;",
+        DiffSegmentKind::Delete => {
+            "background:color-mix(in srgb,var(--danger) 38%,transparent);border-radius:2px;"
+        }
+        DiffSegmentKind::Insert => {
+            "background:color-mix(in srgb,var(--success) 38%,transparent);border-radius:2px;"
+        }
         DiffSegmentKind::Equal => "",
     }
 }

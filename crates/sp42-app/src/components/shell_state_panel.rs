@@ -22,7 +22,7 @@ pub fn ShellStatePanel(model: ShellStateModel) -> impl IntoView {
                         .map(|(label, tone)| view! { <StatusBadge label=label tone=tone /> })
                         .collect_view()}
                 </div>
-                <p style="margin:0;color:#8b9fc0;">
+                <p style="margin:0;color:var(--muted);">
                     "One shared shell-state view across browser, CLI, and desktop so the patrol workbench tells the same story on every target."
                 </p>
             </header>
@@ -65,7 +65,7 @@ pub fn ShellStatePanel(model: ShellStateModel) -> impl IntoView {
                         tone=if notes.is_empty() { StatusTone::Neutral } else { StatusTone::Success }
                     />
                 </div>
-                <ul style="margin:0;padding-inline-start:17px;color:#eff4ff;display:grid;gap:4px;">
+                <ul style="margin:0;padding-inline-start:17px;color:var(--text);display:grid;gap:4px;">
                     {notes
                         .into_iter()
                         .map(|line| view! { <li>{line}</li> })

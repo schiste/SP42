@@ -116,14 +116,14 @@ fn render_entry_card(entry: MediaDiffEntry) -> leptos::prelude::AnyView {
                         alt=title.clone()
                         loading="lazy"
                         style="width:100%;aspect-ratio:4/3;object-fit:cover;border-radius:var(--radius-sm);\
-                               background:rgba(255,255,255,0.04);"
+                               background:var(--row-tint);"
                     />
                 }.into_any()
             } else {
                 view! {
                     <div
                         style="display:grid;place-items:center;aspect-ratio:4/3;border-radius:var(--radius-sm);\
-                               background:rgba(255,255,255,0.04);color:var(--muted);font-size:11px;"
+                               background:var(--row-tint);color:var(--muted);font-size:11px;"
                     >
                         "Preview unavailable"
                     </div>

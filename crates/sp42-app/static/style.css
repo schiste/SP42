@@ -1,54 +1,144 @@
-/* SP42 Design System — single source of truth for all visual tokens */
-
+/*
+ * SP42 design tokens — mapped onto the Wikimedia Codex design system
+ * (theme-wikimedia-ui, @wikimedia/codex-design-tokens v2.6.0).
+ *
+ * Dark is the default (:root). Light is opt-in via [data-theme="light"] on the
+ * document root (set by the theme toggle / restored from localStorage).
+ *
+ * The --* names below are SP42's own semantic layer; every component references
+ * these, never raw Codex tokens. A future Codex bump only touches this block.
+ * Codex token each value derives from is noted in the comment beside it.
+ */
 :root {
   color-scheme: dark;
 
-  /* Backgrounds */
-  --bg: #08111f;
-  --panel: #0b1324;
-  --panel-inner: rgba(15, 23, 42, 0.58);
-  --panel-deep: rgba(8, 15, 29, 0.44);
-  --panel-overlay: rgba(8, 17, 31, 0.95);
-  --panel-overlay-light: rgba(8, 17, 31, 0.85);
-  --input: #111b2e;
-  --selected: #111b2e;
+  /* Backgrounds — Codex dark surface ladder */
+  --bg: #101418; /* background-color-base */
+  --panel: #202122; /* background-color-neutral-subtle */
+  --panel-inner: #27292d; /* background-color-neutral */
+  --panel-deep: #1a1c1f;
+  --panel-overlay: rgba(16, 20, 24, 0.96);
+  --panel-overlay-light: rgba(0, 0, 0, 0.6);
+  --input: #101418;
+  --selected: #1b223d; /* background-color-progressive-subtle */
 
   /* Text */
-  --text: #eff4ff;
-  --muted: #8b9fc0;
-  --subtle: #4f6280;
-  --accent: #8fb7ff;
-  --link: #3b82f6;
+  --text: #eaecf0; /* color-base */
+  --muted: #a2a9b1; /* color-subtle */
+  --subtle: #72777d;
+  --accent: #88a3e8; /* color-progressive */
+  --link: #88a3e8;
 
   /* Semantic */
-  --success: #22c55e;
-  --success-light: #bbf7d0;
-  --success-bg: rgba(34, 197, 94, 0.14);
-  --success-border: rgba(34, 197, 94, 0.3);
-  --warning: #f59e0b;
-  --danger: #ef4444;
-  --danger-light: #fecaca;
-  --danger-bg: rgba(239, 68, 68, 0.18);
-  --danger-border: rgba(239, 68, 68, 0.3);
+  --success: #2cb491; /* color-success */
+  --success-light: #a6e0cd;
+  --success-bg: #132821; /* background-color-success-subtle */
+  --success-border: #245045;
+  --warning: #ca982e; /* color-warning */
+  --danger: #fd7865; /* color-destructive */
+  --danger-light: #ffc4b8;
+  --danger-bg: #3c1a13; /* background-color-destructive-subtle */
+  --danger-border: #5d2a1f;
 
-  /* Borders */
-  --border: rgba(148, 163, 184, 0.18);
-  --border-light: rgba(148, 163, 184, 0.12);
-  --border-emphasis: rgba(148, 163, 184, 0.25);
-  --separator-color: rgba(148, 163, 184, 0.3);
+  /* Accent surfaces (progressive-subtle / border-progressive) */
+  --accent-bg: #1b223d;
+  --accent-border: #6485d1; /* border-color-progressive */
 
-  /* Radii */
-  --radius-sm: 4px;
-  --radius-md: 6px;
+  /* Subtle surface tint for zebra rows / media placeholders */
+  --row-tint: rgba(255, 255, 255, 0.04);
 
-  /* Fonts */
-  --font: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
-    "Noto Sans", "Liberation Sans", sans-serif;
+  /* Status-badge tones */
+  --tone-neutral-bg: #27292d;
+  --tone-neutral-text: #c8ccd1;
+  --tone-neutral-border: #54595d;
+  --tone-info-bg: #1b223d;
+  --tone-info-text: #b0c1ed;
+  --tone-info-border: #3d5599;
+  --tone-positive-bg: #132821;
+  --tone-positive-text: #a6e0cd;
+  --tone-positive-border: #245045;
+  --tone-caution-bg: #2d2212;
+  --tone-caution-text: #e8c878;
+  --tone-caution-border: #5c4a1f;
+
+  /* Borders — Codex dark */
+  --border: #54595d; /* border-color-subtle */
+  --border-light: #2e3136; /* border-color-muted */
+  --border-emphasis: #72777d; /* border-color-base */
+  --separator-color: #72777d;
+
+  /* Radii — Codex uses a tight 2px corner */
+  --radius-sm: 2px;
+  --radius-md: 2px;
+
+  /* Fonts — Codex system sans + a mono fallback */
+  --font: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Inter",
+    "Helvetica", "Arial", sans-serif;
+  --font-sans: var(--font);
   --mono: ui-monospace, SFMono-Regular, "Cascadia Code", "Liberation Mono",
     Menlo, Monaco, Consolas, monospace;
 
-  /* Focus ring */
-  --ring: 0 0 0 2px rgba(143, 183, 255, 0.5);
+  /* Focus ring — Codex progressive outline */
+  --ring: 0 0 0 2px var(--accent-border);
+}
+
+:root[data-theme="light"] {
+  color-scheme: light;
+
+  /* Backgrounds — Codex light surface ladder */
+  --bg: #eaecf0; /* background-color-neutral */
+  --panel: #fff; /* background-color-base */
+  --panel-inner: #fff;
+  --panel-deep: #f8f9fa; /* background-color-neutral-subtle */
+  --panel-overlay: rgba(248, 249, 250, 0.97);
+  --panel-overlay-light: rgba(0, 0, 0, 0.3);
+  --input: #fff;
+  --selected: #e8eeff; /* background-color-progressive-subtle */
+
+  /* Text */
+  --text: #202122; /* color-base */
+  --muted: #54595d; /* color-subtle */
+  --subtle: #72777d;
+  --accent: #36c; /* color-progressive */
+  --link: #36c;
+
+  /* Semantic */
+  --success: #177860; /* color-success */
+  --success-light: #096450;
+  --success-bg: #dff2eb; /* background-color-success-subtle */
+  --success-border: #9fd5c0;
+  --warning: #886425; /* color-warning */
+  --danger: #bf3c2c; /* color-destructive */
+  --danger-light: #9f3526;
+  --danger-bg: #ffe9e5; /* background-color-destructive-subtle */
+  --danger-border: #f1c0b6;
+
+  /* Accent surfaces */
+  --accent-bg: #e8eeff;
+  --accent-border: #36c;
+
+  /* Subtle surface tint for zebra rows / media placeholders */
+  --row-tint: rgba(0, 0, 0, 0.04);
+
+  /* Status-badge tones */
+  --tone-neutral-bg: #eaecf0;
+  --tone-neutral-text: #404244;
+  --tone-neutral-border: #c8ccd1;
+  --tone-info-bg: #e8eeff;
+  --tone-info-text: #2a4b8d;
+  --tone-info-border: #b0c1ed;
+  --tone-positive-bg: #dff2eb;
+  --tone-positive-text: #14866b;
+  --tone-positive-border: #9fd5c0;
+  --tone-caution-bg: #fdf2d5;
+  --tone-caution-text: #886425;
+  --tone-caution-border: #e0c989;
+
+  /* Borders — Codex light */
+  --border: #c8ccd1; /* border-color-subtle */
+  --border-light: #eaecf0; /* border-color-muted */
+  --border-emphasis: #a2a9b1; /* border-color-base */
+  --separator-color: #a2a9b1;
 }
 
 /* ─── Reset ─── */
@@ -77,7 +167,7 @@ body {
   gap: 16px;
   min-height: 42px;
   padding: 0 10px;
-  background: #07101d;
+  background: var(--panel);
   border-block-end: 1px solid var(--border);
 }
 
@@ -113,8 +203,8 @@ body {
 }
 
 .workspace-tab-active {
-  border-color: rgba(143, 183, 255, 0.36);
-  background: rgba(143, 183, 255, 0.14);
+  border-color: var(--accent-border);
+  background: var(--accent-bg);
   color: var(--text);
 }
 
@@ -510,8 +600,8 @@ body {
 
 .queue-group-count {
   padding: 1px 5px;
-  border-radius: 3px;
-  background: rgba(143, 183, 255, 0.18);
+  border-radius: var(--radius-sm);
+  background: var(--accent-bg);
   color: var(--accent);
   font-weight: 700;
   font-size: 9px;
@@ -571,31 +661,36 @@ body {
 }
 
 .rendered-hunk-highlight-add {
-  background: rgba(34, 197, 94, 0.24);
+  background: color-mix(in srgb, var(--success) 28%, transparent);
   color: inherit;
-  box-shadow: inset 0 0 0 1px rgba(34, 197, 94, 0.18);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--success) 40%, transparent);
 }
 
 .rendered-hunk-highlight-remove {
-  background: rgba(239, 68, 68, 0.2);
+  background: color-mix(in srgb, var(--danger) 24%, transparent);
   color: inherit;
-  box-shadow: inset 0 0 0 1px rgba(239, 68, 68, 0.16);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--danger) 36%, transparent);
 }
 
 
-/* ─── Buttons ─── */
+/* ─── Buttons (Codex CSS-only button conventions) ─── */
 .btn {
   min-height: 48px;
   padding: 6px 20px;
-  border: 1px solid var(--border);
+  border: 1px solid var(--border-emphasis);
   border-radius: var(--radius-sm);
   font: inherit;
   font-size: 13px;
   font-weight: 700;
   cursor: pointer;
-  transition: opacity 120ms;
-  background: transparent;
+  transition: background 100ms, border-color 100ms, opacity 120ms;
+  background: var(--panel-inner);
   color: var(--text);
+}
+
+.btn:hover:not(:disabled) {
+  background: var(--accent-bg);
+  border-color: var(--accent-border);
 }
 
 .btn:disabled {
@@ -622,7 +717,14 @@ body {
 
 .btn-ghost {
   background: transparent;
+  border-color: transparent;
   color: var(--muted);
+}
+
+.btn-ghost:hover:not(:disabled) {
+  background: var(--accent-bg);
+  border-color: transparent;
+  color: var(--accent);
 }
 
 .btn-compact {
@@ -639,7 +741,7 @@ body {
 
 @keyframes sp42-pulse {
   0%, 100% { box-shadow: var(--ring); }
-  50% { box-shadow: 0 0 0 4px rgba(143, 183, 255, 0.25); }
+  50% { box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 35%, transparent); }
 }
 
 /* ─── Filters ─── */
@@ -687,7 +789,7 @@ body {
   padding: 17px;
   border-radius: var(--radius-md);
   border: 1px solid var(--border);
-  background: rgba(15, 23, 42, 0.88);
+  background: var(--panel);
 }
 
 .card {
@@ -870,14 +972,14 @@ body {
 }
 
 .diff-insert {
-  background: rgba(34, 197, 94, 0.12);
+  background: color-mix(in srgb, var(--success) 14%, transparent);
   border-inline-start: 3px solid var(--success);
   padding-inline-start: 7px;
   color: var(--success-light);
 }
 
 .diff-delete {
-  background: rgba(239, 68, 68, 0.12);
+  background: color-mix(in srgb, var(--danger) 14%, transparent);
   border-inline-start: 3px solid var(--danger);
   padding-inline-start: 7px;
   color: var(--danger-light);
@@ -903,12 +1005,12 @@ body {
 }
 
 .diff-insert mark {
-  background: rgba(34, 197, 94, 0.35);
+  background: color-mix(in srgb, var(--success) 38%, transparent);
   border-radius: 2px;
 }
 
 .diff-delete mark {
-  background: rgba(239, 68, 68, 0.35);
+  background: color-mix(in srgb, var(--danger) 38%, transparent);
   border-radius: 2px;
 }
 
@@ -965,7 +1067,7 @@ body {
   padding: 10px;
   border-radius: var(--radius-sm);
   border: 1px solid var(--border);
-  background: rgba(15, 23, 42, 0.5);
+  background: var(--panel-deep);
 }
 
 .inspector-entry-text {
@@ -1055,13 +1157,13 @@ body {
 }
 
 .context-menu-item:hover {
-  background: rgba(143, 183, 255, 0.12);
+  background: var(--accent-bg);
 }
 
 /* ─── Inline Edit ─── */
 .diff-edit-container {
   padding: 4px 10px;
-  background: rgba(143, 183, 255, 0.06);
+  background: var(--accent-bg);
   border: 1px solid var(--accent);
   border-radius: var(--radius-sm);
   margin: 2px 0;

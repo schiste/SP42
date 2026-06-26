@@ -71,6 +71,19 @@ fn schema_org_marker_with_no_prose_is_flagged() {
 }
 
 #[test]
+fn schema_org_nested_haspart_is_flagged() {
+    // isAccessibleForFree:true at top, but :false in a nested hasPart — the recursive
+    // serde_json walk must find it (a case a flat regex would get wrong).
+    let raw = r#"<html><head><script type="application/ld+json">
+        {"@type":"NewsArticle","isAccessibleForFree":true,
+         "hasPart":{"@type":"WebPageElement","isAccessibleForFree":false,"cssSelector":".paywall"}}
+        </script></head><body>Home News Sections Account</body></html>"#;
+    let r = classify_source_usability("https://news.example.com/x", "text/html", Some(raw), Some("Home News Sections Account"));
+    assert!(!r.usable);
+    assert_eq!(r.reason, BodyUsabilityReason::NavChromePaywall);
+}
+
+#[test]
 fn vendor_fingerprint_with_no_prose_is_flagged() {
     let raw = r#"<html><head><script src="https://cdn.tinypass.com/api/tinypass.min.js"></script></head><body>Subscribe Menu Account</body></html>"#;
     let r = classify_source_usability("https://news.example.com/x", "text/html", Some(raw), Some("Subscribe Menu Account"));
@@ -138,9 +151,11 @@ Add near the other `LazyLock<Regex>` statics at the top of `body_classifier.rs`:
 /// Replaced by a dom_smoothie content-quality signal in a later (deferred) pass.
 const PROSE_SENTENCE_FLOOR: usize = 5;
 
-/// schema.org paywall flag in JSON-LD: `"isAccessibleForFree": false`.
-static ACCESSIBLE_FOR_FREE_FALSE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r#"(?i)"isAccessibleForFree"\s*:\s*(false|"false")"#).expect("valid regex")
+/// Locates JSON-LD blocks. Their *contents* are parsed with `serde_json`
+/// (see `json_ld_marks_paywalled`), never regex-matched — this only finds the block.
+static LD_JSON_BLOCK: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r#"(?is)<script[^>]*type=["']application/ld\+json["'][^>]*>(.*?)</script>"#)
+        .expect("valid regex")
 });
 
 /// Open Graph content tier marking gated content.
@@ -186,6 +201,34 @@ const PAYWALL_VENDOR_HOSTS: &[&str] = &[
 ];
 ```
 
+Then add these module-level helpers (near `classify_source_usability`, outside `#[cfg(test)]`). They parse JSON-LD with `serde_json` rather than regex-matching inside it, so nested `hasPart` / multiple blocks / whitespace are handled correctly (`serde_json` is already a dependency; reference it fully-qualified — no `use` needed):
+
+```rust
+/// `true` if any JSON-LD block marks the content paywalled
+/// (`isAccessibleForFree: false`), checked recursively (incl. nested `hasPart`).
+fn json_ld_marks_paywalled(raw_html: &str) -> bool {
+    LD_JSON_BLOCK.captures_iter(raw_html).any(|caps| {
+        serde_json::from_str::<serde_json::Value>(caps[1].trim())
+            .map(|value| value_marks_paywalled(&value))
+            .unwrap_or(false)
+    })
+}
+
+fn value_marks_paywalled(value: &serde_json::Value) -> bool {
+    match value {
+        serde_json::Value::Object(map) => {
+            let flagged = map.get("isAccessibleForFree").is_some_and(|v| {
+                matches!(v, serde_json::Value::Bool(false))
+                    || matches!(v.as_str(), Some(s) if s.eq_ignore_ascii_case("false"))
+            });
+            flagged || map.values().any(value_marks_paywalled)
+        }
+        serde_json::Value::Array(items) => items.iter().any(value_marks_paywalled),
+        _ => false,
+    }
+}
+```
+
 **Step 4: Add the detector to `classify_source_usability`**
 
 Replace the `// 3. Paywall / nav-chrome — added in Phase 3.` placeholder (from Phase 2) with:
@@ -198,7 +241,7 @@ Replace the `// 3. Paywall / nav-chrome — added in Phase 3.` placeholder (from
     //    reads as high-prose and is NOT flagged.
     let trimmed = text.map(str::trim).unwrap_or("");
     let raw = raw_html.unwrap_or("");
-    let hard_marker = ACCESSIBLE_FOR_FREE_FALSE.is_match(raw)
+    let hard_marker = json_ld_marks_paywalled(raw)
         || CONTENT_TIER_GATED.is_match(raw)
         || PAYWALL_VENDOR_HOSTS.iter().any(|host| raw.contains(host));
     let soft_marker = PAYWALL_PHRASE.is_match(trimmed);
@@ -357,6 +400,6 @@ git commit -m "test(citation): #42 Law360 paywall stub short-circuits before the
 
 - `cargo test -p sp42-core` passes.
 - The #42 Law360-shaped fixture → `Unusable` / `NavChromePaywall`, zero model calls.
-- Deterministic markers fire: schema.org `isAccessibleForFree:false` and a vendor `<script>` fingerprint each classify `NavChromePaywall` (with low prose); a soft paywall that still ships the full text stays usable; a consent wall with a sign-in phrase is suppressed.
+- Deterministic markers fire: schema.org `isAccessibleForFree:false` (parsed with `serde_json`, incl. nested `hasPart`) and a vendor `<script>` fingerprint each classify `NavChromePaywall` (with low prose); a soft paywall that still ships the full text stays usable; a consent wall with a sign-in phrase is suppressed.
 - Fixture-sample balance holds: zero false positives on real-article controls; catches most paywall stubs (both rates asserted/reported).
-- `PROSE_SENTENCE_FLOOR` and the marker statics (`ACCESSIBLE_FOR_FREE_FALSE`, `CONTENT_TIER_GATED`, `PAYWALL_VENDOR_HOSTS`, `PAYWALL_PHRASE`, `CONSENT_MARKER`) are the documented tuning knobs; the `dom_smoothie` content-quality swap and flag-and-tune-on-traffic are the deferred escalations.
+- `PROSE_SENTENCE_FLOOR`, `json_ld_marks_paywalled`, and the marker statics (`CONTENT_TIER_GATED`, `PAYWALL_VENDOR_HOSTS`, `PAYWALL_PHRASE`, `CONSENT_MARKER`) are the documented tuning knobs; the `dom_smoothie` content-quality swap + a real HTML/DOM parser, and flag-and-tune-on-traffic, are the deferred escalations.

@@ -374,6 +374,7 @@ where
 #[cfg(test)]
 mod orchestrator_tests {
     use super::*;
+    use crate::citation::body_classifier::BodyUsabilityReason;
     use crate::citation::extract::extract_use_sites;
     use crate::wikitext_editor::{BlockKind, BlockRef, ParsoidBlock};
     use sp42_types::{FixedClock, HttpResponse, StubHttpClient, StubModelClient};
@@ -813,6 +814,74 @@ archive is fetched, the queue will be empty and the test will fail, proving the 
         );
         // No extraction failures (if archive had been fetched, queue drain would cause error).
         assert!(report.extraction_failures.is_empty());
+    }
+
+    #[test]
+    fn pdf_citation_carries_unusable_reason_through_page_report() {
+        use futures::executor::block_on;
+
+        // A single citation to a PDF. The finding should have unusable_reason == Some(PdfBody)
+        // and the PageVerificationReport should serialize/deserialize with the field intact.
+        let b = ParsoidBlock {
+            text: "Test claim here.".into(),
+            refs: vec![BlockRef {
+                offset: 5,
+                ref_id: "r1".into(),
+                sources: vec![crate::wikitext_editor::CitedSource {
+                    url: url::Url::parse("https://example.com/report.pdf").unwrap(),
+                    archive_urls: vec![],
+                }],
+                ref_text: "[1]".into(),
+                named: false,
+            }],
+            block_kind: BlockKind::Paragraph,
+            block_ordinal: 0,
+        };
+        let extract = extract_use_sites(&[b], &page());
+
+        // Fetch returns 200 with PDF body.
+        let http = StubHttpClient::new([Ok(HttpResponse {
+            status: 200,
+            headers: {
+                let mut m = std::collections::BTreeMap::new();
+                m.insert("content-type".to_string(), "application/pdf".to_string());
+                m
+            },
+            body: b"%PDF-1.7 body".to_vec(),
+        })]);
+        // No model call: body-usability gate short-circuits before model invocation.
+        let model = StubModelClient::new([]);
+        let report = block_on(verify_page(
+            &http,
+            &model,
+            &FixedClock::new(0),
+            &[model_ref()],
+            &page(),
+            extract,
+            VerifyOptions::default(),
+            1,
+        ));
+
+        assert_eq!(report.findings.len(), 1);
+        let finding = &report.findings[0];
+        assert_eq!(finding.verdict, super::CitationVerdict::SourceUnavailable);
+        assert_eq!(
+            finding.unusable_reason,
+            Some(BodyUsabilityReason::PdfBody),
+            "PDF source should have PdfBody as unusable_reason"
+        );
+
+        // The report serializes the per-finding reason (the reviewer-facing surface).
+        let json = serde_json::to_string(&report).expect("serialize report");
+        let back: PageVerificationReport = serde_json::from_str(&json).expect("deserialize report");
+        assert_eq!(
+            back.findings[0].unusable_reason,
+            Some(BodyUsabilityReason::PdfBody),
+            "unusable_reason should survive the page report round-trip"
+        );
+
+        // Confirm the stat still increments (no new stats fields are added).
+        assert_eq!(report.stats.source_unavailable_unusable, 1);
     }
 }
 

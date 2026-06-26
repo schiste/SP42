@@ -16,6 +16,7 @@ use std::sync::LazyLock;
 
 use regex::Regex;
 use serde::{Deserialize, Serialize};
+use url::Url;
 
 /// Window (in characters) inspected by the JSON-LD / CSS / Wayback-chrome detectors.
 const SIGNATURE_LEN: usize = 500;
@@ -112,6 +113,24 @@ static AMAZON_STUB: LazyLock<Regex> = LazyLock::new(|| {
     .expect("valid regex")
 });
 
+/// Hosts whose pages are viewer/embed shells under generic extraction (no readable
+/// article body). Matched as a suffix on the URL host. Extension point: add hosts here.
+const SPECIAL_CASE_HOSTS: &[&str] = &["books.google."];
+
+/// `true` if the URL's host matches a special-case viewer-shell host.
+fn is_special_case_host(source_url: &str) -> bool {
+    let Ok(parsed) = Url::parse(source_url) else {
+        return false;
+    };
+    let Some(host) = parsed.host_str() else {
+        return false;
+    };
+    let host = host.to_ascii_lowercase();
+    SPECIAL_CASE_HOSTS
+        .iter()
+        .any(|needle| host.contains(needle))
+}
+
 /// The first `n` characters of `text` (a char-boundary-safe prefix window).
 fn head(text: &str, n: usize) -> String {
     text.chars().take(n).collect()
@@ -200,7 +219,7 @@ const fn unusable(reason: BodyUsabilityReason) -> BodyUsability {
 /// of this delegation. The leading params are unused for now.
 #[must_use]
 pub fn classify_source_usability(
-    _source_url: &str, // unused until Task 3 (host-rule); `_`-prefixed to satisfy -D warnings
+    source_url: &str,
     content_type: &str,
     raw_html: Option<&str>,
     text: Option<&str>,
@@ -217,7 +236,10 @@ pub fn classify_source_usability(
         return unusable(BodyUsabilityReason::PdfBody);
     }
 
-    // 2. Special-case hosts (host-rule table) — added in Task 3.
+    // 2. Special-case hosts (viewer/embed shells).
+    if is_special_case_host(source_url) {
+        return unusable(BodyUsabilityReason::ViewerShell);
+    }
 
     // 3. Paywall / nav-chrome — added in Phase 3.
 
@@ -393,6 +415,30 @@ mod tests {
             "https://example.com/x",
             "text/html",
             Some(&prose),
+            Some(&prose),
+        );
+        assert!(r.usable);
+    }
+
+    #[test]
+    fn google_books_host_is_viewer_shell() {
+        for url in [
+            "https://books.google.com/books?id=abc123",
+            "https://books.google.es/books?id=xyz",
+        ] {
+            let r = classify_source_usability(url, "text/html", None, Some("irrelevant body text"));
+            assert!(!r.usable, "{url}");
+            assert_eq!(r.reason, BodyUsabilityReason::ViewerShell, "{url}");
+        }
+    }
+
+    #[test]
+    fn non_special_host_is_not_viewer_shell() {
+        let prose = "The history of the bridge spans more than a century. ".repeat(10);
+        let r = classify_source_usability(
+            "https://en.wikipedia.org/wiki/Bridge",
+            "text/html",
+            None,
             Some(&prose),
         );
         assert!(r.usable);

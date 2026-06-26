@@ -704,6 +704,28 @@ fn no_quote_finding(
     }
 }
 
+/// Build a [`VerificationOutcome`] for an unusable source (short-circuit, no model call).
+/// This captures the pattern: source was fetched but marked unusable by the deterministic
+/// body-usability gate. The finding records the reason and marks grounding as [`GroundingStatus::NotApplicable`].
+fn unusable_source_outcome(
+    usability_reason: BodyUsabilityReason,
+    provenance: &SourceProvenance,
+    use_site_ordinal: u32,
+) -> VerificationOutcome {
+    let mut finding = no_quote_finding(
+        CitationVerdict::SourceUnavailable,
+        GroundingStatus::NotApplicable,
+        PanelAgreement::new(0, 0),
+        provenance,
+        use_site_ordinal,
+    );
+    finding.unusable_reason = Some(usability_reason);
+    VerificationOutcome {
+        finding,
+        votes: Vec::new(),
+    }
+}
+
 /// A fetched source body plus the HTTP status it came from.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FetchedSource {
@@ -846,18 +868,11 @@ where
         body,
     );
     if !usability.usable {
-        let mut finding = no_quote_finding(
-            CitationVerdict::SourceUnavailable,
-            GroundingStatus::NotApplicable,
-            PanelAgreement::new(0, 0),
+        return Ok(unusable_source_outcome(
+            usability.reason,
             &provenance,
             use_site_ordinal,
-        );
-        finding.unusable_reason = Some(usability.reason);
-        return Ok(VerificationOutcome {
-            finding,
-            votes: Vec::new(),
-        });
+        ));
     }
 
     let metadata = if options.include_metadata {

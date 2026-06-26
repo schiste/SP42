@@ -2084,4 +2084,61 @@ mod tests {
         );
         assert!(outcome.votes.is_empty());
     }
+
+    #[test]
+    fn pdf_source_is_unusable_with_no_model_call() {
+        let fetch = StubHttpClient::new([Ok(HttpResponse {
+            status: 200,
+            headers: BTreeMap::from([("content-type".to_string(), "application/pdf".to_string())]),
+            body: b"%PDF-1.7\n...binary report body...".to_vec(),
+        })]);
+        let model_client = StubModelClient::new([]); // empty → any model call errors
+        let outcome = block_on(verify_citation_use_site(
+            &fetch,
+            &model_client,
+            &FixedClock::new(1000),
+            &[model()],
+            &request("Claim from a PDF", "https://example.com/report.pdf"),
+            None,
+            3,
+            VerifyOptions::default(),
+        ))
+        .expect("verifies");
+        assert_eq!(outcome.finding.verdict, CitationVerdict::SourceUnavailable);
+        assert_eq!(
+            outcome.finding.unusable_reason,
+            Some(BodyUsabilityReason::PdfBody)
+        );
+        assert!(outcome.votes.is_empty());
+    }
+
+    #[test]
+    fn google_books_source_is_unusable_with_no_model_call() {
+        let fetch = StubHttpClient::new([Ok(HttpResponse {
+            status: 200,
+            headers: BTreeMap::from([("content-type".to_string(), "text/html".to_string())]),
+            body: long_html_with("Pernod Ricard"), // chrome with the entity name present
+        })]);
+        let model_client = StubModelClient::new([]);
+        let outcome = block_on(verify_citation_use_site(
+            &fetch,
+            &model_client,
+            &FixedClock::new(1000),
+            &[model()],
+            &request(
+                "Some claim about a book",
+                "https://books.google.com/books?id=abc",
+            ),
+            None,
+            3,
+            VerifyOptions::default(),
+        ))
+        .expect("verifies");
+        assert_eq!(outcome.finding.verdict, CitationVerdict::SourceUnavailable);
+        assert_eq!(
+            outcome.finding.unusable_reason,
+            Some(BodyUsabilityReason::ViewerShell)
+        );
+        assert!(outcome.votes.is_empty());
+    }
 }

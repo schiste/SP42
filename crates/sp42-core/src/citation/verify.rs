@@ -32,7 +32,7 @@ use sha2::{Digest, Sha256};
 use sp42_types::{ModelClient, ModelCompletionRequest, ModelInvocation, ModelRef, SamplingParams};
 use url::Url;
 
-use super::body_classifier::classify_body_usability;
+use super::body_classifier::{BodyUsabilityReason, classify_body_usability};
 use super::citoid::{
     CitoidMetadata, build_citoid_header, build_citoid_request, parse_citoid_response,
 };
@@ -183,6 +183,11 @@ pub struct CitationFinding {
     /// `None` for any other verdict.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub source_unavailable_reason: Option<SourceUnavailableReason>,
+    /// When the verdict is `SourceUnavailable` because the body was fetched but
+    /// unusable, the specific classifier reason (PDF, viewer shell, paywall, …).
+    /// `None` for usable sources and for unreachable (non-2xx) sources.
+    #[serde(default)]
+    pub unusable_reason: Option<BodyUsabilityReason>,
     /// Measured agreement among the panel's votes (ADR-0006).
     pub agreement: PanelAgreement,
     /// The winning verdict's located passage, or `None`.
@@ -573,6 +578,7 @@ pub fn assemble_citation_finding(
                     source_unavailable_reason: derive_source_unavailable_reason(
                         verdict, provenance,
                     ),
+                    unusable_reason: None,
                     provenance: provenance.clone(),
                     grounding: GroundingAssertion::LocatedQuote {
                         quote,
@@ -684,6 +690,7 @@ fn no_quote_finding(
         agreement,
         passage: None,
         source_unavailable_reason: derive_source_unavailable_reason(verdict, provenance),
+        unusable_reason: None,
         provenance: provenance.clone(),
         grounding: GroundingAssertion::SourceFetched {
             source_hash: provenance.content_hash.clone(),

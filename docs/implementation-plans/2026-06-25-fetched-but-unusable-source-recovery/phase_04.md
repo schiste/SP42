@@ -83,7 +83,7 @@ git commit -m "test(citation): unusable_reason serde round-trip + legacy back-co
 
 **Step 1: Write the test**
 
-Mirror the existing page-level tests (which already exercise `verify_page` with `StubHttpClient`/`StubModelClient`; see the `source_unavailable_reason == Unusable` assertion around page.rs:738). Add `BodyUsabilityReason` to the page.rs `#[cfg(test)]` module's `use super::{…}` imports (the existing page tests reference `SourceUnavailableReason` but not `BodyUsabilityReason`). Assert that a PDF citation's finding in the assembled `PageVerificationReport` carries `unusable_reason == Some(PdfBody)` and that the report serde round-trips with the field intact. Follow the existing page-test setup for constructing the page input and panel.
+Mirror the existing page-level tests (which already exercise `verify_page` with `StubHttpClient`/`StubModelClient`; see the `source_unavailable_reason == Unusable` assertion around page.rs:738). The page.rs `#[cfg(test)]` module imports via `use super::*;`, which does **not** bring in `BodyUsabilityReason` (it lives in `body_classifier`, and `verify` does not re-export it) — add an explicit `use crate::citation::body_classifier::BodyUsabilityReason;` to that test module. Assert that a PDF citation's finding in the assembled `PageVerificationReport` carries `unusable_reason == Some(PdfBody)` and that the report serde round-trips with the field intact. Follow the existing page-test setup for constructing the page input and panel.
 
 Key assertions (adapt to the existing page-test harness in this module):
 
@@ -147,13 +147,16 @@ git commit -m "feat(reporting): surface unusable_reason in verify output (or: no
 
 **Files:** none (verification only)
 
-**Step 1: Full core suite + clippy**
+**Step 1: Full core suite + workspace build + clippy**
 
 Run: `cargo test -p sp42-core`
 Expected: all pass.
 
+Run: `cargo test --workspace --no-run`
+Expected: the whole workspace compiles — this catches sibling-crate `CitationFinding` literals (`sp42-cli`, `storage.rs`) that a `-p sp42-core` build would miss.
+
 Run: `cargo clippy -p sp42-core --all-targets -- -D warnings`
-Expected: no warnings. (The Phase-1 `_source_url`/`_content_type` params became used in Phase 2, so there are no unused-variable warnings.)
+Expected: no warnings. (The Phase-1 `_source_url` param became used in Phase 2/3, so there are no unused-variable warnings.)
 
 **Step 2: Verify the wasm build still succeeds**
 

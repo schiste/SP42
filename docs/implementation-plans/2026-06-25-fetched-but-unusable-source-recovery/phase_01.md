@@ -33,7 +33,7 @@ In `CitationFinding`, after `pub source_unavailable_reason: Option<SourceUnavail
     pub unusable_reason: Option<BodyUsabilityReason>,
 ```
 
-Ensure `BodyUsabilityReason` is in scope. At the top of `verify.rs`, extend the existing `use super::body_classifier::{…}` import so it reads:
+Ensure `BodyUsabilityReason` is in scope. The current import (verify.rs:35) is the unbraced single path `use super::body_classifier::classify_body_usability;`. Replace it with:
 
 ```rust
 use super::body_classifier::{classify_body_usability, BodyUsabilityReason};
@@ -42,17 +42,20 @@ Add **only** `BodyUsabilityReason` — do NOT add `BodyUsability` (it is never n
 
 **Step 2: Initialize the field in every `CitationFinding { … }` literal**
 
-Add `unusable_reason: None,` to each struct literal. Known sites: `no_quote_finding` (~672–698) and `assemble_citation_finding`. Run the build (Step 3) — the compiler lists every literal missing the field; add `unusable_reason: None,` to each, including any in `#[cfg(test)]`.
+`CitationFinding` is constructed in **sibling crates too**, and `#[serde(default)]` does nothing for struct literals — every one is a hard compile error until the field is supplied. Add `unusable_reason: None,` to each. Known sites:
+- `crates/sp42-core/src/citation/verify.rs` — `no_quote_finding` (~673–698) and `assemble_citation_finding`.
+- `crates/sp42-core/src/citation/storage.rs:329` — `sample_finding()` (`#[cfg(test)]`).
+- `crates/sp42-cli/src/main.rs:1030` — `fixture_finding()` (`#[cfg(test)]`). **This one is in another crate**, so a `-p sp42-core` build will not surface it — Step 3 uses a workspace build for exactly this reason.
 
-**Step 3: Verify it compiles**
+**Step 3: Verify it compiles (workspace-wide)**
 
-Run: `cargo test -p sp42-core --no-run`
-Expected: compiles; if it fails, it names each `CitationFinding` literal still missing `unusable_reason` — add the field there and re-run until it builds.
+Run: `cargo test --workspace --no-run`
+Expected: compiles; if it fails, it names each `CitationFinding` literal (in any crate) still missing `unusable_reason` — add the field there and re-run until the whole workspace builds.
 
 **Step 4: Commit**
 
 ```bash
-git add crates/sp42-core/src/citation/verify.rs
+git add crates/sp42-core/src/citation/verify.rs crates/sp42-core/src/citation/storage.rs crates/sp42-cli/src/main.rs
 git commit -m "feat(citation): add CitationFinding.unusable_reason (plumbing, default None)"
 ```
 
@@ -125,13 +128,15 @@ The non-2xx early return (~734) becomes:
 
 **Step 3: Fix other `FetchedSource` literals**
 
+There is a **production** literal at `crates/sp42-core/src/citation/page.rs:304` (`verify_page`'s transport-error sentinel) plus test literals — all need the new fields. For the page.rs sentinel set `content_type: String::new(), raw_html: None` (no body was fetched).
+
 Run: `cargo test -p sp42-core --no-run`
-Expected: the compiler flags any other `FetchedSource { … }` literals (e.g. in tests) missing the new fields. Add `content_type: String::new(), raw_html: None` (or the appropriate values in tests) to each until it builds.
+Expected: the compiler flags every remaining `FetchedSource { … }` literal missing the new fields. Add `content_type: String::new(), raw_html: None` (or the appropriate values in tests) to each until it builds.
 
 **Step 4: Commit**
 
 ```bash
-git add crates/sp42-core/src/citation/verify.rs
+git add crates/sp42-core/src/citation/verify.rs crates/sp42-core/src/citation/page.rs
 git commit -m "feat(citation): thread content-type and raw HTML through FetchedSource"
 ```
 

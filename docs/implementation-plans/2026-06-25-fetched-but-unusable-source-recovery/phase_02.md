@@ -111,7 +111,7 @@ In `classify_source_usability`, before delegating, add the PDF check. Replace th
 
 ```rust
 pub fn classify_source_usability(
-    source_url: &str,
+    _source_url: &str, // unused until Task 3 (host-rule); `_`-prefixed to satisfy -D warnings
     content_type: &str,
     raw_html: Option<&str>,
     text: Option<&str>,
@@ -218,7 +218,7 @@ fn is_special_case_host(source_url: &str) -> bool {
 
 Ensure `use url::Url;` is present at the top of `body_classifier.rs` (add if absent).
 
-Fill in the "Special-case hosts" slot in `classify_source_usability` (between the PDF check and the text delegation):
+Fill in the "Special-case hosts" slot in `classify_source_usability` (between the PDF check and the text delegation). This is the first use of the URL param, so **rename `_source_url` to `source_url`** in the signature now (it is no longer unused):
 
 ```rust
     // 2. Special-case hosts (viewer/embed shells).

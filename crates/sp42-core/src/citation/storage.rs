@@ -336,6 +336,7 @@ mod tests {
                 offset: 11,
             }),
             source_unavailable_reason: None,
+            unusable_reason: None,
             provenance: SourceProvenance {
                 url: url(),
                 content_hash: sha256_hex(b"the museum opened in 1850"),

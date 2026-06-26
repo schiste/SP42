@@ -117,6 +117,60 @@ static AMAZON_STUB: LazyLock<Regex> = LazyLock::new(|| {
     .expect("valid regex")
 });
 
+/// Minimum count of sentence-like spans for a body to read as real article prose.
+/// Starting threshold — tune against the fixture sample (see plan tuning stance).
+/// Replaced by a `dom_smoothie` content-quality signal in a later (deferred) pass.
+const PROSE_SENTENCE_FLOOR: usize = 5;
+
+/// Locates JSON-LD blocks. Their *contents* are parsed with `serde_json`
+/// (see `json_ld_marks_paywalled`), never regex-matched — this only finds the block.
+static LD_JSON_BLOCK: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r#"(?is)<script[^>]*type=["']application/ld\+json["'][^>]*>(.*?)</script>"#)
+        .expect("valid regex")
+});
+
+/// Open Graph content tier marking gated content.
+static CONTENT_TIER_GATED: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r#"(?i)property=["']article:content_tier["']\s+content=["'](locked|metered)["']"#)
+        .expect("valid regex")
+});
+
+/// Registration / paywall prompt in the extracted text — the weakest marker.
+static PAYWALL_PHRASE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(
+        r"(?i)(subscribe to (read|continue)|sign in to continue|create a free account|register to (read|continue)|to continue reading|subscribers? only|this (article|content) is for subscribers)",
+    )
+    .expect("valid regex")
+});
+
+/// Cookie / GDPR consent-banner markers — the top paywall false-positive source.
+static CONSENT_MARKER: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(
+        r"(?i)(accept all cookies|manage cookies|cookie (policy|consent|preferences|settings)|we value your privacy)",
+    )
+    .expect("valid regex")
+});
+
+/// A sentence-like span (proxy for real article prose); chrome has few, articles many.
+static SENTENCE_END: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"[A-Za-z]{3,}[.!?](\s|$)").expect("valid regex"));
+
+/// Paywall-platform (`PaaS`) hosts that appear in `<script>`/`<link>` srcs. Domains are
+/// facts (no license entanglement); cross-referenced against miscfilters/antipaywall.txt
+/// (GPL-3.0, compatible) for maintenance.
+const PAYWALL_VENDOR_HOSTS: &[&str] = &[
+    "piano.io",
+    "tinypass.com",
+    "npttech.com",
+    "poool.fr",
+    "poool.tech",
+    "zephr.com",
+    "arcpublishing.com",
+    "pelcro.com",
+    "evolok.com",
+    "wallkit.net",
+];
+
 /// Hosts whose pages are viewer/embed shells under generic extraction (no readable
 /// article body). Matched as a case-insensitive substring of the URL host. Extension point: add hosts here.
 const SPECIAL_CASE_HOSTS: &[&str] = &["books.google."];
@@ -138,6 +192,29 @@ fn is_special_case_host(source_url: &str) -> bool {
 /// The first `n` characters of `text` (a char-boundary-safe prefix window).
 fn head(text: &str, n: usize) -> String {
     text.chars().take(n).collect()
+}
+
+/// `true` if any JSON-LD block marks the content paywalled
+/// (`isAccessibleForFree: false`), checked recursively (incl. nested `hasPart`).
+fn json_ld_marks_paywalled(raw_html: &str) -> bool {
+    LD_JSON_BLOCK.captures_iter(raw_html).any(|caps| {
+        serde_json::from_str::<serde_json::Value>(caps[1].trim())
+            .is_ok_and(|value| value_marks_paywalled(&value))
+    })
+}
+
+fn value_marks_paywalled(value: &serde_json::Value) -> bool {
+    match value {
+        serde_json::Value::Object(map) => {
+            let flagged = map.get("isAccessibleForFree").is_some_and(|v| {
+                matches!(v, serde_json::Value::Bool(false))
+                    || matches!(v.as_str(), Some(s) if s.eq_ignore_ascii_case("false"))
+            });
+            flagged || map.values().any(value_marks_paywalled)
+        }
+        serde_json::Value::Array(items) => items.iter().any(value_marks_paywalled),
+        _ => false,
+    }
 }
 
 /// Classify whether a fetched body is usable article content (ADR-0007 §4).
@@ -245,7 +322,25 @@ pub fn classify_source_usability(
         return unusable(BodyUsabilityReason::ViewerShell);
     }
 
-    // 3. Paywall / nav-chrome — added in Phase 3.
+    // 3. Paywall / nav-chrome: a paywall marker AND no substantial readable prose.
+    //    Markers are deterministic-first (raw-HTML structured signals), then a
+    //    registration-phrase fallback guarded against consent banners. The prose
+    //    check is load-bearing: a paywalled page that still ships the article text
+    //    reads as high-prose and is NOT flagged.
+    let trimmed = text.map_or("", str::trim);
+    let raw = raw_html.unwrap_or("");
+    let hard_marker = json_ld_marks_paywalled(raw)
+        || CONTENT_TIER_GATED.is_match(raw)
+        || PAYWALL_VENDOR_HOSTS.iter().any(|host| raw.contains(host));
+    let soft_marker = PAYWALL_PHRASE.is_match(trimmed);
+    let consent_wall = CONSENT_MARKER.is_match(raw) || CONSENT_MARKER.is_match(trimmed);
+    // A hard marker fires through anything; the weak registration phrase is suppressed
+    // when consent markers dominate and there is no hard signal (don't call a consent
+    // UI a paywall). Single combined `if` — `collapsible_if` is denied under -D warnings.
+    let marker = hard_marker || (soft_marker && !consent_wall);
+    if marker && SENTENCE_END.find_iter(trimmed).count() < PROSE_SENTENCE_FLOOR {
+        return unusable(BodyUsabilityReason::NavChromePaywall);
+    }
 
     // 4. Text-shape detectors.
     classify_body_usability(text)
@@ -446,5 +541,78 @@ mod tests {
             Some(&prose),
         );
         assert!(r.usable);
+    }
+
+    #[test]
+    fn schema_org_marker_with_no_prose_is_flagged() {
+        let raw = r#"<html><head><script type="application/ld+json">{"@type":"NewsArticle","isAccessibleForFree":false}</script></head><body>Home News Sections Account</body></html>"#;
+        let r = classify_source_usability("https://news.example.com/x", "text/html", Some(raw), Some("Home News Sections Account"));
+        assert!(!r.usable);
+        assert_eq!(r.reason, BodyUsabilityReason::NavChromePaywall);
+    }
+
+    #[test]
+    fn schema_org_nested_haspart_is_flagged() {
+        // isAccessibleForFree:true at top, but :false in a nested hasPart — the recursive
+        // serde_json walk must find it (a case a flat regex would get wrong).
+        let raw = r#"<html><head><script type="application/ld+json">
+        {"@type":"NewsArticle","isAccessibleForFree":true,
+         "hasPart":{"@type":"WebPageElement","isAccessibleForFree":false,"cssSelector":".paywall"}}
+        </script></head><body>Home News Sections Account</body></html>"#;
+        let r = classify_source_usability("https://news.example.com/x", "text/html", Some(raw), Some("Home News Sections Account"));
+        assert!(!r.usable);
+        assert_eq!(r.reason, BodyUsabilityReason::NavChromePaywall);
+    }
+
+    #[test]
+    fn vendor_fingerprint_with_no_prose_is_flagged() {
+        let raw = r#"<html><head><script src="https://cdn.tinypass.com/api/tinypass.min.js"></script></head><body>Subscribe Menu Account</body></html>"#;
+        let r = classify_source_usability("https://news.example.com/x", "text/html", Some(raw), Some("Subscribe Menu Account"));
+        assert!(!r.usable);
+        assert_eq!(r.reason, BodyUsabilityReason::NavChromePaywall);
+    }
+
+    #[test]
+    fn registration_phrase_with_no_prose_is_flagged() {
+        // Law360-shaped: nav chrome + registration wall, almost no real sentences.
+        let body = format!(
+            "Home News Sections Account {} Subscribe to read the full article. Sign in to continue.",
+            "Companies Pernod Ricard SA Brown-Forman ".repeat(20)
+        );
+        let r = classify_source_usability("https://www.law360.com/articles/735000/x", "text/html", Some(&body), Some(&body));
+        assert!(!r.usable);
+        assert_eq!(r.reason, BodyUsabilityReason::NavChromePaywall);
+    }
+
+    #[test]
+    fn soft_paywall_with_full_text_is_not_flagged() {
+        // isAccessibleForFree:false BUT the article text is present → high prose → verify it.
+        let article = "The bridge opened in 1998 after a decade of work. Engineers debated the design. \
+        Officials praised the result. Traffic doubled within five years. Crews inspect it yearly. "
+        .repeat(4);
+        let raw = format!(
+            r#"<html><head><script type="application/ld+json">{{"isAccessibleForFree":false}}</script></head><body>{article}</body></html>"#
+        );
+        let r = classify_source_usability("https://news.example.com/x", "text/html", Some(&raw), Some(&article));
+        assert!(r.usable, "paywalled page that still ships the text must stay verifiable");
+    }
+
+    #[test]
+    fn real_article_with_subscribe_link_is_not_flagged() {
+        let article = "The treaty was signed in 1815 after long talks. Five nations attended. \
+        The terms reshaped the region. Historians debate it still. Some clauses were never enforced. "
+        .repeat(4);
+        let body = format!("{article} Subscribe to read more of our coverage.");
+        let r = classify_source_usability("https://news.example.com/x", "text/html", Some(&body), Some(&body));
+        assert!(r.usable, "real article must not be flagged as paywall");
+    }
+
+    #[test]
+    fn consent_wall_with_registration_phrase_is_suppressed() {
+        // A cookie-consent interstitial with a sign-in prompt but NO hard paywall marker.
+        // The guard prevents calling a consent UI a paywall.
+        let body = "We value your privacy. Accept all cookies. Manage cookies. Sign in to continue. Home Menu Account";
+        let r = classify_source_usability("https://news.example.com/x", "text/html", Some(body), Some(body));
+        assert_ne!(r.reason, BodyUsabilityReason::NavChromePaywall);
     }
 }

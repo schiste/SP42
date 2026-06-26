@@ -719,7 +719,16 @@ fn unusable_source_outcome(
         provenance,
         use_site_ordinal,
     );
-    finding.unusable_reason = Some(usability_reason);
+    // Record the specific body-usability reason only for sources that were actually
+    // fetched (2xx → `Unusable`). A non-2xx response is `Unreachable`, not
+    // fetched-but-unusable, so its empty body must not be mis-tagged (e.g. `ShortBody`);
+    // keep `unusable_reason` None there, matching the field contract.
+    if matches!(
+        finding.source_unavailable_reason,
+        Some(SourceUnavailableReason::Unusable)
+    ) {
+        finding.unusable_reason = Some(usability_reason);
+    }
     VerificationOutcome {
         finding,
         votes: Vec::new(),
@@ -2082,6 +2091,38 @@ mod tests {
             outcome.finding.unusable_reason,
             Some(BodyUsabilityReason::ShortBody)
         );
+        assert!(outcome.votes.is_empty());
+    }
+
+    #[test]
+    fn unreachable_source_has_no_unusable_reason() {
+        // A non-2xx fetch is Unreachable, not fetched-but-unusable: the verdict is
+        // SourceUnavailable with source_unavailable_reason == Unreachable, but
+        // unusable_reason must stay None (it is only for fetched 2xx bodies). The
+        // empty body would otherwise classify as ShortBody and mis-tag the reason.
+        let fetch = StubHttpClient::new([Ok(HttpResponse {
+            status: 404,
+            headers: BTreeMap::new(),
+            body: Vec::new(),
+        })]);
+        let model_client = StubModelClient::new([]); // empty → any model call errors
+        let outcome = block_on(verify_citation_use_site(
+            &fetch,
+            &model_client,
+            &FixedClock::new(1000),
+            &[model()],
+            &request("Some claim", "https://example.com/missing"),
+            None,
+            3,
+            VerifyOptions::default(),
+        ))
+        .expect("verifies");
+        assert_eq!(outcome.finding.verdict, CitationVerdict::SourceUnavailable);
+        assert_eq!(
+            outcome.finding.source_unavailable_reason,
+            Some(super::SourceUnavailableReason::Unreachable)
+        );
+        assert_eq!(outcome.finding.unusable_reason, None);
         assert!(outcome.votes.is_empty());
     }
 

@@ -6,7 +6,7 @@
 
 ## Context
 
-`docs/FRONTEND_DESIGN_CONTRACT.md` is a binding design spec, but it is prose with
+`docs/platform/FRONTEND_DESIGN_CONTRACT.md` is a binding design spec, but it is prose with
 no implementation — §18 explicitly leaves the "Leptos component API" out of scope.
 That gap is filled by accident: the patrol UI has three sources of visual truth
 that disagree. The contract names tokens (`--surface-base`, `--space-*`);

@@ -825,6 +825,6 @@ cargo run -p sp42-cli -- --bare-url-execute --wiki testwiki \
   --action-note "SP42 bare-URL repair smoke" --format text </dev/null
 ```
 
-(`SP42_WIKI_CONFIG_DIR=fixtures` points the registry at `fixtures/testwiki.yaml`; confirm against `docs/RUNTIME_CONFIGURATION.md` — the variable expects a directory of YAML configs. `WIKIMEDIA_ACCESS_TOKEN` must be available per the dev-auth bridge docs for the bootstrap to succeed.)
+(`SP42_WIKI_CONFIG_DIR=fixtures` points the registry at `fixtures/testwiki.yaml`; confirm against `docs/platform/RUNTIME_CONFIGURATION.md` — the variable expects a directory of YAML configs. `WIKIMEDIA_ACCESS_TOKEN` must be available per the dev-auth bridge docs for the bootstrap to succeed.)
 
 **Step 2: Commit** any wording fix to this plan file only if needed; otherwise nothing to commit.

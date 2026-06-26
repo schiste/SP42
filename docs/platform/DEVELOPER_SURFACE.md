@@ -15,7 +15,7 @@ The server exposes a local readiness and operator-report surface for single-user
 
 Runtime modes, bind addresses, public URLs, frontend API base URL behavior, and
 local Wikimedia credentials are documented in
-[docs/RUNTIME_CONFIGURATION.md](RUNTIME_CONFIGURATION.md).
+[docs/platform/RUNTIME_CONFIGURATION.md](RUNTIME_CONFIGURATION.md).
 
 ## Patrol Scenario Reporting
 

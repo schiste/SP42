@@ -1,4 +1,9 @@
-# Wikipedia Patrol & Anti-Vandalism Tools: Comprehensive Feature Inventory
+# Wikipedia Patrol & Anti-Vandalism Tools: Landscape
+
+Prior-art survey of existing Wikipedia patrol and anti-vandalism tooling,
+maintained as reference for SP42's [patrolling domain](README.md). It records each
+tool's features, status, and technology factually; it is not a competitive
+positioning document.
 
 _Research conducted March 2026. Sources include MediaWiki.org, Wikipedia project pages, GitHub/GitLab repositories, Wikimedia Diff blog, Wikitech, and Meta-Wiki._
 
@@ -712,7 +717,7 @@ _Research conducted March 2026. Sources include MediaWiki.org, Wikipedia project
 
 2. **Twinkle is the most widely adopted tool** (~49,000 users) but is action-oriented rather than queue-based -- it augments individual page workflows rather than providing a dedicated patrol feed.
 
-3. **No existing tool combines all desired features.** The gap is particularly notable for:
+3. **No existing tool combines all of these capabilities.** Gaps across the ecosystem are particularly notable for:
    - Mobile-first patrol experience (Android Edit Patrol is the only option, and it is limited)
    - Dark mode / theming (only AntiVandal v2.0 and Android app support it)
    - Offline capability (no tool supports this)

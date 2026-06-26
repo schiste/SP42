@@ -8,7 +8,7 @@
 
 **Tech Stack:** Rust workspace; `clippy::pedantic` and `warnings` are **deny** workspace-wide — public functions returning `Result` need `# Errors` doc sections, public pure functions need `#[must_use]` where applicable.
 
-**Scope:** Phase 1 of 5 from ADR-0003 (docs/adr/0003-node-anchored-wikitext-editing.md).
+**Scope:** Phase 1 of 5 from ADR-0003 (docs/platform/adr/0003-node-anchored-wikitext-editing.md).
 
 **Codebase verified:** 2026-06-09 (worktree `.worktrees/node-anchored-editing`, branch `louie/node-anchored-editing`, baseline `cargo test --workspace` green).
 
@@ -16,7 +16,7 @@
 
 ## Context for the implementer
 
-- ADR-0003 is at `docs/adr/0003-node-anchored-wikitext-editing.md`. Decision 4: "For any remaining literal-span path, replace blind `replacen(…, 1)` with an exactly-one-occurrence guard: reject the edit unless the needle occurs exactly once."
+- ADR-0003 is at `docs/platform/adr/0003-node-anchored-wikitext-editing.md`. Decision 4: "For any remaining literal-span path, replace blind `replacen(…, 1)` with an exactly-one-occurrence guard: reject the edit unless the needle occurs exactly once."
 - The two sites today (verified):
   - **InlineEdit** — `crates/sp42-server/src/action_routes.rs:387-396`: `page_text.replacen(&original, &replacement, 1)` with only a not-found check (`code: "text-not-found"`). Multiple occurrences silently edit the first one.
   - **TagCitationNeeded** — `apply_citation_template` at `crates/sp42-server/src/action_routes.rs:421-443`: same pattern.

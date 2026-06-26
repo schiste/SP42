@@ -244,6 +244,8 @@ mod tests {
                 offset: 11,
             }),
             provenance: provenance(url),
+            source_excerpt: None,
+            metadata: None,
             grounding: GroundingAssertion::SourceFetched {
                 source_hash: "deadbeef".to_string(),
             },

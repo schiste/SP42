@@ -1,7 +1,7 @@
 use leptos::prelude::*;
 use sp42_core::{
-    CitationFinding, DevAuthBootstrapRequest, GroundingStatus, PageVerificationReport,
-    parse_page_target,
+    CitationFinding, CitoidMetadata, DevAuthBootstrapRequest, GroundingStatus,
+    PageVerificationReport, parse_page_target,
 };
 use sp42_reporting::{
     FindingGroup, ReportSection, finding_is_problem, page_verification_report_to_document,
@@ -373,6 +373,9 @@ fn FindingCard(finding: CitationFinding, article_url: Option<String>) -> impl In
         .passage
         .as_ref()
         .map(|passage| passage.quote.clone());
+    let excerpt = finding.source_excerpt.clone();
+    let source_meta = finding.metadata.as_ref().and_then(metadata_line);
+    let has_evidence = quote.is_some() || excerpt.is_some();
 
     view! {
         <article class="article-reference">
@@ -436,14 +439,37 @@ fn FindingCard(finding: CitationFinding, article_url: Option<String>) -> impl In
                 </div>
             })}
 
-            {quote.map(|text| view! {
+            // Citoid bibliographic context — always visible, since it helps identify
+            // a source even when the tool could not read it.
+            {source_meta.map(|line| view! {
+                <div class="article-reference-meta">{format!("source: {line}")}</div>
+            })}
+
+            {has_evidence.then(|| view! {
                 <details>
                     <summary style="cursor:pointer;font-size:10px;color:#8b9fc0;text-transform:uppercase;letter-spacing:.06em;">
-                        "Evidence located in source"
+                        "Source evidence"
                     </summary>
-                    <blockquote style="margin:6px 0 0;padding:6px 10px;border-inline-start:3px solid rgba(61,185,125,.5);background:rgba(15,23,42,.58);color:#eff4ff;font-size:12px;line-height:1.5;">
-                        {text}
-                    </blockquote>
+                    {quote.map(|text| view! {
+                        <div style="margin:6px 0 0;">
+                            <span style="display:block;color:#8b9fc0;font-size:10px;text-transform:uppercase;letter-spacing:.06em;margin-bottom:2px;">
+                                "Located quote"
+                            </span>
+                            <blockquote style="margin:0;padding:6px 10px;border-inline-start:3px solid rgba(61,185,125,.5);background:rgba(15,23,42,.58);color:#eff4ff;font-size:12px;line-height:1.5;">
+                                {text}
+                            </blockquote>
+                        </div>
+                    })}
+                    {excerpt.map(|text| view! {
+                        <div style="margin:6px 0 0;">
+                            <span style="display:block;color:#8b9fc0;font-size:10px;text-transform:uppercase;letter-spacing:.06em;margin-bottom:2px;">
+                                "Source text (what the panel read)"
+                            </span>
+                            <blockquote style="margin:0;padding:6px 10px;border-inline-start:3px solid rgba(148,163,184,.3);background:rgba(15,23,42,.58);color:#cdd7ea;font-size:12px;line-height:1.5;white-space:pre-wrap;">
+                                {text}
+                            </blockquote>
+                        </div>
+                    })}
                 </details>
             })}
 
@@ -452,6 +478,22 @@ fn FindingCard(finding: CitationFinding, article_url: Option<String>) -> impl In
         // card footer here; persistence is a separate change.
         </article>
     }
+}
+
+/// A one-line bibliographic summary from Citoid metadata (title · author ·
+/// publication · date), or `None` when no field is present.
+fn metadata_line(meta: &CitoidMetadata) -> Option<String> {
+    let parts: Vec<String> = [
+        meta.title.as_ref(),
+        meta.author.as_ref(),
+        meta.publication.as_ref(),
+        meta.published.as_ref(),
+    ]
+    .into_iter()
+    .flatten()
+    .map(String::clone)
+    .collect();
+    (!parts.is_empty()).then(|| parts.join(" · "))
 }
 
 /// Section-header tone for a finding group.

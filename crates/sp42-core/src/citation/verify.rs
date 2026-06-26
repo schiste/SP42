@@ -195,6 +195,18 @@ pub struct CitationFinding {
     pub passage: Option<LocatedPassage>,
     /// Provenance of the really-fetched source.
     pub provenance: SourceProvenance,
+    /// A bounded, reviewer-facing excerpt of the extracted source text — a window
+    /// around the located quote, or the head of the body — so the report can show
+    /// *what the panel read* without carrying the whole source. Display only,
+    /// never grounded; `None` for an unreadable / dead source. Back-compatible.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_excerpt: Option<String>,
+    /// Best-effort Citoid bibliographic metadata for the source (title, author,
+    /// publication, date) when available — especially useful to identify a source
+    /// the tool could not read (PDF / paywall). Context only; never grounded.
+    /// Back-compatible.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub metadata: Option<CitoidMetadata>,
     /// The machine-checkable grounding assertion.
     pub grounding: GroundingAssertion,
     /// Document-order position of this use-site (ADR-0007 §2).
@@ -580,6 +592,8 @@ pub fn assemble_citation_finding(
                     ),
                     unusable_reason: None,
                     provenance: provenance.clone(),
+                    source_excerpt: None,
+                    metadata: None,
                     grounding: GroundingAssertion::LocatedQuote {
                         quote,
                         source_hash: provenance.content_hash.clone(),
@@ -692,6 +706,8 @@ fn no_quote_finding(
         source_unavailable_reason: derive_source_unavailable_reason(verdict, provenance),
         unusable_reason: None,
         provenance: provenance.clone(),
+        source_excerpt: None,
+        metadata: None,
         grounding: GroundingAssertion::SourceFetched {
             source_hash: provenance.content_hash.clone(),
         },
@@ -704,12 +720,56 @@ fn no_quote_finding(
     }
 }
 
+/// Longest reviewer-facing source excerpt retained on a finding (chars). Bounds
+/// the report size while showing enough context around the located quote.
+const SOURCE_EXCERPT_MAX_CHARS: usize = 700;
+
+/// A bounded, reviewer-facing excerpt of the extracted source: a window centred on
+/// the located quote (so the reviewer sees it in context), or the head of the body
+/// when no quote located. `None` for an empty body. Display only — never grounded.
+#[must_use]
+pub fn build_source_excerpt(source_text: &str, passage: Option<&LocatedPassage>) -> Option<String> {
+    if source_text.trim().is_empty() {
+        return None;
+    }
+    let chars: Vec<char> = source_text.chars().collect();
+    let total = chars.len();
+    if total <= SOURCE_EXCERPT_MAX_CHARS {
+        return Some(source_text.trim().to_string());
+    }
+    // The passage offset is a byte offset into `source_text`; map it to a char index.
+    let center = passage.map_or(0, |passage| {
+        source_text
+            .char_indices()
+            .take_while(|(byte, _)| *byte < passage.offset)
+            .count()
+    });
+    let half = SOURCE_EXCERPT_MAX_CHARS / 2;
+    let mut start = center.saturating_sub(half);
+    let end = (start + SOURCE_EXCERPT_MAX_CHARS).min(total);
+    start = end.saturating_sub(SOURCE_EXCERPT_MAX_CHARS);
+    let body: String = chars[start..end].iter().collect();
+    let body = body.trim();
+    let mut excerpt = String::new();
+    if start > 0 {
+        excerpt.push_str("… ");
+    }
+    excerpt.push_str(body);
+    if end < total {
+        excerpt.push_str(" …");
+    }
+    Some(excerpt)
+}
+
 /// Build a [`VerificationOutcome`] for an unusable source (short-circuit, no model call).
 /// This captures the pattern: source was fetched but marked unusable by the deterministic
 /// body-usability gate. The finding records the reason and marks grounding as [`GroundingStatus::NotApplicable`].
+/// Carries best-effort `metadata` (Citoid) so a reviewer can still identify a source the
+/// tool could not read (e.g. a PDF or paywalled page).
 fn unusable_source_outcome(
     usability_reason: BodyUsabilityReason,
     provenance: &SourceProvenance,
+    metadata: Option<CitoidMetadata>,
     use_site_ordinal: u32,
 ) -> VerificationOutcome {
     let mut finding = no_quote_finding(
@@ -729,6 +789,7 @@ fn unusable_source_outcome(
     ) {
         finding.unusable_reason = Some(usability_reason);
     }
+    finding.metadata = metadata;
     VerificationOutcome {
         finding,
         votes: Vec::new(),
@@ -817,6 +878,50 @@ where
     build_citoid_header(&raw, source_url)
 }
 
+/// Run the bounded repair turn (SP42#25 layer 3): one extra call per support-class
+/// vote whose quote failed to locate, updating those votes in place. Best-effort —
+/// a failed repair call leaves the vote as-is.
+async fn run_repair_turn<M>(
+    model_client: &M,
+    params: &SamplingParams,
+    concurrency: usize,
+    inputs: VerifyModelInputs<'_>,
+    source_text: &str,
+    model_verdicts: &mut [ModelVerdict],
+) where
+    M: ModelClient + ?Sized,
+{
+    let pending: Vec<(usize, ModelRef, String)> = model_verdicts
+        .iter()
+        .enumerate()
+        .filter_map(|(index, vote)| {
+            if !vote.parsed.verdict.is_support_class() {
+                return None;
+            }
+            let quote = vote.parsed.quote.as_ref()?;
+            if locate_quote(quote, source_text).is_some() {
+                return None;
+            }
+            Some((index, vote.invocation.model.clone(), quote.clone()))
+        })
+        .collect();
+    let repairs = map_with_concurrency(
+        pending,
+        concurrency,
+        |(index, model, failed_quote), _| async move {
+            let attempt =
+                execute_citation_repair(model_client, &model, params, inputs, &failed_quote).await;
+            (index, attempt)
+        },
+    )
+    .await;
+    for (index, attempt) in repairs {
+        if let Ok(attempt) = attempt {
+            model_verdicts[index].repair = Some(attempt);
+        }
+    }
+}
+
 /// Verify one (claim, source) use-site end-to-end (ADR-0008 §3, ADR-0007).
 ///
 /// Fetches the source once over the injected `HttpClient`, runs the deterministic
@@ -865,6 +970,15 @@ where
         http_status: Some(fetched.status),
     };
 
+    // Fetch Citoid metadata before the usability gate: it is most valuable exactly
+    // when the body is unusable (a PDF/paywall the tool can't read but Citoid can
+    // identify). Skip it for a non-2xx (dead) response — there is nothing to resolve.
+    let metadata = if options.include_metadata && (200..300).contains(&fetched.status) {
+        fetch_metadata(fetch_client, request.source_url.as_str()).await
+    } else {
+        None
+    };
+
     let body = if fetched.text.is_empty() {
         None
     } else {
@@ -880,15 +994,11 @@ where
         return Ok(unusable_source_outcome(
             usability.reason,
             &provenance,
+            metadata,
             use_site_ordinal,
         ));
     }
 
-    let metadata = if options.include_metadata {
-        fetch_metadata(fetch_client, request.source_url.as_str()).await
-    } else {
-        None
-    };
     let inputs = VerifyModelInputs {
         claim: &request.claim,
         source_text: &fetched.text,
@@ -914,46 +1024,75 @@ where
     // Bounded repair turn (SP42#25 layer 3): one extra call per support-class vote whose
     // quote failed to locate. Best-effort — a failed repair call leaves the vote as-is.
     if options.repair_turn {
-        let pending: Vec<(usize, ModelRef, String)> = model_verdicts
-            .iter()
-            .enumerate()
-            .filter_map(|(index, vote)| {
-                if !vote.parsed.verdict.is_support_class() {
-                    return None;
-                }
-                let quote = vote.parsed.quote.as_ref()?;
-                if locate_quote(quote, &fetched.text).is_some() {
-                    return None;
-                }
-                Some((index, vote.invocation.model.clone(), quote.clone()))
-            })
-            .collect();
-        let repairs = map_with_concurrency(
-            pending,
+        run_repair_turn(
+            model_client,
+            params,
             concurrency,
-            |(index, model, failed_quote), _| async move {
-                let attempt =
-                    execute_citation_repair(model_client, &model, params, inputs, &failed_quote)
-                        .await;
-                (index, attempt)
-            },
+            inputs,
+            &fetched.text,
+            &mut model_verdicts,
         )
         .await;
-        for (index, attempt) in repairs {
-            if let Ok(attempt) = attempt {
-                model_verdicts[index].repair = Some(attempt);
-            }
-        }
     }
 
-    let finding = assemble_citation_finding(
+    let mut finding = assemble_citation_finding(
         &fetched.text,
         &provenance,
         &model_verdicts,
         use_site_ordinal,
     );
+    // Attach the reviewer-facing context the surfaced finding does not otherwise
+    // carry: a bounded excerpt of what the panel read (windowed on the quote) and
+    // the best-effort source metadata.
+    finding.source_excerpt = build_source_excerpt(&fetched.text, finding.passage.as_ref());
+    finding.metadata = metadata;
     let votes = build_model_votes(&model_verdicts, &fetched.text);
     Ok(VerificationOutcome { finding, votes })
+}
+
+#[cfg(test)]
+mod excerpt_tests {
+    use super::{LocatedPassage, build_source_excerpt};
+
+    #[test]
+    fn empty_body_has_no_excerpt() {
+        assert_eq!(build_source_excerpt("   ", None), None);
+    }
+
+    #[test]
+    fn short_body_is_returned_whole() {
+        assert_eq!(
+            build_source_excerpt("a short source body", None).as_deref(),
+            Some("a short source body")
+        );
+    }
+
+    #[test]
+    fn long_body_windows_around_the_located_quote() {
+        // A long body with a marker sentence two-thirds in; the excerpt should be
+        // bounded, ellipsised on both ends, and contain the quoted passage.
+        let body = format!("{}MARKER PASSAGE HERE{}", "x".repeat(900), "y".repeat(900));
+        let offset = body.find("MARKER").expect("marker present");
+        let passage = LocatedPassage {
+            quote: "MARKER PASSAGE HERE".to_string(),
+            offset,
+        };
+        let excerpt = build_source_excerpt(&body, Some(&passage)).expect("excerpt");
+        assert!(excerpt.contains("MARKER PASSAGE HERE"));
+        assert!(excerpt.starts_with('…') && excerpt.ends_with('…'));
+        assert!(excerpt.chars().count() < body.chars().count());
+    }
+
+    #[test]
+    fn long_body_without_a_quote_shows_the_head() {
+        let body = "z".repeat(2000);
+        let excerpt = build_source_excerpt(&body, None).expect("excerpt");
+        assert!(
+            !excerpt.starts_with('…'),
+            "head excerpt has no leading ellipsis"
+        );
+        assert!(excerpt.ends_with('…'), "trailing ellipsis when truncated");
+    }
 }
 
 #[cfg(test)]

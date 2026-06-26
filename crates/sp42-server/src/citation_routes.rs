@@ -324,7 +324,12 @@ pub(crate) async fn post_verify_page(
         .map_err(|error| action_error_response(&action_error_from_editor(&error)))?;
     let extract = extract_use_sites(&blocks, &payload);
 
-    let options = VerifyOptions::default();
+    // Fetch Citoid metadata so the report can show bibliographic context (and help
+    // identify sources the tool could not read). Best-effort; never blocks a finding.
+    let options = VerifyOptions {
+        include_metadata: true,
+        ..VerifyOptions::default()
+    };
     let report: PageVerificationReport = verify_page(
         &http_client,
         &model_client,

@@ -343,6 +343,8 @@ mod tests {
                 fetched_at: 42,
                 http_status: Some(200),
             },
+            source_excerpt: None,
+            metadata: None,
             grounding: GroundingAssertion::LocatedQuote {
                 quote: "opened in 1850".to_string(),
                 source_hash: sha256_hex(b"the museum opened in 1850"),

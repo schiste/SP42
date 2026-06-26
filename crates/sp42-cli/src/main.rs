@@ -1098,6 +1098,8 @@ mod verify_tests {
                 fetched_at: 1,
                 http_status: Some(200),
             },
+            source_excerpt: None,
+            metadata: None,
             grounding: GroundingAssertion::LocatedQuote {
                 quote: "opened in 1998".to_string(),
                 source_hash: "abc123".to_string(),

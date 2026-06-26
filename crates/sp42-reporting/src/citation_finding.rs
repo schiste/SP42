@@ -260,6 +260,8 @@ mod tests {
                 fetched_at: 0,
                 http_status: Some(200),
             },
+            source_excerpt: None,
+            metadata: None,
             grounding: GroundingAssertion::SourceFetched {
                 source_hash: "hash".to_string(),
             },

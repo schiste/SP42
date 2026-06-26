@@ -40,18 +40,25 @@ sets `core.hooksPath=.husky`, so the hooks run automatically:
 
 - `pre-commit`: staged/working-tree whitespace checks, `cargo fmt --all -- --check`,
   the forbidden-pattern guard on added lines (§5.3), pedantic `clippy` on the
-  changed crates, docs consistency, release-tree audit, and
-  `./scripts/check-focused.sh`.
+  changed crates, docs consistency, the markdown link check, release-tree audit,
+  and `./scripts/check-focused.sh`.
 - `commit-msg`: enforces Conventional Commits (§8.1).
-- `pre-push`: release-tree audit, `./scripts/ci-all.sh`, the supply-chain gate
-  (`cargo deny` + `cargo audit`), the `sp42-core` coverage gate (≥90% lines),
-  and the forbidden-pattern guard over the pushed range.
+- `pre-push`: release-tree audit, the markdown link check, `./scripts/ci-all.sh`,
+  the supply-chain gate (`cargo deny` + `cargo audit`), the coverage gate
+  (`sp42-core` ≥90% lines and a workspace floor, excl. `xtask`), and the
+  forbidden-pattern guard over the pushed range.
 
-These gates need a few extra tools installed once:
+These gates need a few extra tools installed once (all Rust):
 
 ```sh
 cargo install --locked cargo-deny cargo-audit cargo-llvm-cov
 ```
+
+The markdown link check is a deterministic, internal-links-only scan (Python 3,
+no extra install; external URL liveness is intentionally out of scope). CI also
+runs the optimized wasm bundle + size ceiling on every PR (its inputs can't be
+path-enumerated), a path-filtered desktop (Tauri) build-check, and a weekly
+`cargo-mutants` mutation-testing report.
 
 The same gates run in CI on every non-draft pull request (see
 `.github/workflows/ci.yml`), which additionally enforces the wasm bundle-size

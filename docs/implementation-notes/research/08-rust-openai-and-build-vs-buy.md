@@ -3,7 +3,7 @@
 > **Reconciliation (2026-06-23) — read first.**
 >
 > **This note's build-vs-buy verdict (a hand-rolled ~100-line adapter) is SUPERSEDED by
-> [ADR-0006](../../adr/0006-using-llms.md) Decision 7, which adopts `rust-genai` as the
+> [ADR-0006](../../platform/adr/0006-using-llms.md) Decision 7, which adopts `rust-genai` as the
 > concrete `ModelClient` backend** — implemented in `crates/sp42-cli` (`genai = "=0.6.5"`,
 > pinned, CLI-shell only) behind the provider-agnostic `ModelClient` trait
 > (`crates/sp42-types/src/model.rs`). ADR-0006 weighted native multi-provider reach and

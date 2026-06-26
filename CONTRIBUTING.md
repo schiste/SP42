@@ -11,7 +11,7 @@ constraints.
 - Read [CONSTITUTION.md](CONSTITUTION.md)
 - Read [GOVERNANCE.md](GOVERNANCE.md)
 - Read [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md)
-- Review relevant ADRs in [docs/adr](docs/adr)
+- Review relevant ADRs — see the [docs map](docs/README.md) for their platform vs. domain locations
 
 ## Development Expectations
 

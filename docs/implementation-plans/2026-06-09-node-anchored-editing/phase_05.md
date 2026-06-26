@@ -619,8 +619,8 @@ git commit -m "feat(server): route InlineEdit through node-anchored WikitextEdit
 ## Task 4: Record the outcome (ADR status, docs)
 
 **Files:**
-- Modify: `docs/adr/0003-node-anchored-wikitext-editing.md:3` (Status)
-- Modify: `docs/DEVELOPER_SURFACE.md` ("Action Boundary" section, lines ~41-47)
+- Modify: `docs/platform/adr/0003-node-anchored-wikitext-editing.md:3` (Status)
+- Modify: `docs/platform/DEVELOPER_SURFACE.md` ("Action Boundary" section, lines ~41-47)
 - Modify: `docs/STATUS.md` (latest phase section)
 
 **Step 1: Update the records**
@@ -634,7 +634,7 @@ licensing gate resolved via ADR-0001 §3 — SP42 is `GPL-3.0-only`, so the
 `deny.toml`.
 ```
 
-2. `docs/DEVELOPER_SURFACE.md`, end of the "Action Boundary" section, append:
+2. `docs/platform/DEVELOPER_SURFACE.md`, end of the "Action Boundary" section, append:
 
 ```markdown
 Node-anchored content editing (ADR-0003) follows the same split: the
@@ -658,7 +658,7 @@ Run: `bash scripts/check-doc-consistency.sh` (the docs-consistency check the pre
 **Step 3: Commit**
 
 ```bash
-git add docs/adr/0003-node-anchored-wikitext-editing.md docs/DEVELOPER_SURFACE.md docs/STATUS.md
+git add docs/platform/adr/0003-node-anchored-wikitext-editing.md docs/platform/DEVELOPER_SURFACE.md docs/STATUS.md
 git commit -m "docs: record ADR-0003 implementation (status accepted)"
 ```
 

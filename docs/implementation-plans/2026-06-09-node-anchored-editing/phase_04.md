@@ -76,7 +76,7 @@ git commit -m "chore(deps): add parsoid crate for ADR-0003 (GPL-3.0-or-later + M
 - Modify: `crates/sp42-wiki/src/config.rs` (`RawWikiConfig` ~:12-27, mapping ~:53-67, validation ~:80-98, tests)
 - Modify: `configs/frwiki.yaml`, `fixtures/testwiki.yaml`
 - Modify (struct-literal exhaustiveness): `crates/sp42-cli/src/main.rs:1881` (`fixture_config`), `crates/sp42-live/src/lib.rs:34` (`fixture_wiki_config`), `crates/sp42-server/src/wikimedia_capabilities.rs:458` and `crates/sp42-server/src/storage_routes.rs:957` (`default_wiki_config` test fixtures)
-- Modify: `docs/RUNTIME_CONFIGURATION.md`
+- Modify: `docs/platform/RUNTIME_CONFIGURATION.md`
 
 **Step 1: Write the failing tests**
 
@@ -184,7 +184,7 @@ Expected: compile error — `RawWikiConfig`/`WikiConfig` have no `parsoid_url`.
    - `configs/frwiki.yaml`: `parsoid_url: https://fr.wikipedia.org/w/rest.php`
    - `fixtures/testwiki.yaml`: `parsoid_url: https://test.wikipedia.org/w/rest.php`
 
-6. `docs/RUNTIME_CONFIGURATION.md` — after the `SP42_WIKI_CONFIG_DIR` bullet:
+6. `docs/platform/RUNTIME_CONFIGURATION.md` — after the `SP42_WIKI_CONFIG_DIR` bullet:
 
 ```markdown
 - Per-wiki YAML configs may set `parsoid_url` (the wiki's core REST endpoint,
@@ -201,7 +201,7 @@ Expected: green, including the three new tests and the `sp42-core` doctest.
 **Step 5: Commit**
 
 ```bash
-git add crates/sp42-core/src/types.rs crates/sp42-core/src/lib.rs crates/sp42-wiki/src/config.rs configs/frwiki.yaml fixtures/testwiki.yaml crates/sp42-cli/src/main.rs crates/sp42-live/src/lib.rs crates/sp42-server/src/wikimedia_capabilities.rs crates/sp42-server/src/storage_routes.rs docs/RUNTIME_CONFIGURATION.md
+git add crates/sp42-core/src/types.rs crates/sp42-core/src/lib.rs crates/sp42-wiki/src/config.rs configs/frwiki.yaml fixtures/testwiki.yaml crates/sp42-cli/src/main.rs crates/sp42-live/src/lib.rs crates/sp42-server/src/wikimedia_capabilities.rs crates/sp42-server/src/storage_routes.rs docs/platform/RUNTIME_CONFIGURATION.md
 git commit -m "feat(config): add per-wiki parsoid_url for node-anchored editing (ADR-0003)"
 ```
 

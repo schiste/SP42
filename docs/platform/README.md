@@ -28,8 +28,10 @@ domains may consume it as the system expands toward sourcing and quality signals
 - [ADR-0004 — Crate boundaries for collaborative ownership](adr/0004-crate-boundary-collaboration-model.md)
 - [ADR-0005 — Design system and shared component layer (`sp42-ui`)](adr/0005-design-system-shared-component-layer.md)
 - [ADR-0006 — Using LLMs: model panel, measured agreement, inference endpoint](adr/0006-using-llms.md)
+- [ADR-0010 — Operator-confirmed content proposals (propose/confirm)](adr/0010-operator-confirmed-content-proposals.md)
 
 ADR-0006 defines the provider-agnostic LLM interface every capability reaches a
-model through, so it is a platform layer even though it landed alongside the
-citation work. The citation-specific ADRs that build on it live in
+model through, and ADR-0010 defines the propose/confirm editing pattern domains
+reuse — both are platform layers even though they landed alongside the citation
+work. The citation-specific ADRs that build on them live in
 [domains/references/adr/](../domains/references/adr/).

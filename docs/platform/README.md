@@ -29,6 +29,7 @@ domains may consume it as the system expands toward sourcing and quality signals
 - [ADR-0005 — Design system and shared component layer (`sp42-ui`)](adr/0005-design-system-shared-component-layer.md)
 - [ADR-0006 — Using LLMs: model panel, measured agreement, inference endpoint](adr/0006-using-llms.md)
 - [ADR-0010 — Operator-confirmed content proposals (propose/confirm)](adr/0010-operator-confirmed-content-proposals.md)
+- [ADR-0012 — Frontend end-to-end testing approach](adr/0012-frontend-e2e-testing-approach.md) (Proposed)
 
 ADR-0006 defines the provider-agnostic LLM interface every capability reaches a
 model through, and ADR-0010 defines the propose/confirm editing pattern domains

@@ -28,13 +28,17 @@ Changes require an Architecture Decision Record when they affect:
 - desktop packaging or release distribution
 - persistent storage formats or public APIs
 
-ADRs live in `docs/adr/` and should explain context, decision, alternatives,
-and consequences.
+ADRs live under `docs/platform/adr/` (platform layers) or
+`docs/domains/<domain>/adr/` (domain-specific) and should explain context,
+decision, alternatives, and consequences. ADR numbers are globally unique across
+folders.
 
 A change also requires a Product Requirements Document when it changes an
 operator- or editor-facing capability, workflow, visible decision, or
-scoring/ranking/Wikimedia action semantics. PRDs live in `docs/prd/` and record
-user-facing intent plus definition of done.
+scoring/ranking/Wikimedia action semantics. PRDs live under
+`docs/domains/<domain>/prd/` (numbers globally unique across folders); the PRD
+protocol and template live in `docs/process/`. PRDs record user-facing intent
+plus definition of done.
 
 Public API or contract changes do not automatically require a PRD. Use an ADR
 for structural contract changes; add a PRD only when the contract changes what

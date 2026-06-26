@@ -17,7 +17,7 @@
 ### Task 1: PRD-0008 "Proposed CLI surface" section
 
 **Files:**
-- Modify: `docs/prd/0008-bare-url-repair.md`
+- Modify: `docs/domains/references/prd/0008-bare-url-repair.md`
 
 **Step 1: Insert the section**
 
@@ -62,14 +62,14 @@ Expected: every flag and route named in the section exists. If Phase 6 changed a
 **Step 3: Commit**
 
 ```bash
-git add docs/prd/0008-bare-url-repair.md
+git add docs/domains/references/prd/0008-bare-url-repair.md
 git commit -m "docs: fold the proposed CLI surface back into PRD-0008"
 ```
 
 ### Task 2: ADR-0010 — operator-confirmed content proposals
 
 **Files:**
-- Create: `docs/adr/0010-operator-confirmed-content-proposals.md`
+- Create: `docs/platform/adr/0010-operator-confirmed-content-proposals.md`
 
 **Step 1: Create the ADR** (template: ADR-0003's structure — Status/Date/Author header, Context, Decision, Consequences, Non-Goals):
 
@@ -150,7 +150,7 @@ Expected: exits 0.
 **Step 3: Commit**
 
 ```bash
-git add docs/adr/0010-operator-confirmed-content-proposals.md
+git add docs/platform/adr/0010-operator-confirmed-content-proposals.md
 git commit -m "docs: draft ADR-0010 operator-confirmed content proposals"
 ```
 
@@ -198,7 +198,7 @@ git commit -m "docs: record the bare-URL repair slice in STATUS"
 ### Task 4: The PRD-convention issue — draft, then STOP for the operator
 
 The design records the Editor's instruction to file a GitHub issue proposing
-a "PRDs contain proposed CLI surfaces" convention for `docs/prd/README.md`.
+a "PRDs contain proposed CLI surfaces" convention for `docs/process/prd-protocol.md`.
 **Filing a GitHub issue is an outward-facing artifact: do not file it
 autonomously.** Draft it, then ask the operator.
 
@@ -207,7 +207,7 @@ autonomously.** Draft it, then ask the operator.
 Title:
 
 ```text
-PRD convention: add a "Proposed CLI surface" section expectation to docs/prd/README.md
+PRD convention: add a "Proposed CLI surface" section expectation to docs/process/prd-protocol.md
 ```
 
 Body:
@@ -218,7 +218,7 @@ the PRD as a `## Proposed CLI surface` section: the flag-modes, their
 required/optional arguments, which bridge routes they drive, and how
 refusals surface to the operator.
 
-Proposal: make this a documented convention in `docs/prd/README.md` — a PRD
+Proposal: make this a documented convention in `docs/process/prd-protocol.md` — a PRD
 that introduces or changes an operator-facing capability with a CLI-reachable
 surface should carry a "Proposed CLI surface" section while in
 Draft/Discussion, kept in sync with the shipped flags by the closing PR.
@@ -252,7 +252,7 @@ Task 1:
 
 ```markdown
 The "PRDs contain proposed CLI surfaces" convention proposal for
-`docs/prd/README.md` is tracked in
+`docs/process/prd-protocol.md` is tracked in
 https://github.com/schiste/SP42/issues/<N>.
 ```
 
@@ -261,7 +261,7 @@ https://github.com/schiste/SP42/issues/<N>.
 **Step 4: Commit**
 
 ```bash
-git add docs/prd/0008-bare-url-repair.md
+git add docs/domains/references/prd/0008-bare-url-repair.md
 git commit -m "docs: link the PRD CLI-surface convention issue from PRD-0008"
 ```
 

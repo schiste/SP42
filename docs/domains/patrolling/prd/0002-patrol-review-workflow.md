@@ -21,7 +21,7 @@ This PRD characterizes **the operator's main review loop** — what a reviewer d
 The one split worth stating explicitly is inside the per-selection **action preflight**, because it straddles two PRDs:
 
 - **Action *availability* + retry classification** — does the active session have the rights and tokens to perform this disposition, and if not, what is the retry path (session refresh / backoff / operator change)? This is an operator-workflow + auth concern (identity owned by PRD-0005) and is **owned by this PRD**. Its observable is `preflight_classifies_missing_tokens_as_session_refresh` (in the DoD below).
-- **Action *recommendation* (the score gate)** — given the edit's score and signals, which single disposition does scoring *suggest*? Per the scoring constitution, "Scoring may recommend attention and actions" (`docs/scoring/SCORING_CONSTITUTION.md` §5.1) and recommendation thresholds are a reserved scoring question (§17 Q2), so this is scoring/action semantics **owned by PRD-0003**, whose DoD binds it (`preflight_recommends_rollback_for_high_score_edit`). This PRD only *displays* the recommended disposition the preflight returns.
+- **Action *recommendation* (the score gate)** — given the edit's score and signals, which single disposition does scoring *suggest*? Per the scoring constitution, "Scoring may recommend attention and actions" (`docs/platform/scoring/SCORING_CONSTITUTION.md` §5.1) and recommendation thresholds are a reserved scoring question (§17 Q2), so this is scoring/action semantics **owned by PRD-0003**, whose DoD binds it (`preflight_recommends_rollback_for_high_score_edit`). This PRD only *displays* the recommended disposition the preflight returns.
 
 ## Problem
 
@@ -209,7 +209,7 @@ built; not a pre-implementation risk forecast.)*
   PRD-0003).** Disposition recommendation uses bare score cutoffs (rollback `>= 70`,
   `crates/sp42-live/src/live_operator.rs`; patrol `< 60`; undo `>= 40`)
   inside `is_recommended`, with no doc tying them to the scoring constitution
-  (`docs/scoring/SCORING_CONSTITUTION.md`, which §17 Q2 leaves "Should action recommendation
+  (`docs/platform/scoring/SCORING_CONSTITUTION.md`, which §17 Q2 leaves "Should action recommendation
   thresholds be constitutionalized separately from queue-priority thresholds?" open). A
   change to scoring weights could quietly shift recommendations. The recommendation
   capability and its test (`preflight_recommends_rollback_for_high_score_edit`) live in

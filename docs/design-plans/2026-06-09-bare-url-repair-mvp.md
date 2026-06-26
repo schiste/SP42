@@ -30,7 +30,7 @@ repair loop before enabling any production wiki.
 
 ## Definition of Done
 
-The MVP's full Definition of Done is PRD-0008's (docs/prd/0008-bare-url-repair.md,
+The MVP's full Definition of Done is PRD-0008's (docs/domains/references/prd/0008-bare-url-repair.md,
 Draft — implementation proceeding at-risk pending reviewer reaction): testwiki-only,
 CLI-first, eight DoD items covering proposal generation, ordinal targeting,
 exact-replacement saves, zero-write refusals, sparse-metadata decline,
@@ -67,7 +67,7 @@ test.wikipedia.org repair gate (needs an operator at the keyboard).
 
 **Also in scope for the design (executed with the CLI follow-up):** the
 proposed CLI surface folded back into PRD-0008, and a GitHub issue proposing
-the "PRDs contain proposed CLI surfaces" convention for docs/prd/README.md
+the "PRDs contain proposed CLI surfaces" convention for docs/process/prd-protocol.md
 (issue filed on the Editor's instruction).
 
 ## Glossary
@@ -293,7 +293,7 @@ byte-identical citoid.rs/urls.rs.
 **Components:** `WikiTemplates` in `crates/sp42-core/src/types.rs`;
 `fixtures/testwiki.yaml` (`bare_url_citation: "cite web"`);
 `configs/frwiki.yaml` untouched (absent = disabled);
-`docs/RUNTIME_CONFIGURATION.md` documents the knob; parse/default tests in
+`docs/platform/RUNTIME_CONFIGURATION.md` documents the knob; parse/default tests in
 `crates/sp42-wiki/src/config.rs` if mapping plumbing requires it.
 
 **Dependencies:** none (parallel to Phase 1).
@@ -360,7 +360,7 @@ against a locally running server succeeds (documented, not automated).
 **Components:** PRD-0008 gains "Proposed CLI surface" section; thin
 propose/confirm contract ADR drafted in `docs/adr/` (number per the series
 state at draft time); GitHub issue proposing the "PRDs contain proposed CLI
-surfaces" convention for `docs/prd/README.md` (filed on the Editor's
+surfaces" convention for `docs/process/prd-protocol.md` (filed on the Editor's
 instruction); `docs/STATUS.md` bullet.
 
 **Dependencies:** Phases 1-6 (records describe what shipped).

@@ -26,7 +26,7 @@ require_line "docs/STATUS.md" 'Target shells are now effectively complete for lo
 require_line "docs/STATUS.md" 'Live Wikimedia integration is still gated by external credentials and verification:'
 require_line "docs/STATUS.md" 'PWA packaging and offline installability are now effectively complete for local development:'
 
-require_line "docs/DEVELOPER_SURFACE.md" '- it includes a PWA shell for installability, update activation, iOS guidance, and offline-safe shell behavior'
-require_line "docs/DEVELOPER_SURFACE.md" '- PWA shell, offline fallback, manifest shortcuts, and telemetry surfaces'
+require_line "docs/platform/DEVELOPER_SURFACE.md" '- it includes a PWA shell for installability, update activation, iOS guidance, and offline-safe shell behavior'
+require_line "docs/platform/DEVELOPER_SURFACE.md" '- PWA shell, offline fallback, manifest shortcuts, and telemetry surfaces'
 
 printf 'SP42 docs/status consistency checks passed.\n'

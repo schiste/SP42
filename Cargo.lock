@@ -3122,6 +3122,7 @@ dependencies = [
  "async-trait",
  "base64",
  "futures",
+ "percent-encoding",
  "proptest",
  "regex",
  "serde",

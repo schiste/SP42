@@ -8,6 +8,7 @@
 use std::net::{Ipv4Addr, Ipv6Addr};
 use std::sync::LazyLock;
 
+use percent_encoding::percent_decode_str;
 use regex::Regex;
 use url::{Host, Url};
 
@@ -209,13 +210,125 @@ fn is_blocked_ipv6(ip: Ipv6Addr) -> bool {
         || (first & 0xffc0) == 0xfe80 // link-local fe80::/10
 }
 
+/// A page to verify: the `MediaWiki` page title and a revision (`0` = latest).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PageTarget {
+    /// The `MediaWiki` page title (namespace-qualified, spaces not underscores).
+    pub title: String,
+    /// The revision id, or `0` for the latest revision.
+    pub rev_id: u64,
+}
+
+/// Interpret a user's page reference, accepting either a bare title or a pasted
+/// wiki URL. Pasting an article URL is the natural thing to do, but the action
+/// API treats a URL as a literal title and reports the page missing, so unwrap it
+/// here:
+/// - `https://…/wiki/User:Foo/Bar` → title `User:Foo/Bar`;
+/// - `https://…/w/index.php?title=Foo&oldid=123` → title `Foo`, `rev_id` `123`.
+///
+/// Underscores become spaces and percent-escapes are decoded, matching `MediaWiki`
+/// title normalization. Anything that is not an `http(s)` URL is treated as a
+/// bare title verbatim. The wiki the URL points at is *not* inspected — the caller
+/// chooses the wiki separately, and a host mismatch is theirs to reconcile.
+#[must_use]
+pub fn parse_page_target(input: &str) -> PageTarget {
+    let trimmed = input.trim();
+
+    if let Ok(url) = Url::parse(trimmed)
+        && matches!(url.scheme(), "http" | "https")
+    {
+        // `/wiki/<Title>` — the canonical article path; the title may contain
+        // slashes (subpages), so take everything after `/wiki/`.
+        if let Some(raw) = url.path().strip_prefix("/wiki/")
+            && !raw.is_empty()
+        {
+            return PageTarget {
+                title: normalize_title(raw),
+                rev_id: 0,
+            };
+        }
+
+        // `/w/index.php?title=<Title>&oldid=<rev>` — the script path; the title
+        // (and an explicit revision) live in the query.
+        let mut title = None;
+        let mut rev_id = 0;
+        for (key, value) in url.query_pairs() {
+            match key.as_ref() {
+                "title" => title = Some(value.into_owned()),
+                "oldid" => rev_id = value.parse().unwrap_or(0),
+                _ => {}
+            }
+        }
+        if let Some(title) = title.filter(|title| !title.is_empty()) {
+            return PageTarget {
+                title: normalize_title(&title),
+                rev_id,
+            };
+        }
+    }
+
+    PageTarget {
+        title: trimmed.to_string(),
+        rev_id: 0,
+    }
+}
+
+/// Normalize a title extracted from a URL: percent-decode, then map underscores
+/// to spaces (`MediaWiki` treats them as equivalent and the action API expects
+/// spaces).
+fn normalize_title(raw: &str) -> String {
+    percent_decode_str(raw)
+        .decode_utf8_lossy()
+        .replace('_', " ")
+        .trim()
+        .to_string()
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
         build_article_html_url, check_fetchable_source_url, is_archive_url, is_valid_wiki_code,
-        parse_revision_from_etag, resolve_citation_url, rewrite_wayback_url,
+        parse_page_target, parse_revision_from_etag, resolve_citation_url, rewrite_wayback_url,
     };
     use url::Url;
+
+    #[test]
+    fn parse_page_target_passes_through_a_bare_title() {
+        let target = parse_page_target("  User:LuisVilla/SP42 smoke  ");
+        assert_eq!(target.title, "User:LuisVilla/SP42 smoke");
+        assert_eq!(target.rev_id, 0);
+    }
+
+    #[test]
+    fn parse_page_target_unwraps_a_wiki_url() {
+        // The reported failure: a pasted /wiki/ URL with an underscore subpage.
+        let target = parse_page_target("https://en.wikipedia.org/wiki/User:LuisVilla/SP42_smoke");
+        assert_eq!(target.title, "User:LuisVilla/SP42 smoke");
+        assert_eq!(target.rev_id, 0);
+    }
+
+    #[test]
+    fn parse_page_target_decodes_percent_escapes() {
+        let target = parse_page_target("https://en.wikipedia.org/wiki/Saint-%C3%89tienne");
+        assert_eq!(target.title, "Saint-Étienne");
+    }
+
+    #[test]
+    fn parse_page_target_reads_index_php_title_and_oldid() {
+        let target = parse_page_target(
+            "https://en.wikipedia.org/w/index.php?title=Samin_Nosrat&oldid=1359520049",
+        );
+        assert_eq!(target.title, "Samin Nosrat");
+        assert_eq!(target.rev_id, 1_359_520_049);
+    }
+
+    #[test]
+    fn parse_page_target_leaves_non_http_input_alone() {
+        // A title that merely looks scheme-ish must not be mistaken for a URL.
+        let target = parse_page_target("Template:Citation needed");
+        assert_eq!(target.title, "Template:Citation needed");
+        assert_eq!(target.rev_id, 0);
+    }
 
     fn blocked(u: &str) -> bool {
         check_fetchable_source_url(&Url::parse(u).expect("valid url")).is_err()

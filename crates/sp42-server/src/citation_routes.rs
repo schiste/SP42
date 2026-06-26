@@ -269,6 +269,16 @@ pub(crate) async fn post_verify_page(
     validate_csrf_header(&headers, &session)?;
     let config = config_for_state_wiki(&state, &payload.wiki_id)?;
 
+    // Accept a pasted wiki URL in `title`, not just a bare page title — the action
+    // API treats a URL as a literal (missing) title. A bare title parses to itself
+    // (idempotent with any client-side parse); an oldid URL also yields a revision,
+    // honored only when the request did not already pin one.
+    let target = sp42_core::parse_page_target(&payload.title);
+    payload.title = target.title;
+    if payload.rev_id == 0 {
+        payload.rev_id = target.rev_id;
+    }
+
     // Per-request inference edge from env (dev route).
     let panel = sp42_inference::panel_from_env().map_err(|error| {
         (

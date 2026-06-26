@@ -100,8 +100,9 @@ pub use citation::storage::{
     load_verdict, store_snapshot, store_verdict,
 };
 pub use citation::urls::{
-    ResolvedUrl, build_article_html_url, check_fetchable_source_url, is_archive_url,
-    is_valid_wiki_code, parse_revision_from_etag, resolve_citation_url, rewrite_wayback_url,
+    PageTarget, ResolvedUrl, build_article_html_url, check_fetchable_source_url, is_archive_url,
+    is_valid_wiki_code, parse_page_target, parse_revision_from_etag, resolve_citation_url,
+    rewrite_wayback_url,
 };
 pub use citation::verdict::{CitationFindingKind, CitationVerdict, SupportLevel, Verdict};
 pub use citation::verify::{

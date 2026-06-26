@@ -1,7 +1,7 @@
 use leptos::prelude::*;
 use sp42_core::{
     CitationFinding, CitationVerdict, DevAuthBootstrapRequest, GroundingStatus,
-    PageVerificationReport, SupportLevel,
+    PageVerificationReport, SupportLevel, parse_page_target,
 };
 use sp42_reporting::{
     ReportSection, finding_is_problem, finding_severity_rank, grounding_caveat,
@@ -28,18 +28,22 @@ pub fn CitationSurface() -> impl IntoView {
         let article_title = title.get_untracked();
         let rev_input = rev.get_untracked();
         async move {
-            let trimmed_title = article_title.trim().to_string();
-            if trimmed_title.is_empty() {
+            if article_title.trim().is_empty() {
                 set_load_error.set(Some(
-                    "Enter an article title before verifying citations.".to_string(),
+                    "Enter an article title or paste a wiki URL before verifying citations."
+                        .to_string(),
                 ));
                 set_report.set(None);
                 return;
             }
-            // A blank revision means "latest"; the server resolves 0 to a concrete id.
+            // Accept a pasted /wiki/ or index.php URL, not just a bare title — the
+            // server's action API treats a URL as a literal (missing) title.
+            let target = parse_page_target(&article_title);
+            // The Revision field overrides any oldid in a pasted URL; left blank it
+            // falls back to that oldid, or 0 (latest, resolved server-side).
             let trimmed_rev = rev_input.trim();
             let rev_id = if trimmed_rev.is_empty() {
-                0
+                target.rev_id
             } else {
                 match trimmed_rev.parse::<u64>() {
                     Ok(value) => value,
@@ -94,7 +98,7 @@ pub fn CitationSurface() -> impl IntoView {
                 }
             }
 
-            match fetch_page_report(&wiki, &trimmed_title, rev_id).await {
+            match fetch_page_report(&wiki, &target.title, rev_id).await {
                 Ok(next_report) => set_report.set(Some(next_report)),
                 Err(error) => {
                     set_report.set(None);
@@ -132,7 +136,7 @@ pub fn CitationSurface() -> impl IntoView {
                     <input
                         class="article-input"
                         type="text"
-                        placeholder="Article title"
+                        placeholder="Article title or URL"
                         prop:value=move || title.get()
                         on:input=move |ev| set_title.set(input_value(&ev))
                     />

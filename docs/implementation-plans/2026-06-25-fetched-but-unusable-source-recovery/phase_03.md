@@ -248,11 +248,10 @@ Replace the `// 3. Paywall / nav-chrome — added in Phase 3.` placeholder (from
     let consent_wall = CONSENT_MARKER.is_match(raw) || CONSENT_MARKER.is_match(trimmed);
     // A hard marker fires through anything; the weak registration phrase is suppressed
     // when consent markers dominate and there is no hard signal (don't call a consent
-    // UI a paywall).
-    if hard_marker || (soft_marker && !consent_wall) {
-        if SENTENCE_END.find_iter(trimmed).count() < PROSE_SENTENCE_FLOOR {
-            return unusable(BodyUsabilityReason::NavChromePaywall);
-        }
+    // UI a paywall). Single combined `if` — `collapsible_if` is denied under -D warnings.
+    let marker = hard_marker || (soft_marker && !consent_wall);
+    if marker && SENTENCE_END.find_iter(trimmed).count() < PROSE_SENTENCE_FLOOR {
+        return unusable(BodyUsabilityReason::NavChromePaywall);
     }
 ```
 

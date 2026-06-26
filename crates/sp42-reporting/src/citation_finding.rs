@@ -22,36 +22,121 @@ pub fn is_support(verdict: CitationVerdict) -> bool {
     )
 }
 
-/// Ordering weight for problem-first sorting — lower sorts earlier. The tiers,
-/// most urgent first: refuted (`NotSupported`), support whose quote could not be
-/// located (unverified), a dead live link, a partial, an unusable source (a tool
-/// limitation, not the article's fault), and finally a grounded `Supported`.
-#[must_use]
-pub fn finding_severity_rank(finding: &CitationFinding) -> u8 {
-    match finding.verdict {
-        CitationVerdict::Judged(SupportLevel::NotSupported) => 0,
-        _ if is_support(finding.verdict)
-            && finding.grounding_status == GroundingStatus::Unlocated =>
-        {
-            1
+/// The triage bucket a finding belongs to, used to group the report into labelled
+/// sections ordered by how actionable each is for an editor. Ordering, most to
+/// least: a refuted claim, support whose quote could not be located, a partial,
+/// a dead link, a source the tool could not read (a human still can), and finally
+/// a confirmed `Supported`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FindingGroup {
+    /// The source does not back the claim.
+    NotSupported,
+    /// The panel judged support, but the quote did not locate in the source.
+    Unverified,
+    /// The source partially backs the claim.
+    Partial,
+    /// The live source could not be fetched (link rot).
+    DeadLink,
+    /// The source was fetched but the tool could not read it (PDF, paywall, …);
+    /// a human still can.
+    Unreadable,
+    /// The source confirms the claim (quote located).
+    Supported,
+}
+
+impl FindingGroup {
+    /// All groups in display order (most actionable first).
+    pub const ALL: [FindingGroup; 6] = [
+        FindingGroup::NotSupported,
+        FindingGroup::Unverified,
+        FindingGroup::Partial,
+        FindingGroup::DeadLink,
+        FindingGroup::Unreadable,
+        FindingGroup::Supported,
+    ];
+
+    /// Which group a finding belongs to.
+    #[must_use]
+    pub fn of(finding: &CitationFinding) -> Self {
+        match finding.verdict {
+            CitationVerdict::Judged(SupportLevel::NotSupported) => FindingGroup::NotSupported,
+            CitationVerdict::Judged(SupportLevel::Supported | SupportLevel::Partial)
+                if finding.grounding_status == GroundingStatus::Unlocated =>
+            {
+                FindingGroup::Unverified
+            }
+            CitationVerdict::Judged(SupportLevel::Partial) => FindingGroup::Partial,
+            CitationVerdict::Judged(SupportLevel::Supported) => FindingGroup::Supported,
+            CitationVerdict::SourceUnavailable => match finding.source_unavailable_reason {
+                Some(SourceUnavailableReason::Unreachable) => FindingGroup::DeadLink,
+                _ => FindingGroup::Unreadable,
+            },
         }
-        CitationVerdict::SourceUnavailable
-            if finding.source_unavailable_reason == Some(SourceUnavailableReason::Unreachable) =>
-        {
-            2
+    }
+
+    /// Display order (0 = most actionable, sorts first).
+    #[must_use]
+    pub const fn order(self) -> u8 {
+        match self {
+            FindingGroup::NotSupported => 0,
+            FindingGroup::Unverified => 1,
+            FindingGroup::Partial => 2,
+            FindingGroup::DeadLink => 3,
+            FindingGroup::Unreadable => 4,
+            FindingGroup::Supported => 5,
         }
-        CitationVerdict::Judged(SupportLevel::Partial) => 3,
-        CitationVerdict::SourceUnavailable => 4,
-        CitationVerdict::Judged(SupportLevel::Supported) => 5,
+    }
+
+    /// Section heading.
+    #[must_use]
+    pub const fn title(self) -> &'static str {
+        match self {
+            FindingGroup::NotSupported => "Not supported",
+            FindingGroup::Unverified => "Unverified",
+            FindingGroup::Partial => "Partial",
+            FindingGroup::DeadLink => "Dead link",
+            FindingGroup::Unreadable => "Couldn't read source",
+            FindingGroup::Supported => "Supported",
+        }
+    }
+
+    /// A one-line editor hint on what the group means / what to do, when one helps.
+    #[must_use]
+    pub const fn hint(self) -> Option<&'static str> {
+        match self {
+            FindingGroup::Unverified => {
+                Some("the panel judged support, but the quote could not be located in the source")
+            }
+            FindingGroup::DeadLink => {
+                Some("source could not be fetched — replace the link or add an archive")
+            }
+            FindingGroup::Unreadable => Some(
+                "the tool could not extract this source (PDF, paywall, …); open it and check by hand",
+            ),
+            _ => None,
+        }
+    }
+
+    /// Whether the section starts collapsed. Only confirmed `Supported` findings
+    /// need no editor attention, so everything else opens by default.
+    #[must_use]
+    pub const fn collapsed_by_default(self) -> bool {
+        matches!(self, FindingGroup::Supported)
     }
 }
 
-/// A finding a reviewer likely needs to act on: refuted, unverified support, a
-/// dead link, or a partial. Unusable sources (PDF/paywall) and grounded support
-/// are not surfaced by a "problems only" filter.
+/// Ordering weight for problem-first sorting — lower sorts earlier. Delegates to
+/// [`FindingGroup`] so the sort and the section grouping never drift apart.
+#[must_use]
+pub fn finding_severity_rank(finding: &CitationFinding) -> u8 {
+    FindingGroup::of(finding).order()
+}
+
+/// A finding an editor likely needs to act on: anything that is not a confirmed
+/// `Supported` — including an unusable source, which a human can still read.
 #[must_use]
 pub fn finding_is_problem(finding: &CitationFinding) -> bool {
-    finding_severity_rank(finding) <= 3
+    !matches!(FindingGroup::of(finding), FindingGroup::Supported)
 }
 
 /// The measured panel agreement, rendered only when it carries information — a
@@ -151,8 +236,8 @@ pub fn body_usability_label(reason: BodyUsabilityReason) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::{
-        GroundingCaveat, body_usability_label, finding_is_problem, finding_severity_rank,
-        grounding_caveat, panel_agreement_label, source_unavailable_detail,
+        FindingGroup, GroundingCaveat, body_usability_label, finding_is_problem,
+        finding_severity_rank, grounding_caveat, panel_agreement_label, source_unavailable_detail,
     };
     use sp42_core::{
         BodyUsabilityReason, CitationFinding, CitationFindingKind, CitationVerdict,
@@ -208,52 +293,90 @@ mod tests {
     }
 
     #[test]
-    fn severity_orders_problems_before_clean_citations() {
-        let not_supported = finding(
-            CitationVerdict::Judged(SupportLevel::NotSupported),
-            GroundingStatus::NotApplicable,
+    fn finding_group_maps_each_case() {
+        use FindingGroup::{DeadLink, NotSupported, Partial, Supported, Unreadable, Unverified};
+        let case = |f: &CitationFinding| FindingGroup::of(f);
+        assert_eq!(
+            case(&finding(
+                CitationVerdict::Judged(SupportLevel::NotSupported),
+                GroundingStatus::NotApplicable
+            )),
+            NotSupported
         );
-        let unverified = finding(
-            CitationVerdict::Judged(SupportLevel::Supported),
-            GroundingStatus::Unlocated,
+        assert_eq!(
+            case(&finding(
+                CitationVerdict::Judged(SupportLevel::Supported),
+                GroundingStatus::Unlocated
+            )),
+            Unverified
         );
-        let supported = finding(
-            CitationVerdict::Judged(SupportLevel::Supported),
-            GroundingStatus::Located,
+        // A partial whose quote DID locate stays Partial, not Unverified.
+        assert_eq!(
+            case(&finding(
+                CitationVerdict::Judged(SupportLevel::Partial),
+                GroundingStatus::Located
+            )),
+            Partial
         );
-
-        // Refuted < unverified-support < dead link < unusable < supported.
-        assert!(finding_severity_rank(&not_supported) < finding_severity_rank(&unverified));
-        assert!(finding_severity_rank(&unverified) < finding_severity_rank(&unreachable(None)));
-        assert!(finding_severity_rank(&unreachable(None)) < finding_severity_rank(&unusable(None)));
-        assert!(finding_severity_rank(&unusable(None)) < finding_severity_rank(&supported));
+        assert_eq!(case(&unreachable(Some(404))), DeadLink);
+        assert_eq!(
+            case(&unusable(Some(BodyUsabilityReason::PdfBody))),
+            Unreadable
+        );
+        assert_eq!(
+            case(&finding(
+                CitationVerdict::Judged(SupportLevel::Supported),
+                GroundingStatus::Located
+            )),
+            Supported
+        );
     }
 
     #[test]
-    fn problem_filter_keeps_actionable_drops_clean() {
+    fn severity_orders_by_actionability() {
+        let rank = |verdict, grounding| finding_severity_rank(&finding(verdict, grounding));
+        // not supported < unverified < partial < dead link < unusable < supported.
+        let not_supported = rank(
+            CitationVerdict::Judged(SupportLevel::NotSupported),
+            GroundingStatus::NotApplicable,
+        );
+        let unverified = rank(
+            CitationVerdict::Judged(SupportLevel::Supported),
+            GroundingStatus::Unlocated,
+        );
+        let partial = rank(
+            CitationVerdict::Judged(SupportLevel::Partial),
+            GroundingStatus::Located,
+        );
+        let supported = rank(
+            CitationVerdict::Judged(SupportLevel::Supported),
+            GroundingStatus::Located,
+        );
+        assert!(not_supported < unverified);
+        assert!(unverified < partial);
+        assert!(partial < finding_severity_rank(&unreachable(None)));
+        assert!(finding_severity_rank(&unreachable(None)) < finding_severity_rank(&unusable(None)));
+        assert!(finding_severity_rank(&unusable(None)) < supported);
+    }
+
+    #[test]
+    fn only_supported_is_not_a_problem() {
+        // Everything an editor might act on is a problem — including an unusable
+        // source (a human can still read the PDF).
         assert!(finding_is_problem(&finding(
             CitationVerdict::Judged(SupportLevel::NotSupported),
             GroundingStatus::NotApplicable
         )));
-        // A "supported" whose quote did not locate is unverified — still a problem.
-        assert!(finding_is_problem(&finding(
-            CitationVerdict::Judged(SupportLevel::Supported),
-            GroundingStatus::Unlocated
-        )));
         assert!(finding_is_problem(&unreachable(None)));
-        assert!(finding_is_problem(&finding(
-            CitationVerdict::Judged(SupportLevel::Partial),
-            GroundingStatus::Located
-        )));
+        assert!(finding_is_problem(&unusable(Some(
+            BodyUsabilityReason::PdfBody
+        ))));
 
-        // A grounded "supported" and a tool-limited unusable source are not.
+        // A grounded "supported" is the only non-problem.
         assert!(!finding_is_problem(&finding(
             CitationVerdict::Judged(SupportLevel::Supported),
             GroundingStatus::Located
         )));
-        assert!(!finding_is_problem(&unusable(Some(
-            BodyUsabilityReason::PdfBody
-        ))));
     }
 
     #[test]

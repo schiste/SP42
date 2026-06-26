@@ -14,7 +14,7 @@ pub mod server_debug_summary;
 pub mod shell_state;
 
 pub use citation_finding::{
-    GroundingCaveat, body_usability_label, finding_is_problem, finding_severity_rank,
+    FindingGroup, GroundingCaveat, body_usability_label, finding_is_problem, finding_severity_rank,
     grounding_caveat, is_support, panel_agreement_label, source_unavailable_detail,
 };
 pub use citation_page_report::{

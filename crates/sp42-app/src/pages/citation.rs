@@ -1,12 +1,11 @@
 use leptos::prelude::*;
 use sp42_core::{
-    CitationFinding, CitationVerdict, DevAuthBootstrapRequest, GroundingStatus,
-    PageVerificationReport, SupportLevel, parse_page_target,
+    CitationFinding, DevAuthBootstrapRequest, GroundingStatus, PageVerificationReport,
+    parse_page_target,
 };
 use sp42_reporting::{
-    ReportSection, finding_is_problem, finding_severity_rank, grounding_caveat,
-    page_verification_report_to_document, panel_agreement_label, render_page_verification_text,
-    source_unavailable_detail,
+    FindingGroup, ReportSection, finding_is_problem, page_verification_report_to_document,
+    panel_agreement_label, render_page_verification_text, source_unavailable_detail,
 };
 
 use crate::components::{StatusBadge, StatusTone};
@@ -193,7 +192,7 @@ fn PageReportView(report: PageVerificationReport) -> impl IntoView {
         ("Unavailable", stats.source_unavailable, StatusTone::Info),
     ];
     let meta_line = format!(
-        "{refs} refs · {verified} use-sites verified · unavailable: {dead} dead, {unusable} unusable · {skipped} skipped · {failures} extraction failures",
+        "{refs} refs · {verified} use-sites verified · unavailable: {dead} dead, {unusable} unreadable · {skipped} skipped · {failures} extraction failures",
         refs = stats.refs_seen,
         verified = stats.use_sites_verified,
         dead = stats.source_unavailable_unreachable,
@@ -202,21 +201,28 @@ fn PageReportView(report: PageVerificationReport) -> impl IntoView {
         failures = stats.extraction_failures,
     );
 
-    // Problem-first ordering: the actionable findings (unsupported, unverified
-    // support, dead links, partials) float to the top regardless of document
-    // position, so a reviewer is not hunting through dozens of clean citations.
+    // Bucket findings into actionable groups (problems first). Each non-empty group
+    // becomes a labelled, collapsible section, so the eye scans section headers —
+    // not a verdict column buried inside per-card detail. Document order is kept
+    // within each group.
     let mut findings = report.findings.clone();
-    findings.sort_by_key(|finding| (finding_severity_rank(finding), finding.use_site_ordinal));
+    findings.sort_by_key(|finding| finding.use_site_ordinal);
     let total = findings.len();
     let problem_count = findings
         .iter()
         .filter(|finding| finding_is_problem(finding))
         .count();
-    let findings = StoredValue::new(findings);
-    let (problems_only, set_problems_only) = signal(false);
-    // A toggle only earns its place when it changes the view: some — but not all —
-    // findings are problems.
-    let show_toggle = problem_count > 0 && problem_count < total;
+    let grouped: Vec<(FindingGroup, Vec<CitationFinding>)> = FindingGroup::ALL
+        .into_iter()
+        .filter_map(|group| {
+            let items: Vec<CitationFinding> = findings
+                .iter()
+                .filter(|finding| FindingGroup::of(finding) == group)
+                .cloned()
+                .collect();
+            (!items.is_empty()).then_some((group, items))
+        })
+        .collect();
 
     // Skipped / extraction-failure sections render fine as the shared text lines.
     let other_sections: Vec<ReportSection> = page_verification_report_to_document(&report)
@@ -244,45 +250,18 @@ fn PageReportView(report: PageVerificationReport) -> impl IntoView {
                 </div>
             </header>
             <p class="article-reference-meta" style="margin:0;">{meta_line}</p>
+            <p class="article-reference-meta" style="margin:0;">
+                {format!("{problem_count} of {total} citation(s) need attention")}
+            </p>
 
-            <section class="article-panel">
-                <header
-                    class="article-panel-header"
-                    style="display:flex;align-items:center;justify-content:space-between;gap:7px;flex-wrap:wrap;"
-                >
-                    <StatusBadge label="Findings".to_string() tone=StatusTone::Accent />
-                    <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;">
-                        <StatusBadge
-                            label=format!("{problem_count} need attention")
-                            tone=if problem_count == 0 { StatusTone::Success } else { StatusTone::Warning }
-                        />
-                        {show_toggle.then(|| view! {
-                            <button
-                                class="btn btn-compact"
-                                on:click=move |_| set_problems_only.update(|value| *value = !*value)
-                            >
-                                {move || if problems_only.get() {
-                                    format!("Show all ({total})")
-                                } else {
-                                    format!("Problems only ({problem_count})")
-                                }}
-                            </button>
-                        })}
-                    </div>
-                </header>
-                <div class="article-reference-list">
-                    {move || {
-                        let only = problems_only.get();
-                        findings.with_value(|all| {
-                            all.iter()
-                                .filter(|finding| !only || finding_is_problem(finding))
-                                .cloned()
-                                .map(|finding| view! { <FindingCard finding=finding /> })
-                                .collect_view()
-                        })
-                    }}
-                </div>
-            </section>
+            <div style="display:grid;gap:10px;">
+                {grouped
+                    .into_iter()
+                    .map(|(group, items)| view! {
+                        <FindingGroupSection group=group findings=items />
+                    })
+                    .collect_view()}
+            </div>
 
             <div class="article-panels">
                 {other_sections
@@ -303,61 +282,83 @@ fn PageReportView(report: PageVerificationReport) -> impl IntoView {
     }
 }
 
+/// One verdict-group section: a collapsible block whose header names the group and
+/// count, color-coded by a left border. Problem groups open by default; the
+/// confirmed-`Supported` group starts collapsed.
+#[component]
+fn FindingGroupSection(group: FindingGroup, findings: Vec<CitationFinding>) -> impl IntoView {
+    let count = findings.len();
+    let open = !group.collapsed_by_default();
+    let tone = group_tone(group);
+    let border = group_border(group);
+    let title = group.title().to_string();
+    let hint = group.hint();
+
+    view! {
+        <details
+            open=open
+            style=format!(
+                "border:1px solid var(--border);border-inline-start:3px solid {border};border-radius:6px;background:var(--panel-inner);padding:10px 12px;"
+            )
+        >
+            <summary style="cursor:pointer;display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+                <StatusBadge label=format!("{title} · {count}") tone=tone />
+                {hint.map(|text| view! {
+                    <span class="article-reference-meta">{text}</span>
+                })}
+            </summary>
+            <div class="article-reference-list" style="margin-top:10px;">
+                {findings
+                    .into_iter()
+                    .map(|finding| view! { <FindingCard finding=finding /> })
+                    .collect_view()}
+            </div>
+        </details>
+    }
+}
+
 #[component]
 fn FindingCard(finding: CitationFinding) -> impl IntoView {
-    let (verdict_label, verdict_tone) = verdict_meta(&finding);
-    let grounding = grounding_flag(finding.grounding_status);
+    // The verdict is carried by the enclosing group section + color, so the card
+    // leads with the claim (the thing to check) and keeps the long evidence quote
+    // behind a disclosure so rows stay compact while scanning.
     let agreement = panel_agreement_label(finding.agreement);
     let reason = source_unavailable_detail(&finding);
+    // A located-fuzzy match is the one grounding nuance the group title does not
+    // capture (it lives in the Supported/Partial group but is weaker), so flag it.
+    let fuzzy = matches!(finding.grounding_status, GroundingStatus::LocatedFuzzy);
     let ordinal = finding.use_site_ordinal;
     let ref_id = finding.ref_id.clone();
     let url = finding.provenance.url.to_string();
     let archive = finding.archive_of.as_ref().map(ToString::to_string);
     let claim = finding.claim.clone();
-    // The verbatim passage located in the source — the evidence behind the
-    // verdict, and the single most useful thing for a reviewer to read.
     let quote = finding
         .passage
         .as_ref()
         .map(|passage| passage.quote.clone());
 
-    let heading = if ref_id.is_empty() {
-        format!("#{ordinal}")
-    } else {
-        format!("#{ordinal} {ref_id}")
-    };
-
     view! {
         <article class="article-reference">
-            <div class="article-reference-top">
-                <strong>{heading}</strong>
-                <div style="display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end;">
+            <div style="display:flex;justify-content:space-between;gap:8px;align-items:baseline;">
+                <div style="min-width:0;">
+                    <strong>{format!("#{ordinal}")}</strong>
+                    {(!ref_id.is_empty()).then(|| view! {
+                        <span style="font-size:10px;color:#8b9fc0;margin-inline-start:6px;overflow-wrap:anywhere;">
+                            {ref_id.clone()}
+                        </span>
+                    })}
+                </div>
+                <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;justify-content:flex-end;">
+                    {fuzzy.then(|| view! {
+                        <StatusBadge label="fuzzy match".to_string() tone=StatusTone::Warning />
+                    })}
                     {agreement.map(|label| view! {
                         <StatusBadge label=label tone=StatusTone::Neutral />
                     })}
-                    <StatusBadge label=verdict_label tone=verdict_tone />
                 </div>
             </div>
 
-            {grounding.map(|(label, tone)| view! {
-                <div class="article-reference-meta">
-                    <StatusBadge label=label.to_string() tone=tone />
-                </div>
-            })}
-
-            <p style="color:#eff4ff;">
-                <span style="color:#8b9fc0;">"Claim: "</span>
-                {claim}
-            </p>
-
-            {quote.map(|text| view! {
-                <blockquote style="margin:2px 0;padding:6px 10px;border-inline-start:3px solid rgba(61,185,125,.5);background:rgba(15,23,42,.58);color:#eff4ff;font-size:12px;line-height:1.5;">
-                    <span style="display:block;color:#8b9fc0;font-size:10px;text-transform:uppercase;letter-spacing:.06em;margin-bottom:3px;">
-                        "Evidence located in source"
-                    </span>
-                    {text}
-                </blockquote>
-            })}
+            <p style="color:#eff4ff;margin:0;">{claim}</p>
 
             {reason.map(|value| view! { <div class="article-reference-meta">{value}</div> })}
 
@@ -384,38 +385,45 @@ fn FindingCard(finding: CitationFinding) -> impl IntoView {
                     </a>
                 </div>
             })}
+
+            {quote.map(|text| view! {
+                <details>
+                    <summary style="cursor:pointer;font-size:10px;color:#8b9fc0;text-transform:uppercase;letter-spacing:.06em;">
+                        "Evidence located in source"
+                    </summary>
+                    <blockquote style="margin:6px 0 0;padding:6px 10px;border-inline-start:3px solid rgba(61,185,125,.5);background:rgba(15,23,42,.58);color:#eff4ff;font-size:12px;line-height:1.5;">
+                        {text}
+                    </blockquote>
+                </details>
+            })}
+
+        // Tier-2 (deferred): per-finding disposition for editors — "Looks right /
+        // Disagree (because …)" capturing verdict-quality feedback — slots in at the
+        // card footer here; persistence is a separate change.
         </article>
     }
 }
 
-fn verdict_meta(finding: &CitationFinding) -> (String, StatusTone) {
-    match finding.verdict {
-        CitationVerdict::Judged(SupportLevel::Supported) => {
-            ("supported".to_string(), StatusTone::Success)
-        }
-        CitationVerdict::Judged(SupportLevel::Partial) => {
-            ("partial".to_string(), StatusTone::Warning)
-        }
-        CitationVerdict::Judged(SupportLevel::NotSupported) => {
-            ("not supported".to_string(), StatusTone::Danger)
-        }
-        CitationVerdict::SourceUnavailable => ("source unavailable".to_string(), StatusTone::Info),
+/// Section-header tone for a finding group.
+fn group_tone(group: FindingGroup) -> StatusTone {
+    match group {
+        FindingGroup::NotSupported => StatusTone::Danger,
+        FindingGroup::Unverified | FindingGroup::Partial => StatusTone::Warning,
+        FindingGroup::DeadLink => StatusTone::Info,
+        FindingGroup::Unreadable => StatusTone::Neutral,
+        FindingGroup::Supported => StatusTone::Success,
     }
 }
 
-/// The grounding axis as a styled flag. The classification and labels are shared
-/// (`sp42_reporting::grounding_caveat`); this maps the caution signal to a tone
-/// so an `Unlocated` support reads as *unverified* (amber), not a clean green
-/// pass. `None` when no supporting quote is expected.
-fn grounding_flag(status: GroundingStatus) -> Option<(&'static str, StatusTone)> {
-    grounding_caveat(status).map(|caveat| {
-        let tone = if caveat.is_caution() {
-            StatusTone::Warning
-        } else {
-            StatusTone::Success
-        };
-        (caveat.label(), tone)
-    })
+/// Left-border accent color for a group section (matches [`group_tone`]).
+fn group_border(group: FindingGroup) -> &'static str {
+    match group {
+        FindingGroup::NotSupported => "#ef4444",
+        FindingGroup::Unverified | FindingGroup::Partial => "#f59e0b",
+        FindingGroup::DeadLink => "#3b82f6",
+        FindingGroup::Unreadable => "#4f6280",
+        FindingGroup::Supported => "#22c55e",
+    }
 }
 
 #[component]

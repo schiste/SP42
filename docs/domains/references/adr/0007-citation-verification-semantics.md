@@ -4,6 +4,16 @@
 **Date:** 2026-06-07
 **Author:** Luis Villa
 
+> **NOTE (post-merge, 2026-06-26):** The single verbatim, in-session-locatable
+> quote required here (Decision 5 / the locatable-quote invariant) is being
+> extended to **multiple spans**, to support *within-source synthesis* grounding —
+> claims that are supported only by combining several passages of the **same**
+> source (neither passage sufficient alone). Per-span anti-fabrication is preserved
+> (each span must still verbatim-locate); outside-knowledge inference stays
+> forbidden. The precise rule ("entailed by the union of the spans alone, no
+> unstated premise") and the full rationale are in issue #66. The substantive
+> update to this ADR is pending discussion.
+
 ## Context
 
 PRD-0001 (*Citation verification — initial implementation*, merged as PR #17)

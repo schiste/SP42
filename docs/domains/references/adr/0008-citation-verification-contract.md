@@ -4,6 +4,13 @@
 **Date:** 2026-06-07
 **Author:** Luis Villa
 
+> **NOTE (post-merge, 2026-06-26):** The single-quote response shape
+> (`LocatedPassage { quote: String, offset }` — one passage from the winning
+> verdict) is being extended to carry **multiple located spans** (a `quotes` list),
+> to support *within-source synthesis* grounding — see issue #66. Each span still
+> re-checks verbatim against the fetched bytes (anti-fabrication unchanged). The
+> substantive contract update is pending discussion.
+
 ## Context
 
 PRD-0001 (citation verification — initial implementation, merged as PR #17) adds

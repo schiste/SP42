@@ -219,7 +219,7 @@ mod tests {
         finding_summary_line, finding_summary_tone, recommended_next_step, session_digest_badges,
         session_digest_lines,
     };
-    use sp42_reporting::{
+    use sp42_patrol::{
         PatrolScenarioFinding, PatrolScenarioReadiness, PatrolScenarioReport,
         PatrolScenarioSection, ReportSeverity,
     };

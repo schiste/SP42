@@ -9,11 +9,11 @@ use std::time::Duration;
 
 use sp42_core::{
     ActionError, ActionResponseSummary, BareUrlApplyRequest, BareUrlApplyResponse, BareUrlDeclined,
-    BareUrlOutcome, BareUrlProposal, BareUrlProposalsRequest, BareUrlProposalsResponse, FlagState,
-    PageVerificationReport, PageVerificationRequest, TokenKind, VerifyOptions, WikiPageSaveRequest,
-    WikitextEditor, WikitextNodeKind, WikitextNodeLocator, WikitextPageRef, bare_url_references,
-    build_citoid_header, build_citoid_request, citoid_language, execute_fetch_token,
-    execute_wiki_page_save, extract_use_sites, parse_action_response_summary,
+    BareUrlOutcome, BareUrlProposal, BareUrlProposalsRequest, BareUrlProposalsResponse,
+    CitoidMetadata, FlagState, PageVerificationRequest, TokenKind, VerifyOptions,
+    WikiPageSaveRequest, WikitextEditor, WikitextNodeKind, WikitextNodeLocator, WikitextPageRef,
+    bare_url_references, build_citoid_header, build_citoid_request, citoid_language,
+    execute_fetch_token, execute_wiki_page_save, extract_use_sites, parse_action_response_summary,
     render_bare_url_citation, verify_page,
 };
 
@@ -89,6 +89,28 @@ async fn fetch_citoid_object(
     }
     let body = response.bytes().await.ok()?;
     sp42_core::parse_citoid_response(&body)
+}
+
+/// Fetch Citoid metadata for each distinct source URL, deduped (caller passes
+/// distinct URLs) and paced at [`CITOID_PACE`] (Wikimedia API etiquette — the
+/// shared service expects ~1 req/s). Best-effort: a URL Citoid cannot resolve is
+/// simply absent from the map, never an error.
+async fn fetch_page_metadata(
+    client: &reqwest::Client,
+    urls: Vec<String>,
+) -> std::collections::HashMap<String, CitoidMetadata> {
+    let mut metadata = std::collections::HashMap::new();
+    for (index, url) in urls.iter().enumerate() {
+        if index > 0 {
+            tokio::time::sleep(CITOID_PACE).await;
+        }
+        if let Some(object) = fetch_citoid_object(client, None, url).await
+            && let Some(header) = build_citoid_header(&object, url)
+        {
+            metadata.insert(url.clone(), header);
+        }
+    }
+    metadata
 }
 
 /// Enumerate the revision's references, classify the bare ones, and build
@@ -324,13 +346,23 @@ pub(crate) async fn post_verify_page(
         .map_err(|error| action_error_response(&action_error_from_editor(&error)))?;
     let extract = extract_use_sites(&blocks, &payload);
 
-    // Fetch Citoid metadata so the report can show bibliographic context (and help
-    // identify sources the tool could not read). Best-effort; never blocks a finding.
-    let options = VerifyOptions {
-        include_metadata: true,
-        ..VerifyOptions::default()
+    // Distinct live source URLs for deduped Citoid metadata lookups.
+    let metadata_urls: Vec<String> = {
+        let mut seen = std::collections::HashSet::new();
+        extract
+            .use_sites
+            .iter()
+            .map(|use_site| use_site.request.source_url.to_string())
+            .filter(|url| seen.insert(url.clone()))
+            .collect()
     };
-    let report: PageVerificationReport = verify_page(
+
+    // Verify the page and fetch source metadata concurrently. Metadata is a display
+    // sidecar (never grounded); it is fetched deduped + paced (CITOID_PACE) so a
+    // citation-heavy page does not burst the shared Citoid service, and the pacing
+    // latency overlaps the model calls rather than adding to them.
+    let options = VerifyOptions::default();
+    let verify = verify_page(
         &http_client,
         &model_client,
         state.clock.as_ref(),
@@ -339,8 +371,15 @@ pub(crate) async fn post_verify_page(
         extract,
         options,
         PAGE_VERIFY_CONCURRENCY,
-    )
-    .await;
+    );
+    let metadata = fetch_page_metadata(&state.http_client, metadata_urls);
+    let (mut report, metadata_by_url) = tokio::join!(verify, metadata);
+
+    for finding in &mut report.findings {
+        if let Some(meta) = metadata_by_url.get(&finding.provenance.url.to_string()) {
+            finding.metadata = Some(meta.clone());
+        }
+    }
 
     Ok(Json(report))
 }

@@ -764,12 +764,9 @@ pub fn build_source_excerpt(source_text: &str, passage: Option<&LocatedPassage>)
 /// Build a [`VerificationOutcome`] for an unusable source (short-circuit, no model call).
 /// This captures the pattern: source was fetched but marked unusable by the deterministic
 /// body-usability gate. The finding records the reason and marks grounding as [`GroundingStatus::NotApplicable`].
-/// Carries best-effort `metadata` (Citoid) so a reviewer can still identify a source the
-/// tool could not read (e.g. a PDF or paywalled page).
 fn unusable_source_outcome(
     usability_reason: BodyUsabilityReason,
     provenance: &SourceProvenance,
-    metadata: Option<CitoidMetadata>,
     use_site_ordinal: u32,
 ) -> VerificationOutcome {
     let mut finding = no_quote_finding(
@@ -789,7 +786,6 @@ fn unusable_source_outcome(
     ) {
         finding.unusable_reason = Some(usability_reason);
     }
-    finding.metadata = metadata;
     VerificationOutcome {
         finding,
         votes: Vec::new(),
@@ -970,15 +966,6 @@ where
         http_status: Some(fetched.status),
     };
 
-    // Fetch Citoid metadata before the usability gate: it is most valuable exactly
-    // when the body is unusable (a PDF/paywall the tool can't read but Citoid can
-    // identify). Skip it for a non-2xx (dead) response — there is nothing to resolve.
-    let metadata = if options.include_metadata && (200..300).contains(&fetched.status) {
-        fetch_metadata(fetch_client, request.source_url.as_str()).await
-    } else {
-        None
-    };
-
     let body = if fetched.text.is_empty() {
         None
     } else {
@@ -994,11 +981,18 @@ where
         return Ok(unusable_source_outcome(
             usability.reason,
             &provenance,
-            metadata,
             use_site_ordinal,
         ));
     }
 
+    // Citoid metadata is verification-prompt context only (never grounded, never
+    // attached to the finding here). The page report's *display* metadata is fetched
+    // separately, deduped and paced, by the server route.
+    let metadata = if options.include_metadata {
+        fetch_metadata(fetch_client, request.source_url.as_str()).await
+    } else {
+        None
+    };
     let inputs = VerifyModelInputs {
         claim: &request.claim,
         source_text: &fetched.text,
@@ -1041,11 +1035,10 @@ where
         &model_verdicts,
         use_site_ordinal,
     );
-    // Attach the reviewer-facing context the surfaced finding does not otherwise
-    // carry: a bounded excerpt of what the panel read (windowed on the quote) and
-    // the best-effort source metadata.
+    // Attach a bounded excerpt of what the panel read (windowed on the located
+    // quote) — reviewer context the surfaced finding does not otherwise carry.
+    // Source metadata is attached separately by the server route (deduped + paced).
     finding.source_excerpt = build_source_excerpt(&fetched.text, finding.passage.as_ref());
-    finding.metadata = metadata;
     let votes = build_model_votes(&model_verdicts, &fetched.text);
     Ok(VerificationOutcome { finding, votes })
 }

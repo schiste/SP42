@@ -61,7 +61,8 @@ pub(crate) async fn get_auth_login(
         .as_deref()
         .unwrap_or_else(|| state.default_wiki_id());
     let oauth_config = oauth_client_config_for_request(&state, &headers, wiki_id)?;
-    let redirect_after_login = sanitize_redirect_target(query.next.as_deref());
+    let redirect_after_login =
+        sanitize_redirect_target(query.next.as_deref(), &state.deployment.allowed_origins);
     let mut rng = ServerRng;
     let state_token = generate_oauth_state(&mut rng);
     let verifier = generate_pkce_verifier(&mut rng);

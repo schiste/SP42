@@ -82,6 +82,39 @@ fn deployment_mode() -> Option<String> {
     None
 }
 
+/// Whether the API is served from a different origin than the frontend shell
+/// (e.g. `apiBaseUrl` / `SP42_API_BASE_URL` points at another host). In that
+/// case the OAuth callback runs on the API origin, so the login `next` must
+/// carry an absolute frontend-origin URL to return the user to the SPA rather
+/// than the backend. ADR-0014 / Codex review #90.
+#[must_use]
+pub fn is_split_origin_deployment() -> bool {
+    let base = configured_api_base_url();
+    if base.is_empty() {
+        return false;
+    }
+    // Same origin when the configured API base is the current frontend origin;
+    // a different (cross-origin) base means a split deployment.
+    frontend_origin().is_none_or(|origin| !base.starts_with(&origin))
+}
+
+/// The current frontend shell origin (`scheme://host[:port]`), if available.
+#[cfg(target_arch = "wasm32")]
+#[must_use]
+pub fn frontend_origin() -> Option<String> {
+    web_sys::window()?
+        .location()
+        .origin()
+        .ok()
+        .and_then(|origin| non_empty_string(&origin))
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[must_use]
+pub fn frontend_origin() -> Option<String> {
+    None
+}
+
 #[must_use]
 pub fn configured_api_base_url() -> String {
     runtime_api_base_url()

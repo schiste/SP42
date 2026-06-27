@@ -4,7 +4,9 @@ use crate::platform::auth::{
     AuthSession, begin_login, bootstrap_dev_auth_session, fetch_auth_session, logout,
     save_local_credentials,
 };
-use crate::platform::config::{is_local_deployment, request_wiki_switch, selected_wiki_id};
+use crate::platform::config::{
+    is_local_deployment, is_split_origin_deployment, request_wiki_switch, selected_wiki_id,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum WorkspaceView {
@@ -145,7 +147,9 @@ fn LoginGate(session: AuthSession, refresh: Callback<()>) -> impl IntoView {
     };
 
     // Local-dev convenience: install a session from .env.wikimedia.local. Only
-    // offered when the server reports a local token is available.
+    // offered in local mode with a token available — the bootstrap route is
+    // hard-gated to local mode server-side, so showing it in vps/desktop would
+    // be a dead button that posts to a rejected endpoint. Codex review #90.
     let dev_bootstrap = Action::new_local(move |(): &()| async move {
         let request = sp42_core::DevAuthBootstrapRequest {
             username: String::new(),
@@ -155,7 +159,7 @@ fn LoginGate(session: AuthSession, refresh: Callback<()>) -> impl IntoView {
         let _ = bootstrap_dev_auth_session(&request).await;
         refresh.run(());
     });
-    let secondary = if session.local_token_available {
+    let secondary = if is_local_deployment() && session.local_token_available {
         view! {
             <button
                 class="btn btn-ghost"
@@ -445,7 +449,18 @@ fn current_login_next() -> String {
             let path = location.pathname().ok()?;
             let search = location.search().unwrap_or_default();
             let hash = location.hash().unwrap_or_default();
-            Some(format!("{path}{search}{hash}"))
+            let relative = format!("{path}{search}{hash}");
+            // In split frontend/API deployments the callback redirect runs on the
+            // API origin, so a relative target would strand the user on the
+            // backend. Return an absolute frontend-origin URL (the server
+            // validates it against its allowed origins). Same-origin deployments
+            // keep the relative path. Codex review #90.
+            if is_split_origin_deployment() {
+                let origin = location.origin().ok()?;
+                Some(format!("{origin}{relative}"))
+            } else {
+                Some(relative)
+            }
         })
         .unwrap_or_else(|| "/".to_string())
 }

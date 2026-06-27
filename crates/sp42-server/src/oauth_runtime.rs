@@ -1,5 +1,5 @@
 use axum::Json;
-use axum::http::{HeaderMap, StatusCode, header::HOST};
+use axum::http::{HeaderMap, HeaderValue, StatusCode, header::HOST};
 use sp42_core::{
     DevAuthBootstrapRequest, OAuthClientConfig, OAuthTokenResponse, routes::AUTH_CALLBACK_PATH,
 };
@@ -22,15 +22,45 @@ pub(crate) fn internal_error(message: &str) -> (StatusCode, Json<serde_json::Val
     )
 }
 
-pub(crate) fn sanitize_redirect_target(next: Option<&str>) -> String {
+pub(crate) fn sanitize_redirect_target(
+    next: Option<&str>,
+    allowed_origins: &[HeaderValue],
+) -> String {
     let Some(target) = next.map(str::trim).filter(|value| !value.is_empty()) else {
         return "/".to_string();
     };
+    // Same-origin relative path: allow `/path`, reject protocol-relative `//host`.
     if target.starts_with('/') && !target.starts_with("//") {
-        target.to_string()
-    } else {
-        "/".to_string()
+        return target.to_string();
     }
+    // Split frontend/API deployments send an absolute frontend-origin URL so the
+    // callback returns to the SPA instead of the API host. Honor it only when its
+    // origin is in the configured allow list — otherwise this would be an open
+    // redirect. Codex review #90.
+    if let Ok(url) = url::Url::parse(target)
+        && matches!(url.scheme(), "http" | "https")
+        && origin_is_allowed(&url, allowed_origins)
+    {
+        return target.to_string();
+    }
+    "/".to_string()
+}
+
+/// Whether `url`'s origin (`scheme://host[:port]`) matches one of the server's
+/// configured allowed origins (the same list used for CORS).
+fn origin_is_allowed(url: &url::Url, allowed_origins: &[HeaderValue]) -> bool {
+    let candidate = url.origin();
+    if !candidate.is_tuple() {
+        return false;
+    }
+    let candidate = candidate.ascii_serialization();
+    allowed_origins.iter().any(|origin| {
+        origin
+            .to_str()
+            .ok()
+            .and_then(|raw| url::Url::parse(raw).ok())
+            .is_some_and(|allowed| allowed.origin().ascii_serialization() == candidate)
+    })
 }
 
 pub(crate) fn redirect_with_status(target: &str, key: &str, value: &str) -> String {
@@ -225,4 +255,53 @@ pub(crate) fn validate_bootstrap_payload(
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{HeaderValue, sanitize_redirect_target};
+
+    fn origins() -> Vec<HeaderValue> {
+        vec![HeaderValue::from_static("https://app.example.org")]
+    }
+
+    #[test]
+    fn keeps_same_origin_relative_paths() {
+        assert_eq!(
+            sanitize_redirect_target(Some("/?wiki=dewiki#view=patrol"), &origins()),
+            "/?wiki=dewiki#view=patrol"
+        );
+    }
+
+    #[test]
+    fn rejects_protocol_relative_and_missing_targets() {
+        assert_eq!(
+            sanitize_redirect_target(Some("//evil.example"), &origins()),
+            "/"
+        );
+        assert_eq!(sanitize_redirect_target(Some("   "), &origins()), "/");
+        assert_eq!(sanitize_redirect_target(None, &origins()), "/");
+    }
+
+    #[test]
+    fn honors_absolute_url_on_allowed_frontend_origin() {
+        assert_eq!(
+            sanitize_redirect_target(Some("https://app.example.org/?wiki=dewiki"), &origins()),
+            "https://app.example.org/?wiki=dewiki"
+        );
+    }
+
+    #[test]
+    fn rejects_absolute_url_off_allowed_origin() {
+        // open-redirect guard: an origin not in the allow list falls back to "/"
+        assert_eq!(
+            sanitize_redirect_target(Some("https://evil.example/steal"), &origins()),
+            "/"
+        );
+        // wrong scheme is rejected too
+        assert_eq!(
+            sanitize_redirect_target(Some("javascript:alert(1)"), &origins()),
+            "/"
+        );
+    }
 }

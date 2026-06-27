@@ -23,6 +23,9 @@ pub struct WikiRegistry {
 struct WikiRegistryInner {
     configs: BTreeMap<String, WikiConfig>,
     default_wiki_id: String,
+    /// The default wiki's resolved config, computed once at construction so it is
+    /// available even when the default is a derived (unconfigured) project.
+    default_config: WikiConfig,
     source: String,
 }
 
@@ -79,7 +82,8 @@ impl WikiRegistry {
     /// # Errors
     ///
     /// Returns [`WikiRegistryError`] when the config set is empty, contains a
-    /// duplicate wiki ID, or the requested default is not part of the set.
+    /// duplicate wiki ID, or the requested default is neither part of the set
+    /// nor a derivable Wikimedia project (ADR-0014).
     pub fn from_configs(
         configs: impl IntoIterator<Item = WikiConfig>,
         default_wiki_id: Option<String>,
@@ -99,17 +103,25 @@ impl WikiRegistry {
             .cloned()
             .ok_or(WikiRegistryError::EmptyConfigSet)?;
         let default_wiki_id = default_wiki_id.unwrap_or(first_wiki_id);
-        if !by_id.contains_key(&default_wiki_id) {
-            return Err(WikiRegistryError::UnknownDefaultWikiId {
-                env_var: SP42_DEFAULT_WIKI_ID,
-                wiki_id: default_wiki_id,
-            });
-        }
+        // The default may be a hand-configured wiki or any derivable Wikimedia
+        // project, so the documented "any Wikimedia project" deployment can set
+        // `SP42_DEFAULT_WIKI_ID` to e.g. `dewiki`. Resolve it once here; an id
+        // that is neither configured nor derivable is rejected at startup.
+        let default_config = match by_id.get(&default_wiki_id) {
+            Some(config) => config.clone(),
+            None => crate::sites::derive_wiki_config(&default_wiki_id).ok_or_else(|| {
+                WikiRegistryError::UnknownDefaultWikiId {
+                    env_var: SP42_DEFAULT_WIKI_ID,
+                    wiki_id: default_wiki_id.clone(),
+                }
+            })?,
+        };
 
         Ok(Self {
             inner: Arc::new(WikiRegistryInner {
                 configs: by_id,
                 default_wiki_id,
+                default_config,
                 source,
             }),
         })
@@ -148,17 +160,11 @@ impl WikiRegistry {
         })
     }
 
-    /// # Panics
-    ///
-    /// Panics only if the registry invariant is broken and the stored default
-    /// wiki ID no longer points to a loaded config.
+    /// The default wiki's resolved config (hand-configured or derived), computed
+    /// once at construction.
     #[must_use]
     pub fn default_config(&self) -> WikiConfig {
-        self.inner
-            .configs
-            .get(&self.inner.default_wiki_id)
-            .expect("registry default wiki must be loaded")
-            .clone()
+        self.inner.default_config.clone()
     }
 
     #[must_use]
@@ -310,11 +316,41 @@ mod tests {
     #[test]
     fn rejects_unknown_default_wiki_id() {
         let config = frwiki_config();
-        let error =
-            WikiRegistry::from_configs([config], Some("enwiki".to_string()), "test".to_string())
-                .expect_err("unknown default should fail");
+        let error = WikiRegistry::from_configs(
+            [config],
+            Some("not-a-real-wiki".to_string()),
+            "test".to_string(),
+        )
+        .expect_err("unknown default should fail");
 
-        assert!(error.to_string().contains("SP42_DEFAULT_WIKI_ID=enwiki"));
+        assert!(
+            error
+                .to_string()
+                .contains("SP42_DEFAULT_WIKI_ID=not-a-real-wiki")
+        );
+    }
+
+    #[test]
+    fn accepts_derived_default_wiki_id() {
+        // A known-but-unconfigured Wikimedia project is a valid default: the
+        // "any Wikimedia project" deployment can point SP42 at e.g. dewiki
+        // without a hand-written config (ADR-0014).
+        let registry = WikiRegistry::from_configs(
+            [frwiki_config()],
+            Some("dewiki".to_string()),
+            "test".to_string(),
+        )
+        .expect("derivable default should be accepted");
+
+        assert_eq!(registry.default_wiki_id(), "dewiki");
+        let default = registry.default_config();
+        assert_eq!(default.wiki_id, "dewiki");
+        assert_eq!(
+            default.api_url.as_str(),
+            "https://de.wikipedia.org/w/api.php"
+        );
+        // the derived default is not folded into the hand-configured set
+        assert_eq!(registry.wiki_ids(), vec!["frwiki"]);
     }
 
     #[test]

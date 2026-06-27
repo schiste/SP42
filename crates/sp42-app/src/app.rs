@@ -26,13 +26,30 @@ pub fn App() -> impl IntoView {
     let (auth, set_auth) = signal(AuthState::Loading);
 
     let refresh = Action::new_local(move |(): &()| async move {
-        let state = match fetch_auth_session().await {
-            Ok(session) => AuthState::Ready(session),
-            // A failed probe is treated as anonymous so the gate is shown rather
-            // than trapping the user on a spinner.
-            Err(_) => AuthState::Ready(AuthSession::default()),
-        };
-        set_auth.set(state);
+        let was_loading = matches!(auth.get_untracked(), AuthState::Loading);
+        let was_authed =
+            matches!(auth.get_untracked(), AuthState::Ready(ref session) if session.authenticated);
+        match fetch_auth_session().await {
+            Ok(session) => {
+                // Only swap state when the authenticated status actually changes
+                // (or on the very first probe). A periodic re-check that always
+                // set the signal would remount — and reset — the workspace on
+                // every tab focus. Codex review #90.
+                if was_loading || session.authenticated != was_authed {
+                    set_auth.set(AuthState::Ready(session));
+                }
+            }
+            // On the first probe a failed request is treated as anonymous so the
+            // gate is shown rather than trapping the user on a spinner. On a later
+            // re-check a transient network error is ignored: don't log an
+            // authenticated user out over a blip; only a definitive
+            // `authenticated == false` response above re-gates.
+            Err(_) => {
+                if was_loading {
+                    set_auth.set(AuthState::Ready(AuthSession::default()));
+                }
+            }
+        }
     });
     let refresh = Callback::new(move |()| {
         refresh.dispatch_local(());
@@ -41,6 +58,12 @@ pub fn App() -> impl IntoView {
     Effect::new(move |ran: Option<bool>| {
         if ran.is_none() {
             refresh.run(());
+            // Re-check the session when the tab regains visibility. Sessions
+            // expire after a server-side idle timeout; without this the workspace
+            // keeps rendering on a dead session and the next API call 401s,
+            // stranding the user in a stale UI until a manual reload. Codex
+            // review #90.
+            register_visibility_recheck(refresh);
         }
         true
     });
@@ -61,6 +84,31 @@ pub fn App() -> impl IntoView {
             }
         }}
     }
+}
+
+/// Re-run `refresh` whenever the tab becomes visible again, so an idle-expired
+/// session returns the user to the login gate instead of a stale workspace.
+fn register_visibility_recheck(refresh: Callback<()>) {
+    use wasm_bindgen::JsCast;
+    use wasm_bindgen::closure::Closure;
+
+    let Some(document) = web_sys::window().and_then(|window| window.document()) else {
+        return;
+    };
+    let callback = Closure::<dyn FnMut(web_sys::Event)>::new(move |_event: web_sys::Event| {
+        // Only re-check when the tab is shown, not when it is hidden.
+        let visible = web_sys::window()
+            .and_then(|window| window.document())
+            .is_none_or(|document| !document.hidden());
+        if visible {
+            refresh.run(());
+        }
+    });
+    let _ = document
+        .add_event_listener_with_callback("visibilitychange", callback.as_ref().unchecked_ref());
+    // Leak the closure intentionally — it must live for the page lifetime (the
+    // same pattern as the PWA install-prompt listener in `platform/pwa.rs`).
+    callback.forget();
 }
 
 /// The unauthenticated login screen (required before the workspace renders).
@@ -367,7 +415,7 @@ fn Workspace(session: AuthSession, refresh: Callback<()>) -> impl IntoView {
 }
 
 /// Fetch the full list of resolvable Wikimedia `wiki_id`s for the picker
-/// dropdown (`GET /wikis`, the embedded SiteMatrix snapshot). Empty on failure.
+/// dropdown (`GET /wikis`, the embedded `SiteMatrix` snapshot). Empty on failure.
 async fn fetch_known_wikis() -> Vec<String> {
     let url = crate::platform::config::api_url(sp42_core::routes::WIKIS_PATH);
     let Ok(bytes) = crate::platform::http::get_bytes(&url, "fetch wiki list").await else {

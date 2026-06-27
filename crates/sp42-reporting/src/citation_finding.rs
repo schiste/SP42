@@ -31,7 +31,10 @@ pub fn is_support(verdict: CitationVerdict) -> bool {
 pub enum FindingGroup {
     /// The source does not back the claim.
     NotSupported,
-    /// The panel judged support, but the quote did not locate in the source.
+    /// The panel judged support, but the quote did not locate *exactly* in the
+    /// source — either it was not found, or only a guarded fuzzy match hit. Core
+    /// treats fuzzy support as human-weighable but never groundable, so it needs
+    /// review and must not sit in the clean `Supported` bucket.
     Unverified,
     /// The source partially backs the claim.
     Partial,
@@ -61,7 +64,10 @@ impl FindingGroup {
         match finding.verdict {
             CitationVerdict::Judged(SupportLevel::NotSupported) => FindingGroup::NotSupported,
             CitationVerdict::Judged(SupportLevel::Supported | SupportLevel::Partial)
-                if finding.grounding_status == GroundingStatus::Unlocated =>
+                if matches!(
+                    finding.grounding_status,
+                    GroundingStatus::Unlocated | GroundingStatus::LocatedFuzzy
+                ) =>
             {
                 FindingGroup::Unverified
             }
@@ -104,9 +110,9 @@ impl FindingGroup {
     #[must_use]
     pub const fn hint(self) -> Option<&'static str> {
         match self {
-            FindingGroup::Unverified => {
-                Some("the panel judged support, but the quote could not be located in the source")
-            }
+            FindingGroup::Unverified => Some(
+                "the panel judged support, but the quote was not located exactly (fuzzy match or not found) — weigh it by hand",
+            ),
             FindingGroup::DeadLink => {
                 Some("source could not be fetched — replace the link or add an archive")
             }
@@ -312,13 +318,22 @@ mod tests {
             )),
             Unverified
         );
-        // A partial whose quote DID locate stays Partial, not Unverified.
+        // A partial whose quote DID locate exactly stays Partial, not Unverified.
         assert_eq!(
             case(&finding(
                 CitationVerdict::Judged(SupportLevel::Partial),
                 GroundingStatus::Located
             )),
             Partial
+        );
+        // A support whose quote located only fuzzily is NOT clean: it must leave the
+        // Supported bucket and surface as Unverified (fuzzy is never groundable).
+        assert_eq!(
+            case(&finding(
+                CitationVerdict::Judged(SupportLevel::Supported),
+                GroundingStatus::LocatedFuzzy
+            )),
+            Unverified
         );
         assert_eq!(case(&unreachable(Some(404))), DeadLink);
         assert_eq!(
@@ -373,8 +388,13 @@ mod tests {
         assert!(finding_is_problem(&unusable(Some(
             BodyUsabilityReason::PdfBody
         ))));
+        // A fuzzy-only support needs review too (it is not exactly grounded).
+        assert!(finding_is_problem(&finding(
+            CitationVerdict::Judged(SupportLevel::Supported),
+            GroundingStatus::LocatedFuzzy
+        )));
 
-        // A grounded "supported" is the only non-problem.
+        // Only an exactly-grounded "supported" is a non-problem.
         assert!(!finding_is_problem(&finding(
             CitationVerdict::Judged(SupportLevel::Supported),
             GroundingStatus::Located

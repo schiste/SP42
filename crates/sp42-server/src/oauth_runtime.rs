@@ -104,7 +104,13 @@ pub(crate) fn oauth_client_config_for_request(
         authorize_url: config.oauth_authorize_url,
         token_url: config.oauth_token_url,
         redirect_uri,
-        scopes: vec!["basic".to_string(), "patrol".to_string()],
+        // Request the full action grants so OAuth-logged-in users can pass the
+        // capability gates for editing/patrol/rollback, not just read (the
+        // capability derivation needs editpage + rollback). Codex review #90.
+        scopes: ["basic", "editpage", "patrol", "rollback"]
+            .into_iter()
+            .map(str::to_string)
+            .collect(),
     })
 }
 
@@ -127,7 +133,13 @@ pub(crate) fn oauth_client_config_from_pending(
         authorize_url: config.oauth_authorize_url,
         token_url: config.oauth_token_url,
         redirect_uri,
-        scopes: vec!["basic".to_string(), "patrol".to_string()],
+        // Request the full action grants so OAuth-logged-in users can pass the
+        // capability gates for editing/patrol/rollback, not just read (the
+        // capability derivation needs editpage + rollback). Codex review #90.
+        scopes: ["basic", "editpage", "patrol", "rollback"]
+            .into_iter()
+            .map(str::to_string)
+            .collect(),
     })
 }
 

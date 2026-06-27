@@ -13,11 +13,11 @@ use crate::components::style::wiki_base_url;
 use crate::components::{StatusBadge, StatusTone};
 use crate::platform::auth::{bootstrap_dev_auth_session, fetch_dev_auth_session_status};
 use crate::platform::citation::fetch_page_report;
-use crate::platform::config::configured_default_wiki_id;
+use crate::platform::config::selected_wiki_id;
 
 #[component]
 pub fn CitationSurface() -> impl IntoView {
-    let (wiki_id, set_wiki_id) = signal(configured_default_wiki_id());
+    let (wiki_id, set_wiki_id) = signal(selected_wiki_id());
     let (title, set_title) = signal(String::new());
     let (rev, set_rev) = signal(String::new());
     let (report, set_report) = signal(None::<PageVerificationReport>);

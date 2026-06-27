@@ -33,6 +33,10 @@ const LIFTWING_URL: &str =
     "https://api.wikimedia.org/service/lw/inference/v1/models/revertrisk-language-agnostic:predict";
 /// Universal baseline applied to any wiki without a hand-tuned config.
 pub const DEFAULT_SCORING_POLICY_REF: &str = "active/default-language-agnostic";
+/// Patrol-relevant content namespaces for dynamically-derived wikis: main (0),
+/// project (4), file (6), template (10), category (14). Broader than article-
+/// only so e.g. Commons File edits aren't dropped by the namespace filter.
+const DERIVED_NAMESPACE_ALLOWLIST: [i32; 5] = [0, 4, 6, 10, 14];
 
 /// Whether `wiki_id` is a known Wikimedia project in the embedded site list.
 #[must_use]
@@ -72,7 +76,7 @@ pub fn derive_wiki_config(wiki_id: &str) -> Option<WikiConfig> {
         coordination_url: None,
         parsoid_url: Some(base.join("/w/rest.php").ok()?),
         inference_url: None,
-        namespace_allowlist: vec![0],
+        namespace_allowlist: DERIVED_NAMESPACE_ALLOWLIST.to_vec(),
         scoring_policy_ref: DEFAULT_SCORING_POLICY_REF.to_string(),
         scoring: compiled.scoring_config,
         templates: WikiTemplates {
@@ -119,7 +123,7 @@ mod tests {
             Some("https://de.wikipedia.org/w/rest.php")
         );
         assert_eq!(config.scoring_policy_ref, DEFAULT_SCORING_POLICY_REF);
-        assert_eq!(config.namespace_allowlist, vec![0]);
+        assert_eq!(config.namespace_allowlist, vec![0, 4, 6, 10, 14]);
         // shared endpoints derive to the central Wikimedia services
         assert_eq!(
             config.oauth_authorize_url.as_str(),

@@ -2,11 +2,11 @@ use leptos::prelude::*;
 use sp42_core::{ArticleInventory, ArticleReference, MediaReference};
 
 use crate::platform::article::fetch_article_inventory;
-use crate::platform::config::configured_default_wiki_id;
+use crate::platform::config::selected_wiki_id;
 
 #[component]
 pub fn ArticleSurface() -> impl IntoView {
-    let (wiki_id, set_wiki_id) = signal(configured_default_wiki_id());
+    let (wiki_id, set_wiki_id) = signal(selected_wiki_id());
     let (title, set_title) = signal(String::new());
     let (inventory, set_inventory) = signal(None::<ArticleInventory>);
     let (load_error, set_load_error) = signal(None::<String>);

@@ -389,8 +389,16 @@ async fn fetch_known_wikis() -> Vec<String> {
 }
 
 fn current_login_next() -> String {
+    // Preserve the full location (path + ?wiki=… + #view=…) so OAuth login
+    // returns to the requested project/view, not the default. Codex review #90.
     crate::platform::globals::browser_window()
-        .and_then(|window| window.location().pathname().ok())
+        .and_then(|window| {
+            let location = window.location();
+            let path = location.pathname().ok()?;
+            let search = location.search().unwrap_or_default();
+            let hash = location.hash().unwrap_or_default();
+            Some(format!("{path}{search}{hash}"))
+        })
         .unwrap_or_else(|| "/".to_string())
 }
 

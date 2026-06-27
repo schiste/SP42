@@ -1,12 +1,13 @@
 use leptos::prelude::*;
+use sp42_citation::{
+    FindingGroup, finding_is_problem, page_verification_report_to_document, panel_agreement_label,
+    render_page_verification_text, source_unavailable_detail,
+};
 use sp42_core::{
     CitationFinding, CitoidMetadata, DevAuthBootstrapRequest, GroundingStatus,
     PageVerificationReport, parse_page_target,
 };
-use sp42_reporting::{
-    FindingGroup, ReportSection, finding_is_problem, page_verification_report_to_document,
-    panel_agreement_label, render_page_verification_text, source_unavailable_detail,
-};
+use sp42_reporting::ReportSection;
 
 use crate::components::style::wiki_base_url;
 use crate::components::{StatusBadge, StatusTone};

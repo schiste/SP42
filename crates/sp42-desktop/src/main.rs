@@ -5,7 +5,7 @@ use sp42_devtools::{
     DevContextOptions, DevOperatorSurface, DevOperatorSurfaceOptions, DevWorkbenchOptions,
     build_default_dev_operator_surface, render_dev_transport_lines,
 };
-use sp42_reporting::{
+use sp42_patrol::{
     PatrolOperatorSummary, PatrolSessionDigest, render_patrol_operator_summary_markdown,
     render_patrol_operator_summary_text, render_patrol_scenario_markdown,
     render_patrol_scenario_text, render_patrol_session_digest_markdown,

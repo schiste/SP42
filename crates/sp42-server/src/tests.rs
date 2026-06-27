@@ -1616,7 +1616,7 @@ async fn live_operator_route_returns_canonical_operator_contract() {
     let body = to_bytes(response.into_body(), usize::MAX)
         .await
         .expect("response body should read");
-    let view: sp42_reporting::LiveOperatorView =
+    let view: sp42_patrol::LiveOperatorView =
         serde_json::from_slice(&body).expect("live operator view should parse");
 
     assert_eq!(view.wiki_id, "frwiki");
@@ -1705,7 +1705,7 @@ async fn live_operator_route_surfaces_cached_backlog_state() {
     let first_body = to_bytes(first.into_body(), usize::MAX)
         .await
         .expect("first response body should read");
-    let first_view: sp42_reporting::LiveOperatorView =
+    let first_view: sp42_patrol::LiveOperatorView =
         serde_json::from_slice(&first_body).expect("first live operator view should parse");
 
     let second = router
@@ -1725,7 +1725,7 @@ async fn live_operator_route_surfaces_cached_backlog_state() {
     let second_body = to_bytes(second.into_body(), usize::MAX)
         .await
         .expect("second response body should read");
-    let second_view: sp42_reporting::LiveOperatorView =
+    let second_view: sp42_patrol::LiveOperatorView =
         serde_json::from_slice(&second_body).expect("second live operator view should parse");
 
     assert_eq!(first_view.queue[0].event.title, "Live route sample");

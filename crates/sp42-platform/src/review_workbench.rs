@@ -208,8 +208,8 @@ fn performer_label(performer: &EditorIdentity) -> String {
 #[cfg(test)]
 mod tests {
     use crate::scoring_engine::score_edit;
+    use crate::test_fixtures::fixture_wiki_config;
     use crate::types::{EditEvent, EditorIdentity, QueuedEdit, ScoringConfig};
-    use sp42_platform::test_fixtures::fixture_wiki_config;
 
     use super::{build_review_workbench, build_session_action_execution_requests};
 

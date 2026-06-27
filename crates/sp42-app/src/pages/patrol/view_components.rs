@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use leptos::prelude::*;
 use sp42_core::{MediaDiffReport, QueuedEdit, SessionActionKind, StructuredDiff};
-use sp42_reporting::LiveOperatorView;
+use sp42_patrol::LiveOperatorView;
 
 use crate::components::action_bar::ActionBar;
 use crate::components::context_header::ContextHeader;

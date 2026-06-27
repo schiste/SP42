@@ -7,7 +7,7 @@ use sp42_core::{
     diff_lines, score_edit_with_context,
 };
 use sp42_live::{RecentChangesQuery, StreamIngestor, build_recent_changes_request};
-use sp42_reporting::{
+use sp42_patrol::{
     PatrolOperatorSummary, PatrolOperatorSummaryInputs, PatrolScenarioReport,
     PatrolScenarioReportInputs, PatrolSessionDigest, PatrolSessionDigestInputs, ShellStateInputs,
     ShellStateModel, build_patrol_operator_summary, build_patrol_scenario_report,

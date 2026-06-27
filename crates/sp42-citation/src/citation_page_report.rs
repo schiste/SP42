@@ -1,13 +1,13 @@
 //! Pure renderer for a page-level citation verification report.
 //!
-//! [`sp42_core::PageVerificationReport`] (built by the article-level verifier) is
+//! [`crate::PageVerificationReport`] (built by the article-level verifier) is
 //! data, not presentation. This module turns it into the shared
 //! [`ReportDocument`], so the CLI and the app render the same reviewer view
 //! through [`render_report_document_text`]/[`render_report_document_markdown`],
 //! mirroring `patrol_scenario_report`. The report type lives in `sp42-core`, so
 //! the transform is a free function here (no inherent method — orphan rule).
 
-use sp42_core::{
+use crate::{
     CitationFinding, CitationVerdict, GroundingStatus, PageVerificationReport,
     SourceUnavailableReason, SupportLevel,
 };
@@ -210,7 +210,7 @@ fn truncate_claim(claim: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use sp42_core::{
+    use crate::{
         BlockFailure, BodyUsabilityReason, CitationFinding, CitationFindingKind, CitationVerdict,
         GroundingAssertion, GroundingStatus, LocatedPassage, PageVerificationReport,
         PageVerificationStats, PanelAgreement, SkippedReason, SkippedRef, SourceProvenance,

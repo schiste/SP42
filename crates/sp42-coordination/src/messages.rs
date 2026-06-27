@@ -1,7 +1,7 @@
 //! Coordination protocol payloads and room summary contracts.
 
 use serde::{Deserialize, Serialize};
-use sp42_core::Action;
+use sp42_platform::Action;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum CoordinationMessage {

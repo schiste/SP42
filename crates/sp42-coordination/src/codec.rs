@@ -30,7 +30,7 @@ mod tests {
         RaceResolution, ScoreDelta,
     };
     use proptest::prelude::*;
-    use sp42_core::Action;
+    use sp42_platform::Action;
 
     #[test]
     fn round_trip_identity() {

@@ -6,8 +6,8 @@ use std::str::FromStr;
 
 use serde::Deserialize;
 
-use sp42_core::errors::StreamIngestorError;
-use sp42_core::{EditEvent, EditorIdentity, WikiConfig};
+use sp42_platform::errors::StreamIngestorError;
+use sp42_platform::{EditEvent, EditorIdentity, WikiConfig};
 
 const SUPPORTED_CHANGE_TYPES: [&str; 2] = ["edit", "new"];
 
@@ -361,7 +361,7 @@ mod tests {
         StreamIngestor, StreamIngestorOptions, normalize_unix_timestamp_ms, parse_timestamp_text,
     };
     use crate::test_fixtures::fixture_wiki_config;
-    use sp42_core::EditorIdentity;
+    use sp42_platform::EditorIdentity;
     const SAMPLE_EVENT: &str = include_str!("../../../fixtures/frwiki_recentchange_edit.json");
     const SAMPLE_BATCH: &str = include_str!("../../../fixtures/frwiki_recentchanges_batch.jsonl");
 

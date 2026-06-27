@@ -3,7 +3,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::{BacklogRuntimeStatus, StreamRuntimeStatus};
-use sp42_core::{
+use sp42_platform::{
     ActionExecutionStatusReport, DevAuthCapabilityReport, DevAuthSessionStatus, EditorIdentity,
     FlagState, LocalOAuthConfigStatus, LocalOAuthSourceReport, PublicRuleSetDocument,
     PublicTeamDefinitionDocument, PublicTeamRegistryDocument, PublicUserPreferencesDocument,
@@ -620,7 +620,7 @@ mod tests {
         LiveOperatorBackendStatus, LiveOperatorQuery, LiveOperatorRetryClass,
         build_live_operator_action_preflight, classify_retry, filter_live_operator_queue,
     };
-    use sp42_core::{
+    use sp42_platform::{
         ActionExecutionStatusReport, CompositeScore, DevAuthActionTokenAvailability,
         DevAuthCapabilityReadiness, DevAuthCapabilityReport, DevAuthDerivedCapabilities,
         DevAuthEditCapabilities, DevAuthModerationCapabilities, DevAuthProbeAcceptance,
@@ -897,7 +897,7 @@ mod tests {
 
         assert_eq!(
             preflight.recommended_kind,
-            Some(sp42_core::SessionActionKind::Rollback)
+            Some(sp42_platform::SessionActionKind::Rollback)
         );
         assert!(
             preflight
@@ -932,7 +932,7 @@ mod tests {
         let rollback = preflight
             .recommendations
             .iter()
-            .find(|entry| matches!(entry.kind, sp42_core::SessionActionKind::Rollback))
+            .find(|entry| matches!(entry.kind, sp42_platform::SessionActionKind::Rollback))
             .expect("rollback recommendation should exist");
         assert!(!rollback.available);
         assert_eq!(

@@ -1,5 +1,5 @@
 use leptos::prelude::*;
-use sp42_reporting::{
+use sp42_patrol::{
     PatrolScenarioFinding, PatrolScenarioReadiness, PatrolScenarioReport, PatrolScenarioSection,
     ReportSeverity, render_patrol_scenario_text,
 };
@@ -306,7 +306,7 @@ mod tests {
             wiki_id: "frwiki".to_string(),
             queue_depth: 2,
             readiness: PatrolScenarioReadiness::Ready,
-            selected: Some(sp42_reporting::PatrolScenarioSelectedEdit {
+            selected: Some(sp42_patrol::PatrolScenarioSelectedEdit {
                 wiki_id: "frwiki".to_string(),
                 rev_id: 123_456,
                 title: "Example".to_string(),

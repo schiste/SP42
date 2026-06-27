@@ -7,6 +7,7 @@ use async_trait::async_trait;
 use futures::executor::block_on;
 use reqwest::header::COOKIE;
 use serde_json::Value;
+use sp42_citation::{render_page_verification_markdown, render_page_verification_text};
 use sp42_core::routes as route_contracts;
 use sp42_core::{
     CitationFinding, CitationVerificationRequest, ClaimContext, DevAuthBootstrapRequest,
@@ -23,11 +24,10 @@ use sp42_devtools::{
     build_dev_stream_preview, build_dev_workbench, parse_default_dev_wiki_config,
 };
 use sp42_inference::{client_from_env, panel_from_env};
-use sp42_reporting::{
+use sp42_patrol::{
     PatrolScenarioReportInputs, ShellStateInputs, build_patrol_scenario_report,
-    build_shell_state_model, render_page_verification_markdown, render_page_verification_text,
-    render_patrol_scenario_markdown, render_patrol_scenario_text, render_shell_state_markdown,
-    render_shell_state_text,
+    build_shell_state_model, render_patrol_scenario_markdown, render_patrol_scenario_text,
+    render_shell_state_markdown, render_shell_state_text,
 };
 use sp42_types::{HttpClient, HttpClientError, HttpMethod, HttpRequest, HttpResponse};
 use std::collections::{BTreeMap, BTreeSet};
@@ -2129,8 +2129,8 @@ fn build_cli_session_workbench(
 
 #[derive(Debug, Clone, Copy)]
 struct SessionDigestArtifacts<'a> {
-    shell_state: &'a sp42_reporting::ShellStateModel,
-    scenario: &'a sp42_reporting::PatrolScenarioReport,
+    shell_state: &'a sp42_patrol::ShellStateModel,
+    scenario: &'a sp42_patrol::PatrolScenarioReport,
 }
 
 fn render_session_digest_json(

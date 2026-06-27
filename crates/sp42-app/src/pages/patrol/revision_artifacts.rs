@@ -4,7 +4,7 @@ use leptos::prelude::*;
 use sp42_core::{
     MediaDiffReport, QueuedEdit, SessionActionExecutionRequest, SessionActionKind, StructuredDiff,
 };
-use sp42_reporting::LiveOperatorView;
+use sp42_patrol::LiveOperatorView;
 
 use crate::components::diff_viewer::{EditAction, TagAction};
 use crate::platform::auth::execute_dev_auth_action;

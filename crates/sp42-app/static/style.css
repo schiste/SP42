@@ -172,6 +172,7 @@ body {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  flex-wrap: wrap;
   gap: 16px;
   min-height: 42px;
   padding: 0 10px;
@@ -180,6 +181,7 @@ body {
 }
 
 .workspace-brand {
+  flex: 0 0 auto;
   font-size: 12px;
   font-weight: 800;
   letter-spacing: 0.08em;
@@ -189,6 +191,8 @@ body {
 .workspace-tabs {
   display: inline-flex;
   align-items: center;
+  flex: 0 1 auto;
+  min-width: 0;
   gap: 4px;
   padding: 3px;
   border: 1px solid var(--border-light);
@@ -214,6 +218,10 @@ body {
   border-color: var(--accent-border);
   background: var(--accent-bg);
   color: var(--text);
+}
+
+.workspace-theme-toggle {
+  flex: 0 0 auto;
 }
 
 .workspace-body {
@@ -1234,6 +1242,27 @@ body {
 
 /* ─── Responsive ─── */
 @media (max-width: 768px) {
+  .workspace-nav {
+    justify-content: flex-start;
+    gap: 8px;
+    min-height: auto;
+    padding-block: 6px;
+  }
+
+  .workspace-brand {
+    flex-basis: 100%;
+  }
+
+  .workspace-tabs {
+    flex: 1 1 0;
+    gap: 3px;
+  }
+
+  .workspace-tab {
+    min-width: 0;
+    padding-inline: 8px;
+  }
+
   .patrol-grid {
     grid-template-columns: 1fr !important;
     grid-template-rows: auto auto auto 1fr auto !important;

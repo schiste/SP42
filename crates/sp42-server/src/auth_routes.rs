@@ -351,6 +351,83 @@ pub(crate) async fn post_bootstrap_session(
     Ok((StatusCode::OK, [(SET_COOKIE, cookie)], Json(status)))
 }
 
+#[derive(Debug, serde::Deserialize)]
+pub(crate) struct LocalCredentialsRequest {
+    #[serde(default)]
+    access_token: Option<String>,
+    #[serde(default)]
+    client_application_key: Option<String>,
+    #[serde(default)]
+    client_application_secret: Option<String>,
+}
+
+/// Local-dev onboarding (ADR-0014): write Wikimedia credentials entered in the
+/// browser setup window into `.env.wikimedia.local`. Hard-gated to
+/// `SP42_DEPLOYMENT_MODE=local` (same localhost-only trust as the dev bridge);
+/// the secret is written to disk and never echoed back. Takes effect on the
+/// next server start.
+pub(crate) async fn post_local_credentials(
+    State(state): State<AppState>,
+    Json(payload): Json<LocalCredentialsRequest>,
+) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
+    if !state.deployment.mode.permits_dev_token_bootstrap() {
+        return Err((
+            StatusCode::FORBIDDEN,
+            Json(serde_json::json!({
+                "error": "Local credential setup is only available in SP42_DEPLOYMENT_MODE=local"
+            })),
+        ));
+    }
+
+    let mut updates: Vec<(String, String)> = Vec::new();
+    for (key, value) in [
+        ("WIKIMEDIA_ACCESS_TOKEN", payload.access_token),
+        (
+            "WIKIMEDIA_CLIENT_APPLICATION_KEY",
+            payload.client_application_key,
+        ),
+        (
+            "WIKIMEDIA_CLIENT_APPLICATION_SECRET",
+            payload.client_application_secret,
+        ),
+    ] {
+        if let Some(value) = value {
+            let value = value.trim().to_string();
+            if !value.is_empty() {
+                updates.push((key.to_string(), value));
+            }
+        }
+    }
+
+    if updates.is_empty() {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({ "error": "Provide at least one credential to save." })),
+        ));
+    }
+
+    let saved_keys: Vec<String> = updates.iter().map(|(key, _)| key.clone()).collect();
+    match crate::local_env::write_local_credentials(&updates) {
+        Ok(file_name) => {
+            info!(
+                file_name = file_name.as_str(),
+                saved_keys = saved_keys.join(","),
+                "wrote local Wikimedia credentials from the setup window"
+            );
+            Ok(Json(serde_json::json!({
+                "saved": true,
+                "file_name": file_name,
+                "restart_required": true,
+                "saved_keys": saved_keys,
+            })))
+        }
+        Err(error) => Err((
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": format!("Could not write credentials: {error}") })),
+        )),
+    }
+}
+
 pub(crate) async fn delete_session(
     State(state): State<AppState>,
     headers: HeaderMap,

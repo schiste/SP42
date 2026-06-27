@@ -12,6 +12,7 @@ use crate::action_routes::{get_action_history, get_action_status, post_execute_a
 use crate::auth_routes::{
     delete_session, get_auth_callback, get_auth_login, get_auth_session, get_bootstrap_status,
     get_capabilities, get_session, post_auth_logout, post_bootstrap_session,
+    post_local_credentials,
 };
 use crate::citation_routes::{post_bare_url_apply, post_bare_url_proposals, post_verify_page};
 use crate::operator_live::get_live_operator_view;
@@ -219,6 +220,10 @@ fn dev_bridge_routes(router: Router<AppState>) -> Router<AppState> {
         .route(
             route_contracts::DEV_AUTH_BOOTSTRAP_STATUS_PATH,
             get(get_bootstrap_status),
+        )
+        .route(
+            route_contracts::DEV_AUTH_LOCAL_CREDENTIALS_PATH,
+            axum::routing::post(post_local_credentials),
         )
 }
 

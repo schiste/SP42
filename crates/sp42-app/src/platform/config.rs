@@ -63,6 +63,25 @@ fn query_param(search: &str, key: &str) -> Option<String> {
     None
 }
 
+/// Whether the server is running in `local` deployment mode (from runtime
+/// config). The local-setup window only makes sense — and the server only
+/// permits credential writes — in local mode. Defaults to `true` when the mode
+/// is unknown (local dev serves the runtime config, so this is reliable there).
+#[must_use]
+pub fn is_local_deployment() -> bool {
+    deployment_mode().is_none_or(|mode| mode == "local")
+}
+
+#[cfg(target_arch = "wasm32")]
+fn deployment_mode() -> Option<String> {
+    runtime_config_string("deploymentMode")
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn deployment_mode() -> Option<String> {
+    None
+}
+
 #[must_use]
 pub fn configured_api_base_url() -> String {
     runtime_api_base_url()

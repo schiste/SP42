@@ -183,6 +183,35 @@ pub fn begin_login(login_path: &str, next: &str) {
     }
 }
 
+/// Local-dev onboarding: write the entered Wikimedia credentials into
+/// `.env.wikimedia.local` via the local-only server endpoint. Returns the file
+/// name written. Empty fields are ignored server-side; takes effect on restart.
+#[cfg(target_arch = "wasm32")]
+pub async fn save_local_credentials(
+    access_token: &str,
+    client_application_key: &str,
+    client_application_secret: &str,
+) -> Result<String, String> {
+    let body = serde_json::json!({
+        "access_token": access_token,
+        "client_application_key": client_application_key,
+        "client_application_secret": client_application_secret,
+    })
+    .to_string();
+    let bytes = post_json_bytes(
+        &api_url(routes::DEV_AUTH_LOCAL_CREDENTIALS_PATH),
+        body,
+        "save local Wikimedia credentials",
+    )
+    .await?;
+    let value: Value = serde_json::from_slice(&bytes).map_err(|error| error.to_string())?;
+    Ok(value
+        .get("file_name")
+        .and_then(Value::as_str)
+        .unwrap_or(".env.wikimedia.local")
+        .to_string())
+}
+
 /// Log out of the Wikimedia OAuth session (CSRF-guarded) and drop the token.
 #[cfg(target_arch = "wasm32")]
 pub async fn logout() -> Result<(), String> {

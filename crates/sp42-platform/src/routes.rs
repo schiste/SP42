@@ -75,6 +75,7 @@ pub const DEV_AUTH_SESSION_PATH: &str = "/dev/auth/session";
 pub const DEV_AUTH_CAPABILITIES_PATTERN: &str = "/dev/auth/capabilities/{wiki_id}";
 pub const DEV_AUTH_BOOTSTRAP_SESSION_PATH: &str = "/dev/auth/session/bootstrap";
 pub const DEV_AUTH_BOOTSTRAP_STATUS_PATH: &str = "/dev/auth/bootstrap/status";
+pub const DEV_AUTH_LOCAL_CREDENTIALS_PATH: &str = "/dev/auth/local-credentials";
 pub const DEV_ACTION_EXECUTE_PATH: &str = "/dev/actions/execute";
 pub const DEV_ACTION_STATUS_PATH: &str = "/dev/actions/status";
 pub const DEV_ACTION_HISTORY_PATH: &str = "/dev/actions/history";

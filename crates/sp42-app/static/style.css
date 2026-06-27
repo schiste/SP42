@@ -1222,3 +1222,28 @@ body {
   border: 1px solid var(--border);
   border-radius: 4px;
 }
+
+.auth-setup-form {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: 100%;
+  text-align: start;
+}
+
+.auth-setup-field {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  font-size: 12px;
+  color: var(--text-muted, #9fb3c8);
+}
+
+.auth-setup-field input {
+  padding: 6px 8px;
+  font-size: 13px;
+  color: var(--text);
+  background: #07101d;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+}

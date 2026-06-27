@@ -2,8 +2,9 @@ use leptos::prelude::*;
 
 use crate::platform::auth::{
     AuthSession, begin_login, bootstrap_dev_auth_session, fetch_auth_session, logout,
+    save_local_credentials,
 };
-use crate::platform::config::{request_wiki_switch, selected_wiki_id};
+use crate::platform::config::{is_local_deployment, request_wiki_switch, selected_wiki_id};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum WorkspaceView {
@@ -65,6 +66,16 @@ pub fn App() -> impl IntoView {
 /// The unauthenticated login screen (required before the workspace renders).
 #[component]
 fn LoginGate(session: AuthSession, refresh: Callback<()>) -> impl IntoView {
+    // Local dev with nothing configured yet: show the first-run setup window so
+    // a developer can paste credentials straight into .env.wikimedia.local
+    // (ADR-0014) instead of editing files by hand.
+    if is_local_deployment() && !session.oauth_client_ready && !session.local_token_available {
+        return view! {
+            <div class="auth-gate"><LocalSetupPanel /></div>
+        }
+        .into_any();
+    }
+
     let login_path = session.login_path.clone();
     let start_login = move |_| begin_login(&login_path, &current_login_next());
 
@@ -125,6 +136,97 @@ fn LoginGate(session: AuthSession, refresh: Callback<()>) -> impl IntoView {
                 {primary}
                 {secondary}
             </div>
+        </div>
+    }
+    .into_any()
+}
+
+/// First-run local setup: capture Wikimedia credentials and write them into
+/// `.env.wikimedia.local` via the local-only endpoint (ADR-0014).
+#[component]
+fn LocalSetupPanel() -> impl IntoView {
+    let (token, set_token) = signal(String::new());
+    let (key, set_key) = signal(String::new());
+    let (secret, set_secret) = signal(String::new());
+    let (result, set_result) = signal(None::<Result<String, String>>);
+
+    let save = Action::new_local(move |(): &()| async move {
+        let outcome = save_local_credentials(
+            &token.get_untracked(),
+            &key.get_untracked(),
+            &secret.get_untracked(),
+        )
+        .await;
+        set_result.set(Some(outcome));
+    });
+
+    view! {
+        <div class="auth-gate-card">
+            <div class="workspace-brand">"SP42"</div>
+            <h1 class="auth-gate-title">"Set up local access"</h1>
+            <p class="auth-gate-lead">
+                "No Wikimedia credentials found. Paste a personal OAuth2 access token to start \
+                 right away, or your OAuth consumer key + secret for the full login flow. "
+                <a
+                    href="https://meta.wikimedia.org/wiki/Special:OAuthConsumerRegistration/propose/oauth2"
+                    target="_blank"
+                    rel="noreferrer"
+                >
+                    "Where do I get these?"
+                </a>
+            </p>
+            <form
+                class="auth-setup-form"
+                on:submit=move |ev| {
+                    ev.prevent_default();
+                    save.dispatch_local(());
+                }
+            >
+                <label class="auth-setup-field">
+                    <span>"Access token (quickest)"</span>
+                    <input
+                        type="password"
+                        autocomplete="off"
+                        prop:value=move || token.get()
+                        on:input=move |ev| set_token.set(event_target_value(&ev))
+                    />
+                </label>
+                <label class="auth-setup-field">
+                    <span>"OAuth consumer key (optional)"</span>
+                    <input
+                        type="text"
+                        autocomplete="off"
+                        prop:value=move || key.get()
+                        on:input=move |ev| set_key.set(event_target_value(&ev))
+                    />
+                </label>
+                <label class="auth-setup-field">
+                    <span>"OAuth consumer secret (optional)"</span>
+                    <input
+                        type="password"
+                        autocomplete="off"
+                        prop:value=move || secret.get()
+                        on:input=move |ev| set_secret.set(event_target_value(&ev))
+                    />
+                </label>
+                <button class="btn btn-success" type="submit">
+                    "Save to .env.wikimedia.local"
+                </button>
+            </form>
+            {move || match result.get() {
+                Some(Ok(file)) => view! {
+                    <p class="auth-gate-status">
+                        "Saved to " {file}
+                        ". Restart the dev server (Ctrl-C, then ./scripts/dev-local.sh) to apply."
+                    </p>
+                }
+                .into_any(),
+                Some(Err(error)) => view! {
+                    <p class="auth-gate-error">{error}</p>
+                }
+                .into_any(),
+                None => ().into_any(),
+            }}
         </div>
     }
 }

@@ -11,7 +11,7 @@ use crate::patrol_session_digest::PatrolSessionSelectedSummary;
 use crate::report_document::{
     ReportDocument, ReportSection, render_report_document_markdown, render_report_document_text,
 };
-use sp42_core::review_workbench::ReviewWorkbench;
+use sp42_platform::review_workbench::ReviewWorkbench;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ShellTimelineStage {
@@ -439,11 +439,11 @@ fn panel_line(panel: &ShellPanelSummary) -> String {
 
 #[cfg(test)]
 mod tests {
-    use sp42_core::context_builder::{ContextInputs, build_scoring_context};
-    use sp42_core::diff_engine::diff_lines;
-    use sp42_core::review_workbench::build_review_workbench;
-    use sp42_core::scoring_engine::score_edit;
-    use sp42_core::types::{EditEvent, EditorIdentity, QueuedEdit, ScoringConfig};
+    use sp42_platform::context_builder::{ContextInputs, build_scoring_context};
+    use sp42_platform::diff_engine::diff_lines;
+    use sp42_platform::review_workbench::build_review_workbench;
+    use sp42_platform::scoring_engine::score_edit;
+    use sp42_platform::types::{EditEvent, EditorIdentity, QueuedEdit, ScoringConfig};
     use sp42_wiki::test_fixtures::frwiki_config;
 
     use super::{

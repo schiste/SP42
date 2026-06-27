@@ -6,7 +6,7 @@ use axum::{
     http::{HeaderMap, StatusCode},
 };
 use sp42_live::{LiveOperatorPhaseTiming, LiveOperatorTelemetry};
-use sp42_reporting::LiveOperatorView;
+use sp42_patrol::LiveOperatorView;
 
 use crate::live_queue::{
     LiveOperatorAssembly, LiveOperatorFinalization, LiveOperatorProductContext,

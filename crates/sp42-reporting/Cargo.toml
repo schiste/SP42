@@ -11,7 +11,7 @@ workspace = true
 [dependencies]
 serde.workspace = true
 sp42-coordination = { path = "../sp42-coordination" }
-sp42-core = { path = "../sp42-core" }
+sp42-platform = { path = "../sp42-platform" }
 sp42-live = { path = "../sp42-live" }
 
 [dev-dependencies]

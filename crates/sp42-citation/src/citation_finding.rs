@@ -1,4 +1,4 @@
-//! Presentation helpers for a single [`sp42_core::CitationFinding`].
+//! Presentation helpers for a single [`crate::CitationFinding`].
 //!
 //! These are pure functions over the finding data — severity classification for
 //! problem-first ordering, and human-readable labels — so any reviewer surface
@@ -7,7 +7,7 @@
 //! wasm view layer stays a thin mapping from these to badges/markup, and the
 //! logic is unit-tested here on the host (the app crate's tests are wasm-gated).
 
-use sp42_core::{
+use crate::{
     BodyUsabilityReason, CitationFinding, CitationVerdict, GroundingStatus, PanelAgreement,
     SourceUnavailableReason, SupportLevel,
 };
@@ -262,7 +262,7 @@ mod tests {
         FindingGroup, GroundingCaveat, body_usability_label, finding_is_problem,
         finding_severity_rank, grounding_caveat, panel_agreement_label, source_unavailable_detail,
     };
-    use sp42_core::{
+    use crate::{
         BodyUsabilityReason, CitationFinding, CitationFindingKind, CitationVerdict,
         GroundingAssertion, GroundingStatus, PanelAgreement, SourceProvenance,
         SourceUnavailableReason, SupportLevel,

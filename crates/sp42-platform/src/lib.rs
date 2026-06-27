@@ -37,6 +37,7 @@ pub mod action_contracts;
 pub mod action_executor;
 pub mod article_inventory;
 pub mod branding;
+pub mod context_builder;
 pub mod dev_auth;
 pub mod diff_engine;
 pub mod errors;
@@ -46,6 +47,7 @@ pub mod oauth;
 pub mod priority_queue;
 pub mod public_documents;
 pub mod queue_builder;
+pub mod review_workbench;
 pub mod routes;
 pub mod scoring_engine;
 pub mod scoring_policy;
@@ -72,6 +74,7 @@ pub use action_executor::{
 pub use article_inventory::{
     ArticleInventory, ArticleReference, article_inventory_notes, build_article_inventory,
 };
+pub use context_builder::{ContextInputs, build_scoring_context};
 pub use dev_auth::{
     ActionExecutionHistoryReport, ActionExecutionLogEntry, ActionExecutionStatusReport,
     DEV_AUTH_ACTION_HISTORY_PATH, DEV_AUTH_ACTION_STATUS_PATH, DEV_AUTH_BOOTSTRAP_SESSION_PATH,
@@ -119,6 +122,10 @@ pub use public_documents::{
 };
 pub use queue_builder::{
     build_ranked_queue, build_ranked_queue_with_contexts, build_ranked_queue_with_policy,
+};
+pub use review_workbench::{
+    PreparedRequestPreview, ReviewWorkbench, build_review_workbench,
+    build_session_action_execution_requests,
 };
 pub use scoring_engine::{score_edit, score_edit_with_context};
 pub use scoring_policy::{

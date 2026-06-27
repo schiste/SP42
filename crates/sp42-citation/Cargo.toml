@@ -1,5 +1,5 @@
 [package]
-name = "sp42-coordination"
+name = "sp42-citation"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -9,13 +9,18 @@ rust-version.workspace = true
 workspace = true
 
 [dependencies]
-rmp-serde.workspace = true
+futures.workspace = true
+percent-encoding.workspace = true
+regex = "1.12"
 serde.workspace = true
-sp42-platform = { path = "../sp42-platform" }
-sp42-types = { path = "../sp42-types" }
-thiserror.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
 tracing.workspace = true
+unicode-normalization = "0.1"
+url.workspace = true
+sp42-platform = { path = "../sp42-platform" }
+sp42-reporting = { path = "../sp42-reporting" }
+sp42-types = { path = "../sp42-types" }
 
 [dev-dependencies]
-futures.workspace = true
 proptest = "1.9.0"

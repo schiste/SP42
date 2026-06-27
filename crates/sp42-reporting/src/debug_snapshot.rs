@@ -3,10 +3,10 @@
 use serde::{Deserialize, Serialize};
 
 use sp42_coordination::CoordinationStateSummary;
-use sp42_core::diff_engine::StructuredDiff;
-use sp42_core::review_workbench::ReviewWorkbench;
-use sp42_core::types::{QueuedEdit, ScoringContext};
 use sp42_live::{BacklogRuntimeStatus, StreamRuntimeStatus};
+use sp42_platform::diff_engine::StructuredDiff;
+use sp42_platform::review_workbench::ReviewWorkbench;
+use sp42_platform::types::{QueuedEdit, ScoringContext};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum TraceLevel {
@@ -261,14 +261,14 @@ fn push_coordination_snapshot(
 
 #[cfg(test)]
 mod tests {
-    use sp42_core::diff_engine::diff_lines;
-    use sp42_core::review_workbench::build_review_workbench;
-    use sp42_core::scoring_engine::{score_edit, score_edit_with_context};
-    use sp42_core::types::{
+    use sp42_live::{BacklogRuntimeStatus, StreamRuntimeStatus};
+    use sp42_platform::diff_engine::diff_lines;
+    use sp42_platform::review_workbench::build_review_workbench;
+    use sp42_platform::scoring_engine::{score_edit, score_edit_with_context};
+    use sp42_platform::types::{
         EditEvent, EditorIdentity, QueuedEdit, ScoringConfig, ScoringContext, UserRiskProfile,
         WarningLevel,
     };
-    use sp42_live::{BacklogRuntimeStatus, StreamRuntimeStatus};
 
     use super::{DebugSnapshotInputs, TraceLevel, build_debug_snapshot};
 

@@ -3,7 +3,7 @@
 //! whether it supports a claim.
 //!
 //! Layering (Constitution Art. 2.3 — side effects only at the edges):
-//! - Pure `sp42-core` logic: the verdict types, the anti-fabrication locator,
+//! - Pure `sp42-citation` logic: the verdict types, the anti-fabrication locator,
 //!   measured-agreement voting, the body-usability GIGO gate, the verifier
 //!   prompt, the model-response parser, URL helpers, source-text
 //!   recovery/extraction, the Citoid metadata sidecar, bounded concurrency, the

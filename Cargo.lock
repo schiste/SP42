@@ -3071,9 +3071,11 @@ dependencies = [
  "leptos",
  "send_wrapper",
  "serde_json",
+ "sp42-citation",
  "sp42-coordination",
  "sp42-core",
  "sp42-live",
+ "sp42-patrol",
  "sp42-reporting",
  "sp42-types",
  "sp42-wiki",
@@ -3081,6 +3083,25 @@ dependencies = [
  "wasm-bindgen",
  "wasm-bindgen-futures",
  "web-sys",
+]
+
+[[package]]
+name = "sp42-citation"
+version = "0.1.0"
+dependencies = [
+ "futures",
+ "percent-encoding",
+ "proptest",
+ "regex",
+ "serde",
+ "serde_json",
+ "sha2",
+ "sp42-platform",
+ "sp42-reporting",
+ "sp42-types",
+ "tracing",
+ "unicode-normalization",
+ "url",
 ]
 
 [[package]]
@@ -3092,9 +3113,11 @@ dependencies = [
  "reqwest 0.12.28",
  "serde",
  "serde_json",
+ "sp42-citation",
  "sp42-core",
  "sp42-devtools",
  "sp42-inference",
+ "sp42-patrol",
  "sp42-reporting",
  "sp42-types",
  "tokio",
@@ -3109,7 +3132,7 @@ dependencies = [
  "proptest",
  "rmp-serde",
  "serde",
- "sp42-core",
+ "sp42-platform",
  "sp42-types",
  "thiserror 2.0.18",
  "tracing",
@@ -3130,6 +3153,8 @@ dependencies = [
  "serde_yaml",
  "sha2",
  "similar",
+ "sp42-citation",
+ "sp42-patrol",
  "sp42-platform",
  "sp42-types",
  "thiserror 2.0.18",
@@ -3146,6 +3171,7 @@ dependencies = [
  "serde_json",
  "sp42-core",
  "sp42-devtools",
+ "sp42-patrol",
  "sp42-reporting",
  "url",
 ]
@@ -3158,6 +3184,7 @@ dependencies = [
  "sp42-coordination",
  "sp42-core",
  "sp42-live",
+ "sp42-patrol",
  "sp42-reporting",
  "sp42-types",
  "sp42-wiki",
@@ -3186,7 +3213,23 @@ dependencies = [
  "proptest",
  "serde",
  "serde_json",
- "sp42-core",
+ "sp42-platform",
+ "sp42-types",
+ "sp42-wiki",
+]
+
+[[package]]
+name = "sp42-patrol"
+version = "0.1.0"
+dependencies = [
+ "proptest",
+ "serde",
+ "serde_json",
+ "serde_yaml",
+ "sp42-coordination",
+ "sp42-live",
+ "sp42-platform",
+ "sp42-reporting",
  "sp42-types",
  "sp42-wiki",
 ]
@@ -3220,8 +3263,8 @@ dependencies = [
  "serde",
  "serde_json",
  "sp42-coordination",
- "sp42-core",
  "sp42-live",
+ "sp42-platform",
  "sp42-wiki",
  "url",
 ]
@@ -3242,6 +3285,7 @@ dependencies = [
  "sp42-core",
  "sp42-inference",
  "sp42-live",
+ "sp42-patrol",
  "sp42-reporting",
  "sp42-types",
  "sp42-wiki",

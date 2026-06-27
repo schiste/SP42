@@ -3,11 +3,12 @@
 # toolchain ships llvm-tools-preview.
 #
 #   - Platform-independent logic line coverage >= SP42_COVERAGE_MIN (default 90)
-#     — the binding ≥90% floor. This logic is now split across two crates:
-#     sp42-platform (scoring engine, policy compiler, action/wikitext/storage
-#     machinery, shared types/traits) and sp42-core (citation verification +
-#     patrol review workflow). They are measured TOGETHER so the split does not
-#     change the bar that the combined code has always had to meet.
+#     — the binding ≥90% floor. This logic is split across crates as it is
+#     extracted: sp42-platform (scoring engine/policy, action/wikitext/storage
+#     machinery, shared types/traits/review-workbench), sp42-citation (references
+#     domain), and sp42-core (remaining patrol scoring-eval). They are measured
+#     TOGETHER so the split does not change the bar the combined code must meet.
+#     Add each newly-extracted crate's `-p` here in the same PR that creates it.
 #   - workspace line coverage, excluding the `xtask` build-tooling crate, >=
 #     SP42_WORKSPACE_COVERAGE_MIN (default 80) — so coverage cannot silently
 #     erode outside the platform-independent crates. Ratchet upward over time.
@@ -28,9 +29,9 @@ command -v cargo-llvm-cov >/dev/null 2>&1 || {
   exit 1
 }
 
-printf '\n== platform-independent logic (sp42-platform + sp42-core) line coverage (must be >= %s%%) ==\n' "$core_min"
+printf '\n== platform-independent logic (sp42-platform + sp42-core + sp42-citation + sp42-patrol) line coverage (must be >= %s%%) ==\n' "$core_min"
 RUST_TEST_THREADS="${RUST_TEST_THREADS:-1}" \
-  cargo llvm-cov -p sp42-platform -p sp42-core \
+  cargo llvm-cov -p sp42-platform -p sp42-core -p sp42-citation -p sp42-patrol \
     --ignore-filename-regex 'crates/sp42-types/' \
     --fail-under-lines "$core_min"
 

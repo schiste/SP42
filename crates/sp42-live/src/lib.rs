@@ -29,7 +29,7 @@ pub use stream_runtime::{StreamRuntime, StreamRuntimeStatus};
 
 #[cfg(test)]
 pub(crate) mod test_fixtures {
-    use sp42_core::WikiConfig;
+    use sp42_platform::WikiConfig;
 
     pub(crate) fn fixture_wiki_config() -> WikiConfig {
         sp42_wiki::test_fixtures::frwiki_config()

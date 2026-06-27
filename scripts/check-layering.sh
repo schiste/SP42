@@ -58,12 +58,12 @@ LAYER = {
     "sp42-devtools": "shell",
     # tooling (exempt)
     "xtask": "tooling",
-    # hybrid — sp42-platform extracted (phase 2); patrol + citation still here,
-    # split out in later phases.
+    # domains
+    "sp42-citation": "domain",
+    "sp42-patrol": "domain",
+    # hybrid — all code extracted; sp42-core is now a pure re-export facade,
+    # retired in the relocation slice. Kept exempt until then.
     "sp42-core": "hybrid",
-    # future, post-extraction:
-    #   "sp42-patrol":   "domain",
-    #   "sp42-citation": "domain",
 }
 
 # Lower rank = lower layer. A crate may depend only on layers at or below its own

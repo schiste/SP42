@@ -6,7 +6,7 @@ use crate::messages::{
     RaceResolution, ScoreDelta,
 };
 use crate::{decode_message, encode_message};
-use sp42_core::Action;
+use sp42_platform::Action;
 use sp42_types::{WebSocket, WebSocketFrame};
 
 pub struct CoordinationClient<S> {
@@ -190,7 +190,7 @@ mod tests {
     use super::CoordinationClient;
     use crate::encode_message;
     use crate::messages::{CoordinationMessage, EditClaim, PresenceHeartbeat, RaceResolution};
-    use sp42_core::Action;
+    use sp42_platform::Action;
     use sp42_types::{LoopbackWebSocket, WebSocketFrame};
 
     #[test]

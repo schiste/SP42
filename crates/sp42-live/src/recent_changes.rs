@@ -4,7 +4,7 @@ use std::collections::BTreeMap;
 
 use serde::Deserialize;
 
-use sp42_core::{EditEvent, EditorIdentity, FlagState, RecentChangesError, WikiConfig};
+use sp42_platform::{EditEvent, EditorIdentity, FlagState, RecentChangesError, WikiConfig};
 use sp42_types::{HttpClient, HttpMethod, HttpRequest, HttpResponse};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -800,7 +800,7 @@ mod tests {
         assert!(batch.events[0].is_bot.is_enabled());
         assert!(matches!(
             batch.events[0].performer,
-            sp42_core::EditorIdentity::Temporary { .. }
+            sp42_platform::EditorIdentity::Temporary { .. }
         ));
         assert_eq!(batch.events[0].timestamp_ms, 1_774_366_920_500);
     }

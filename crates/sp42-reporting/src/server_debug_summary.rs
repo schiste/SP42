@@ -2,7 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 use sp42_coordination::CoordinationSnapshot;
-use sp42_core::{DevAuthCapabilityReport, DevAuthSessionStatus, LocalOAuthConfigStatus};
+use sp42_platform::{DevAuthCapabilityReport, DevAuthSessionStatus, LocalOAuthConfigStatus};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ServerDebugSummary {

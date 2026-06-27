@@ -2,7 +2,7 @@
 
 use crate::stream_ingestor::StreamIngestor;
 use serde::{Deserialize, Serialize};
-use sp42_core::{EditEvent, StreamRuntimeError, WikiConfig};
+use sp42_platform::{EditEvent, StreamRuntimeError, WikiConfig};
 use sp42_types::{EventSource, Storage, StorageError};
 
 const DEFAULT_CURSOR_KEY_PREFIX: &str = "stream.last_event_id";

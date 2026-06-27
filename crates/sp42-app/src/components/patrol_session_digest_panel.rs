@@ -1,5 +1,5 @@
 use leptos::prelude::*;
-use sp42_reporting::{PatrolScenarioReadiness, PatrolScenarioReport, ReportSeverity};
+use sp42_patrol::{PatrolScenarioReadiness, PatrolScenarioReport, ReportSeverity};
 
 use super::{InspectorFeed, StatusBadge, StatusTone, inspector_entries_from_lines};
 
@@ -156,7 +156,7 @@ pub fn recommendation_tone(report: &PatrolScenarioReport) -> StatusTone {
 }
 
 #[must_use]
-pub fn finding_summary_tone(findings: &[sp42_reporting::PatrolScenarioFinding]) -> StatusTone {
+pub fn finding_summary_tone(findings: &[sp42_patrol::PatrolScenarioFinding]) -> StatusTone {
     if findings
         .iter()
         .any(|finding| finding.severity == ReportSeverity::Blocker)
@@ -173,7 +173,7 @@ pub fn finding_summary_tone(findings: &[sp42_reporting::PatrolScenarioFinding]) 
 }
 
 #[must_use]
-pub fn finding_summary_line(finding: &sp42_reporting::PatrolScenarioFinding) -> String {
+pub fn finding_summary_line(finding: &sp42_patrol::PatrolScenarioFinding) -> String {
     format!("{} {}: {}", finding.severity, finding.code, finding.message)
 }
 
@@ -229,7 +229,7 @@ mod tests {
             wiki_id: "frwiki".to_string(),
             queue_depth: 2,
             readiness,
-            selected: Some(sp42_reporting::PatrolScenarioSelectedEdit {
+            selected: Some(sp42_patrol::PatrolScenarioSelectedEdit {
                 wiki_id: "frwiki".to_string(),
                 rev_id: 123_456,
                 title: "Example".to_string(),

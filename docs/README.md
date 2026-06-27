@@ -30,6 +30,8 @@ Capabilities built on top of the platform.
 - [../CONTRIBUTING.md](../CONTRIBUTING.md) — contributor workflow and local checks
 - [process/prd-protocol.md](process/prd-protocol.md) — when a PRD is required and its lifecycle
 - [process/prd-template.md](process/prd-template.md) — PRD template
+- [process/adding-a-domain.md](process/adding-a-domain.md) — turnkey path for owning a domain
+- [platform/adr/0013-layered-platform-domain-architecture.md](platform/adr/0013-layered-platform-domain-architecture.md) — the layered platform/domain architecture and how it is mechanically enforced
 
 ## How ADRs and PRDs are filed
 

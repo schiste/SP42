@@ -82,6 +82,8 @@ jobs:
         run: cargo ci-clippy
       - name: Docs
         run: cargo ci-doc
+      - name: Layer check (ADR-0013 dependency direction)
+        run: ./scripts/check-layering.sh
       - name: Forbidden-pattern guard (added lines)
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}

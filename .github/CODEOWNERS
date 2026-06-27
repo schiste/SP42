@@ -1,0 +1,47 @@
+# Code ownership by architectural layer (ADR-0013).
+#
+# Routes review by layer/domain: platform -> leads, each domain -> its owner,
+# shells -> leads. Last matching pattern wins, so the order is general -> specific.
+#
+# Paths use the CURRENT (flat) crate layout. When crates are relocated into
+# crates/{platform,domains,shells}/ (migration phase 5) replace these with the
+# folder globs noted at the bottom.
+
+# Default: leads own everything not otherwise claimed.
+*                                   @schiste
+
+# --- Platform (leads) -------------------------------------------------------
+/crates/sp42-types/                 @schiste
+/crates/sp42-core/                  @schiste
+/crates/sp42-coordination/          @schiste
+/crates/sp42-wiki/                  @schiste
+/crates/sp42-live/                  @schiste
+/crates/sp42-reporting/             @schiste
+/crates/sp42-inference/             @schiste
+
+# --- Domains (domain owners) ------------------------------------------------
+# Each domain folder is owned by that domain's maintainer. Until sp42-patrol /
+# sp42-citation are extracted (migration phases 3-4) the patrol and citation code
+# lives in sp42-core above. Add the owner here when the domain crate lands:
+# /crates/domains/patrolling/        @patrol-owner
+# /crates/domains/references/        @citation-owner
+
+# --- Shells (leads) ---------------------------------------------------------
+/crates/sp42-cli/                   @schiste
+/crates/sp42-app/                   @schiste
+/crates/sp42-desktop/               @schiste
+/crates/sp42-server/                @schiste
+/crates/sp42-devtools/              @schiste
+
+# --- Governance / enforcement (leads) ---------------------------------------
+/CONSTITUTION.md                    @schiste
+/GOVERNANCE.md                      @schiste
+/docs/platform/adr/                 @schiste
+/.github/                           @schiste
+/scripts/check-layering.sh          @schiste
+
+# --- Post-relocation layout (migration phase 5) -----------------------------
+# /crates/platform/**                @schiste
+# /crates/domains/patrolling/**      @patrol-owner
+# /crates/domains/references/**      @citation-owner
+# /crates/shells/**                  @schiste

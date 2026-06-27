@@ -15,9 +15,13 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$repo_root"
 
 dist="${1:-target/dist/sp42-app}"
-# Ceilings (bytes). Current optimized bundle ~2.65 MiB raw / ~678 KiB gzip.
-max_raw="${SP42_WASM_MAX_RAW_BYTES:-2969600}"   # 2900 KiB
-max_gz="${SP42_WASM_MAX_GZIP_BYTES:-737280}"    # 720 KiB
+# Ceilings (bytes). The article-level citation-review surface (per-finding
+# evidence quote, source excerpt, Citoid metadata, grouped/color-coded cards)
+# lands the optimized bundle at ~3.0 MiB raw / ~744 KiB gzip. Raise the ceilings
+# to that plus ~256 KiB raw headroom; ratchet back DOWN as the bundle shrinks
+# (e.g. moving inline styles to CSS), never up without a recorded decision.
+max_raw="${SP42_WASM_MAX_RAW_BYTES:-3407872}"   # 3328 KiB
+max_gz="${SP42_WASM_MAX_GZIP_BYTES:-851968}"    # 832 KiB
 
 wasm=""
 for f in "$dist"/*.wasm; do

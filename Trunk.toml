@@ -56,3 +56,7 @@ rewrite = "/actions"
 [[proxies]]
 backend = "http://127.0.0.1:8788/auth"
 rewrite = "/auth"
+
+[[proxies]]
+backend = "http://127.0.0.1:8788/wikis"
+rewrite = "/wikis"

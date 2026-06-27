@@ -259,8 +259,19 @@ fn Workspace(session: AuthSession, refresh: Callback<()>) -> impl IntoView {
     });
 
     // Wiki picker: point the workspace at any Wikimedia project the server can
-    // resolve (ADR-0014). Submitting sets the ?wiki= override and reloads.
+    // resolve (ADR-0014). Submitting sets the ?wiki= override and reloads. The
+    // datalist is the full embedded site list, fetched once, so the input is a
+    // type-to-filter dropdown over every Wikimedia project.
     let (wiki_input, set_wiki_input) = signal(selected_wiki_id());
+    let (wiki_options, set_wiki_options) = signal(Vec::<String>::new());
+    Effect::new(move |ran: Option<bool>| {
+        if ran.is_none() {
+            wasm_bindgen_futures::spawn_local(async move {
+                set_wiki_options.set(fetch_known_wikis().await);
+            });
+        }
+        true
+    });
 
     view! {
         <div class="workspace-shell">
@@ -310,12 +321,13 @@ fn Workspace(session: AuthSession, refresh: Callback<()>) -> impl IntoView {
                         aria-label="Wikimedia project (dbname, e.g. enwiki, commonswiki)"
                     />
                     <datalist id="sp42-wiki-suggestions">
-                        <option value="enwiki"></option>
-                        <option value="frwiki"></option>
-                        <option value="dewiki"></option>
-                        <option value="eswiki"></option>
-                        <option value="commonswiki"></option>
-                        <option value="wikidatawiki"></option>
+                        {move || {
+                            wiki_options
+                                .get()
+                                .into_iter()
+                                .map(|id| view! { <option value=id></option> })
+                                .collect_view()
+                        }}
                     </datalist>
                     <button class="btn btn-ghost btn-compact" type="submit">
                         "Switch"
@@ -352,6 +364,28 @@ fn Workspace(session: AuthSession, refresh: Callback<()>) -> impl IntoView {
             </main>
         </div>
     }
+}
+
+/// Fetch the full list of resolvable Wikimedia `wiki_id`s for the picker
+/// dropdown (`GET /wikis`, the embedded SiteMatrix snapshot). Empty on failure.
+async fn fetch_known_wikis() -> Vec<String> {
+    let url = crate::platform::config::api_url(sp42_core::routes::WIKIS_PATH);
+    let Ok(bytes) = crate::platform::http::get_bytes(&url, "fetch wiki list").await else {
+        return Vec::new();
+    };
+    serde_json::from_slice::<serde_json::Value>(&bytes)
+        .ok()
+        .and_then(|value| {
+            value
+                .get("wiki_ids")
+                .and_then(|ids| ids.as_array())
+                .map(|ids| {
+                    ids.iter()
+                        .filter_map(|id| id.as_str().map(str::to_string))
+                        .collect()
+                })
+        })
+        .unwrap_or_default()
 }
 
 fn current_login_next() -> String {

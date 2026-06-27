@@ -57,7 +57,11 @@ pub fn tone_colors(tone: StatusTone) -> (&'static str, &'static str, &'static st
             "var(--tone-info-text)",
             "var(--accent-border)",
         ),
-        StatusTone::Danger => ("rgba(239,68,68,0.18)", "#fecaca", "rgba(239,68,68,0.4)"),
+        StatusTone::Danger => (
+            "var(--danger-bg)",
+            "var(--danger-light)",
+            "var(--danger-border)",
+        ),
     }
 }
 

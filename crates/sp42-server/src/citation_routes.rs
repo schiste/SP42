@@ -40,6 +40,11 @@ use crate::state::AppState;
 /// Citoid etiquette: at most one request per second on the live service.
 const CITOID_PACE: Duration = Duration::from_secs(1);
 
+/// Upper bound on how long verify-page waits for the paced, best-effort Citoid
+/// metadata sidecar before returning the (already complete) report without the
+/// stragglers — keeps a many-source page from blocking behind ~1 req/s pacing.
+const METADATA_BUDGET: Duration = Duration::from_secs(20);
+
 /// Page-level verify fan-out: how many use-sites verify concurrently on the
 /// verify-page route. Each runs its own `options.concurrency`-wide model panel,
 /// so keep `PAGE_VERIFY_CONCURRENCY * options.concurrency` within the model
@@ -359,8 +364,10 @@ pub(crate) async fn post_verify_page(
 
     // Verify the page and fetch source metadata concurrently. Metadata is a display
     // sidecar (never grounded); it is fetched deduped + paced (CITOID_PACE) so a
-    // citation-heavy page does not burst the shared Citoid service, and the pacing
-    // latency overlaps the model calls rather than adding to them.
+    // citation-heavy page does not burst the shared Citoid service. The fetch is
+    // time-boxed (METADATA_BUDGET) so the completed report is never held behind the
+    // ~1 req/s pacing on a many-source page — whatever resolved by the deadline is
+    // attached, the rest is simply omitted.
     let options = VerifyOptions::default();
     let verify = verify_page(
         &http_client,
@@ -372,8 +379,12 @@ pub(crate) async fn post_verify_page(
         options,
         PAGE_VERIFY_CONCURRENCY,
     );
-    let metadata = fetch_page_metadata(&state.http_client, metadata_urls);
-    let (mut report, metadata_by_url) = tokio::join!(verify, metadata);
+    let metadata = tokio::time::timeout(
+        METADATA_BUDGET,
+        fetch_page_metadata(&state.http_client, metadata_urls),
+    );
+    let (mut report, metadata_result) = tokio::join!(verify, metadata);
+    let metadata_by_url = metadata_result.unwrap_or_default();
 
     for finding in &mut report.findings {
         if let Some(meta) = metadata_by_url.get(&finding.provenance.url.to_string()) {

@@ -58,6 +58,10 @@ if [[ "$docs_only" == "1" ]]; then
   exit 0
 fi
 
+# Self-heal build artifacts when the heavy-checks path ends (incl. the
+# coverage run's llvm-cov tree), success or failure. Skip via SP42_KEEP_ARTIFACTS=1.
+trap './scripts/clean-house.sh --auto || true' EXIT
+
 printf '\n== SP42 pre-push: release tree audit ==\n'
 ./scripts/audit-release-tree.sh
 

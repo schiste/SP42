@@ -128,6 +128,30 @@ Maintainers may run the full CI-shaped check before merge:
 ./scripts/ci-all.sh
 ```
 
+### Build artifacts self-heal
+
+A Rust workspace with several profiles (and a per-worktree `build-dir`) grows a
+large `target/` fast, and Cargo's cache GC only prunes the global `~/.cargo`
+cache — never your project `target/`. So the heavy local builds self-heal: both
+`./scripts/ci-all.sh` and the `pre-push` hook end by running
+`./scripts/clean-house.sh --auto`, which bounds `target/` (drops the disposable
+`doc`/`llvm-cov` trees, prunes stale per-worktree build dirs, and sheds the
+duplicate `debug` profile once over budget) while keeping the active profile's
+cache warm. Run it by hand any time, too.
+
+Tuning (env):
+
+- `SP42_KEEP_ARTIFACTS=1` — skip the self-heal entirely (keep everything).
+- `SP42_TARGET_CAP_GB=N` — target-size budget (default 8).
+- `SP42_BUILD_STALE_DAYS=N` — age before a per-worktree build tree is pruned (default 3).
+
+Prefer the `cargo ci-*` aliases over plain `cargo build`/`test` — a stray `dev`
+(debug) build creates a whole second copy of `target/`. Optionally install
+[`cargo-sweep`](https://github.com/holmgr/cargo-sweep) (`cargo install
+cargo-sweep`); the self-heal uses it as a size-capped last resort when present.
+`./scripts/clean-house.sh --purge-target` wipes `target/` entirely (cold rebuild
+next).
+
 ## Credentials and Local Auth
 
 If you use the local Wikimedia development bridge:

@@ -9,11 +9,11 @@ use std::time::Duration;
 
 use sp42_core::{
     ActionError, ActionResponseSummary, BareUrlApplyRequest, BareUrlApplyResponse, BareUrlDeclined,
-    BareUrlOutcome, BareUrlProposal, BareUrlProposalsRequest, BareUrlProposalsResponse, FlagState,
-    PageVerificationReport, PageVerificationRequest, TokenKind, VerifyOptions, WikiPageSaveRequest,
-    WikitextEditor, WikitextNodeKind, WikitextNodeLocator, WikitextPageRef, bare_url_references,
-    build_citoid_header, build_citoid_request, citoid_language, execute_fetch_token,
-    execute_wiki_page_save, extract_use_sites, parse_action_response_summary,
+    BareUrlOutcome, BareUrlProposal, BareUrlProposalsRequest, BareUrlProposalsResponse,
+    CitoidMetadata, FlagState, PageVerificationRequest, TokenKind, VerifyOptions,
+    WikiPageSaveRequest, WikitextEditor, WikitextNodeKind, WikitextNodeLocator, WikitextPageRef,
+    bare_url_references, build_citoid_header, build_citoid_request, citoid_language,
+    execute_fetch_token, execute_wiki_page_save, extract_use_sites, parse_action_response_summary,
     render_bare_url_citation, verify_page,
 };
 
@@ -39,6 +39,11 @@ use crate::state::AppState;
 
 /// Citoid etiquette: at most one request per second on the live service.
 const CITOID_PACE: Duration = Duration::from_secs(1);
+
+/// Upper bound on how long verify-page waits for the paced, best-effort Citoid
+/// metadata sidecar before returning the (already complete) report without the
+/// stragglers — keeps a many-source page from blocking behind ~1 req/s pacing.
+const METADATA_BUDGET: Duration = Duration::from_secs(20);
 
 /// Page-level verify fan-out: how many use-sites verify concurrently on the
 /// verify-page route. Each runs its own `options.concurrency`-wide model panel,
@@ -89,6 +94,28 @@ async fn fetch_citoid_object(
     }
     let body = response.bytes().await.ok()?;
     sp42_core::parse_citoid_response(&body)
+}
+
+/// Fetch Citoid metadata for each distinct source URL, deduped (caller passes
+/// distinct URLs) and paced at [`CITOID_PACE`] (Wikimedia API etiquette — the
+/// shared service expects ~1 req/s). Best-effort: a URL Citoid cannot resolve is
+/// simply absent from the map, never an error.
+async fn fetch_page_metadata(
+    client: &reqwest::Client,
+    urls: Vec<String>,
+) -> std::collections::HashMap<String, CitoidMetadata> {
+    let mut metadata = std::collections::HashMap::new();
+    for (index, url) in urls.iter().enumerate() {
+        if index > 0 {
+            tokio::time::sleep(CITOID_PACE).await;
+        }
+        if let Some(object) = fetch_citoid_object(client, None, url).await
+            && let Some(header) = build_citoid_header(&object, url)
+        {
+            metadata.insert(url.clone(), header);
+        }
+    }
+    metadata
 }
 
 /// Enumerate the revision's references, classify the bare ones, and build
@@ -269,6 +296,16 @@ pub(crate) async fn post_verify_page(
     validate_csrf_header(&headers, &session)?;
     let config = config_for_state_wiki(&state, &payload.wiki_id)?;
 
+    // Accept a pasted wiki URL in `title`, not just a bare page title — the action
+    // API treats a URL as a literal (missing) title. A bare title parses to itself
+    // (idempotent with any client-side parse); an oldid URL also yields a revision,
+    // honored only when the request did not already pin one.
+    let target = sp42_core::parse_page_target(&payload.title);
+    payload.title = target.title;
+    if payload.rev_id == 0 {
+        payload.rev_id = target.rev_id;
+    }
+
     // Per-request inference edge from env (dev route).
     let panel = sp42_inference::panel_from_env().map_err(|error| {
         (
@@ -314,8 +351,25 @@ pub(crate) async fn post_verify_page(
         .map_err(|error| action_error_response(&action_error_from_editor(&error)))?;
     let extract = extract_use_sites(&blocks, &payload);
 
+    // Distinct live source URLs for deduped Citoid metadata lookups.
+    let metadata_urls: Vec<String> = {
+        let mut seen = std::collections::HashSet::new();
+        extract
+            .use_sites
+            .iter()
+            .map(|use_site| use_site.request.source_url.to_string())
+            .filter(|url| seen.insert(url.clone()))
+            .collect()
+    };
+
+    // Verify the page and fetch source metadata concurrently. Metadata is a display
+    // sidecar (never grounded); it is fetched deduped + paced (CITOID_PACE) so a
+    // citation-heavy page does not burst the shared Citoid service. The fetch is
+    // time-boxed (METADATA_BUDGET) so the completed report is never held behind the
+    // ~1 req/s pacing on a many-source page — whatever resolved by the deadline is
+    // attached, the rest is simply omitted.
     let options = VerifyOptions::default();
-    let report: PageVerificationReport = verify_page(
+    let verify = verify_page(
         &http_client,
         &model_client,
         state.clock.as_ref(),
@@ -324,8 +378,19 @@ pub(crate) async fn post_verify_page(
         extract,
         options,
         PAGE_VERIFY_CONCURRENCY,
-    )
-    .await;
+    );
+    let metadata = tokio::time::timeout(
+        METADATA_BUDGET,
+        fetch_page_metadata(&state.http_client, metadata_urls),
+    );
+    let (mut report, metadata_result) = tokio::join!(verify, metadata);
+    let metadata_by_url = metadata_result.unwrap_or_default();
+
+    for finding in &mut report.findings {
+        if let Some(meta) = metadata_by_url.get(&finding.provenance.url.to_string()) {
+            finding.metadata = Some(meta.clone());
+        }
+    }
 
     Ok(Json(report))
 }

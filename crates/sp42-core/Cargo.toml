@@ -12,6 +12,7 @@ workspace = true
 async-trait.workspace = true
 base64.workspace = true
 futures.workspace = true
+percent-encoding.workspace = true
 regex = "1.12"
 serde.workspace = true
 serde_json.workspace = true

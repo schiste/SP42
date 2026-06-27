@@ -7,6 +7,7 @@ pub enum StatusTone {
     Success,
     Warning,
     Accent,
+    Danger,
 }
 
 #[component]
@@ -41,6 +42,7 @@ pub fn tone_colors(tone: StatusTone) -> (&'static str, &'static str, &'static st
             "#d6e4ff",
             "rgba(143,183,255,0.35)",
         ),
+        StatusTone::Danger => ("rgba(239,68,68,0.18)", "#fecaca", "rgba(239,68,68,0.4)"),
     }
 }
 

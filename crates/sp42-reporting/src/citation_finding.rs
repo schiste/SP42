@@ -43,18 +43,23 @@ pub enum FindingGroup {
     /// The source was fetched but the tool could not read it (PDF, paywall, …);
     /// a human still can.
     Unreadable,
+    /// The claim is backed, but only via an archive because the live URL is dead —
+    /// the citation works yet the live link has rotted and wants repair, so it must
+    /// not hide in the clean `Supported` bucket.
+    VerifiedViaArchive,
     /// The source confirms the claim (quote located).
     Supported,
 }
 
 impl FindingGroup {
     /// All groups in display order (most actionable first).
-    pub const ALL: [FindingGroup; 6] = [
+    pub const ALL: [FindingGroup; 7] = [
         FindingGroup::NotSupported,
         FindingGroup::Unverified,
         FindingGroup::Partial,
         FindingGroup::DeadLink,
         FindingGroup::Unreadable,
+        FindingGroup::VerifiedViaArchive,
         FindingGroup::Supported,
     ];
 
@@ -72,6 +77,13 @@ impl FindingGroup {
                 FindingGroup::Unverified
             }
             CitationVerdict::Judged(SupportLevel::Partial) => FindingGroup::Partial,
+            // A fully-supported claim that was only confirmed against an archive (the
+            // live URL is dead) is not clean — the dead link wants repair, so pull it
+            // out of the collapsed Supported bucket. (Partial-via-archive stays Partial,
+            // already surfaced; its dead link is still shown on the card.)
+            CitationVerdict::Judged(SupportLevel::Supported) if finding.archive_of.is_some() => {
+                FindingGroup::VerifiedViaArchive
+            }
             CitationVerdict::Judged(SupportLevel::Supported) => FindingGroup::Supported,
             CitationVerdict::SourceUnavailable => match finding.source_unavailable_reason {
                 Some(SourceUnavailableReason::Unreachable) => FindingGroup::DeadLink,
@@ -89,7 +101,8 @@ impl FindingGroup {
             FindingGroup::Partial => 2,
             FindingGroup::DeadLink => 3,
             FindingGroup::Unreadable => 4,
-            FindingGroup::Supported => 5,
+            FindingGroup::VerifiedViaArchive => 5,
+            FindingGroup::Supported => 6,
         }
     }
 
@@ -102,6 +115,7 @@ impl FindingGroup {
             FindingGroup::Partial => "Partial",
             FindingGroup::DeadLink => "Dead link",
             FindingGroup::Unreadable => "Couldn't read source",
+            FindingGroup::VerifiedViaArchive => "Verified via archive",
             FindingGroup::Supported => "Supported",
         }
     }
@@ -118,6 +132,9 @@ impl FindingGroup {
             }
             FindingGroup::Unreadable => Some(
                 "the tool could not extract this source (PDF, paywall, …); open it and check by hand",
+            ),
+            FindingGroup::VerifiedViaArchive => Some(
+                "the live link is dead but an archive backs the claim — point the citation at the archive",
             ),
             _ => None,
         }
@@ -302,7 +319,9 @@ mod tests {
 
     #[test]
     fn finding_group_maps_each_case() {
-        use FindingGroup::{DeadLink, NotSupported, Partial, Supported, Unreadable, Unverified};
+        use FindingGroup::{
+            DeadLink, NotSupported, Partial, Supported, Unreadable, Unverified, VerifiedViaArchive,
+        };
         let case = |f: &CitationFinding| FindingGroup::of(f);
         assert_eq!(
             case(&finding(
@@ -340,6 +359,14 @@ mod tests {
             case(&unusable(Some(BodyUsabilityReason::PdfBody))),
             Unreadable
         );
+        // A fully-supported claim confirmed via an archive (live URL dead) is pulled
+        // out of clean Supported into its own group.
+        let mut archived = finding(
+            CitationVerdict::Judged(SupportLevel::Supported),
+            GroundingStatus::Located,
+        );
+        archived.archive_of = Some(url::Url::parse("https://dead.example/live").expect("url"));
+        assert_eq!(case(&archived), VerifiedViaArchive);
         assert_eq!(
             case(&finding(
                 CitationVerdict::Judged(SupportLevel::Supported),

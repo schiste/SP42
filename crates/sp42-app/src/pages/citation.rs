@@ -503,6 +503,7 @@ fn group_tone(group: FindingGroup) -> StatusTone {
         FindingGroup::Unverified | FindingGroup::Partial => StatusTone::Warning,
         FindingGroup::DeadLink => StatusTone::Info,
         FindingGroup::Unreadable => StatusTone::Neutral,
+        FindingGroup::VerifiedViaArchive => StatusTone::Accent,
         FindingGroup::Supported => StatusTone::Success,
     }
 }
@@ -514,6 +515,7 @@ fn group_border(group: FindingGroup) -> &'static str {
         FindingGroup::Unverified | FindingGroup::Partial => "#f59e0b",
         FindingGroup::DeadLink => "#3b82f6",
         FindingGroup::Unreadable => "#4f6280",
+        FindingGroup::VerifiedViaArchive => "#8fb7ff",
         FindingGroup::Supported => "#22c55e",
     }
 }

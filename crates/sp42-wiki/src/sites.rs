@@ -33,10 +33,14 @@ const LIFTWING_URL: &str =
     "https://api.wikimedia.org/service/lw/inference/v1/models/revertrisk-language-agnostic:predict";
 /// Universal baseline applied to any wiki without a hand-tuned config.
 pub const DEFAULT_SCORING_POLICY_REF: &str = "active/default-language-agnostic";
-/// Patrol-relevant content namespaces for dynamically-derived wikis: main (0),
-/// project (4), file (6), template (10), category (14). Broader than article-
-/// only so e.g. Commons File edits aren't dropped by the namespace filter.
-const DERIVED_NAMESPACE_ALLOWLIST: [i32; 5] = [0, 4, 6, 10, 14];
+/// Patrol-relevant namespaces for dynamically-derived wikis: main (0), user (2),
+/// project (4), file (6), template (10), category (14). This mirrors the patrol
+/// filter UI default (`DEFAULT_NAMESPACES` in `sp42-app`) on purpose — a derived
+/// wiki has no curated config, so its default allowlist must equal what the UI
+/// presents as selected. Kept aligned so derived wikis don't silently drop edits
+/// the filter shows as included (e.g. User-namespace edits on `dewiki`). Codex
+/// review #90.
+const DERIVED_NAMESPACE_ALLOWLIST: [i32; 6] = [0, 2, 4, 6, 10, 14];
 
 /// Whether `wiki_id` is a known Wikimedia project in the embedded site list.
 #[must_use]
@@ -123,7 +127,7 @@ mod tests {
             Some("https://de.wikipedia.org/w/rest.php")
         );
         assert_eq!(config.scoring_policy_ref, DEFAULT_SCORING_POLICY_REF);
-        assert_eq!(config.namespace_allowlist, vec![0, 4, 6, 10, 14]);
+        assert_eq!(config.namespace_allowlist, vec![0, 2, 4, 6, 10, 14]);
         // shared endpoints derive to the central Wikimedia services
         assert_eq!(
             config.oauth_authorize_url.as_str(),

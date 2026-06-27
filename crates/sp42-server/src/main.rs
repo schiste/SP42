@@ -1125,9 +1125,11 @@ fn config_for_state_wiki(
 }
 
 fn resolved_wiki_config(state: &AppState, wiki_id: &str) -> Result<sp42_core::WikiConfig, String> {
+    // resolve() falls back to deriving any Wikimedia project from the embedded
+    // authoritative site list when it isn't hand-configured (ADR-0014).
     let mut config = state
         .wiki_registry
-        .config(wiki_id)
+        .resolve(wiki_id)
         .map_err(|error| error.to_string())?;
     if let Some(api_url) = &state.capability_targets.api_url {
         config.api_url = reqwest::Url::parse(api_url)

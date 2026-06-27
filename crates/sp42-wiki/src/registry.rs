@@ -115,7 +115,7 @@ impl WikiRegistry {
         })
     }
 
-    /// Return a wiki config by ID.
+    /// Return a hand-configured wiki config by ID (no dynamic fallback).
     ///
     /// # Errors
     ///
@@ -129,6 +129,23 @@ impl WikiRegistry {
             .ok_or_else(|| WikiRegistryError::UnknownWikiId {
                 wiki_id: wiki_id.to_string(),
             })
+    }
+
+    /// Resolve a wiki config for **any** Wikimedia project: a hand-configured
+    /// wiki wins, otherwise the config is derived from the embedded
+    /// authoritative `SiteMatrix` snapshot (ADR-0014, [`crate::sites`]).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`WikiRegistryError::UnknownWikiId`] only when `wiki_id` is
+    /// neither configured nor a known Wikimedia `dbname`.
+    pub fn resolve(&self, wiki_id: &str) -> Result<WikiConfig, WikiRegistryError> {
+        if let Some(config) = self.inner.configs.get(wiki_id) {
+            return Ok(config.clone());
+        }
+        crate::sites::derive_wiki_config(wiki_id).ok_or_else(|| WikiRegistryError::UnknownWikiId {
+            wiki_id: wiki_id.to_string(),
+        })
     }
 
     /// # Panics
@@ -248,6 +265,33 @@ mod tests {
         assert_eq!(registry.default_wiki_id(), "frwiki");
         assert_eq!(registry.default_config().wiki_id, "frwiki");
         assert_eq!(registry.wiki_count(), 1);
+    }
+
+    #[test]
+    fn resolve_prefers_configured_then_derives_then_errors() {
+        let registry = WikiRegistry::embedded_default().expect("embedded registry should load");
+
+        // configured wiki wins (frwiki is the embedded default)
+        assert_eq!(
+            registry
+                .resolve("frwiki")
+                .expect("frwiki configured")
+                .wiki_id,
+            "frwiki"
+        );
+
+        // unconfigured-but-real Wikimedia project derives dynamically
+        let derived = registry.resolve("dewiki").expect("dewiki should derive");
+        assert_eq!(
+            derived.api_url.as_str(),
+            "https://de.wikipedia.org/w/api.php"
+        );
+
+        // truly unknown still errors
+        assert!(matches!(
+            registry.resolve("not-a-real-wiki"),
+            Err(super::WikiRegistryError::UnknownWikiId { .. })
+        ));
     }
 
     #[test]

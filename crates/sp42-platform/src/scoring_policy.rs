@@ -17,6 +17,8 @@ const ACTIVE_TESTWIKI_VANDALISM_POLICY_YAML: &str =
     include_str!("../../../configs/scoring/active/testwiki-vandalism.yaml");
 const ACTIVE_ENWIKI_VANDALISM_POLICY_YAML: &str =
     include_str!("../../../configs/scoring/active/enwiki-vandalism.yaml");
+const ACTIVE_DEFAULT_LANGUAGE_AGNOSTIC_POLICY_YAML: &str =
+    include_str!("../../../configs/scoring/active/default-language-agnostic.yaml");
 const CANDIDATE_FRWIKI_TIGHTEN_IDENTITY_CAP_YAML: &str =
     include_str!("../../../configs/scoring/candidate/frwiki-vandalism-tighten-identity-cap.yaml");
 
@@ -512,6 +514,7 @@ fn embedded_policy_source(reference: &str) -> Option<&'static str> {
         "active/frwiki-vandalism" => Some(ACTIVE_FRWIKI_VANDALISM_POLICY_YAML),
         "active/testwiki-vandalism" => Some(ACTIVE_TESTWIKI_VANDALISM_POLICY_YAML),
         "active/enwiki-vandalism" => Some(ACTIVE_ENWIKI_VANDALISM_POLICY_YAML),
+        "active/default-language-agnostic" => Some(ACTIVE_DEFAULT_LANGUAGE_AGNOSTIC_POLICY_YAML),
         "candidate/frwiki-vandalism-tighten-identity-cap" => {
             Some(CANDIDATE_FRWIKI_TIGHTEN_IDENTITY_CAP_YAML)
         }
@@ -660,5 +663,16 @@ mod tests {
             .expect("embedded enwiki policy should compile");
 
         assert_eq!(compiled.wiki_id, "enwiki");
+    }
+
+    #[test]
+    fn loads_embedded_default_language_agnostic_policy() {
+        // Universal baseline used by any dynamically-resolved wiki (ADR-0014);
+        // it must always compile or every unconfigured wiki fails to resolve.
+        let compiled =
+            super::load_embedded_compiled_scoring_policy("active/default-language-agnostic")
+                .expect("embedded default policy should compile");
+
+        assert_eq!(compiled.wiki_id, "default");
     }
 }

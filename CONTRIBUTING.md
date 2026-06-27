@@ -161,6 +161,39 @@ If you use the local Wikimedia development bridge:
 - never paste raw access tokens into code, docs, issues, or PRs
 - redact cookies, CSRF tokens, and authorization headers from logs
 
+### Wikimedia OAuth login (ADR-0014)
+
+SP42 requires logging in with a Wikimedia account. To run the real login locally:
+
+1. Register an OAuth 2.0 consumer at
+   [`Special:OAuthConsumerRegistration`](https://meta.wikimedia.org/wiki/Special:OAuthConsumerRegistration/propose/oauth2)
+   — owner-only is enough for your own account; a non-owner-only (general)
+   consumer is needed for other people to log in (and requires Wikimedia
+   approval). Set the callback to `{public_base_url}/auth/callback` (locally,
+   `http://localhost:4173/auth/callback`) and request `basic` plus the action
+   grants you need (patrol/rollback/edit).
+2. Put the credentials in `.env.wikimedia.local`:
+   ```
+   WIKIMEDIA_CLIENT_APPLICATION_KEY=<consumer key>
+   WIKIMEDIA_CLIENT_APPLICATION_SECRET=<consumer secret>
+   ```
+3. Run `./scripts/dev-local.sh` and click "Log in with your Wikimedia account".
+   In `local` deployment mode a `WIKIMEDIA_ACCESS_TOKEN` still enables the
+   secondary dev-token bootstrap button.
+
+### Working with any Wikimedia project
+
+SP42 resolves **any** Wikimedia project from an embedded authoritative SiteMatrix
+snapshot (`crates/sp42-wiki/data/wikimedia-sites.json`) — use the wiki picker in
+the header (e.g. `dewiki`, `commonswiki`, `eswiktionary`) or a `?wiki=<dbname>`
+URL. Hand-tuned `configs/*.yaml` wikis still win; everything else uses the
+universal default scoring policy. Refresh the embedded list when Wikimedia adds
+or renames projects:
+
+```sh
+./scripts/sync-wikis.sh
+```
+
 ## Pull Requests
 
 A good PR should include:

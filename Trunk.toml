@@ -9,6 +9,13 @@ public_url = "/"
 watch = [
   "crates/sp42-app/src",
   "crates/sp42-app/static",
+  "crates/sp42-platform/src",
+  "crates/sp42-citation/src",
+  "crates/sp42-patrol/src",
+  "crates/sp42-reporting/src",
+  "crates/sp42-coordination/src",
+  "crates/sp42-live/src",
+  "crates/sp42-wiki/src",
   "crates/sp42-core/src",
   "crates/sp42-types/src",
 ]
@@ -45,3 +52,7 @@ rewrite = "/debug"
 [[proxies]]
 backend = "http://127.0.0.1:8788/actions"
 rewrite = "/actions"
+
+[[proxies]]
+backend = "http://127.0.0.1:8788/auth"
+rewrite = "/auth"

@@ -1142,3 +1142,83 @@ body {
     gap: 6px;
   }
 }
+
+/* --- Wikimedia OAuth login gate + session header + wiki picker (ADR-0014) --- */
+.auth-gate {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 100vh;
+  padding: 24px;
+  background: #07101d;
+}
+
+.auth-gate-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+  max-width: 420px;
+  padding: 32px;
+  text-align: center;
+  background: var(--panel, #0d1a2b);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+
+.auth-gate-title {
+  margin: 0;
+  font-size: 20px;
+  color: var(--text);
+}
+
+.auth-gate-lead {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--text-muted, #9fb3c8);
+}
+
+.auth-gate-status {
+  color: var(--text-muted, #9fb3c8);
+  font-size: 13px;
+}
+
+.auth-gate-error {
+  color: var(--danger, #ff6b6b);
+  font-size: 12px;
+}
+
+.workspace-session {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.workspace-session-user {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.workspace-wiki-picker {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-inline-start: auto;
+}
+
+.workspace-wiki-label {
+  font-size: 11px;
+  color: var(--text-muted, #9fb3c8);
+}
+
+.workspace-wiki-input {
+  width: 120px;
+  padding: 3px 6px;
+  font-size: 12px;
+  color: var(--text);
+  background: #07101d;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+}

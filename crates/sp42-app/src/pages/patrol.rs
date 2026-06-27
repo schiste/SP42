@@ -1,7 +1,7 @@
 use leptos::prelude::*;
 
 use crate::components::filter_bar::FilterBar;
-use crate::platform::config::configured_default_wiki_id;
+use crate::platform::config::selected_wiki_id;
 
 mod action_controller;
 mod eventstream_controller;
@@ -26,7 +26,7 @@ use view_components::{
 
 #[component]
 pub fn PatrolSurface() -> impl IntoView {
-    let active_wiki_id = configured_default_wiki_id();
+    let active_wiki_id = selected_wiki_id();
     let (selected_rev_id, set_selected_rev_id) = signal(None::<u64>);
     let (review_note, set_review_note) = signal(String::new());
     let (show_help, set_show_help) = signal(false);

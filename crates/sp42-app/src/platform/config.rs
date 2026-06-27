@@ -12,6 +12,57 @@ pub fn configured_default_wiki_id() -> String {
         .unwrap_or_else(|| FALLBACK_DEFAULT_WIKI_ID.to_string())
 }
 
+/// The wiki the workspace is pointed at: a `?wiki=<dbname>` URL override (set by
+/// the wiki picker) when present, otherwise the configured default. Lets SP42
+/// target any Wikimedia project the server can resolve (ADR-0014).
+#[must_use]
+pub fn selected_wiki_id() -> String {
+    wiki_override_from_query().unwrap_or_else(configured_default_wiki_id)
+}
+
+/// Point the workspace at `wiki_id` by setting the `?wiki=` override and
+/// reloading (the patrol surface binds its wiki at construction).
+#[cfg(target_arch = "wasm32")]
+pub fn request_wiki_switch(wiki_id: &str) {
+    let trimmed = wiki_id.trim();
+    if trimmed.is_empty() {
+        return;
+    }
+    if let Some(window) = web_sys::window() {
+        let encoded = String::from(js_sys::encode_uri_component(trimmed));
+        // Preserve the view hash (#view=…); replace the query.
+        let hash = window.location().hash().unwrap_or_default();
+        let _ = window
+            .location()
+            .set_href(&format!("/?wiki={encoded}{hash}"));
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub fn request_wiki_switch(_wiki_id: &str) {}
+
+#[cfg(target_arch = "wasm32")]
+fn wiki_override_from_query() -> Option<String> {
+    let search = web_sys::window()?.location().search().ok()?;
+    query_param(&search, "wiki")
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn wiki_override_from_query() -> Option<String> {
+    None
+}
+
+fn query_param(search: &str, key: &str) -> Option<String> {
+    let search = search.strip_prefix('?').unwrap_or(search);
+    for pair in search.split('&') {
+        let mut parts = pair.splitn(2, '=');
+        if parts.next() == Some(key) {
+            return non_empty_string(parts.next().unwrap_or(""));
+        }
+    }
+    None
+}
+
 #[must_use]
 pub fn configured_api_base_url() -> String {
     runtime_api_base_url()

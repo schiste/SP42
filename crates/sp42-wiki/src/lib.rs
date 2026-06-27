@@ -14,6 +14,7 @@ pub mod capabilities;
 pub mod config;
 pub mod errors;
 pub mod registry;
+pub mod sites;
 #[cfg(any(test, feature = "test-fixtures"))]
 pub mod test_fixtures;
 
@@ -28,3 +29,4 @@ pub use registry::{
     DEFAULT_WIKI_CONFIG_DIR, SP42_DEFAULT_WIKI_ID, SP42_WIKI_CONFIG_DIR, WikiRegistry,
     load_configs_from_dir,
 };
+pub use sites::{derive_wiki_config, is_known_wiki, known_wiki_count, known_wiki_ids};

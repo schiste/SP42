@@ -280,11 +280,11 @@ fn PageReportView(report: PageVerificationReport) -> impl IntoView {
             </div>
 
             <details
-                style="padding:10px 17px;border-radius:4px;border:1px solid rgba(148,163,184,.14);background:rgba(8,15,29,.58);"
+                style="padding:10px 17px;border-radius:4px;border:1px solid var(--border-light);background:var(--panel-deep);"
             >
                 <summary style="cursor:pointer;font-weight:700;">"Raw text report"</summary>
                 <pre
-                    style="margin:.75rem 0 0;overflow:auto;white-space:pre-wrap;word-break:break-word;font-family:ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;font-size:.9rem;line-height:1.55;color:#eff4ff;"
+                    style="margin:.75rem 0 0;overflow:auto;white-space:pre-wrap;word-break:break-word;font-family:ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;font-size:.9rem;line-height:1.55;color:var(--text);"
                 >{report_text}</pre>
             </details>
         </div>
@@ -385,7 +385,7 @@ fn FindingCard(finding: CitationFinding, article_url: Option<String>) -> impl In
                 <div style="min-width:0;">
                     <strong>{format!("#{ordinal}")}</strong>
                     {(!ref_id.is_empty()).then(|| view! {
-                        <span style="font-size:10px;color:#8b9fc0;margin-inline-start:6px;overflow-wrap:anywhere;">
+                        <span style="font-size:10px;color:var(--muted);margin-inline-start:6px;overflow-wrap:anywhere;">
                             {ref_id.clone()}
                         </span>
                     })}
@@ -400,7 +400,7 @@ fn FindingCard(finding: CitationFinding, article_url: Option<String>) -> impl In
                 </div>
             </div>
 
-            <p style="color:#eff4ff;margin:0;">{claim}</p>
+            <p style="color:var(--text);margin:0;">{claim}</p>
 
             {article_url.map(|href| view! {
                 <div class="article-reference-meta">
@@ -408,7 +408,7 @@ fn FindingCard(finding: CitationFinding, article_url: Option<String>) -> impl In
                         href=href
                         target="_blank"
                         rel="noopener noreferrer"
-                        style="color:#7cc4ff;font-weight:600;"
+                        style="color:var(--link);font-weight:600;"
                     >
                         "↗ show citation in article"
                     </a>
@@ -422,7 +422,7 @@ fn FindingCard(finding: CitationFinding, article_url: Option<String>) -> impl In
                     href=url.clone()
                     target="_blank"
                     rel="noopener noreferrer"
-                    style="color:#7cc4ff;word-break:break-all;"
+                    style="color:var(--link);word-break:break-all;"
                 >
                     {url.clone()}
                 </a>
@@ -434,7 +434,7 @@ fn FindingCard(finding: CitationFinding, article_url: Option<String>) -> impl In
                         href=value.clone()
                         target="_blank"
                         rel="noopener noreferrer"
-                        style="color:#7cc4ff;word-break:break-all;"
+                        style="color:var(--link);word-break:break-all;"
                     >
                         {value.clone()}
                     </a>
@@ -449,25 +449,25 @@ fn FindingCard(finding: CitationFinding, article_url: Option<String>) -> impl In
 
             {has_evidence.then(|| view! {
                 <details>
-                    <summary style="cursor:pointer;font-size:10px;color:#8b9fc0;text-transform:uppercase;letter-spacing:.06em;">
+                    <summary style="cursor:pointer;font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;">
                         "Source evidence"
                     </summary>
                     {quote.map(|text| view! {
                         <div style="margin:6px 0 0;">
-                            <span style="display:block;color:#8b9fc0;font-size:10px;text-transform:uppercase;letter-spacing:.06em;margin-bottom:2px;">
+                            <span style="display:block;color:var(--muted);font-size:10px;text-transform:uppercase;letter-spacing:.06em;margin-bottom:2px;">
                                 "Located quote"
                             </span>
-                            <blockquote style="margin:0;padding:6px 10px;border-inline-start:3px solid rgba(61,185,125,.5);background:rgba(15,23,42,.58);color:#eff4ff;font-size:12px;line-height:1.5;">
+                            <blockquote style="margin:0;padding:6px 10px;border-inline-start:3px solid var(--success-border);background:var(--panel-inner);color:var(--text);font-size:12px;line-height:1.5;">
                                 {text}
                             </blockquote>
                         </div>
                     })}
                     {excerpt.map(|text| view! {
                         <div style="margin:6px 0 0;">
-                            <span style="display:block;color:#8b9fc0;font-size:10px;text-transform:uppercase;letter-spacing:.06em;margin-bottom:2px;">
+                            <span style="display:block;color:var(--muted);font-size:10px;text-transform:uppercase;letter-spacing:.06em;margin-bottom:2px;">
                                 "Source text (what the panel read)"
                             </span>
-                            <blockquote style="margin:0;padding:6px 10px;border-inline-start:3px solid rgba(148,163,184,.3);background:rgba(15,23,42,.58);color:#cdd7ea;font-size:12px;line-height:1.5;white-space:pre-wrap;">
+                            <blockquote style="margin:0;padding:6px 10px;border-inline-start:3px solid var(--border);background:var(--panel-inner);color:var(--muted);font-size:12px;line-height:1.5;white-space:pre-wrap;">
                                 {text}
                             </blockquote>
                         </div>
@@ -513,12 +513,12 @@ fn group_tone(group: FindingGroup) -> StatusTone {
 /// Left-border accent color for a group section (matches [`group_tone`]).
 fn group_border(group: FindingGroup) -> &'static str {
     match group {
-        FindingGroup::NotSupported => "#ef4444",
-        FindingGroup::Unverified | FindingGroup::Partial => "#f59e0b",
-        FindingGroup::DeadLink => "#3b82f6",
-        FindingGroup::Unreadable => "#4f6280",
-        FindingGroup::VerifiedViaArchive => "#8fb7ff",
-        FindingGroup::Supported => "#22c55e",
+        FindingGroup::NotSupported => "var(--danger)",
+        FindingGroup::Unverified | FindingGroup::Partial => "var(--warning)",
+        FindingGroup::DeadLink => "var(--link)",
+        FindingGroup::Unreadable => "var(--subtle)",
+        FindingGroup::VerifiedViaArchive => "var(--accent)",
+        FindingGroup::Supported => "var(--success)",
     }
 }
 

@@ -136,7 +136,7 @@
   --tone-info-text: #2a4b8d;
   --tone-info-border: #b0c1ed;
   --tone-positive-bg: #dff2eb;
-  --tone-positive-text: #14866b;
+  --tone-positive-text: #096450;
   --tone-positive-border: #9fd5c0;
   --tone-caution-bg: #fdf2d5;
   --tone-caution-text: #886425;
@@ -704,7 +704,7 @@ body {
   color: var(--text);
 }
 
-.btn:hover:not(:disabled) {
+.btn:hover:not(:disabled):not(.btn-danger):not(.btn-success) {
   background: var(--accent-bg);
   border-color: var(--accent-border);
 }
@@ -725,10 +725,20 @@ body {
   border-color: var(--danger-border);
 }
 
+.btn-danger:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--danger-bg) 84%, var(--danger) 16%);
+  border-color: var(--danger);
+}
+
 .btn-success {
   background: var(--success-bg);
   color: var(--success-light);
   border-color: var(--success-border);
+}
+
+.btn-success:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--success-bg) 84%, var(--success) 16%);
+  border-color: var(--success);
 }
 
 .btn-ghost {

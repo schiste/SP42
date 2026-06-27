@@ -296,7 +296,7 @@ mod tests {
         finding_summary_tone, ordered_sections, readiness_meta, scenario_badges,
         scenario_storyboard_lines,
     };
-    use sp42_core::{
+    use sp42_patrol::{
         PatrolScenarioFinding, PatrolScenarioReadiness, PatrolScenarioReport,
         PatrolScenarioSection, ReportSeverity,
     };

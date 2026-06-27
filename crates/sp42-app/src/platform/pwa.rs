@@ -1017,10 +1017,10 @@ mod tests {
     use futures::executor::block_on;
 
     use super::{
-        PwaBrowserContext, PwaEnvironmentStatus, PwaShellMode, classify_shell_mode, icon_192_path,
-        icon_512_path, is_install_ready, is_ios_user_agent, is_probably_secure_origin,
-        is_update_ready, manifest_path, normalize_manifest_href, offline_fallback_path,
-        pwa_guidance_lines, pwa_status_lines, service_worker_path, shell_asset_paths,
+        PwaBrowserContext, PwaEnvironmentStatus, PwaShellMode, icon_192_path, icon_512_path,
+        is_install_ready, is_ios_user_agent, is_probably_secure_origin, is_update_ready,
+        manifest_path, normalize_manifest_href, offline_fallback_path, pwa_guidance_lines,
+        pwa_status_lines, service_worker_path, shell_asset_paths,
     };
 
     #[test]

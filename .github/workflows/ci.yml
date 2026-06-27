@@ -76,6 +76,11 @@ jobs:
         run: cargo ci-build
       - name: Wasm compile-check (sp42-app)
         run: cargo build -p sp42-app --target wasm32-unknown-unknown --profile ci --locked
+      - name: Wasm test compile-check (sp42-app)
+        # sp42-app's modules are #[cfg(target_arch = "wasm32")], so the host `cargo
+        # ci-test` step never compiles its tests; without --tests here, stale wasm-only
+        # #[cfg(test)] code rots unnoticed. Compile-only (running needs wasm-bindgen-test).
+        run: cargo check -p sp42-app --target wasm32-unknown-unknown --profile ci --locked --tests
       - name: Tests
         run: cargo ci-test
       - name: Clippy (pedantic = deny)

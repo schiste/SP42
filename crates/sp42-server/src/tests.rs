@@ -656,6 +656,33 @@ async fn bootstrap_session_is_disabled_outside_local_mode() {
 }
 
 #[tokio::test]
+async fn wiki_defaults_route_returns_resolved_namespaces() {
+    // /wikis/{id} exposes the resolved default namespaces so the filter UI matches
+    // server behavior; a derived wiki yields the shared patrol default. Codex #90.
+    let router = build_router(test_state());
+    let response = router
+        .oneshot(
+            Request::builder()
+                .method(Method::GET)
+                .uri("/wikis/dewiki")
+                .body(Body::empty())
+                .expect("request should build"),
+        )
+        .await
+        .expect("request should complete");
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = to_bytes(response.into_body(), usize::MAX)
+        .await
+        .expect("response body should read");
+    let json: serde_json::Value = serde_json::from_slice(&body).expect("body should be json");
+    assert_eq!(
+        json["namespace_allowlist"],
+        serde_json::json!([0, 2, 4, 6, 10, 14])
+    );
+}
+
+#[tokio::test]
 async fn operator_live_returns_401_without_a_session() {
     // With no session token, /operator/live must return 401 (not the assembly's
     // generic 502) so the wasm auth refresh re-gates to login. Codex review #90.

@@ -28,7 +28,7 @@ use crate::state::AppState;
 use crate::static_assets::{
     browser_app_dist_dir, browser_shell_unavailable, disable_response_caching, get_favicon,
     get_manifest_json, get_offline_html, get_runtime_config_js, get_service_worker,
-    get_static_icon, get_wikis,
+    get_static_icon, get_wiki_defaults, get_wikis,
 };
 use crate::storage_routes::{
     get_logical_storage_document, get_public_storage_document, get_storage_document,
@@ -231,6 +231,7 @@ fn static_asset_routes(router: Router<AppState>) -> Router<AppState> {
     router
         .route(route_contracts::HEALTHZ_PATH, get(get_healthz))
         .route(route_contracts::WIKIS_PATH, get(get_wikis))
+        .route(route_contracts::WIKI_DEFAULTS_PATH, get(get_wiki_defaults))
         .route(route_contracts::MANIFEST_JSON_PATH, get(get_manifest_json))
         .route(
             route_contracts::RUNTIME_CONFIG_JS_PATH,

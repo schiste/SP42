@@ -41,6 +41,34 @@ pub fn PatrolSurface() -> impl IntoView {
     let queue_controller = create_patrol_queue_controller(selected_rev_id);
     let filters = queue_controller.filters;
     let set_filters = queue_controller.set_filters;
+
+    // The active wiki's resolved default namespaces, so the filter checkboxes show
+    // what the server uses for an unfiltered query (configured wikis like enwiki
+    // differ from the universal default). Seeded with the shared default, then
+    // refined by a one-shot fetch on mount. Codex review #90.
+    let (default_namespaces, set_default_namespaces) =
+        signal(sp42_core::DEFAULT_PATROL_NAMESPACES.to_vec());
+    {
+        let wiki = active_wiki_id.clone();
+        let fetch = Action::new_local(move |(): &()| {
+            let wiki = wiki.clone();
+            async move {
+                if let Ok(namespaces) =
+                    crate::platform::live::fetch_wiki_namespace_defaults(&wiki).await
+                {
+                    if !namespaces.is_empty() {
+                        set_default_namespaces.set(namespaces);
+                    }
+                }
+            }
+        });
+        Effect::new(move |ran: Option<bool>| {
+            if ran.is_none() {
+                fetch.dispatch_local(());
+            }
+            true
+        });
+    }
     let all_edits = queue_controller.all_edits;
     let set_all_edits = queue_controller.set_all_edits;
     let group_rev_ids = queue_controller.group_rev_ids;
@@ -162,6 +190,7 @@ pub fn PatrolSurface() -> impl IntoView {
                         filters=filters
                         set_filters=set_filters
                         next_continue=next_continue
+                        default_namespaces=default_namespaces
                     />
 
                     <QueuePane

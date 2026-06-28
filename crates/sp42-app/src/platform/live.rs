@@ -18,6 +18,33 @@ pub async fn fetch_live_operator_view(
     serde_json::from_slice(&bytes).map_err(|error| format!("parse live operator view: {error}"))
 }
 
+/// The active wiki's resolved default namespace allowlist (`GET /wikis/{id}`), so
+/// the patrol filter UI shows the namespaces the server actually uses for an
+/// unfiltered query — configured wikis differ from the universal default. Codex
+/// review #90.
+#[cfg(target_arch = "wasm32")]
+pub async fn fetch_wiki_namespace_defaults(wiki_id: &str) -> Result<Vec<i32>, String> {
+    let bytes = get_bytes(
+        &api_url(&routes::wiki_defaults_path(wiki_id)),
+        "fetch wiki namespace defaults",
+    )
+    .await?;
+    let value: serde_json::Value =
+        serde_json::from_slice(&bytes).map_err(|error| error.to_string())?;
+    let namespaces = value
+        .get("namespace_allowlist")
+        .and_then(serde_json::Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(serde_json::Value::as_i64)
+                .filter_map(|value| i32::try_from(value).ok())
+                .collect()
+        })
+        .unwrap_or_default();
+    Ok(namespaces)
+}
+
 #[cfg(not(target_arch = "wasm32"))]
 pub async fn fetch_live_operator_view(
     _wiki_id: &str,

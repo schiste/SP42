@@ -47,15 +47,15 @@ const NAMESPACE_OPTIONS: &[(i32, &str)] = &[
     (14, "Category"),
 ];
 
-// Single source shared with the derived WikiConfig allowlist (sp42-wiki sites.rs)
-// so the filter default and what the server actually returns cannot drift.
-const DEFAULT_NAMESPACES: &[i32] = &sp42_core::DEFAULT_PATROL_NAMESPACES;
-
 #[component]
 pub fn FilterBar(
     filters: ReadSignal<PatrolFilterParams>,
     set_filters: WriteSignal<PatrolFilterParams>,
     next_continue: ReadSignal<Option<String>>,
+    /// The active wiki's resolved default namespaces — what the server uses for an
+    /// unfiltered query. Shown as "checked when no explicit selection" so the
+    /// checkboxes match server behavior for configured wikis. Codex review #90.
+    default_namespaces: ReadSignal<Vec<i32>>,
 ) -> impl IntoView {
     macro_rules! update_filter {
         ($body:expr) => {{
@@ -276,7 +276,7 @@ pub fn FilterBar(
                     let is_active = move || {
                         let namespaces = filters.get().query.namespaces;
                         if namespaces.is_empty() {
-                            DEFAULT_NAMESPACES.contains(&ns)
+                            default_namespaces.get().contains(&ns)
                         } else {
                             namespaces.contains(&ns)
                         }
@@ -291,7 +291,7 @@ pub fn FilterBar(
                                     let checked = event_target_checked(&ev);
                                     update_filter!(move |f| {
                                         if f.query.namespaces.is_empty() {
-                                            f.query.namespaces = DEFAULT_NAMESPACES.to_vec();
+                                            f.query.namespaces = default_namespaces.get_untracked();
                                         }
                                         let list = &mut f.query.namespaces;
                                         if checked && !list.contains(&ns) {

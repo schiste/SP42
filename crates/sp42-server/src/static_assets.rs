@@ -137,6 +137,21 @@ pub(crate) async fn get_wikis() -> Json<serde_json::Value> {
     Json(serde_json::json!({ "wiki_ids": sp42_wiki::known_wiki_ids() }))
 }
 
+/// The resolved default namespace allowlist for one wiki, so the patrol filter UI
+/// shows the same namespaces the server uses for an unfiltered query — configured
+/// wikis (e.g. enwiki `[0,1]`) differ from the universal default. Falls back to
+/// the shared patrol default for an unknown id. Codex review #90.
+pub(crate) async fn get_wiki_defaults(
+    State(state): State<AppState>,
+    Path(wiki_id): Path<String>,
+) -> Json<serde_json::Value> {
+    let namespace_allowlist = state.wiki_registry.resolve(&wiki_id).map_or_else(
+        |_| sp42_core::DEFAULT_PATROL_NAMESPACES.to_vec(),
+        |config| config.namespace_allowlist,
+    );
+    Json(serde_json::json!({ "namespace_allowlist": namespace_allowlist }))
+}
+
 pub(crate) async fn get_service_worker() -> impl IntoResponse {
     serve_static_file(static_asset_path("sw.js"), "application/javascript").await
 }

@@ -10,7 +10,6 @@ use sp42_core::{
 };
 
 use crate::http_errors::{forbidden_error, unauthorized_error};
-use crate::local_env::LocalOAuthConfig;
 use crate::runtime_status::DevAuthBootstrapStatus;
 use crate::state::{AppState, PendingOAuthLogin, SessionSnapshot, StoredSession};
 
@@ -101,7 +100,7 @@ pub(crate) fn auth_session_view_without_session(state: &AppState) -> OAuthSessio
         refresh_available: FlagState::Disabled,
         bridge_mode: "inactive".to_string(),
         csrf_token: None,
-        local_token_available: FlagState::from(state.local_oauth.access_token().is_some()),
+        local_token_available: FlagState::from(state.shared_local_access_token().is_some()),
         oauth_client_ready: FlagState::from(state.local_oauth.has_confidential_oauth_client()),
         login_path: AUTH_LOGIN_PATH.to_string(),
         logout_path: AUTH_LOGOUT_PATH.to_string(),
@@ -123,7 +122,7 @@ pub(crate) async fn auth_session_view(
             refresh_available: FlagState::from(sessions_refresh_available(state, headers).await),
             bridge_mode: session.bridge_mode,
             csrf_token: Some(session.csrf_token),
-            local_token_available: FlagState::from(state.local_oauth.access_token().is_some()),
+            local_token_available: FlagState::from(state.shared_local_access_token().is_some()),
             oauth_client_ready: FlagState::from(state.local_oauth.has_confidential_oauth_client()),
             login_path: AUTH_LOGIN_PATH.to_string(),
             logout_path: AUTH_LOGOUT_PATH.to_string(),
@@ -172,7 +171,7 @@ pub(crate) async fn install_session(
 
 pub(crate) fn to_status(
     session: Option<&StoredSession>,
-    local_oauth: &LocalOAuthConfig,
+    local_token_available: bool,
     now_ms: i64,
 ) -> DevAuthSessionStatus {
     DevAuthSessionStatus {
@@ -184,7 +183,9 @@ pub(crate) fn to_status(
         bridge_mode: session
             .map_or_else(|| "inactive".to_string(), |entry| entry.bridge_mode.clone()),
         csrf_token: session.map(|entry| entry.csrf_token.clone()),
-        local_token_available: local_oauth.access_token().is_some(),
+        // Callers pass `state.shared_local_access_token().is_some()` so this is
+        // false outside local mode (the env token can't act as identity there).
+        local_token_available,
     }
 }
 
@@ -195,7 +196,7 @@ pub(crate) fn bootstrap_status(
     let source_report = state.local_oauth.source_report();
 
     DevAuthBootstrapStatus {
-        bootstrap_ready: state.local_oauth.access_token().is_some(),
+        bootstrap_ready: state.shared_local_access_token().is_some(),
         oauth: state.local_oauth.status(),
         session: auth.clone(),
         source_path: source_report
@@ -360,8 +361,12 @@ pub(crate) async fn current_status(
             token_present: true,
             bridge_mode: session.bridge_mode,
             csrf_token: Some(session.csrf_token),
-            local_token_available: state.local_oauth.access_token().is_some(),
+            local_token_available: state.shared_local_access_token().is_some(),
         },
-        None => to_status(None, &state.local_oauth, state.clock.now_ms()),
+        None => to_status(
+            None,
+            state.shared_local_access_token().is_some(),
+            state.clock.now_ms(),
+        ),
     }
 }

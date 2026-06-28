@@ -525,7 +525,7 @@ fn to_status_hides_token_value() {
             capability_cache: HashMap::new(),
             action_history: Vec::new(),
         }),
-        &LocalOAuthConfig::default(),
+        false,
         now_ms(),
     );
 
@@ -997,16 +997,17 @@ fn session_cookie_max_age_covers_absolute_timeout() {
 }
 
 #[test]
-fn local_token_fallback_is_gated_to_local_mode() {
-    // The shared env token may only stand in for a per-user session in local mode;
-    // in vps/desktop an unauthenticated request must not borrow it. Codex review #90.
+fn shared_local_access_token_is_gated_to_local_mode() {
+    // The single gate: the shared env token may act as an identity only in local
+    // mode. In vps/desktop it is invisible to every consumer (request fallback,
+    // capability probe, and the availability/bootstrap flags). Codex review #90.
     let env = temp_local_env_file("WIKIMEDIA_ACCESS_TOKEN=secret-local-token\n");
 
     let mut local = test_state();
     local.deployment = test_deployment_for_mode(DeploymentMode::Local);
     local.local_oauth = LocalOAuthConfig::load_from_candidates([env.clone()]);
     assert_eq!(
-        crate::local_token_fallback(&local).as_deref(),
+        local.shared_local_access_token(),
         Some("secret-local-token")
     );
 
@@ -1015,9 +1016,9 @@ fn local_token_fallback_is_gated_to_local_mode() {
         state.deployment = test_deployment_for_mode(mode);
         state.local_oauth = LocalOAuthConfig::load_from_candidates([env.clone()]);
         assert_eq!(
-            crate::local_token_fallback(&state),
+            state.shared_local_access_token(),
             None,
-            "{mode:?} must not fall back to the shared env token"
+            "{mode:?} must not expose the shared env token"
         );
     }
 }

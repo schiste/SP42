@@ -732,21 +732,10 @@ async fn access_token_for_request(state: &AppState, headers: &HeaderMap) -> Opti
     current_session_snapshot(state, headers, true)
         .await
         .map(|session| session.access_token)
-        // The shared env token is a local-dev convenience only. Outside local mode
-        // per-user OAuth is the required identity, so an unauthenticated request
-        // must NOT fall back to it (that would let anyone use the shared bearer for
-        // /operator/live, article inventory, etc.). Codex review #90.
-        .or_else(|| local_token_fallback(state))
-}
-
-/// The shared local env access token, but only in local deployment mode.
-fn local_token_fallback(state: &AppState) -> Option<String> {
-    state
-        .deployment
-        .mode
-        .permits_dev_token_bootstrap()
-        .then(|| state.local_oauth.access_token().map(ToString::to_string))
-        .flatten()
+        // The shared env token is a local-dev convenience only; outside local mode
+        // an unauthenticated request must NOT borrow it. Gated centrally by
+        // `shared_local_access_token`. Codex review #90.
+        .or_else(|| state.shared_local_access_token().map(ToString::to_string))
 }
 
 async fn get_article_inventory(
@@ -902,14 +891,9 @@ fn capability_probe_token<'a>(
 ) -> Option<&'a str> {
     match subject {
         // The shared env token is a local-dev convenience; outside local mode the
-        // probe must run token-less (unauthenticated) so a present
-        // WIKIMEDIA_ACCESS_TOKEN can't stand in for per-user OAuth. Codex review #90.
-        CapabilityProbeSubject::LocalToken => state
-            .deployment
-            .mode
-            .permits_dev_token_bootstrap()
-            .then(|| state.local_oauth.access_token())
-            .flatten(),
+        // probe runs token-less (unauthenticated). Gated centrally by
+        // `shared_local_access_token`. Codex review #90.
+        CapabilityProbeSubject::LocalToken => state.shared_local_access_token(),
         CapabilityProbeSubject::Session(session) => Some(session.access_token.as_str()),
     }
 }

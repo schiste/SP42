@@ -49,6 +49,21 @@ impl AppState {
     pub(crate) fn default_wiki_id(&self) -> &str {
         self.wiki_registry.default_wiki_id()
     }
+
+    /// The shared local dev access token, usable as a session identity ONLY in
+    /// local deployment mode. This is the single gate for the env token: outside
+    /// local mode per-user OAuth is the required identity, so every consumer —
+    /// request fallback, capability probe, and the availability/bootstrap flags
+    /// reported to clients — goes through here rather than reading the raw token
+    /// directly. Returns `None` (token absent or non-local mode) accordingly.
+    /// Codex review #90.
+    pub(crate) fn shared_local_access_token(&self) -> Option<&str> {
+        self.deployment
+            .mode
+            .permits_dev_token_bootstrap()
+            .then(|| self.local_oauth.access_token())
+            .flatten()
+    }
 }
 
 #[derive(Debug, Clone)]

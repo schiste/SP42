@@ -338,7 +338,11 @@ pub(crate) async fn post_bootstrap_session(
         sessions.remove(&prior_session_id);
     }
     sessions.insert(session_id.clone(), stored);
-    let status = to_status(sessions.get(&session_id), &state.local_oauth, current_ms);
+    let status = to_status(
+        sessions.get(&session_id),
+        state.shared_local_access_token().is_some(),
+        current_ms,
+    );
     drop(sessions);
     info!(
         session_id = session_id.as_str(),
@@ -446,7 +450,11 @@ pub(crate) async fn delete_session(
     Ok((
         StatusCode::OK,
         [(SET_COOKIE, expired_session_cookie_header(&state))],
-        Json(to_status(None, &state.local_oauth, state.clock.now_ms())),
+        Json(to_status(
+            None,
+            state.shared_local_access_token().is_some(),
+            state.clock.now_ms(),
+        )),
     ))
 }
 

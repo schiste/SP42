@@ -47,7 +47,9 @@ const NAMESPACE_OPTIONS: &[(i32, &str)] = &[
     (14, "Category"),
 ];
 
-const DEFAULT_NAMESPACES: &[i32] = &[0, 2, 4, 6, 10, 14];
+// Single source shared with the derived WikiConfig allowlist (sp42-wiki sites.rs)
+// so the filter default and what the server actually returns cannot drift.
+const DEFAULT_NAMESPACES: &[i32] = &sp42_core::DEFAULT_PATROL_NAMESPACES;
 
 #[component]
 pub fn FilterBar(

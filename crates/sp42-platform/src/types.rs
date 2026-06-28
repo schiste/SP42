@@ -419,34 +419,45 @@ pub struct WikiConfig {
     pub templates: WikiTemplates,
 }
 
+/// The universal, language-agnostic scoring policy applied to any wiki without a
+/// hand-tuned policy. Its compiled `wiki_id` is the [`DEFAULT_SCORING_POLICY_WIKI_ID`]
+/// sentinel, accepted for any wiki. Single source shared by the authored default
+/// ([`default_scoring_policy_ref`]) and the derived path (`sp42-wiki` `sites.rs`).
+pub const DEFAULT_SCORING_POLICY_REF: &str = "active/default-language-agnostic";
+
+/// The compiled scoring policy `wiki_id` that the universal default carries; the
+/// authored-config validator accepts it for any wiki (otherwise a policy's
+/// `wiki_id` must equal the config's).
+pub const DEFAULT_SCORING_POLICY_WIKI_ID: &str = "default";
+
+/// Patrol-relevant namespaces shown/selected by default and used as the derived
+/// wiki allowlist: main (0), user (2), project (4), file (6), template (10),
+/// category (14). The single source for the frontend filter default
+/// (`sp42-app` `DEFAULT_NAMESPACES`) and the derived `WikiConfig` allowlist
+/// (`sp42-wiki` `sites.rs`), so the two cannot silently drift — a derived wiki
+/// surfaces exactly what the filter presents as selected.
+pub const DEFAULT_PATROL_NAMESPACES: [i32; 6] = [0, 2, 4, 6, 10, 14];
+
 fn default_scoring_policy_ref() -> String {
-    "active/frwiki-vandalism".to_string()
+    DEFAULT_SCORING_POLICY_REF.to_string()
 }
 
 /// Per-wiki template names for tagging actions. Each value is the short
 /// template name without braces (e.g. `"refnec"` → `{{refnec}}`).
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub struct WikiTemplates {
-    #[serde(default = "default_citation_needed")]
-    pub citation_needed: String,
+    /// "Citation needed" template for this wiki (short name, no braces). `None`
+    /// when the wiki has no configured template — derived wikis and authored
+    /// configs that omit it. The tag-citation-needed action then refuses rather
+    /// than inserting a wrong-language template (issue #91), mirroring how
+    /// `bare_url_citation` gates bare-URL repair.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub citation_needed: Option<String>,
     /// Citation template rendered by bare-URL repair (PRD-0008), for example
     /// `"cite web"`. Presence enables the feature for this wiki; when `None`,
     /// the bare-URL routes refuse with `bare-url-repair-not-enabled`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub bare_url_citation: Option<String>,
-}
-
-impl Default for WikiTemplates {
-    fn default() -> Self {
-        Self {
-            citation_needed: default_citation_needed(),
-            bare_url_citation: None,
-        }
-    }
-}
-
-fn default_citation_needed() -> String {
-    "Référence nécessaire".to_string()
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]

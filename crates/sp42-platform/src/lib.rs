@@ -153,7 +153,8 @@ pub use traits::{
     ReplayEventSource, Rng, SequenceRng, Storage, StubHttpClient, SystemClock, WebSocket,
 };
 pub use types::{
-    Action, CompositeScore, EditEvent, EditorIdentity, FlagState, HttpMethod, HttpRequest,
+    Action, CompositeScore, DEFAULT_PATROL_NAMESPACES, DEFAULT_SCORING_POLICY_REF,
+    DEFAULT_SCORING_POLICY_WIKI_ID, EditEvent, EditorIdentity, FlagState, HttpMethod, HttpRequest,
     HttpResponse, LocalOAuthSourceReport, QueueHeuristicPolicy, QueuedEdit, ScoreWeights,
     ScoringCombinationRule, ScoringConfig, ScoringContext, ScoringExternalEvaluationConfig,
     ScoringIdentityConfig, ScoringSignal, ScoringSignalParameters, ServerSentEvent,

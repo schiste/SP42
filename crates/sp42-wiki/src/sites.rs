@@ -13,9 +13,8 @@
 use std::collections::BTreeMap;
 use std::sync::LazyLock;
 
-use sp42_core::WikiConfig;
-use sp42_core::WikiTemplates;
 use sp42_core::scoring_policy::load_embedded_compiled_scoring_policy;
+use sp42_core::{DEFAULT_PATROL_NAMESPACES, DEFAULT_SCORING_POLICY_REF, WikiConfig, WikiTemplates};
 use url::Url;
 
 const EMBEDDED_SITES_JSON: &str = include_str!("../data/wikimedia-sites.json");
@@ -31,16 +30,6 @@ const OAUTH_AUTHORIZE_URL: &str = "https://meta.wikimedia.org/w/rest.php/oauth2/
 const OAUTH_TOKEN_URL: &str = "https://meta.wikimedia.org/w/rest.php/oauth2/access_token";
 const LIFTWING_URL: &str =
     "https://api.wikimedia.org/service/lw/inference/v1/models/revertrisk-language-agnostic:predict";
-/// Universal baseline applied to any wiki without a hand-tuned config.
-pub const DEFAULT_SCORING_POLICY_REF: &str = "active/default-language-agnostic";
-/// Patrol-relevant namespaces for dynamically-derived wikis: main (0), user (2),
-/// project (4), file (6), template (10), category (14). This mirrors the patrol
-/// filter UI default (`DEFAULT_NAMESPACES` in `sp42-app`) on purpose — a derived
-/// wiki has no curated config, so its default allowlist must equal what the UI
-/// presents as selected. Kept aligned so derived wikis don't silently drop edits
-/// the filter shows as included (e.g. User-namespace edits on `dewiki`). Codex
-/// review #90.
-const DERIVED_NAMESPACE_ALLOWLIST: [i32; 6] = [0, 2, 4, 6, 10, 14];
 
 /// Whether `wiki_id` is a known Wikimedia project in the embedded site list.
 #[must_use]
@@ -80,11 +69,15 @@ pub fn derive_wiki_config(wiki_id: &str) -> Option<WikiConfig> {
         coordination_url: None,
         parsoid_url: Some(base.join("/w/rest.php").ok()?),
         inference_url: None,
-        namespace_allowlist: DERIVED_NAMESPACE_ALLOWLIST.to_vec(),
+        // Shared single source with the patrol filter UI default so a derived
+        // wiki surfaces exactly what the filter shows as selected (ADR-0014).
+        namespace_allowlist: DEFAULT_PATROL_NAMESPACES.to_vec(),
         scoring_policy_ref: DEFAULT_SCORING_POLICY_REF.to_string(),
         scoring: compiled.scoring_config,
+        // No hand-tuned citation template for a derived wiki: the tag-citation
+        // action refuses rather than inserting a wrong-language template (#91).
         templates: WikiTemplates {
-            citation_needed: "Citation needed".to_string(),
+            citation_needed: None,
             bare_url_citation: None,
         },
     })

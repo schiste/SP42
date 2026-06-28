@@ -66,6 +66,13 @@ pub fn App() -> impl IntoView {
             // stranding the user in a stale UI until a manual reload. Codex
             // review #90.
             register_visibility_recheck(refresh);
+            // Single re-gate authority: any API call that returns 401 drops the
+            // workspace back to the login gate, regardless of which call detected
+            // the expired session. The per-layer cookie/session/token timers are
+            // now belt-and-suspenders, not the load-bearing trigger. Codex review #90.
+            crate::platform::http::set_unauthorized_handler(move || {
+                set_auth.set(AuthState::Ready(AuthSession::default()));
+            });
         }
         true
     });

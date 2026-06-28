@@ -32,7 +32,8 @@ use crate::runtime_status::{
 };
 use crate::session_runtime::{
     CSRF_HEADER_NAME, SESSION_COOKIE_NAME, install_session,
-    session_cookie_header as runtime_session_cookie_header, to_status,
+    session_cookie_header as runtime_session_cookie_header, session_expires_at_ms,
+    session_is_expired, to_status,
 };
 use crate::state::{AppState, StoredSession};
 use crate::wikimedia_capabilities::CapabilityProbeTargets;
@@ -424,6 +425,22 @@ fn test_session(username: &str, access_token: &str, created_at_ms: i64) -> Store
         capability_cache: HashMap::new(),
         action_history: Vec::new(),
     }
+}
+
+#[test]
+fn session_expiry_is_capped_by_upstream_token_deadline() {
+    let created = 1_000_000;
+    let mut session = test_session("Tester", "token", created);
+    // upstream OAuth token expires in 5 min — well before the 30-min idle window
+    let upstream = created + 5 * 60 * 1000;
+    session.upstream_access_expires_at_ms = Some(upstream);
+
+    // the session deadline is capped at the upstream token deadline
+    assert_eq!(session_expires_at_ms(&session, created), upstream);
+    // still valid just before the token expires
+    assert!(!session_is_expired(&session, created + 4 * 60 * 1000));
+    // expired once the token deadline passes, despite idle/absolute remaining
+    assert!(session_is_expired(&session, created + 6 * 60 * 1000));
 }
 
 fn assert_claim_actor(

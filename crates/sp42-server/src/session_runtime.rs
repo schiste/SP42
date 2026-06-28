@@ -268,7 +268,14 @@ pub(crate) fn session_expires_at_ms(session: &StoredSession, current_time_ms: i6
     let absolute_deadline = session
         .created_at_ms
         .saturating_add(SESSION_ABSOLUTE_TIMEOUT_MS);
-    let deadline = idle_deadline.min(absolute_deadline);
+    let mut deadline = idle_deadline.min(absolute_deadline);
+    // The session cannot outlive the upstream OAuth access token: once it
+    // expires, every wiki API call fails with an expired bearer while the user
+    // still looks authenticated. Cap the session at that deadline so it re-gates
+    // instead (token refresh is out of scope, ADR-0014). Codex review #90.
+    if let Some(upstream) = session.upstream_access_expires_at_ms {
+        deadline = deadline.min(upstream);
+    }
     deadline.max(current_time_ms)
 }
 

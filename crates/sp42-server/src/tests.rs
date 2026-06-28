@@ -996,6 +996,32 @@ fn session_cookie_max_age_covers_absolute_timeout() {
     );
 }
 
+#[test]
+fn local_token_fallback_is_gated_to_local_mode() {
+    // The shared env token may only stand in for a per-user session in local mode;
+    // in vps/desktop an unauthenticated request must not borrow it. Codex review #90.
+    let env = temp_local_env_file("WIKIMEDIA_ACCESS_TOKEN=secret-local-token\n");
+
+    let mut local = test_state();
+    local.deployment = test_deployment_for_mode(DeploymentMode::Local);
+    local.local_oauth = LocalOAuthConfig::load_from_candidates([env.clone()]);
+    assert_eq!(
+        crate::local_token_fallback(&local).as_deref(),
+        Some("secret-local-token")
+    );
+
+    for mode in [DeploymentMode::Vps, DeploymentMode::Desktop] {
+        let mut state = test_state();
+        state.deployment = test_deployment_for_mode(mode);
+        state.local_oauth = LocalOAuthConfig::load_from_candidates([env.clone()]);
+        assert_eq!(
+            crate::local_token_fallback(&state),
+            None,
+            "{mode:?} must not fall back to the shared env token"
+        );
+    }
+}
+
 #[tokio::test]
 async fn healthz_route_is_available() {
     let router = build_router(test_state());

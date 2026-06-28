@@ -732,7 +732,21 @@ async fn access_token_for_request(state: &AppState, headers: &HeaderMap) -> Opti
     current_session_snapshot(state, headers, true)
         .await
         .map(|session| session.access_token)
-        .or_else(|| state.local_oauth.access_token().map(ToString::to_string))
+        // The shared env token is a local-dev convenience only. Outside local mode
+        // per-user OAuth is the required identity, so an unauthenticated request
+        // must NOT fall back to it (that would let anyone use the shared bearer for
+        // /operator/live, article inventory, etc.). Codex review #90.
+        .or_else(|| local_token_fallback(state))
+}
+
+/// The shared local env access token, but only in local deployment mode.
+fn local_token_fallback(state: &AppState) -> Option<String> {
+    state
+        .deployment
+        .mode
+        .permits_dev_token_bootstrap()
+        .then(|| state.local_oauth.access_token().map(ToString::to_string))
+        .flatten()
 }
 
 async fn get_article_inventory(
@@ -855,7 +869,12 @@ async fn cached_capability_report_for_subject(
     }
 
     match subject {
-        CapabilityProbeSubject::LocalToken => {
+        // Never serve the shared local-token capability cache outside local mode,
+        // so a present env token can't grant capabilities to an unauthenticated
+        // request. Codex review #90.
+        CapabilityProbeSubject::LocalToken
+            if state.deployment.mode.permits_dev_token_bootstrap() =>
+        {
             let guard = state.capability_cache.read().await;
             if let Some(cache) = guard.as_ref()
                 && cache.report.wiki_id == wiki_id
@@ -864,6 +883,7 @@ async fn cached_capability_report_for_subject(
                 return Some(cache.report.clone());
             }
         }
+        CapabilityProbeSubject::LocalToken => {}
         CapabilityProbeSubject::Session(session) => {
             if let Some(report) =
                 cached_capabilities_for_session(state, &session.session_id, wiki_id).await
@@ -881,7 +901,15 @@ fn capability_probe_token<'a>(
     subject: &'a CapabilityProbeSubject<'a>,
 ) -> Option<&'a str> {
     match subject {
-        CapabilityProbeSubject::LocalToken => state.local_oauth.access_token(),
+        // The shared env token is a local-dev convenience; outside local mode the
+        // probe must run token-less (unauthenticated) so a present
+        // WIKIMEDIA_ACCESS_TOKEN can't stand in for per-user OAuth. Codex review #90.
+        CapabilityProbeSubject::LocalToken => state
+            .deployment
+            .mode
+            .permits_dev_token_bootstrap()
+            .then(|| state.local_oauth.access_token())
+            .flatten(),
         CapabilityProbeSubject::Session(session) => Some(session.access_token.as_str()),
     }
 }

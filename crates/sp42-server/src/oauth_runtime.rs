@@ -47,34 +47,19 @@ pub(crate) fn sanitize_redirect_target(
 }
 
 /// Whether `url`'s origin matches one of the server's configured allowed origins
-/// (the same list used for CORS). Origins are compared as reconstructed
-/// `scheme://host[:port]` strings so both HTTP(S) and configured app schemes
-/// (e.g. `tauri://localhost`) match consistently.
+/// (the same list used for CORS), via the shared origin primitive so HTTP(S) and
+/// configured app schemes (e.g. `tauri://localhost`) match consistently.
 fn origin_is_allowed(url: &url::Url, allowed_origins: &[HeaderValue]) -> bool {
-    let Some(candidate) = origin_string(url) else {
+    let Some(candidate) = sp42_core::origin_of_url(url) else {
         return false;
     };
     allowed_origins.iter().any(|origin| {
         origin
             .to_str()
             .ok()
-            .and_then(|raw| url::Url::parse(raw).ok())
-            .and_then(|allowed| origin_string(&allowed))
+            .and_then(sp42_core::origin_of)
             .is_some_and(|allowed| allowed == candidate)
     })
-}
-
-/// `scheme://host[:port]` for any URL that has a network authority — covers
-/// HTTP(S) and custom app schemes (`tauri://localhost`). Returns `None` for
-/// authority-less targets such as `javascript:` or `mailto:`, which can never
-/// match a configured origin.
-fn origin_string(url: &url::Url) -> Option<String> {
-    let scheme = url.scheme();
-    let host = url.host_str()?;
-    match url.port() {
-        Some(port) => Some(format!("{scheme}://{host}:{port}")),
-        None => Some(format!("{scheme}://{host}")),
-    }
 }
 
 pub(crate) fn redirect_with_status(target: &str, key: &str, value: &str) -> String {

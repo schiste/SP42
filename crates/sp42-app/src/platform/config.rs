@@ -98,31 +98,13 @@ pub fn is_split_origin_deployment() -> bool {
     // parsed scheme://host[:port] origins — a prefix check would misclassify
     // e.g. :4173 vs :41730 or app.example.org vs app.example.org.evil. Codex #90.
     match frontend_origin() {
-        Some(origin) => !origins_match(&base, &origin),
+        // Shared origin primitive (`sp42_core::origins_match`) — never a string
+        // prefix check. ADR-0013 / Codex review #90.
+        Some(origin) => !sp42_core::origins_match(&base, &origin),
         // Frontend origin unknown: treat as split so `next` carries an absolute
         // origin; the server still validates it against its allow list.
         None => true,
     }
-}
-
-/// Whether two URL-ish strings share the same `scheme://host[:port]` origin.
-fn origins_match(left: &str, right: &str) -> bool {
-    match (origin_of(left), origin_of(right)) {
-        (Some(left), Some(right)) => left == right,
-        _ => false,
-    }
-}
-
-/// The `scheme://host[:port]` origin of a URL string (default ports omitted),
-/// or `None` when it has no network authority.
-fn origin_of(url: &str) -> Option<String> {
-    let parsed = url::Url::parse(url).ok()?;
-    let scheme = parsed.scheme();
-    let host = parsed.host_str()?;
-    Some(match parsed.port() {
-        Some(port) => format!("{scheme}://{host}:{port}"),
-        None => format!("{scheme}://{host}"),
-    })
 }
 
 /// The current frontend shell origin (`scheme://host[:port]`), if available.
@@ -243,33 +225,9 @@ fn runtime_meta_content(name: &str) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        configured_default_wiki_id, join_base_and_path, normalize_base_url, origins_match,
-    };
+    use super::{configured_default_wiki_id, join_base_and_path, normalize_base_url};
 
-    #[test]
-    fn origins_match_compares_parsed_origins_not_prefixes() {
-        // identical origins (trailing slash is irrelevant)
-        assert!(origins_match(
-            "https://app.example.org",
-            "https://app.example.org/"
-        ));
-        // port prefix pitfall: 4173 is a prefix of 41730 but a different origin
-        assert!(!origins_match(
-            "http://localhost:41730",
-            "http://localhost:4173"
-        ));
-        // host suffix pitfall: evil host that prefix-starts with the real origin
-        assert!(!origins_match(
-            "https://app.example.org.evil",
-            "https://app.example.org"
-        ));
-        // plainly different hosts
-        assert!(!origins_match(
-            "https://api.example.org",
-            "https://app.example.org"
-        ));
-    }
+    // origin parsing/comparison is now tested in sp42_platform::origin.
 
     #[test]
     fn joins_same_origin_paths() {

@@ -151,16 +151,11 @@ fn origin_header_value(label: &str, value: &str) -> Result<HeaderValue, String> 
 /// default desktop allow list already trusts that origin, and it mirrors the
 /// non-HTTP support in the redirect sanitizer. Codex review #90.
 fn allowed_origin_header_value(label: &str, value: &str) -> Result<HeaderValue, String> {
-    let url = Url::parse(value)
-        .map_err(|error| format!("{label} contains invalid URL `{value}`: {error}"))?;
-    let host = url
-        .host_str()
-        .ok_or_else(|| format!("{label} origin `{value}` has no host"))?;
-    let scheme = url.scheme();
-    let origin = match url.port() {
-        Some(port) => format!("{scheme}://{host}:{port}"),
-        None => format!("{scheme}://{host}"),
-    };
+    // Shared origin primitive: canonical scheme://host[:port], accepting custom
+    // app schemes (e.g. tauri://localhost) so the desktop sidecar loads. ADR-0013.
+    let origin = sp42_core::origin_of(value).ok_or_else(|| {
+        format!("{label} origin `{value}` is not a valid scheme://host[:port] origin")
+    })?;
     header_value(&origin)
 }
 

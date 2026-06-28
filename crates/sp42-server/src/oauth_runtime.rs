@@ -34,11 +34,11 @@ pub(crate) fn sanitize_redirect_target(
         return target.to_string();
     }
     // Split frontend/API deployments send an absolute frontend-origin URL so the
-    // callback returns to the SPA instead of the API host. Honor it only when its
-    // origin is in the configured allow list — otherwise this would be an open
-    // redirect. Codex review #90.
+    // callback returns to the SPA instead of the API host — including the desktop
+    // Tauri webview, whose origin may be a non-HTTP scheme such as
+    // `tauri://localhost`. Honor it only when its origin is in the configured
+    // allow list — otherwise this would be an open redirect. Codex review #90.
     if let Ok(url) = url::Url::parse(target)
-        && matches!(url.scheme(), "http" | "https")
         && origin_is_allowed(&url, allowed_origins)
     {
         return target.to_string();
@@ -46,21 +46,35 @@ pub(crate) fn sanitize_redirect_target(
     "/".to_string()
 }
 
-/// Whether `url`'s origin (`scheme://host[:port]`) matches one of the server's
-/// configured allowed origins (the same list used for CORS).
+/// Whether `url`'s origin matches one of the server's configured allowed origins
+/// (the same list used for CORS). Origins are compared as reconstructed
+/// `scheme://host[:port]` strings so both HTTP(S) and configured app schemes
+/// (e.g. `tauri://localhost`) match consistently.
 fn origin_is_allowed(url: &url::Url, allowed_origins: &[HeaderValue]) -> bool {
-    let candidate = url.origin();
-    if !candidate.is_tuple() {
+    let Some(candidate) = origin_string(url) else {
         return false;
-    }
-    let candidate = candidate.ascii_serialization();
+    };
     allowed_origins.iter().any(|origin| {
         origin
             .to_str()
             .ok()
             .and_then(|raw| url::Url::parse(raw).ok())
-            .is_some_and(|allowed| allowed.origin().ascii_serialization() == candidate)
+            .and_then(|allowed| origin_string(&allowed))
+            .is_some_and(|allowed| allowed == candidate)
     })
+}
+
+/// `scheme://host[:port]` for any URL that has a network authority — covers
+/// HTTP(S) and custom app schemes (`tauri://localhost`). Returns `None` for
+/// authority-less targets such as `javascript:` or `mailto:`, which can never
+/// match a configured origin.
+fn origin_string(url: &url::Url) -> Option<String> {
+    let scheme = url.scheme();
+    let host = url.host_str()?;
+    match url.port() {
+        Some(port) => Some(format!("{scheme}://{host}:{port}")),
+        None => Some(format!("{scheme}://{host}")),
+    }
 }
 
 pub(crate) fn redirect_with_status(target: &str, key: &str, value: &str) -> String {
@@ -298,9 +312,25 @@ mod tests {
             sanitize_redirect_target(Some("https://evil.example/steal"), &origins()),
             "/"
         );
-        // wrong scheme is rejected too
+        // authority-less / dangerous schemes are rejected too
         assert_eq!(
             sanitize_redirect_target(Some("javascript:alert(1)"), &origins()),
+            "/"
+        );
+    }
+
+    #[test]
+    fn honors_configured_non_http_app_origin() {
+        // desktop Tauri webview: its `tauri://localhost` origin is a configured
+        // allowed origin, so the callback must return there. Codex review #90.
+        let allowed = vec![HeaderValue::from_static("tauri://localhost")];
+        assert_eq!(
+            sanitize_redirect_target(Some("tauri://localhost/?wiki=dewiki"), &allowed),
+            "tauri://localhost/?wiki=dewiki"
+        );
+        // but a non-listed custom scheme is still rejected
+        assert_eq!(
+            sanitize_redirect_target(Some("tauri://localhost/x"), &origins()),
             "/"
         );
     }

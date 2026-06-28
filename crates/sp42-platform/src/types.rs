@@ -422,7 +422,7 @@ pub struct WikiConfig {
 /// The universal, language-agnostic scoring policy applied to any wiki without a
 /// hand-tuned policy. Its compiled `wiki_id` is the [`DEFAULT_SCORING_POLICY_WIKI_ID`]
 /// sentinel, accepted for any wiki. Single source shared by the authored default
-/// ([`default_scoring_policy_ref`]) and the derived path (`sp42-wiki` `sites.rs`).
+/// (`default_scoring_policy_ref`) and the derived path (`sp42-wiki` `sites.rs`).
 pub const DEFAULT_SCORING_POLICY_REF: &str = "active/default-language-agnostic";
 
 /// The compiled scoring policy `wiki_id` that the universal default carries; the

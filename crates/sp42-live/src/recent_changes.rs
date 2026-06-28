@@ -205,6 +205,16 @@ pub fn parse_recent_changes_response(
     let parsed: RecentChangesEnvelope =
         serde_json::from_slice(&response.body).map_err(RecentChangesError::from)?;
 
+    // Honor an explicit namespace override (e.g. the user checking Talk/User-talk
+    // in the filter) over the config/derived allowlist; fall back to the allowlist
+    // only when there is no override, so the allowlist is a default — not a hard
+    // cap that drops namespaces the user explicitly selected. Mirrors the request
+    // builder's `rcnamespace` choice. Codex review #90.
+    let effective_namespaces = query
+        .namespace_override
+        .as_deref()
+        .unwrap_or(&config.namespace_allowlist);
+
     let mut events = Vec::new();
     for change in parsed.query.recentchanges {
         if !matches!(change.change_type.as_str(), "edit" | "new") {
@@ -216,9 +226,7 @@ pub fn parse_recent_changes_response(
         if !query.include_minor.is_enabled() && change.minor.is_enabled() {
             continue;
         }
-        if !config.namespace_allowlist.is_empty()
-            && !config.namespace_allowlist.contains(&change.namespace)
-        {
+        if !effective_namespaces.is_empty() && !effective_namespaces.contains(&change.namespace) {
             continue;
         }
 
@@ -589,6 +597,39 @@ mod tests {
         assert_eq!(batch.events.len(), 1);
         assert_eq!(batch.events[0].rev_id, 123_456);
         assert_eq!(batch.next_continue.as_deref(), Some("next-token"));
+    }
+
+    #[test]
+    fn explicit_namespace_override_is_honored_over_the_allowlist() {
+        // fixture_wiki_config (frwiki) allowlist is [0,2,4,6,10,14]; a User-talk
+        // (ns 3) change is dropped by default but kept when the user explicitly
+        // selects it via namespace_override — the allowlist is a default, not a
+        // hard cap. Codex review #90.
+        let config = fixture_wiki_config();
+        let body = br#"{"query":{"recentchanges":[
+            {"type":"edit","ns":3,"title":"User talk:Example","user":"192.0.2.1",
+             "timestamp":"2026-03-24T15:42:00Z","bot":false,"minor":false,
+             "revid":222,"old_revid":221,"oldlen":10,"newlen":20}
+        ]}}"#;
+        let response = HttpResponse {
+            status: 200,
+            headers: BTreeMap::new(),
+            body: body.to_vec(),
+        };
+
+        // default: no override → ns 3 dropped by the allowlist
+        let default_query = RecentChangesQuery::initial(25, false);
+        let dropped = parse_recent_changes_response(&config, &response, &default_query)
+            .expect("response should parse");
+        assert_eq!(dropped.events.len(), 0);
+
+        // explicit override including ns 3 → kept
+        let mut override_query = RecentChangesQuery::initial(25, false);
+        override_query.namespace_override = Some(vec![1, 3]);
+        let kept = parse_recent_changes_response(&config, &response, &override_query)
+            .expect("response should parse");
+        assert_eq!(kept.events.len(), 1);
+        assert_eq!(kept.events[0].namespace, 3);
     }
 
     #[test]

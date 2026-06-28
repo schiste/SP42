@@ -104,7 +104,6 @@ fn test_state() -> AppState {
         wiki_registry: test_wiki_registry(),
         wikitext_editor: test_wikitext_editor(),
         next_client_id: Arc::new(AtomicU64::new(1)),
-        next_session_id: Arc::new(AtomicU64::new(1)),
         started_at: Instant::now(),
     }
 }
@@ -1064,7 +1063,6 @@ async fn healthz_reports_ready_when_local_token_is_loaded() {
         wiki_registry: test_wiki_registry(),
         wikitext_editor: test_wikitext_editor(),
         next_client_id: Arc::new(AtomicU64::new(1)),
-        next_session_id: Arc::new(AtomicU64::new(1)),
         started_at: Instant::now(),
     };
 
@@ -1574,7 +1572,6 @@ async fn capability_route_uses_injected_targets() {
         wiki_registry: test_wiki_registry(),
         wikitext_editor: test_wikitext_editor(),
         next_client_id: Arc::new(AtomicU64::new(1)),
-        next_session_id: Arc::new(AtomicU64::new(1)),
         started_at: Instant::now(),
     };
     let router = build_router(state);
@@ -1643,7 +1640,6 @@ async fn live_operator_route_returns_canonical_operator_contract() {
         wiki_registry: test_wiki_registry(),
         wikitext_editor: test_wikitext_editor(),
         next_client_id: Arc::new(AtomicU64::new(1)),
-        next_session_id: Arc::new(AtomicU64::new(1)),
         started_at: Instant::now(),
     };
 
@@ -1735,7 +1731,6 @@ async fn live_operator_route_surfaces_cached_backlog_state() {
         wiki_registry: test_wiki_registry(),
         wikitext_editor: test_wikitext_editor(),
         next_client_id: Arc::new(AtomicU64::new(1)),
-        next_session_id: Arc::new(AtomicU64::new(1)),
         started_at: Instant::now(),
     };
 
@@ -1912,7 +1907,6 @@ async fn logical_storage_document_route_resolves_profile_page() {
         wiki_registry: test_wiki_registry(),
         wikitext_editor: test_wikitext_editor(),
         next_client_id: Arc::new(AtomicU64::new(1)),
-        next_session_id: Arc::new(AtomicU64::new(1)),
         started_at: Instant::now(),
     };
     let current_ms = state.clock.now_ms();
@@ -1996,7 +1990,6 @@ async fn public_storage_document_route_returns_typed_preferences() {
         wiki_registry: test_wiki_registry(),
         wikitext_editor: test_wikitext_editor(),
         next_client_id: Arc::new(AtomicU64::new(1)),
-        next_session_id: Arc::new(AtomicU64::new(1)),
         started_at: Instant::now(),
     };
     let current_ms = state.clock.now_ms();
@@ -2086,7 +2079,6 @@ async fn bootstrap_derives_username_and_scopes_from_validated_token() {
         wiki_registry: test_wiki_registry(),
         wikitext_editor: test_wikitext_editor(),
         next_client_id: Arc::new(AtomicU64::new(1)),
-        next_session_id: Arc::new(AtomicU64::new(1)),
         started_at: Instant::now(),
     };
 

@@ -1,4 +1,4 @@
-use std::{collections::HashMap, sync::atomic::Ordering};
+use std::collections::HashMap;
 
 use axum::{
     Json,
@@ -160,7 +160,7 @@ pub(crate) async fn install_session(
     stored: StoredSession,
     current_ms: i64,
 ) -> String {
-    let session_id = next_session_id(state, current_ms);
+    let session_id = next_session_id();
     let mut sessions = state.sessions.write().await;
     prune_expired_sessions(&mut sessions, current_ms);
     if let Some(prior_session_id) = prior_session_id {
@@ -219,13 +219,21 @@ pub(crate) fn session_cookie_value(headers: &HeaderMap) -> Option<String> {
         })
 }
 
-pub(crate) fn next_session_id(state: &AppState, current_ms: i64) -> String {
-    let counter = state.next_session_id.fetch_add(1, Ordering::Relaxed);
+pub(crate) fn next_session_id() -> String {
+    // CSPRNG session identifier (256 bits). It gates the stored Wikimedia bearer
+    // token, so it must be unguessable — never derive it from time/pid/counter,
+    // which an attacker who can approximate the login time could reconstruct.
+    // Codex review #90 (P1).
+    use crate::runtime_adapters::ServerRng;
+    use sp42_types::Rng as _;
+
+    let mut rng = ServerRng;
     format!(
-        "{:016x}{:016x}{:08x}",
-        u64::try_from(current_ms).unwrap_or(u64::MAX),
-        counter,
-        std::process::id()
+        "{:016x}{:016x}{:016x}{:016x}",
+        rng.next_u64(),
+        rng.next_u64(),
+        rng.next_u64(),
+        rng.next_u64()
     )
 }
 

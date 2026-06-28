@@ -42,7 +42,6 @@ pub(crate) struct AppState {
     pub(crate) wiki_registry: WikiRegistry,
     pub(crate) wikitext_editor: Arc<dyn WikitextEditor>,
     pub(crate) next_client_id: Arc<AtomicU64>,
-    pub(crate) next_session_id: Arc<AtomicU64>,
     pub(crate) started_at: Instant,
 }
 

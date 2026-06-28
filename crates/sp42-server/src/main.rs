@@ -326,7 +326,6 @@ async fn main() -> Result<(), std::io::Error> {
         wiki_registry,
         wikitext_editor: Arc::new(parsoid_editor::ParsoidWikitextEditor::new()),
         next_client_id: Arc::new(AtomicU64::new(1)),
-        next_session_id: Arc::new(AtomicU64::new(1)),
         started_at: Instant::now(),
     };
     spawn_ingestion_supervisors(&state);

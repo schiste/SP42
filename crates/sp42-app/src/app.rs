@@ -28,26 +28,26 @@ pub fn App() -> impl IntoView {
     let (auth, set_auth) = signal(AuthState::Loading);
 
     let refresh = Action::new_local(move |(): &()| async move {
-        let was_loading = matches!(auth.get_untracked(), AuthState::Loading);
         let was_authed =
             matches!(auth.get_untracked(), AuthState::Ready(ref session) if session.authenticated);
         match fetch_auth_session().await {
             Ok(session) => {
-                // Only swap state when the authenticated status actually changes
-                // (or on the very first probe). A periodic re-check that always
-                // set the signal would remount — and reset — the workspace on
-                // every tab focus. Codex review #90.
-                if was_loading || session.authenticated != was_authed {
+                // Re-render the gate whenever we're unauthenticated — the
+                // login-gate metadata (oauth_client_ready / local_token_available /
+                // route paths) can change after local setup or a server restart —
+                // and on the first transition into authenticated. Skip redundant
+                // updates only while staying authenticated, so the workspace isn't
+                // remounted (and reset) on every periodic probe. Codex review #90.
+                if !session.authenticated || !was_authed {
                     set_auth.set(AuthState::Ready(session));
                 }
             }
-            // On the first probe a failed request is treated as anonymous so the
-            // gate is shown rather than trapping the user on a spinner. On a later
-            // re-check a transient network error is ignored: don't log an
-            // authenticated user out over a blip; only a definitive
-            // `authenticated == false` response above re-gates.
+            // A failed probe re-gates only from the initial spinner; a transient
+            // network blip on a later re-check is ignored rather than logging an
+            // authenticated user out. /auth/session itself returns 200 with
+            // `authenticated:false` for an expired session, handled above.
             Err(_) => {
-                if was_loading {
+                if matches!(auth.get_untracked(), AuthState::Loading) {
                     set_auth.set(AuthState::Ready(AuthSession::default()));
                 }
             }
@@ -66,12 +66,15 @@ pub fn App() -> impl IntoView {
             // stranding the user in a stale UI until a manual reload. Codex
             // review #90.
             register_visibility_recheck(refresh);
-            // Single re-gate authority: any API call that returns 401 drops the
-            // workspace back to the login gate, regardless of which call detected
-            // the expired session. The per-layer cookie/session/token timers are
-            // now belt-and-suspenders, not the load-bearing trigger. Codex review #90.
+            // Single re-gate authority: any API call that returns 401 re-fetches
+            // the real /auth/session and re-renders the gate, regardless of which
+            // call detected the expired session. Re-fetching (rather than
+            // synthesizing a default) preserves the server's gate metadata, so the
+            // user sees the correct Wikimedia-login / setup state, not a stale
+            // "not configured". The per-layer cookie/session/token timers are now
+            // belt-and-suspenders, not the load-bearing trigger. Codex review #90.
             crate::platform::http::set_unauthorized_handler(move || {
-                set_auth.set(AuthState::Ready(AuthSession::default()));
+                refresh.run(());
             });
         }
         true

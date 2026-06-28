@@ -309,7 +309,7 @@ pub(crate) async fn post_bootstrap_session(
     };
 
     let current_ms = state.clock.now_ms();
-    let session_id = next_session_id(&state, current_ms);
+    let session_id = next_session_id();
     let stored = StoredSession {
         username,
         scopes: effective_session_scopes(&capabilities),

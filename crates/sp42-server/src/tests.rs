@@ -933,18 +933,40 @@ async fn plain_http_client_caps_chunked_response_without_content_length() {
     );
 }
 
-#[test]
-fn vps_session_cookie_is_secure() {
+fn session_cookie_for_mode(mode: DeploymentMode) -> String {
     let mut state = test_state();
-    state.deployment = test_deployment_for_mode(DeploymentMode::Vps);
-    let cookie = runtime_session_cookie_header(&state, "session-cookie")
+    state.deployment = test_deployment_for_mode(mode);
+    runtime_session_cookie_header(&state, "session-cookie")
         .expect("session cookie header should build")
         .to_str()
         .expect("session cookie header should be text")
-        .to_string();
+        .to_string()
+}
 
-    assert!(cookie.contains("; Secure"));
-    assert!(cookie.contains("SameSite=Lax"));
+#[test]
+fn vps_session_cookie_is_cross_site_and_secure() {
+    // cross-site split deployments need SameSite=None; Secure so the cookie is
+    // sent on credentialed cross-site fetches after OAuth. Codex review #90.
+    let cookie = session_cookie_for_mode(DeploymentMode::Vps);
+    assert!(cookie.contains("SameSite=None"), "got: {cookie}");
+    assert!(cookie.contains("; Secure"), "got: {cookie}");
+}
+
+#[test]
+fn desktop_session_cookie_is_cross_site_and_secure() {
+    // tauri://localhost webview → loopback sidecar is cross-site too.
+    let cookie = session_cookie_for_mode(DeploymentMode::Desktop);
+    assert!(cookie.contains("SameSite=None"), "got: {cookie}");
+    assert!(cookie.contains("; Secure"), "got: {cookie}");
+}
+
+#[test]
+fn local_session_cookie_is_lax_without_secure() {
+    // localhost across ports is same-site, so Lax works and no Secure is needed
+    // (plain http dev).
+    let cookie = session_cookie_for_mode(DeploymentMode::Local);
+    assert!(cookie.contains("SameSite=Lax"), "got: {cookie}");
+    assert!(!cookie.contains("Secure"), "got: {cookie}");
 }
 
 #[tokio::test]

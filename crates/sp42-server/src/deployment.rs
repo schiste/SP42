@@ -36,6 +36,20 @@ impl DeploymentMode {
     pub(crate) const fn uses_secure_cookies(self) -> bool {
         matches!(self, Self::Vps)
     }
+
+    /// The session cookie `SameSite` policy. Cross-site deployments (a different
+    /// site frontend/API pair under `vps`, or the desktop `tauri://localhost` →
+    /// loopback sidecar) need `None` so the browser sends the cookie on
+    /// credentialed cross-site fetches; `Lax` is dropped on those. `local` is
+    /// same-site (`localhost` across ports), so `Lax` is kept there. `None` is
+    /// only honored by browsers alongside `Secure` (see `session_cookie_header`).
+    /// Codex review #90.
+    pub(crate) const fn session_cookie_same_site(self) -> &'static str {
+        match self {
+            Self::Local => "Lax",
+            Self::Vps | Self::Desktop => "None",
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

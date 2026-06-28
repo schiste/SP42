@@ -240,13 +240,17 @@ fn session_cookie_header_value(
     session_id: &str,
     max_age_seconds: i64,
 ) -> Option<HeaderValue> {
-    let secure = if state.deployment.mode.uses_secure_cookies() {
+    let same_site = state.deployment.mode.session_cookie_same_site();
+    // Browsers only honor `SameSite=None` when it is paired with `Secure`, so
+    // force `Secure` for the cross-site modes regardless of `uses_secure_cookies`
+    // (loopback/localhost is a secure context in the webview). Codex review #90.
+    let secure = if same_site == "None" || state.deployment.mode.uses_secure_cookies() {
         "; Secure"
     } else {
         ""
     };
     HeaderValue::from_str(&format!(
-        "{SESSION_COOKIE_NAME}={session_id}; HttpOnly; SameSite=Lax; Path=/; Max-Age={max_age_seconds}{secure}"
+        "{SESSION_COOKIE_NAME}={session_id}; HttpOnly; SameSite={same_site}; Path=/; Max-Age={max_age_seconds}{secure}"
     ))
     .ok()
 }

@@ -104,7 +104,7 @@ fn allowed_origins_from_env(
             .map(str::trim)
             .filter(|value| !value.is_empty())
         {
-            origins.push(origin_header_value("SP42_ALLOWED_ORIGINS", origin)?);
+            origins.push(allowed_origin_header_value("SP42_ALLOWED_ORIGINS", origin)?);
         }
     }
 
@@ -144,6 +144,26 @@ fn origin_header_value(label: &str, value: &str) -> Result<HeaderValue, String> 
     header_value(&url.origin().ascii_serialization())
 }
 
+/// Canonicalize a configured allowed origin to `scheme://host[:port]`. Unlike
+/// `origin_header_value` (for the public base URL, which must be HTTP(S)), this
+/// accepts custom app schemes such as `tauri://localhost` so the desktop
+/// sidecar's `SP42_ALLOWED_ORIGINS` loads instead of failing startup — the
+/// default desktop allow list already trusts that origin, and it mirrors the
+/// non-HTTP support in the redirect sanitizer. Codex review #90.
+fn allowed_origin_header_value(label: &str, value: &str) -> Result<HeaderValue, String> {
+    let url = Url::parse(value)
+        .map_err(|error| format!("{label} contains invalid URL `{value}`: {error}"))?;
+    let host = url
+        .host_str()
+        .ok_or_else(|| format!("{label} origin `{value}` has no host"))?;
+    let scheme = url.scheme();
+    let origin = match url.port() {
+        Some(port) => format!("{scheme}://{host}:{port}"),
+        None => format!("{scheme}://{host}"),
+    };
+    header_value(&origin)
+}
+
 const LOCAL_ALLOWED_ORIGINS: &[&str] = &[
     "http://127.0.0.1:4173",
     "http://localhost:4173",
@@ -161,7 +181,23 @@ const DESKTOP_ALLOWED_ORIGINS: &[&str] = &[
 
 #[cfg(test)]
 mod tests {
-    use super::{DeploymentMode, allowed_origins_from_env};
+    use super::{DeploymentMode, allowed_origin_header_value, allowed_origins_from_env};
+
+    #[test]
+    fn allowed_origin_accepts_custom_app_scheme() {
+        // desktop sidecar sets SP42_ALLOWED_ORIGINS=tauri://localhost,...; the
+        // env parser must accept that scheme or the desktop app fails to boot.
+        // Codex review #90.
+        let origin = allowed_origin_header_value("SP42_ALLOWED_ORIGINS", "tauri://localhost")
+            .expect("custom app scheme should parse");
+        assert_eq!(origin, "tauri://localhost");
+        // http(s) still canonicalizes as before
+        let http = allowed_origin_header_value("SP42_ALLOWED_ORIGINS", "http://tauri.localhost")
+            .expect("http origin should parse");
+        assert_eq!(http, "http://tauri.localhost");
+        // authority-less values are still rejected
+        assert!(allowed_origin_header_value("SP42_ALLOWED_ORIGINS", "not-a-url").is_err());
+    }
 
     #[test]
     fn deployment_mode_labels_are_stable() {

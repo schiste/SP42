@@ -64,12 +64,15 @@ fn query_param(search: &str, key: &str) -> Option<String> {
 }
 
 /// Whether the server is running in `local` deployment mode (from runtime
-/// config). The local-setup window only makes sense — and the server only
-/// permits credential writes — in local mode. Defaults to `true` when the mode
-/// is unknown (local dev serves the runtime config, so this is reliable there).
+/// config). The local-setup window and dev-token control only make sense — and
+/// the server only permits the corresponding `/dev/auth/*` routes — in local
+/// mode. Fails closed: an unknown/absent `deploymentMode` (e.g. a split or static
+/// frontend that doesn't load `/runtime-config.js` from the API origin) is
+/// treated as NON-local, so the gate never shows controls a vps/desktop server
+/// would reject. Only an explicit `local` enables them. Codex review #90.
 #[must_use]
 pub fn is_local_deployment() -> bool {
-    deployment_mode().is_none_or(|mode| mode == "local")
+    deployment_mode().as_deref() == Some("local")
 }
 
 #[cfg(target_arch = "wasm32")]

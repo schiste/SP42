@@ -656,6 +656,25 @@ async fn bootstrap_session_is_disabled_outside_local_mode() {
 }
 
 #[tokio::test]
+async fn operator_live_returns_401_without_a_session() {
+    // With no session token, /operator/live must return 401 (not the assembly's
+    // generic 502) so the wasm auth refresh re-gates to login. Codex review #90.
+    let router = build_router(test_state());
+    let response = router
+        .oneshot(
+            Request::builder()
+                .method(Method::GET)
+                .uri("/operator/live/frwiki")
+                .body(Body::empty())
+                .expect("request should build"),
+        )
+        .await
+        .expect("request should complete");
+
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
 async fn bare_url_proposals_route_is_registered_and_gated() {
     let router = build_router(test_state());
     let response = router

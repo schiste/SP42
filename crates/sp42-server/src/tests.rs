@@ -969,6 +969,17 @@ fn local_session_cookie_is_lax_without_secure() {
     assert!(!cookie.contains("Secure"), "got: {cookie}");
 }
 
+#[test]
+fn session_cookie_max_age_covers_absolute_timeout() {
+    // The cookie must outlive the sliding idle window so active users past 30 min
+    // are not bounced; it tracks the 8h absolute cap instead. Codex review #90.
+    let cookie = session_cookie_for_mode(DeploymentMode::Local);
+    assert!(
+        cookie.contains(&format!("Max-Age={}", 8 * 60 * 60)),
+        "got: {cookie}"
+    );
+}
+
 #[tokio::test]
 async fn healthz_route_is_available() {
     let router = build_router(test_state());

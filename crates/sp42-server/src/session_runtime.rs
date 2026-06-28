@@ -18,7 +18,13 @@ pub(crate) const SESSION_COOKIE_NAME: &str = "sp42_dev_session";
 pub(crate) use sp42_core::routes::CSRF_HEADER_NAME;
 pub(crate) const SESSION_IDLE_TIMEOUT_MS: i64 = 30 * 60 * 1000;
 const SESSION_ABSOLUTE_TIMEOUT_MS: i64 = 8 * 60 * 60 * 1000;
-const SESSION_COOKIE_MAX_AGE_SECONDS: i64 = SESSION_IDLE_TIMEOUT_MS / 1000;
+// The cookie must live as long as the session possibly can — the absolute
+// timeout, not the (sliding) idle timeout. Pinning it to the idle window expired
+// the browser cookie 30 min after login even for an active user whose session
+// the server keeps alive via touches, bouncing them to login. The server still
+// enforces the finer sliding-idle policy; an idle-expired session just yields a
+// cookie the server rejects. Codex review #90.
+const SESSION_COOKIE_MAX_AGE_SECONDS: i64 = SESSION_ABSOLUTE_TIMEOUT_MS / 1000;
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub(crate) struct OAuthSessionView {

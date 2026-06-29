@@ -68,10 +68,12 @@ leaked past the token layer and should be routed through a variable instead.
 - **Dark default, light opt-in.** Dark stays SP42's default; light is a toggle
   in the workspace nav. The choice persists in `localStorage` (`sp42-theme`) and
   is applied as `data-theme` on the document root by the
-  [`theme`](../../crates/sp42-ui/src/theme.rs) module. A small inline script in
-  [`index.html`](../../index.html) applies the saved theme before first paint to
-  avoid a flash. Codex ships both modes from one token source, so supporting both
-  was nearly free.
+  [`theme`](../../crates/sp42-ui/src/theme.rs) module. Shells restore theme
+  state with `restore_theme()` and render the shared `ThemeToggle`; label,
+  title, click handling, and visual classes stay inside `sp42-ui`. A small
+  inline script in [`index.html`](../../index.html) applies the saved theme
+  before first paint to avoid a flash. Codex ships both modes from one token
+  source, so supporting both was nearly free.
 - **Codex visual conventions:** 2px corner radius, the progressive/destructive/
   success/warning color roles, and CSS-only button/badge/field styling.
 - **No values bypass the token layer.** Score tiers, status-badge tones, and

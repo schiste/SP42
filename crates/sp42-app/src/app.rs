@@ -296,12 +296,9 @@ fn LocalSetupPanel() -> impl IntoView {
 /// The authenticated workspace (the former `App` body) plus a session header.
 #[component]
 fn Workspace(session: AuthSession, refresh: Callback<()>) -> impl IntoView {
-    use sp42_ui::theme::{apply_theme, stored_theme};
+    use sp42_ui::theme::{ThemeToggle, restore_theme};
     let (active_view, set_active_view) = signal(initial_workspace_view());
-    let (theme, set_theme) = signal(stored_theme());
-
-    // Reassert the (HTML-restored) theme and re-persist whenever it changes.
-    Effect::new(move |_| apply_theme(theme.get()));
+    let theme = restore_theme();
 
     let show_patrol = move |_| {
         set_workspace_hash(WorkspaceView::Patrol);
@@ -315,8 +312,6 @@ fn Workspace(session: AuthSession, refresh: Callback<()>) -> impl IntoView {
         set_workspace_hash(WorkspaceView::Citation);
         set_active_view.set(WorkspaceView::Citation);
     };
-    let toggle_theme = move |_| set_theme.update(|theme| *theme = theme.toggled());
-
     let username = session
         .username
         .clone()
@@ -413,17 +408,7 @@ fn Workspace(session: AuthSession, refresh: Callback<()>) -> impl IntoView {
                         "Log out"
                     </button>
                 </div>
-                <button
-                    type="button"
-                    class="workspace-tab workspace-theme-toggle"
-                    on:click=toggle_theme
-                    aria-label=move || {
-                        format!("Switch to {} theme", theme.get().other_label().to_lowercase())
-                    }
-                    title=move || format!("Switch to {} theme", theme.get().other_label())
-                >
-                    {move || theme.get().other_label()}
-                </button>
+                {ThemeToggle(theme)}
             </nav>
             <main class="workspace-body">
                 {move || match active_view.get() {

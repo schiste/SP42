@@ -5,6 +5,8 @@
 //! Non-browser builds compile this API as a deterministic no-op so `sp42-ui`
 //! remains a normal workspace crate for host checks.
 
+use leptos::prelude::*;
+
 /// Browser `localStorage` key used for the persisted design-system theme.
 pub const THEME_STORAGE_KEY: &str = "sp42-theme";
 
@@ -41,7 +43,77 @@ impl Theme {
             Self::Light => "Dark",
         }
     }
+
+    /// Accessible label for the theme toggle.
+    #[must_use]
+    pub const fn toggle_aria_label(self) -> &'static str {
+        match self {
+            Self::Dark => "Switch to light theme",
+            Self::Light => "Switch to dark theme",
+        }
+    }
+
+    /// Tooltip/title for the theme toggle.
+    #[must_use]
+    pub const fn toggle_title(self) -> &'static str {
+        match self {
+            Self::Dark => "Switch to Light theme",
+            Self::Light => "Switch to Dark theme",
+        }
+    }
 }
+
+/// Reactive theme state restored from browser storage.
+#[derive(Clone, Copy)]
+pub struct ThemeState {
+    current: ReadSignal<Theme>,
+    set_current: WriteSignal<Theme>,
+}
+
+impl ThemeState {
+    /// Current theme signal.
+    #[must_use]
+    pub const fn current(self) -> ReadSignal<Theme> {
+        self.current
+    }
+
+    /// Switch to the opposite theme.
+    pub fn toggle(self) {
+        self.set_current
+            .update(|current| *current = current.toggled());
+    }
+}
+
+/// Restore persisted theme state and keep the document root synchronized.
+#[must_use]
+pub fn restore_theme() -> ThemeState {
+    let (current, set_current) = signal(stored_theme());
+
+    Effect::new(move |_| apply_theme(current.get()));
+
+    ThemeState {
+        current,
+        set_current,
+    }
+}
+
+/// Shared design-system theme toggle.
+#[must_use]
+pub fn theme_toggle(state: ThemeState) -> impl IntoView {
+    view! {
+        <button
+            type="button"
+            class="workspace-tab workspace-theme-toggle"
+            on:click=move |_| state.toggle()
+            aria-label=move || state.current().get().toggle_aria_label()
+            title=move || state.current().get().toggle_title()
+        >
+            {move || state.current().get().other_label()}
+        </button>
+    }
+}
+
+pub use theme_toggle as ThemeToggle;
 
 /// Theme saved from a previous browser session, or [`Theme::Dark`] by default.
 #[must_use]
@@ -104,6 +176,14 @@ mod tests {
     fn other_label_names_the_target_theme() {
         assert_eq!(Theme::Dark.other_label(), "Light");
         assert_eq!(Theme::Light.other_label(), "Dark");
+    }
+
+    #[test]
+    fn toggle_labels_name_the_target_theme() {
+        assert_eq!(Theme::Dark.toggle_aria_label(), "Switch to light theme");
+        assert_eq!(Theme::Light.toggle_aria_label(), "Switch to dark theme");
+        assert_eq!(Theme::Dark.toggle_title(), "Switch to Light theme");
+        assert_eq!(Theme::Light.toggle_title(), "Switch to Dark theme");
     }
 
     #[test]

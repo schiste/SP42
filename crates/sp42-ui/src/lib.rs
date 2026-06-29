@@ -18,4 +18,6 @@ pub const DESIGN_SYSTEM_CSS: &str = include_str!("../static/style.css");
 /// Repository-relative path to the design-system stylesheet.
 pub const DESIGN_SYSTEM_CSS_PATH: &str = "crates/sp42-ui/static/style.css";
 
-pub use theme::{THEME_STORAGE_KEY, Theme, apply_theme, stored_theme};
+pub use theme::{
+    THEME_STORAGE_KEY, Theme, ThemeState, ThemeToggle, apply_theme, restore_theme, stored_theme,
+};

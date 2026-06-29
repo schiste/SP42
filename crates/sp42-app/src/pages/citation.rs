@@ -13,11 +13,11 @@ use crate::components::style::wiki_base_url;
 use crate::components::{StatusBadge, StatusTone};
 use crate::platform::auth::{bootstrap_dev_auth_session, fetch_dev_auth_session_status};
 use crate::platform::citation::fetch_page_report;
-use crate::platform::config::configured_default_wiki_id;
+use crate::platform::config::{is_local_deployment, selected_wiki_id};
 
 #[component]
 pub fn CitationSurface() -> impl IntoView {
-    let (wiki_id, set_wiki_id) = signal(configured_default_wiki_id());
+    let (wiki_id, set_wiki_id) = signal(selected_wiki_id());
     let (title, set_title) = signal(String::new());
     let (rev, set_rev) = signal(String::new());
     let (report, set_report) = signal(None::<PageVerificationReport>);
@@ -62,39 +62,40 @@ pub fn CitationSurface() -> impl IntoView {
             set_loading.set(true);
             set_load_error.set(None);
 
-            // The verify-page route is session+CSRF gated, so ensure a session
-            // before calling it — Citations works standalone (no dependency on
-            // having visited Patrol first) and survives the ~30-min expiry.
-            // Prefer an existing session: in desktop/VPS mode the session is a
-            // real OAuth session and the local dev-token bootstrap is rejected, so
-            // only fall back to bootstrap when no session is active. Either path
-            // refreshes the CSRF token that post_json_bytes attaches.
-            let have_session = matches!(
-                fetch_dev_auth_session_status().await,
-                Ok(status) if status.authenticated
-            );
-            if !have_session {
-                let bootstrap = DevAuthBootstrapRequest {
-                    username: String::new(),
-                    scopes: Vec::new(),
-                    expires_at_ms: None,
-                };
-                match bootstrap_dev_auth_session(&bootstrap).await {
-                    Ok(status) if status.authenticated => {}
-                    Ok(_) => {
-                        set_report.set(None);
-                        set_load_error.set(Some(
-                            "Could not start an authenticated session — check the local Wikimedia token (.env.wikimedia.local)."
-                                .to_string(),
-                        ));
-                        set_loading.set(false);
-                        return;
-                    }
-                    Err(error) => {
-                        set_report.set(None);
-                        set_load_error.set(Some(format!("Auth bootstrap failed: {error}")));
-                        set_loading.set(false);
-                        return;
+            // The verify-page route is session+CSRF gated. Ensuring a session via
+            // the local dev-token bootstrap is a LOCAL-mode convenience only — in
+            // vps/desktop that route is forbidden (403, not 401), so the global
+            // 401 handler would never re-gate. Outside local mode we skip the
+            // bootstrap entirely and let the verify call below 401, which drops the
+            // user back to the login gate. Codex review #90.
+            if is_local_deployment() {
+                let have_session = matches!(
+                    fetch_dev_auth_session_status().await,
+                    Ok(status) if status.authenticated
+                );
+                if !have_session {
+                    let bootstrap = DevAuthBootstrapRequest {
+                        username: String::new(),
+                        scopes: Vec::new(),
+                        expires_at_ms: None,
+                    };
+                    match bootstrap_dev_auth_session(&bootstrap).await {
+                        Ok(status) if status.authenticated => {}
+                        Ok(_) => {
+                            set_report.set(None);
+                            set_load_error.set(Some(
+                                "Could not start an authenticated session — check the local Wikimedia token (.env.wikimedia.local)."
+                                    .to_string(),
+                            ));
+                            set_loading.set(false);
+                            return;
+                        }
+                        Err(error) => {
+                            set_report.set(None);
+                            set_load_error.set(Some(format!("Auth bootstrap failed: {error}")));
+                            set_loading.set(false);
+                            return;
+                        }
                     }
                 }
             }

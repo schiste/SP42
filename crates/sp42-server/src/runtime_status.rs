@@ -175,7 +175,7 @@ pub(crate) async fn server_readiness(state: &AppState, headers: &HeaderMap) -> S
     let capability_probe = CapabilityProbeHint {
         wiki_id: default_wiki_id.to_string(),
         endpoint: route_contracts::dev_auth_capabilities_path(default_wiki_id),
-        available: state.local_oauth.access_token().is_some(),
+        available: state.shared_local_access_token().is_some(),
     };
     let capability_cache = capability_cache_status(state, default_wiki_id).await;
     let session_count = session_count(state).await;

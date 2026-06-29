@@ -1,3 +1,4 @@
+use serde::Deserialize;
 use serde_json::Value;
 use sp42_core::{
     ActionExecutionHistoryReport, ActionExecutionStatusReport, DEV_AUTH_ACTION_HISTORY_PATH,
@@ -129,6 +130,99 @@ fn configured_redirect_uri() -> String {
     option_env!("SP42_WIKIMEDIA_OAUTH_CALLBACK_URL")
         .unwrap_or("http://localhost:4173/oauth/callback")
         .to_string()
+}
+
+/// Browser view of the real Wikimedia OAuth session (`GET /auth/session`,
+/// server's `OAuthSessionView`). `FlagState` fields serialize as plain bools.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Default)]
+pub struct AuthSession {
+    #[serde(default)]
+    pub authenticated: bool,
+    #[serde(default)]
+    pub username: Option<String>,
+    #[serde(default)]
+    pub scopes: Vec<String>,
+    #[serde(default)]
+    pub csrf_token: Option<String>,
+    #[serde(default)]
+    pub oauth_client_ready: bool,
+    #[serde(default)]
+    pub local_token_available: bool,
+    #[serde(default = "default_login_path")]
+    pub login_path: String,
+    #[serde(default = "default_logout_path")]
+    pub logout_path: String,
+}
+
+fn default_login_path() -> String {
+    routes::AUTH_LOGIN_PATH.to_string()
+}
+
+fn default_logout_path() -> String {
+    routes::AUTH_LOGOUT_PATH.to_string()
+}
+
+/// Fetch the current Wikimedia OAuth session and capture its CSRF token.
+#[cfg(target_arch = "wasm32")]
+pub async fn fetch_auth_session() -> Result<AuthSession, String> {
+    let bytes = get_bytes(&api_url(routes::AUTH_SESSION_PATH), "fetch auth session").await?;
+    let session: AuthSession = serde_json::from_slice(&bytes).map_err(|error| error.to_string())?;
+    remember_csrf_token(session.csrf_token.as_deref());
+    Ok(session)
+}
+
+/// Begin the Wikimedia OAuth login by navigating the browser to the server's
+/// `/auth/login` endpoint, which redirects to meta.wikimedia.org. `next` is the
+/// in-app location to return to after the callback completes.
+#[cfg(target_arch = "wasm32")]
+pub fn begin_login(login_path: &str, next: &str) {
+    let encoded = String::from(js_sys::encode_uri_component(next));
+    let target = api_url(&format!("{login_path}?next={encoded}"));
+    if let Some(window) = globals::browser_window() {
+        let _ = window.location().set_href(&target);
+    }
+}
+
+/// Local-dev onboarding: write the entered Wikimedia credentials into
+/// `.env.wikimedia.local` via the local-only server endpoint. Returns the file
+/// name written. Empty fields are ignored server-side; takes effect on restart.
+#[cfg(target_arch = "wasm32")]
+pub async fn save_local_credentials(
+    access_token: &str,
+    client_application_key: &str,
+    client_application_secret: &str,
+) -> Result<String, String> {
+    let body = serde_json::json!({
+        "access_token": access_token,
+        "client_application_key": client_application_key,
+        "client_application_secret": client_application_secret,
+    })
+    .to_string();
+    let bytes = post_json_bytes(
+        &api_url(routes::DEV_AUTH_LOCAL_CREDENTIALS_PATH),
+        body,
+        "save local Wikimedia credentials",
+    )
+    .await?;
+    let value: Value = serde_json::from_slice(&bytes).map_err(|error| error.to_string())?;
+    Ok(value
+        .get("file_name")
+        .and_then(Value::as_str)
+        .unwrap_or(".env.wikimedia.local")
+        .to_string())
+}
+
+/// Log out of the Wikimedia OAuth session (CSRF-guarded) and drop the token.
+#[cfg(target_arch = "wasm32")]
+pub async fn logout() -> Result<(), String> {
+    post_json_bytes(
+        &api_url(routes::AUTH_LOGOUT_PATH),
+        "{}".to_string(),
+        "log out of the Wikimedia session",
+    )
+    .await?;
+    forget_csrf_token();
+    Ok(())
 }
 
 #[cfg(target_arch = "wasm32")]

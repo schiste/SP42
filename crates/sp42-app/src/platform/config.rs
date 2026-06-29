@@ -12,6 +12,121 @@ pub fn configured_default_wiki_id() -> String {
         .unwrap_or_else(|| FALLBACK_DEFAULT_WIKI_ID.to_string())
 }
 
+/// The wiki the workspace is pointed at: a `?wiki=<dbname>` URL override (set by
+/// the wiki picker) when present, otherwise the configured default. Lets SP42
+/// target any Wikimedia project the server can resolve (ADR-0014).
+#[must_use]
+pub fn selected_wiki_id() -> String {
+    wiki_override_from_query().unwrap_or_else(configured_default_wiki_id)
+}
+
+/// Point the workspace at `wiki_id` by setting the `?wiki=` override and
+/// reloading (the patrol surface binds its wiki at construction).
+#[cfg(target_arch = "wasm32")]
+pub fn request_wiki_switch(wiki_id: &str) {
+    let trimmed = wiki_id.trim();
+    if trimmed.is_empty() {
+        return;
+    }
+    if let Some(window) = web_sys::window() {
+        let encoded = String::from(js_sys::encode_uri_component(trimmed));
+        // Preserve the view hash (#view=…); replace the query.
+        let hash = window.location().hash().unwrap_or_default();
+        let _ = window
+            .location()
+            .set_href(&format!("/?wiki={encoded}{hash}"));
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub fn request_wiki_switch(_wiki_id: &str) {}
+
+#[cfg(target_arch = "wasm32")]
+fn wiki_override_from_query() -> Option<String> {
+    let search = web_sys::window()?.location().search().ok()?;
+    query_param(&search, "wiki")
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn wiki_override_from_query() -> Option<String> {
+    None
+}
+
+fn query_param(search: &str, key: &str) -> Option<String> {
+    let search = search.strip_prefix('?').unwrap_or(search);
+    for pair in search.split('&') {
+        let mut parts = pair.splitn(2, '=');
+        if parts.next() == Some(key) {
+            return non_empty_string(parts.next().unwrap_or(""));
+        }
+    }
+    None
+}
+
+/// Whether the server is running in `local` deployment mode (from runtime
+/// config). The local-setup window and dev-token control only make sense — and
+/// the server only permits the corresponding `/dev/auth/*` routes — in local
+/// mode. Fails closed: an unknown/absent `deploymentMode` (e.g. a split or static
+/// frontend that doesn't load `/runtime-config.js` from the API origin) is
+/// treated as NON-local, so the gate never shows controls a vps/desktop server
+/// would reject. Only an explicit `local` enables them. Codex review #90.
+#[must_use]
+pub fn is_local_deployment() -> bool {
+    deployment_mode().as_deref() == Some("local")
+}
+
+#[cfg(target_arch = "wasm32")]
+fn deployment_mode() -> Option<String> {
+    runtime_config_string("deploymentMode")
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn deployment_mode() -> Option<String> {
+    None
+}
+
+/// Whether the API is served from a different origin than the frontend shell
+/// (e.g. `apiBaseUrl` / `SP42_API_BASE_URL` points at another host). In that
+/// case the OAuth callback runs on the API origin, so the login `next` must
+/// carry an absolute frontend-origin URL to return the user to the SPA rather
+/// than the backend. ADR-0014 / Codex review #90.
+#[must_use]
+pub fn is_split_origin_deployment() -> bool {
+    let base = configured_api_base_url();
+    if base.is_empty() {
+        return false;
+    }
+    // Same origin when the configured API base resolves to the current frontend
+    // origin; a different (cross-origin) base means a split deployment. Compare
+    // parsed scheme://host[:port] origins — a prefix check would misclassify
+    // e.g. :4173 vs :41730 or app.example.org vs app.example.org.evil. Codex #90.
+    match frontend_origin() {
+        // Shared origin primitive (`sp42_core::origins_match`) — never a string
+        // prefix check. ADR-0013 / Codex review #90.
+        Some(origin) => !sp42_core::origins_match(&base, &origin),
+        // Frontend origin unknown: treat as split so `next` carries an absolute
+        // origin; the server still validates it against its allow list.
+        None => true,
+    }
+}
+
+/// The current frontend shell origin (`scheme://host[:port]`), if available.
+#[cfg(target_arch = "wasm32")]
+#[must_use]
+pub fn frontend_origin() -> Option<String> {
+    web_sys::window()?
+        .location()
+        .origin()
+        .ok()
+        .and_then(|origin| non_empty_string(&origin))
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[must_use]
+pub fn frontend_origin() -> Option<String> {
+    None
+}
+
 #[must_use]
 pub fn configured_api_base_url() -> String {
     runtime_api_base_url()
@@ -114,6 +229,8 @@ fn runtime_meta_content(name: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::{configured_default_wiki_id, join_base_and_path, normalize_base_url};
+
+    // origin parsing/comparison is now tested in sp42_platform::origin.
 
     #[test]
     fn joins_same_origin_paths() {

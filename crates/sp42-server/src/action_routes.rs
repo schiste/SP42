@@ -344,7 +344,7 @@ async fn execute_tag_citation_needed_action(
             retryable: false,
         });
     }
-    let template = &config.templates.citation_needed;
+    let template = citation_needed_template(config)?;
     let date = current_french_date();
     let page_text = crate::fetch_page_wikitext(client, config, &title).await?;
     let updated_text = apply_citation_template(&page_text, &selected_text, template, &date)?;
@@ -485,6 +485,25 @@ pub(crate) fn action_error_from_editor(error: &WikitextEditorError) -> ActionErr
         http_status,
         retryable,
     }
+}
+
+/// The configured "citation needed" template for `config`, or a refusal. Derived
+/// and unconfigured wikis have no template, so tagging refuses rather than
+/// inserting a wrong-language one — mirroring `bare_url_template` (#91).
+fn citation_needed_template(config: &sp42_core::WikiConfig) -> Result<&str, ActionError> {
+    config
+        .templates
+        .citation_needed
+        .as_deref()
+        .ok_or_else(|| ActionError::Execution {
+            message: format!(
+                "citation-needed tagging is not configured for wiki {}",
+                config.wiki_id
+            ),
+            code: Some("citation-needed-not-enabled".to_string()),
+            http_status: Some(400),
+            retryable: false,
+        })
 }
 
 fn apply_citation_template(
@@ -977,8 +996,29 @@ fn action_error_message(body: &Json<serde_json::Value>) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{action_feedback_for_entry, apply_citation_template};
+    use super::{action_feedback_for_entry, apply_citation_template, citation_needed_template};
     use sp42_core::{ActionError, ActionExecutionLogEntry, SessionActionKind};
+
+    #[test]
+    fn citation_needed_template_refuses_when_unconfigured() {
+        // a derived wiki has no citation template (#91)
+        let config = sp42_wiki::derive_wiki_config("dewiki").expect("dewiki should derive");
+        let ActionError::Execution {
+            code, http_status, ..
+        } = citation_needed_template(&config).expect_err("derived wiki has no template");
+        assert_eq!(code.as_deref(), Some("citation-needed-not-enabled"));
+        assert_eq!(http_status, Some(400));
+    }
+
+    #[test]
+    fn citation_needed_template_returns_configured_value() {
+        let mut config = sp42_wiki::derive_wiki_config("dewiki").expect("dewiki should derive");
+        config.templates.citation_needed = Some("Belege fehlen".to_string());
+        assert_eq!(
+            citation_needed_template(&config).expect("configured template"),
+            "Belege fehlen"
+        );
+    }
 
     #[test]
     fn action_feedback_includes_rationale_summary() {

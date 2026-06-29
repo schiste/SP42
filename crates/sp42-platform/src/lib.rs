@@ -44,6 +44,7 @@ pub mod errors;
 pub mod liftwing;
 pub mod media_diff;
 pub mod oauth;
+pub mod origin;
 pub mod priority_queue;
 pub mod public_documents;
 pub mod queue_builder;
@@ -112,6 +113,7 @@ pub use oauth::{
     generate_oauth_state, generate_pkce_verifier, parse_callback_query, prepare_oauth_launch,
     prepare_token_exchange_from_callback, validate_code_verifier,
 };
+pub use origin::{origin_of, origin_of_url, origins_match};
 pub use priority_queue::{PriorityQueue, QueueEntry};
 pub use public_documents::{
     PublicAuditLedgerDocument, PublicAuditLedgerEntry, PublicAuditLedgerReasoning,
@@ -151,7 +153,8 @@ pub use traits::{
     ReplayEventSource, Rng, SequenceRng, Storage, StubHttpClient, SystemClock, WebSocket,
 };
 pub use types::{
-    Action, CompositeScore, EditEvent, EditorIdentity, FlagState, HttpMethod, HttpRequest,
+    Action, CompositeScore, DEFAULT_PATROL_NAMESPACES, DEFAULT_SCORING_POLICY_REF,
+    DEFAULT_SCORING_POLICY_WIKI_ID, EditEvent, EditorIdentity, FlagState, HttpMethod, HttpRequest,
     HttpResponse, LocalOAuthSourceReport, QueueHeuristicPolicy, QueuedEdit, ScoreWeights,
     ScoringCombinationRule, ScoringConfig, ScoringContext, ScoringExternalEvaluationConfig,
     ScoringIdentityConfig, ScoringSignal, ScoringSignalParameters, ServerSentEvent,

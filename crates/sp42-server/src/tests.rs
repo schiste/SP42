@@ -32,7 +32,8 @@ use crate::runtime_status::{
 };
 use crate::session_runtime::{
     CSRF_HEADER_NAME, SESSION_COOKIE_NAME, install_session,
-    session_cookie_header as runtime_session_cookie_header, to_status,
+    session_cookie_header as runtime_session_cookie_header, session_expires_at_ms,
+    session_is_expired, to_status,
 };
 use crate::state::{AppState, StoredSession};
 use crate::wikimedia_capabilities::CapabilityProbeTargets;
@@ -103,7 +104,6 @@ fn test_state() -> AppState {
         wiki_registry: test_wiki_registry(),
         wikitext_editor: test_wikitext_editor(),
         next_client_id: Arc::new(AtomicU64::new(1)),
-        next_session_id: Arc::new(AtomicU64::new(1)),
         started_at: Instant::now(),
     }
 }
@@ -426,6 +426,22 @@ fn test_session(username: &str, access_token: &str, created_at_ms: i64) -> Store
     }
 }
 
+#[test]
+fn session_expiry_is_capped_by_upstream_token_deadline() {
+    let created = 1_000_000;
+    let mut session = test_session("Tester", "token", created);
+    // upstream OAuth token expires in 5 min — well before the 30-min idle window
+    let upstream = created + 5 * 60 * 1000;
+    session.upstream_access_expires_at_ms = Some(upstream);
+
+    // the session deadline is capped at the upstream token deadline
+    assert_eq!(session_expires_at_ms(&session, created), upstream);
+    // still valid just before the token expires
+    assert!(!session_is_expired(&session, created + 4 * 60 * 1000));
+    // expired once the token deadline passes, despite idle/absolute remaining
+    assert!(session_is_expired(&session, created + 6 * 60 * 1000));
+}
+
 fn assert_claim_actor(
     message: &sp42_coordination::CoordinationMessage,
     expected_actor: &str,
@@ -509,7 +525,7 @@ fn to_status_hides_token_value() {
             capability_cache: HashMap::new(),
             action_history: Vec::new(),
         }),
-        &LocalOAuthConfig::default(),
+        false,
         now_ms(),
     );
 
@@ -637,6 +653,52 @@ async fn bootstrap_session_is_disabled_outside_local_mode() {
             .and_then(serde_json::Value::as_str)
             .is_some_and(|message| message.contains("SP42_DEPLOYMENT_MODE=local"))
     );
+}
+
+#[tokio::test]
+async fn wiki_defaults_route_returns_resolved_namespaces() {
+    // /wikis/{id} exposes the resolved default namespaces so the filter UI matches
+    // server behavior; a derived wiki yields the shared patrol default. Codex #90.
+    let router = build_router(test_state());
+    let response = router
+        .oneshot(
+            Request::builder()
+                .method(Method::GET)
+                .uri("/wikis/dewiki")
+                .body(Body::empty())
+                .expect("request should build"),
+        )
+        .await
+        .expect("request should complete");
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = to_bytes(response.into_body(), usize::MAX)
+        .await
+        .expect("response body should read");
+    let json: serde_json::Value = serde_json::from_slice(&body).expect("body should be json");
+    assert_eq!(
+        json["namespace_allowlist"],
+        serde_json::json!([0, 2, 4, 6, 10, 14])
+    );
+}
+
+#[tokio::test]
+async fn operator_live_returns_401_without_a_session() {
+    // With no session token, /operator/live must return 401 (not the assembly's
+    // generic 502) so the wasm auth refresh re-gates to login. Codex review #90.
+    let router = build_router(test_state());
+    let response = router
+        .oneshot(
+            Request::builder()
+                .method(Method::GET)
+                .uri("/operator/live/frwiki")
+                .body(Body::empty())
+                .expect("request should build"),
+        )
+        .await
+        .expect("request should complete");
+
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
 }
 
 #[tokio::test]
@@ -933,18 +995,78 @@ async fn plain_http_client_caps_chunked_response_without_content_length() {
     );
 }
 
-#[test]
-fn vps_session_cookie_is_secure() {
+fn session_cookie_for_mode(mode: DeploymentMode) -> String {
     let mut state = test_state();
-    state.deployment = test_deployment_for_mode(DeploymentMode::Vps);
-    let cookie = runtime_session_cookie_header(&state, "session-cookie")
+    state.deployment = test_deployment_for_mode(mode);
+    runtime_session_cookie_header(&state, "session-cookie")
         .expect("session cookie header should build")
         .to_str()
         .expect("session cookie header should be text")
-        .to_string();
+        .to_string()
+}
 
-    assert!(cookie.contains("; Secure"));
-    assert!(cookie.contains("SameSite=Lax"));
+#[test]
+fn vps_session_cookie_is_cross_site_and_secure() {
+    // cross-site split deployments need SameSite=None; Secure so the cookie is
+    // sent on credentialed cross-site fetches after OAuth. Codex review #90.
+    let cookie = session_cookie_for_mode(DeploymentMode::Vps);
+    assert!(cookie.contains("SameSite=None"), "got: {cookie}");
+    assert!(cookie.contains("; Secure"), "got: {cookie}");
+}
+
+#[test]
+fn desktop_session_cookie_is_cross_site_and_secure() {
+    // tauri://localhost webview → loopback sidecar is cross-site too.
+    let cookie = session_cookie_for_mode(DeploymentMode::Desktop);
+    assert!(cookie.contains("SameSite=None"), "got: {cookie}");
+    assert!(cookie.contains("; Secure"), "got: {cookie}");
+}
+
+#[test]
+fn local_session_cookie_is_lax_without_secure() {
+    // localhost across ports is same-site, so Lax works and no Secure is needed
+    // (plain http dev).
+    let cookie = session_cookie_for_mode(DeploymentMode::Local);
+    assert!(cookie.contains("SameSite=Lax"), "got: {cookie}");
+    assert!(!cookie.contains("Secure"), "got: {cookie}");
+}
+
+#[test]
+fn session_cookie_max_age_covers_absolute_timeout() {
+    // The cookie must outlive the sliding idle window so active users past 30 min
+    // are not bounced; it tracks the 8h absolute cap instead. Codex review #90.
+    let cookie = session_cookie_for_mode(DeploymentMode::Local);
+    assert!(
+        cookie.contains(&format!("Max-Age={}", 8 * 60 * 60)),
+        "got: {cookie}"
+    );
+}
+
+#[test]
+fn shared_local_access_token_is_gated_to_local_mode() {
+    // The single gate: the shared env token may act as an identity only in local
+    // mode. In vps/desktop it is invisible to every consumer (request fallback,
+    // capability probe, and the availability/bootstrap flags). Codex review #90.
+    let env = temp_local_env_file("WIKIMEDIA_ACCESS_TOKEN=secret-local-token\n");
+
+    let mut local = test_state();
+    local.deployment = test_deployment_for_mode(DeploymentMode::Local);
+    local.local_oauth = LocalOAuthConfig::load_from_candidates([env.clone()]);
+    assert_eq!(
+        local.shared_local_access_token(),
+        Some("secret-local-token")
+    );
+
+    for mode in [DeploymentMode::Vps, DeploymentMode::Desktop] {
+        let mut state = test_state();
+        state.deployment = test_deployment_for_mode(mode);
+        state.local_oauth = LocalOAuthConfig::load_from_candidates([env.clone()]);
+        assert_eq!(
+            state.shared_local_access_token(),
+            None,
+            "{mode:?} must not expose the shared env token"
+        );
+    }
 }
 
 #[tokio::test]
@@ -1014,7 +1136,6 @@ async fn healthz_reports_ready_when_local_token_is_loaded() {
         wiki_registry: test_wiki_registry(),
         wikitext_editor: test_wikitext_editor(),
         next_client_id: Arc::new(AtomicU64::new(1)),
-        next_session_id: Arc::new(AtomicU64::new(1)),
         started_at: Instant::now(),
     };
 
@@ -1524,7 +1645,6 @@ async fn capability_route_uses_injected_targets() {
         wiki_registry: test_wiki_registry(),
         wikitext_editor: test_wikitext_editor(),
         next_client_id: Arc::new(AtomicU64::new(1)),
-        next_session_id: Arc::new(AtomicU64::new(1)),
         started_at: Instant::now(),
     };
     let router = build_router(state);
@@ -1593,7 +1713,6 @@ async fn live_operator_route_returns_canonical_operator_contract() {
         wiki_registry: test_wiki_registry(),
         wikitext_editor: test_wikitext_editor(),
         next_client_id: Arc::new(AtomicU64::new(1)),
-        next_session_id: Arc::new(AtomicU64::new(1)),
         started_at: Instant::now(),
     };
 
@@ -1685,7 +1804,6 @@ async fn live_operator_route_surfaces_cached_backlog_state() {
         wiki_registry: test_wiki_registry(),
         wikitext_editor: test_wikitext_editor(),
         next_client_id: Arc::new(AtomicU64::new(1)),
-        next_session_id: Arc::new(AtomicU64::new(1)),
         started_at: Instant::now(),
     };
 
@@ -1862,7 +1980,6 @@ async fn logical_storage_document_route_resolves_profile_page() {
         wiki_registry: test_wiki_registry(),
         wikitext_editor: test_wikitext_editor(),
         next_client_id: Arc::new(AtomicU64::new(1)),
-        next_session_id: Arc::new(AtomicU64::new(1)),
         started_at: Instant::now(),
     };
     let current_ms = state.clock.now_ms();
@@ -1946,7 +2063,6 @@ async fn public_storage_document_route_returns_typed_preferences() {
         wiki_registry: test_wiki_registry(),
         wikitext_editor: test_wikitext_editor(),
         next_client_id: Arc::new(AtomicU64::new(1)),
-        next_session_id: Arc::new(AtomicU64::new(1)),
         started_at: Instant::now(),
     };
     let current_ms = state.clock.now_ms();
@@ -2036,7 +2152,6 @@ async fn bootstrap_derives_username_and_scopes_from_validated_token() {
         wiki_registry: test_wiki_registry(),
         wikitext_editor: test_wikitext_editor(),
         next_client_id: Arc::new(AtomicU64::new(1)),
-        next_session_id: Arc::new(AtomicU64::new(1)),
         started_at: Instant::now(),
     };
 

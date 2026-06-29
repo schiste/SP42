@@ -326,7 +326,6 @@ async fn main() -> Result<(), std::io::Error> {
         wiki_registry,
         wikitext_editor: Arc::new(parsoid_editor::ParsoidWikitextEditor::new()),
         next_client_id: Arc::new(AtomicU64::new(1)),
-        next_session_id: Arc::new(AtomicU64::new(1)),
         started_at: Instant::now(),
     };
     spawn_ingestion_supervisors(&state);
@@ -733,7 +732,10 @@ async fn access_token_for_request(state: &AppState, headers: &HeaderMap) -> Opti
     current_session_snapshot(state, headers, true)
         .await
         .map(|session| session.access_token)
-        .or_else(|| state.local_oauth.access_token().map(ToString::to_string))
+        // The shared env token is a local-dev convenience only; outside local mode
+        // an unauthenticated request must NOT borrow it. Gated centrally by
+        // `shared_local_access_token`. Codex review #90.
+        .or_else(|| state.shared_local_access_token().map(ToString::to_string))
 }
 
 async fn get_article_inventory(
@@ -856,7 +858,12 @@ async fn cached_capability_report_for_subject(
     }
 
     match subject {
-        CapabilityProbeSubject::LocalToken => {
+        // Never serve the shared local-token capability cache outside local mode,
+        // so a present env token can't grant capabilities to an unauthenticated
+        // request. Codex review #90.
+        CapabilityProbeSubject::LocalToken
+            if state.deployment.mode.permits_dev_token_bootstrap() =>
+        {
             let guard = state.capability_cache.read().await;
             if let Some(cache) = guard.as_ref()
                 && cache.report.wiki_id == wiki_id
@@ -865,6 +872,7 @@ async fn cached_capability_report_for_subject(
                 return Some(cache.report.clone());
             }
         }
+        CapabilityProbeSubject::LocalToken => {}
         CapabilityProbeSubject::Session(session) => {
             if let Some(report) =
                 cached_capabilities_for_session(state, &session.session_id, wiki_id).await
@@ -882,7 +890,10 @@ fn capability_probe_token<'a>(
     subject: &'a CapabilityProbeSubject<'a>,
 ) -> Option<&'a str> {
     match subject {
-        CapabilityProbeSubject::LocalToken => state.local_oauth.access_token(),
+        // The shared env token is a local-dev convenience; outside local mode the
+        // probe runs token-less (unauthenticated). Gated centrally by
+        // `shared_local_access_token`. Codex review #90.
+        CapabilityProbeSubject::LocalToken => state.shared_local_access_token(),
         CapabilityProbeSubject::Session(session) => Some(session.access_token.as_str()),
     }
 }
@@ -1125,9 +1136,11 @@ fn config_for_state_wiki(
 }
 
 fn resolved_wiki_config(state: &AppState, wiki_id: &str) -> Result<sp42_core::WikiConfig, String> {
+    // resolve() falls back to deriving any Wikimedia project from the embedded
+    // authoritative site list when it isn't hand-configured (ADR-0014).
     let mut config = state
         .wiki_registry
-        .config(wiki_id)
+        .resolve(wiki_id)
         .map_err(|error| error.to_string())?;
     if let Some(api_url) = &state.capability_targets.api_url {
         config.api_url = reqwest::Url::parse(api_url)

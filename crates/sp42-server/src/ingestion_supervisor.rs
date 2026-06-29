@@ -80,6 +80,10 @@ pub(crate) async fn supervisor_snapshot_iteration(
         .as_ref()
         .and_then(|snapshot| snapshot.status.last_success_at_ms);
 
+    // Deliberately the raw token, not `shared_local_access_token`: this is the
+    // server's own background poll of *public* recentchanges (no per-user data,
+    // no writes), not a request acting on a user's behalf, so it is not gated to
+    // local mode. All identity-bearing paths go through the gated accessor.
     let Some(access_token) = state.local_oauth.access_token().map(ToString::to_string) else {
         return supervisor_inactive_snapshot(
             wiki_id,

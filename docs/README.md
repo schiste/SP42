@@ -32,6 +32,7 @@ Capabilities built on top of the platform.
 - [process/prd-template.md](process/prd-template.md) — PRD template
 - [process/adding-a-domain.md](process/adding-a-domain.md) — turnkey path for owning a domain
 - [platform/adr/0013-layered-platform-domain-architecture.md](platform/adr/0013-layered-platform-domain-architecture.md) — the layered platform/domain architecture and how it is mechanically enforced
+- [platform/adr/0014-wikimedia-oauth-and-any-project.md](platform/adr/0014-wikimedia-oauth-and-any-project.md) — required Wikimedia OAuth login + resolving any Wikimedia project from an embedded SiteMatrix snapshot
 
 ## How ADRs and PRDs are filed
 

@@ -47,12 +47,7 @@ pub(crate) async fn get_revision_diff(
 ) -> Result<Json<Option<sp42_core::StructuredDiff>>, (StatusCode, Json<serde_json::Value>)> {
     let access_token = access_token_for_request(&state, &headers)
         .await
-        .ok_or_else(|| {
-            (
-                StatusCode::UNAUTHORIZED,
-                Json(serde_json::json!({"error": "no access token"})),
-            )
-        })?;
+        .ok_or_else(|| unauthorized_error("No authenticated Wikimedia session is active."))?;
     let config = config_for_state_wiki(&state, &wiki_id)?;
     let diff = fetch_revision_diff_by_ids(&state, &access_token, &config, rev_id, old_rev_id)
         .await
@@ -72,12 +67,7 @@ pub(crate) async fn get_revision_media_diff(
 ) -> Result<Json<Option<sp42_core::MediaDiffReport>>, (StatusCode, Json<serde_json::Value>)> {
     let access_token = access_token_for_request(&state, &headers)
         .await
-        .ok_or_else(|| {
-            (
-                StatusCode::UNAUTHORIZED,
-                Json(serde_json::json!({"error": "no access token"})),
-            )
-        })?;
+        .ok_or_else(|| unauthorized_error("No authenticated Wikimedia session is active."))?;
     let config = config_for_state_wiki(&state, &wiki_id)?;
     let report =
         fetch_revision_media_diff_by_ids(&state, &access_token, &config, rev_id, old_rev_id)

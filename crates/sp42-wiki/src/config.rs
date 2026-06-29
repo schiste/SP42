@@ -5,7 +5,9 @@ use std::collections::BTreeSet;
 use crate::errors::ConfigError;
 use serde::Deserialize;
 use sp42_core::scoring_policy::load_embedded_compiled_scoring_policy;
-use sp42_core::{WikiConfig, WikiTemplates};
+use sp42_core::{
+    DEFAULT_SCORING_POLICY_REF, DEFAULT_SCORING_POLICY_WIKI_ID, WikiConfig, WikiTemplates,
+};
 use url::Url;
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
@@ -30,7 +32,7 @@ struct RawWikiConfig {
 }
 
 fn default_scoring_policy_ref() -> String {
-    "active/frwiki-vandalism".to_string()
+    DEFAULT_SCORING_POLICY_REF.to_string()
 }
 
 /// Parse a single wiki configuration document from YAML.
@@ -44,7 +46,12 @@ pub fn parse_wiki_config(source: &str) -> Result<WikiConfig, ConfigError> {
     ensure_non_empty("wiki_id", &raw.wiki_id)?;
     ensure_non_empty("display_name", &raw.display_name)?;
     let compiled_policy = load_embedded_compiled_scoring_policy(&raw.scoring_policy_ref)?;
-    if compiled_policy.wiki_id != raw.wiki_id {
+    // A wiki-specific policy must name its wiki, but the universal default policy
+    // (sentinel wiki_id) is valid for any wiki — so authored and derived configs
+    // share the same language-agnostic fallback (ADR-0014).
+    if compiled_policy.wiki_id != raw.wiki_id
+        && compiled_policy.wiki_id != DEFAULT_SCORING_POLICY_WIKI_ID
+    {
         return Err(ConfigError::InvalidField {
             field: "scoring_policy_ref",
             message: format!(

@@ -1,5 +1,5 @@
 use axum::Json;
-use axum::http::{HeaderMap, StatusCode, header::HOST};
+use axum::http::{HeaderMap, HeaderValue, StatusCode, header::HOST};
 use sp42_core::{
     DevAuthBootstrapRequest, OAuthClientConfig, OAuthTokenResponse, routes::AUTH_CALLBACK_PATH,
 };
@@ -22,15 +22,44 @@ pub(crate) fn internal_error(message: &str) -> (StatusCode, Json<serde_json::Val
     )
 }
 
-pub(crate) fn sanitize_redirect_target(next: Option<&str>) -> String {
+pub(crate) fn sanitize_redirect_target(
+    next: Option<&str>,
+    allowed_origins: &[HeaderValue],
+) -> String {
     let Some(target) = next.map(str::trim).filter(|value| !value.is_empty()) else {
         return "/".to_string();
     };
+    // Same-origin relative path: allow `/path`, reject protocol-relative `//host`.
     if target.starts_with('/') && !target.starts_with("//") {
-        target.to_string()
-    } else {
-        "/".to_string()
+        return target.to_string();
     }
+    // Split frontend/API deployments send an absolute frontend-origin URL so the
+    // callback returns to the SPA instead of the API host — including the desktop
+    // Tauri webview, whose origin may be a non-HTTP scheme such as
+    // `tauri://localhost`. Honor it only when its origin is in the configured
+    // allow list — otherwise this would be an open redirect. Codex review #90.
+    if let Ok(url) = url::Url::parse(target)
+        && origin_is_allowed(&url, allowed_origins)
+    {
+        return target.to_string();
+    }
+    "/".to_string()
+}
+
+/// Whether `url`'s origin matches one of the server's configured allowed origins
+/// (the same list used for CORS), via the shared origin primitive so HTTP(S) and
+/// configured app schemes (e.g. `tauri://localhost`) match consistently.
+fn origin_is_allowed(url: &url::Url, allowed_origins: &[HeaderValue]) -> bool {
+    let Some(candidate) = sp42_core::origin_of_url(url) else {
+        return false;
+    };
+    allowed_origins.iter().any(|origin| {
+        origin
+            .to_str()
+            .ok()
+            .and_then(sp42_core::origin_of)
+            .is_some_and(|allowed| allowed == candidate)
+    })
 }
 
 pub(crate) fn redirect_with_status(target: &str, key: &str, value: &str) -> String {
@@ -104,7 +133,13 @@ pub(crate) fn oauth_client_config_for_request(
         authorize_url: config.oauth_authorize_url,
         token_url: config.oauth_token_url,
         redirect_uri,
-        scopes: vec!["basic".to_string(), "patrol".to_string()],
+        // Request the full action grants so OAuth-logged-in users can pass the
+        // capability gates for editing/patrol/rollback, not just read (the
+        // capability derivation needs editpage + rollback). Codex review #90.
+        scopes: ["basic", "editpage", "patrol", "rollback"]
+            .into_iter()
+            .map(str::to_string)
+            .collect(),
     })
 }
 
@@ -127,7 +162,13 @@ pub(crate) fn oauth_client_config_from_pending(
         authorize_url: config.oauth_authorize_url,
         token_url: config.oauth_token_url,
         redirect_uri,
-        scopes: vec!["basic".to_string(), "patrol".to_string()],
+        // Request the full action grants so OAuth-logged-in users can pass the
+        // capability gates for editing/patrol/rollback, not just read (the
+        // capability derivation needs editpage + rollback). Codex review #90.
+        scopes: ["basic", "editpage", "patrol", "rollback"]
+            .into_iter()
+            .map(str::to_string)
+            .collect(),
     })
 }
 
@@ -213,4 +254,69 @@ pub(crate) fn validate_bootstrap_payload(
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{HeaderValue, sanitize_redirect_target};
+
+    fn origins() -> Vec<HeaderValue> {
+        vec![HeaderValue::from_static("https://app.example.org")]
+    }
+
+    #[test]
+    fn keeps_same_origin_relative_paths() {
+        assert_eq!(
+            sanitize_redirect_target(Some("/?wiki=dewiki#view=patrol"), &origins()),
+            "/?wiki=dewiki#view=patrol"
+        );
+    }
+
+    #[test]
+    fn rejects_protocol_relative_and_missing_targets() {
+        assert_eq!(
+            sanitize_redirect_target(Some("//evil.example"), &origins()),
+            "/"
+        );
+        assert_eq!(sanitize_redirect_target(Some("   "), &origins()), "/");
+        assert_eq!(sanitize_redirect_target(None, &origins()), "/");
+    }
+
+    #[test]
+    fn honors_absolute_url_on_allowed_frontend_origin() {
+        assert_eq!(
+            sanitize_redirect_target(Some("https://app.example.org/?wiki=dewiki"), &origins()),
+            "https://app.example.org/?wiki=dewiki"
+        );
+    }
+
+    #[test]
+    fn rejects_absolute_url_off_allowed_origin() {
+        // open-redirect guard: an origin not in the allow list falls back to "/"
+        assert_eq!(
+            sanitize_redirect_target(Some("https://evil.example/steal"), &origins()),
+            "/"
+        );
+        // authority-less / dangerous schemes are rejected too
+        assert_eq!(
+            sanitize_redirect_target(Some("javascript:alert(1)"), &origins()),
+            "/"
+        );
+    }
+
+    #[test]
+    fn honors_configured_non_http_app_origin() {
+        // desktop Tauri webview: its `tauri://localhost` origin is a configured
+        // allowed origin, so the callback must return there. Codex review #90.
+        let allowed = vec![HeaderValue::from_static("tauri://localhost")];
+        assert_eq!(
+            sanitize_redirect_target(Some("tauri://localhost/?wiki=dewiki"), &allowed),
+            "tauri://localhost/?wiki=dewiki"
+        );
+        // but a non-listed custom scheme is still rejected
+        assert_eq!(
+            sanitize_redirect_target(Some("tauri://localhost/x"), &origins()),
+            "/"
+        );
+    }
 }

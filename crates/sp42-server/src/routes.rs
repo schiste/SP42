@@ -12,6 +12,7 @@ use crate::action_routes::{get_action_history, get_action_status, post_execute_a
 use crate::auth_routes::{
     delete_session, get_auth_callback, get_auth_login, get_auth_session, get_bootstrap_status,
     get_capabilities, get_session, post_auth_logout, post_bootstrap_session,
+    post_local_credentials,
 };
 use crate::citation_routes::{post_bare_url_apply, post_bare_url_proposals, post_verify_page};
 use crate::operator_live::get_live_operator_view;
@@ -27,7 +28,7 @@ use crate::state::AppState;
 use crate::static_assets::{
     browser_app_dist_dir, browser_shell_unavailable, disable_response_caching, get_favicon,
     get_manifest_json, get_offline_html, get_runtime_config_js, get_service_worker,
-    get_static_icon,
+    get_static_icon, get_wiki_defaults, get_wikis,
 };
 use crate::storage_routes::{
     get_logical_storage_document, get_public_storage_document, get_storage_document,
@@ -220,11 +221,17 @@ fn dev_bridge_routes(router: Router<AppState>) -> Router<AppState> {
             route_contracts::DEV_AUTH_BOOTSTRAP_STATUS_PATH,
             get(get_bootstrap_status),
         )
+        .route(
+            route_contracts::DEV_AUTH_LOCAL_CREDENTIALS_PATH,
+            axum::routing::post(post_local_credentials),
+        )
 }
 
 fn static_asset_routes(router: Router<AppState>) -> Router<AppState> {
     router
         .route(route_contracts::HEALTHZ_PATH, get(get_healthz))
+        .route(route_contracts::WIKIS_PATH, get(get_wikis))
+        .route(route_contracts::WIKI_DEFAULTS_PATH, get(get_wiki_defaults))
         .route(route_contracts::MANIFEST_JSON_PATH, get(get_manifest_json))
         .route(
             route_contracts::RUNTIME_CONFIG_JS_PATH,

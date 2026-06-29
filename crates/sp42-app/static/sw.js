@@ -16,6 +16,7 @@ const SHELL_ASSETS = [
 const NETWORK_ONLY_PATTERNS = [
   /\/dev\//,
   /\/dev-auth\//,
+  /\/auth\//,
   /\/oauth\//,
   /\/coordination\//,
   /\/ws\//,

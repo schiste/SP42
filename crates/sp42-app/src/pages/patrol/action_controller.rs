@@ -4,7 +4,7 @@ use leptos::prelude::*;
 use sp42_core::{EditorIdentity, QueuedEdit, SessionActionExecutionRequest, SessionActionKind};
 use sp42_patrol::LiveOperatorView;
 
-use crate::platform::auth::{bootstrap_dev_auth_session, execute_dev_auth_action};
+use crate::platform::auth::execute_dev_auth_action;
 use crate::platform::console;
 
 pub(super) struct PatrolActionController {
@@ -135,20 +135,9 @@ fn install_action_effect(
                         response.message.unwrap_or_default()
                     ));
                 }
-                Err(error) if is_auth_error(&error) => {
-                    set_action_status.set("Session expired, re-authenticating...".to_string());
-                    retry_after_reauthentication(
-                        &request,
-                        &edit,
-                        kind,
-                        &all_edits,
-                        set_all_edits,
-                        set_review_note,
-                        set_action_status,
-                    )
-                    .await;
-                }
                 Err(error) => {
+                    // A 401 here re-gates to login via the global unauthorized
+                    // handler (platform/http.rs); no per-page session retry. Codex #90.
                     set_action_status.set(format!("Action error: {error}"));
                 }
             }
@@ -272,60 +261,4 @@ fn remove_accepted_edit(
     console::debug(&format!(
         "[SP42] removed rev {acted_rev}, next → {next_rev:?}"
     ));
-}
-
-async fn retry_after_reauthentication(
-    request: &SessionActionExecutionRequest,
-    edit: &QueuedEdit,
-    kind: SessionActionKind,
-    all_edits: &ReadSignal<Vec<QueuedEdit>>,
-    set_all_edits: WriteSignal<Vec<QueuedEdit>>,
-    set_review_note: WriteSignal<String>,
-    set_action_status: WriteSignal<String>,
-) {
-    let bootstrap_request = sp42_core::DevAuthBootstrapRequest {
-        username: String::new(),
-        scopes: Vec::new(),
-        expires_at_ms: None,
-    };
-    if bootstrap_dev_auth_session(&bootstrap_request)
-        .await
-        .is_err()
-    {
-        set_action_status.set("Re-authentication failed. Reload the page.".to_string());
-        return;
-    }
-
-    match execute_dev_auth_action(request).await {
-        Ok(response) if response.accepted => {
-            set_action_status.set(format!(
-                "{} accepted for rev {} (re-authenticated)",
-                kind.label(),
-                edit.event.rev_id
-            ));
-            let mut queue = all_edits.get_untracked();
-            if let Some(pos) = queue
-                .iter()
-                .position(|candidate| candidate.event.rev_id == edit.event.rev_id)
-            {
-                queue.remove(pos);
-                set_all_edits.set(queue);
-            }
-            set_review_note.set(String::new());
-        }
-        Ok(response) => {
-            set_action_status.set(format!(
-                "{} rejected: {}",
-                kind.label(),
-                response.message.unwrap_or_default()
-            ));
-        }
-        Err(retry_error) => {
-            set_action_status.set(format!("Retry failed: {retry_error}"));
-        }
-    }
-}
-
-fn is_auth_error(error: &str) -> bool {
-    error.contains("401") || error.contains("No authenticated")
 }

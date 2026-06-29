@@ -144,15 +144,20 @@ in our process.
    simpler than the old per-hop full-`check_fetchable_source_url` string check,
    but it is *not* zero.)
 
-5. **Retry/backoff via maintained middleware, not hand-rolled.** Use
-   `reqwest-retry` + `reqwest-middleware`. Retry idempotent GETs on retryable
-   HTTP statuses (`429`, `500/502/503/504`); exponential backoff with jitter,
-   ~3 attempts. Do **not** retry transport/connect errors (see Implementation
-   note 3 for why). **`Retry-After` is not honored by `reqwest-retry`** (verified
-   — its policy sees only retry-count, its strategy only classifies responses);
-   honoring the server's `Retry-After` over computed backoff needs a small custom
-   middleware and is recorded as a follow-up (low priority for a serial,
-   low-volume tool that rarely trips Wikimedia's REST rate limit).
+5. **Retry/backoff as a small in-`execute` loop (not `reqwest-retry`).** The
+   original plan was to use `reqwest-retry` + `reqwest-middleware`; the build
+   showed that crate **cannot honor `Retry-After`** (its policy sees only the
+   retry count, its strategy only classifies responses), which the Wikimedia REST
+   side wants. So the edge instead runs a ~30-line retry loop in `execute`: retry
+   idempotent GETs on transient statuses (`408/429/5xx`), up to 3 attempts,
+   waiting the server's **`Retry-After`** when present (capped) else exponential
+   backoff with full jitter; **never** retry transport/connect errors (a
+   deterministic SSRF rejection surfaces as one and must fail fast — Implementation
+   note 3). This *reverses* the "lean on the maintained crate" instinct, but it
+   is the only way to honor `Retry-After`, and it has the side benefit of
+   **dropping two dependencies** (`reqwest-retry`, `reqwest-middleware`) and the
+   reqwest-0.12 version pin — leaving `ip_network` as the only genuinely new
+   external crate (`rand`, for jitter, is already in the workspace).
 
 6. **`maxlag` is explicitly out of scope.** It applies to the Action API
    (`api.php`) only (since MediaWiki 1.27) and returns HTTP 200 + `Retry-After`;
@@ -203,14 +208,14 @@ in our process.
   and ≈ −300 lines once duplicated tests collapse. The decisive win is
   de-duplication (4 files / 3 crates → 1). See the Implementation notes for why
   production code did not shrink as much as sketched.
-- **New dependencies, and why they are not bloat:** `ip_network` (IP
-  classification), `reqwest-retry` + `reqwest-middleware` (retry). The build
-  confirms that **adding these three crates still leaves the codebase smaller**
-  (the net reduction above is *after* the additions), and they *replace*
-  security-critical hand-rolled code (CIDR range classification; hand-rolled
-  retry/backoff would otherwise be ~100 lines) with maintained libraries. No new
-  DNS stack — the resolver wraps the existing system resolver. (`reqwest-retry`
-  is pinned to the reqwest-0.12 line; see Implementation notes.)
+- **New dependencies, and why they are not bloat:** exactly **one genuinely new
+  external crate — `ip_network`** (IP range classification, replacing hand-rolled
+  CIDR logic); `rand` (jitter) is already a workspace dependency. The
+  `reqwest-retry` + `reqwest-middleware` crates were tried and then **dropped**
+  (they cannot honor `Retry-After`; see decision #5), which also removed a
+  reqwest-version pin. No new DNS stack — the resolver wraps the existing system
+  resolver. Net: the codebase gets smaller *and* the external-dependency count
+  rises by one.
 - **Closes #34's open items** (retry/backoff, codified timeouts, confirmed UA;
   `maxlag` ruled out with reason) **and #60** (resolved-IP / DNS-rebinding) as a
   side effect of the resolver.
@@ -290,20 +295,22 @@ corrected or surfaced — recorded so the design is honest:
    the literal pre-flight, which happens outside `reqwest`). Consequence for the
    verify-page report: a rebinding-style block is reported generically.
 
-3. **Retry strategy must not retry transport errors (decision #5 refined).**
-   Because of (2), a deterministic SSRF rejection is indistinguishable from a
-   transient connect failure at the retry layer, so the default strategy retried
-   it `MAX_RETRIES` times (~2.6 s of wasted backoff). The shipped strategy
-   retries only on retryable **HTTP statuses** (5xx/429) and never on
-   transport/connect errors — SSRF and dead hosts fail fast. Trade-off: genuine
-   transient *connect* blips are not retried; the high-value retries (server-sent
-   503/429) are preserved. **`Retry-After` is not honored** (see decision #5) —
-   `reqwest-retry` has no hook for it; this is a recorded follow-up.
+3. **Retry runs only on statuses, not transport errors (decision #5).** Because
+   of (2), a deterministic SSRF rejection is indistinguishable from a transient
+   connect failure at the retry layer — `reqwest-retry`'s default retried it
+   `MAX_RETRIES` times (~2.6 s of wasted backoff). The shipped loop retries only
+   on transient **HTTP statuses** (`408/429/5xx`) and never on transport/connect
+   errors, so SSRF and dead hosts fail fast. Trade-off: genuine transient
+   *connect* blips are not retried; the high-value retries (server-sent 503/429,
+   and now `Retry-After`) are preserved.
 
-4. **Dependency pin.** `reqwest-retry`'s latest (0.9 / `reqwest-middleware` 0.5)
-   targets `reqwest` 0.13; the workspace is on 0.12, so the edge pins
-   `reqwest-retry 0.7` + `reqwest-middleware 0.4`. (`genai` already pulls a
-   second `reqwest` 0.13 transitively — unrelated and harmless.)
+4. **`reqwest-retry` was tried and dropped — replaced by a ~30-line loop.** It
+   cannot honor `Retry-After` (decision #5) and forced a reqwest-0.12 version pin
+   (its 0.9 line targets reqwest 0.13). Hand-rolling the loop honors `Retry-After`,
+   removes both retry crates and the pin, and is verified by a timing test (a
+   `Retry-After: 3` response makes the client wait ~3 s, not the sub-second
+   default backoff). (`genai` still pulls a second `reqwest` 0.13 transitively —
+   unrelated and harmless.)
 
 5. **The two-face split is only partly realized — and decision #2 overstated
    it.** Citoid is reached from two server paths, and they differ: the *bare-URL
@@ -317,6 +324,12 @@ corrected or surfaced — recorded so the design is honest:
    through the `verify_page`/`verify.rs` signature. A strict typed trusted face
    for Citoid remains a follow-up; decision #2 should be read as the intent, not
    as fully implemented here.
+
+6. **IPv4-mapped IPv6 must be unwrapped (Codex P1).** `Ipv6Network::is_global()`
+   treats the whole `::ffff/96` block as global, so `http://[::ffff:127.0.0.1]/`
+   (or a DNS answer of that form) reached loopback/metadata via the embedded
+   IPv4. `is_public_ip` now unwraps `to_ipv4_mapped()` and classifies the
+   embedded IPv4 first.
 
 **LOC, measured (tests excluded, per the consolidation).** Production code is
 ≈ −45 net: ~383 prod lines removed (CLI `CliHttpClient`, server `PlainHttpClient`,

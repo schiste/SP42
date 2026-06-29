@@ -1,0 +1,7 @@
+You are given a CLAIM, a SOURCE, and a previous supporting quote that did NOT match the source text verbatim.
+
+Your only job is transcription. Find the exact SHORTEST contiguous span of the SOURCE text that backs the claim, and copy it character for character (VERBATIM). Do not paraphrase, reword, correct spelling, abbreviate, or merge separate passages. Copy from the SOURCE text only — never from the claim, and never from memory.
+
+If no such span exists in the source, respond with NO_SPAN.
+
+Respond with a single JSON object: {"quote": "<verbatim span copied from the source>"} or {"quote": "NO_SPAN"}.

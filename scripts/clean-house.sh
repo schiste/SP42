@@ -118,10 +118,18 @@ grace_s=$((grace_min * 60))
 #     Any profile whose newest file predates the global newest by more than the
 #     grace window — older profiles, stale CI runs, orphaned worktree hashes — is
 #     dropped, along with its matching top-level finals.
+# Epoch mtime of a file, portably: GNU coreutils uses `stat -c %Y`, BSD/macOS
+# uses `stat -f %m`. Probe once and reuse — getting this wrong returns no mtime,
+# which silently disables the whole keep-last pass (every tree looks un-aged).
+if stat -c '%Y' . >/dev/null 2>&1; then
+  stat_mtime=(stat -c '%Y')   # GNU
+else
+  stat_mtime=(stat -f '%m')   # BSD/macOS
+fi
 newest_file_mtime() {
   # `head -1` closes the pipe early; with `set -o pipefail` the SIGPIPE'd `sort`
   # would otherwise abort the script under `set -e`. The stdout is still captured.
-  /usr/bin/find "$1" -type f -exec stat -f '%m' {} + 2>/dev/null | sort -rn | head -1 || true
+  /usr/bin/find "$1" -type f -exec "${stat_mtime[@]}" {} + 2>/dev/null | sort -rn | head -1 || true
 }
 
 if [[ -d target/.build ]]; then

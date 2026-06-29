@@ -10,7 +10,7 @@
 no implementation — §18 explicitly leaves the "Leptos component API" out of scope.
 That gap is filled by accident: the patrol UI has three sources of visual truth
 that disagree. The contract names tokens (`--surface-base`, `--space-*`);
-`sp42-app/static/style.css` uses different names (`--bg`, `--danger`) and has no
+`sp42-ui/static/style.css` uses different names (`--bg`, `--danger`) and has no
 spacing/type scale; components hardcode the rest.
 
 Measured today: **176** inline `style=` attributes, **43** hex/`rgba()` literals

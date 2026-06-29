@@ -1,6 +1,6 @@
 # Using the Wikimedia Codex design system
 
-_Last updated: 2026-06-26._
+_Last updated: 2026-06-29._
 
 SP42's web UI is styled to align with [Wikimedia Codex](https://doc.wikimedia.org/codex/latest/),
 the Wikimedia Foundation's design system. This page records **how** SP42 uses
@@ -35,7 +35,7 @@ consume Codex components directly.
 ## How the tokens are wired
 
 The single source of truth is the `:root` block in
-[`crates/sp42-app/static/style.css`](../../crates/sp42-app/static/style.css).
+[`crates/sp42-ui/static/style.css`](../../crates/sp42-ui/static/style.css).
 
 - SP42 keeps its **own semantic variable names** (`--bg`, `--text`, `--accent`,
   `--danger`, `--panel`, `--border`, `--radius-sm`, …). Every component reads
@@ -68,7 +68,7 @@ leaked past the token layer and should be routed through a variable instead.
 - **Dark default, light opt-in.** Dark stays SP42's default; light is a toggle
   in the workspace nav. The choice persists in `localStorage` (`sp42-theme`) and
   is applied as `data-theme` on the document root by the
-  [`theme`](../../crates/sp42-app/src/theme.rs) module. A small inline script in
+  [`theme`](../../crates/sp42-ui/src/theme.rs) module. A small inline script in
   [`index.html`](../../index.html) applies the saved theme before first paint to
   avoid a flash. Codex ships both modes from one token source, so supporting both
   was nearly free.

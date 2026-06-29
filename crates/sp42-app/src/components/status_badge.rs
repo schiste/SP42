@@ -28,7 +28,7 @@ pub fn StatusBadge(label: String, tone: StatusTone) -> impl IntoView {
 
 /// Tone -> (background, foreground, border) as CSS custom property references,
 /// so badges follow the active Codex theme. Token values live in
-/// `static/style.css` (`--tone-*`).
+/// `sp42-ui/static/style.css` (`--tone-*`).
 #[must_use]
 pub fn tone_colors(tone: StatusTone) -> (&'static str, &'static str, &'static str) {
     match tone {

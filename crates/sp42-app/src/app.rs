@@ -296,7 +296,7 @@ fn LocalSetupPanel() -> impl IntoView {
 /// The authenticated workspace (the former `App` body) plus a session header.
 #[component]
 fn Workspace(session: AuthSession, refresh: Callback<()>) -> impl IntoView {
-    use crate::theme::{apply_theme, stored_theme};
+    use sp42_ui::theme::{apply_theme, stored_theme};
     let (active_view, set_active_view) = signal(initial_workspace_view());
     let (theme, set_theme) = signal(stored_theme());
 

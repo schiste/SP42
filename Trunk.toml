@@ -9,6 +9,8 @@ public_url = "/"
 watch = [
   "crates/sp42-app/src",
   "crates/sp42-app/static",
+  "crates/sp42-ui/src",
+  "crates/sp42-ui/static",
   "crates/sp42-platform/src",
   "crates/sp42-citation/src",
   "crates/sp42-patrol/src",

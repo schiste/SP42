@@ -42,6 +42,7 @@ jobs:
               - 'crates/sp42-core/**'
               - 'crates/sp42-server/**'
               - 'crates/sp42-app/**'
+              - 'crates/sp42-ui/**'
               - 'Cargo.toml'
               - 'Cargo.lock'
               - 'rust-toolchain.toml'

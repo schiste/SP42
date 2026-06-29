@@ -53,6 +53,7 @@ LAYER = {
     # shells
     "sp42-cli": "shell",
     "sp42-app": "shell",
+    "sp42-ui": "shell",
     "sp42-desktop": "shell",
     "sp42-server": "shell",
     "sp42-devtools": "shell",

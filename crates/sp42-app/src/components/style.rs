@@ -4,7 +4,7 @@
 /// rendering across the queue column and context sidebar.
 ///
 /// The colour is a CSS custom property reference (not a literal) so the tier
-/// follows the active Codex theme — see `static/style.css`.
+/// follows the active Codex theme — see `sp42-ui/static/style.css`.
 pub fn score_tier(score: i32) -> (&'static str, &'static str) {
     if score >= 70 {
         ("var(--danger)", "!!")

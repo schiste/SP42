@@ -16,7 +16,7 @@
     <link rel="apple-touch-icon" href="/icons/sp42-icon-192.svg" />
     <script>
       // Restore the saved Codex theme before first paint to avoid a flash.
-      // Mirrors crate::theme (localStorage key "sp42-theme"). Dark is default.
+      // Mirrors sp42_ui::theme (localStorage key "sp42-theme"). Dark is default.
       (function () {
         try {
           if (localStorage.getItem("sp42-theme") === "light") {
@@ -27,7 +27,7 @@
     </script>
     <style>
       /* Pre-boot splash palette — Codex (theme-wikimedia-ui). Kept in sync
-         with the dark/light tokens in crates/sp42-app/static/style.css so the
+         with the dark/light tokens in crates/sp42-ui/static/style.css so the
          loading screen matches the app shell. */
       :root {
         color-scheme: dark;
@@ -101,7 +101,7 @@
     <link data-trunk rel="copy-file" href="crates/sp42-app/static/sw.js" />
     <link data-trunk rel="copy-file" href="crates/sp42-app/static/offline.html" />
     <link data-trunk rel="copy-dir" href="crates/sp42-app/static/icons" />
-    <link data-trunk rel="css" href="crates/sp42-app/static/style.css" />
+    <link data-trunk rel="css" href="crates/sp42-ui/static/style.css" />
     <script src="/runtime-config.js"></script>
     <script>
       (async () => {

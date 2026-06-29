@@ -10,9 +10,9 @@ use serde_json::Value;
 use sp42_citation::{render_page_verification_markdown, render_page_verification_text};
 use sp42_core::routes as route_contracts;
 use sp42_core::{
-    CitationFinding, CitationVerificationRequest, ClaimContext, DevAuthBootstrapRequest,
-    DevAuthSessionStatus, FetchedSource, GroundingStatus, PageVerificationReport,
-    PageVerificationRequest, QueuedEdit, SessionActionExecutionRequest,
+    CitationFinding, CitationVerificationRequest, CitoidMetadata, ClaimContext,
+    DevAuthBootstrapRequest, DevAuthSessionStatus, FetchedSource, GroundingStatus,
+    PageVerificationReport, PageVerificationRequest, QueuedEdit, SessionActionExecutionRequest,
     SessionActionExecutionResponse, SessionActionKind, SystemClock, VerificationOutcome,
     VerifyOptions as CoreVerifyOptions, build_dev_auth_bootstrap_request,
     check_fetchable_source_url, locate_quote, locate_quote_fuzzy, parse_dev_auth_status,
@@ -24,13 +24,13 @@ use sp42_devtools::{
     build_dev_context_preview, build_dev_coordination_preview, build_dev_queue,
     build_dev_stream_preview, build_dev_workbench, parse_default_dev_wiki_config,
 };
-use sp42_inference::{client_from_env, panel_from_env, panel_from_models};
+use sp42_inference::{GenaiModelClient, client_from_env, panel_from_env, panel_from_models};
 use sp42_patrol::{
     PatrolScenarioReportInputs, ShellStateInputs, build_patrol_scenario_report,
     build_shell_state_model, render_patrol_scenario_markdown, render_patrol_scenario_text,
     render_shell_state_markdown, render_shell_state_text,
 };
-use sp42_types::{HttpClient, HttpClientError, HttpMethod, HttpRequest, HttpResponse};
+use sp42_types::{HttpClient, HttpClientError, HttpMethod, HttpRequest, HttpResponse, ModelRef};
 use std::collections::{BTreeMap, BTreeSet};
 
 const LOCAL_SERVER_BASE_URL: &str = "http://127.0.0.1:8788";
@@ -73,6 +73,7 @@ struct CliOptions {
     bare_url: Option<BareUrlCliOptions>,
     verify: Option<VerifyCliOptions>,
     verify_page: Option<VerifyPageCliOptions>,
+    batch: Option<BatchOptions>,
     verdict_only: bool,
     /// `--locate-probe --quote <q>`: read a source body from STDIN and report whether the
     /// quote locates (offline, no model) — the deterministic locate-replay tool (SP42#25).
@@ -106,6 +107,20 @@ struct VerifyCliOptions {
     models: Option<String>,
     /// SIDE article-title context (`--article-title`); empty keeps the no-context path.
     article_title: Option<String>,
+    /// Pre-fetched bibliographic metadata sidecar (`--metadata-json <path>`). When set, the
+    /// verifier uses it as prompt context instead of fetching Citoid — reproducible, no network.
+    metadata_json: Option<String>,
+}
+
+/// Batch verification (`--batch`): read one JSON case per line (STDIN, or `--batch-file`),
+/// verify each, and emit one JSON result line. Reuses the model panel / endpoint config of
+/// the single `--verify` path; `--models` selects the panel for the whole batch.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct BatchOptions {
+    /// Input path; `None` reads JSONL from STDIN.
+    file: Option<String>,
+    /// Per-batch model panel override (`--models`); falls back to the env panel.
+    models: Option<String>,
 }
 
 /// Article-level citation verification (`--verify-page`, PRD-0009 / ADR-0011): verify
@@ -182,6 +197,11 @@ fn run() -> Result<String, String> {
     if let Some(quote) = &options.locate_probe {
         let source = read_stdin().map_err(|error| error.to_string())?;
         return run_locate_probe(quote, &source);
+    }
+
+    // Batch verification: one JSON case per line in, one JSON result per line out.
+    if let Some(batch) = &options.batch {
+        return render_batch(batch);
     }
 
     // Read-only citation verification is independent of the dev-queue payload.
@@ -294,6 +314,9 @@ fn parse_options(args: impl IntoIterator<Item = String>) -> Result<CliOptions, S
     let mut verify_source_body = None;
     let mut verify_models = None;
     let mut verify_article_title = None;
+    let mut verify_metadata_json = None;
+    let mut batch_flag = false;
+    let mut batch_file = None;
     let mut verdict_only = false;
     let mut probe_quote = None;
     let mut locate_probe_flag = false;
@@ -328,6 +351,9 @@ fn parse_options(args: impl IntoIterator<Item = String>) -> Result<CliOptions, S
             verify_source_body: &mut verify_source_body,
             verify_models: &mut verify_models,
             verify_article_title: &mut verify_article_title,
+            verify_metadata_json: &mut verify_metadata_json,
+            batch_flag: &mut batch_flag,
+            batch_file: &mut batch_file,
             verdict_only: &mut verdict_only,
             probe_quote: &mut probe_quote,
             locate_probe_flag: &mut locate_probe_flag,
@@ -351,6 +377,14 @@ fn parse_options(args: impl IntoIterator<Item = String>) -> Result<CliOptions, S
         bare_url_rev,
         bare_url_ordinal,
     )?;
+    let batch = if batch_flag {
+        Some(BatchOptions {
+            file: batch_file,
+            models: verify_models.clone(),
+        })
+    } else {
+        None
+    };
     let verify = build_verify_options(
         verify_claim,
         verify_source_url,
@@ -362,6 +396,7 @@ fn parse_options(args: impl IntoIterator<Item = String>) -> Result<CliOptions, S
         verify_source_body,
         verify_models,
         verify_article_title,
+        verify_metadata_json,
     )?;
     let locate_probe = if locate_probe_flag {
         Some(probe_quote.ok_or_else(|| "--locate-probe requires --quote".to_string())?)
@@ -385,6 +420,7 @@ fn parse_options(args: impl IntoIterator<Item = String>) -> Result<CliOptions, S
         bare_url,
         verify,
         verify_page,
+        batch,
         verdict_only,
         locate_probe,
     })
@@ -404,6 +440,7 @@ fn build_verify_options(
     source_body: Option<String>,
     models: Option<String>,
     article_title: Option<String>,
+    metadata_json: Option<String>,
 ) -> Result<Option<VerifyCliOptions>, String> {
     if source_file.is_some() && source_body.is_some() {
         return Err("use only one of --source-file and --source-body".to_string());
@@ -420,6 +457,7 @@ fn build_verify_options(
             source_body,
             models,
             article_title,
+            metadata_json,
         })),
         (None, None) => Ok(None),
         _ => Err("citation verification requires both --claim and --source-url".to_string()),
@@ -455,6 +493,9 @@ struct CliParseState<'a> {
     verify_source_body: &'a mut Option<String>,
     verify_models: &'a mut Option<String>,
     verify_article_title: &'a mut Option<String>,
+    verify_metadata_json: &'a mut Option<String>,
+    batch_flag: &'a mut bool,
+    batch_file: &'a mut Option<String>,
     verdict_only: &'a mut bool,
     probe_quote: &'a mut Option<String>,
     locate_probe_flag: &'a mut bool,
@@ -560,6 +601,16 @@ where
         }
         "--article-title" => {
             *state.verify_article_title = Some(next_option_value(args, "--article-title")?);
+        }
+        "--metadata-json" => {
+            *state.verify_metadata_json = Some(next_option_value(args, "--metadata-json")?);
+        }
+        "--batch" => {
+            *state.batch_flag = true;
+        }
+        "--batch-file" => {
+            *state.batch_file = Some(next_option_value(args, "--batch-file")?);
+            *state.batch_flag = true;
         }
         "--with-metadata" => {
             *state.verify_metadata = true;
@@ -908,40 +959,26 @@ fn prefetched_from_body(text: String) -> FetchedSource {
     }
 }
 
-/// Execute one ad-hoc (claim, source URL) verification against the configured panel.
-///
-/// Reads the inference endpoint, model panel, and (optional) bearer token from the
-/// environment so no secret is hard-coded; performs only read-only GET/POST requests.
-async fn run_verify(options: &VerifyCliOptions) -> Result<VerificationOutcome, String> {
-    // `--models` overrides the panel for this run; the endpoint/token still come from the env.
-    let panel = match options.models.as_deref() {
+/// Build the model panel: `--models` (comma-separated) overrides the env panel for this run;
+/// the endpoint/token always come from the env (`SP42_INFERENCE_*`).
+fn build_panel(models: Option<&str>) -> Result<Vec<ModelRef>, String> {
+    match models {
         Some(models) => {
             let provider = std::env::var("SP42_INFERENCE_PROVIDER")
                 .unwrap_or_else(|_| "configured".to_string());
-            panel_from_models(&provider, models)?
+            panel_from_models(&provider, models)
         }
-        None => panel_from_env()?,
-    };
-    let model_client = client_from_env()?;
+        None => panel_from_env(),
+    }
+}
 
-    let source_url = options
-        .source_url
-        .parse()
-        .map_err(|_| format!("invalid --source-url: {}", options.source_url))?;
-    let request = CitationVerificationRequest {
-        wiki_id: String::new(),
-        rev_id: 0,
-        title: String::new(),
-        claim: options.claim.clone(),
-        source_url,
-    };
-
-    // The source-fetch client carries no inference credential; the bearer is held only by
-    // the model adapter, so it can never reach a third-party source host. Redirects are not
-    // auto-followed; `CliHttpClient::execute` follows them manually and re-checks every hop
-    // against the SSRF floor before connecting (SP42#34/#43).
+/// Build the read-only source-fetch HTTP client. It carries no inference credential — the
+/// bearer is held only by the model adapter, so it can never reach a third-party source host.
+/// Redirects are not auto-followed; `CliHttpClient::execute` follows them manually and
+/// re-checks every hop against the SSRF floor before connecting (SP42#34/#43).
+fn build_fetch_client() -> Result<CliHttpClient, String> {
     let allow_private = std::env::var("SP42_FETCH_ALLOW_PRIVATE").is_ok_and(|value| value == "1");
-    let fetch_client = CliHttpClient {
+    Ok(CliHttpClient {
         client: reqwest::Client::builder()
             .user_agent(sp42_core::branding::USER_AGENT)
             .connect_timeout(Duration::from_secs(10))
@@ -951,29 +988,55 @@ async fn run_verify(options: &VerifyCliOptions) -> Result<VerificationOutcome, S
             .map_err(|error| format!("source http client failed to build: {error}"))?,
         allow_private,
         max_source_bytes: MAX_SOURCE_BYTES,
-    };
+    })
+}
 
-    // An offline body (`--source-file`/`--source-body`) is handed to the verifier as a
-    // pre-fetched 200 text/plain source, so the run never touches the network for the body
-    // (reproducible, no re-fetch). `--source-url` still supplies the provenance URL.
-    let prefetched = resolve_source_body(
-        options.source_file.as_deref(),
-        options.source_body.as_deref(),
-    )?
-    .map(prefetched_from_body);
+/// One verification's resolved inputs — shared by the single `--verify` path and `--batch`.
+struct VerifyCase {
+    claim: String,
+    source_url: String,
+    /// Resolved offline body; `None` means live-fetch `source_url`.
+    source_body: Option<String>,
+    /// Bibliographic sidecar; `None` means fetch-or-skip per `include_metadata`.
+    metadata: Option<CitoidMetadata>,
+    include_metadata: bool,
+    repair: bool,
+    preceding_sentences: Vec<String>,
+    article_title: Option<String>,
+}
+
+/// Verify one case against an already-built panel/clients. An offline body is handed to the
+/// verifier as a pre-fetched 200 `text/plain` source (no network for the body); `source_url`
+/// still supplies the provenance URL. An empty context stays on the no-context path.
+async fn verify_case(
+    fetch_client: &CliHttpClient,
+    model_client: &GenaiModelClient,
+    panel: &[ModelRef],
+    case: &VerifyCase,
+) -> Result<VerificationOutcome, String> {
+    let source_url = case
+        .source_url
+        .parse()
+        .map_err(|_| format!("invalid source url: {}", case.source_url))?;
+    let request = CitationVerificationRequest {
+        wiki_id: String::new(),
+        rev_id: 0,
+        title: String::new(),
+        claim: case.claim.clone(),
+        source_url,
+    };
     let verify_options = CoreVerifyOptions {
-        include_metadata: options.include_metadata,
+        include_metadata: case.include_metadata,
         concurrency: 3,
-        repair_turn: options.repair,
-        prefetched,
+        repair_turn: case.repair,
+        prefetched: case.source_body.clone().map(prefetched_from_body),
+        metadata_sidecar: case.metadata.clone(),
         ..Default::default()
     };
-    // SIDE-style co-reference context. `--article-title` and `--preceding-sentence` populate it;
-    // an empty context stays byte-identical to the no-context path.
     let claim_context = {
         let context = ClaimContext {
-            article_title: options.article_title.clone().unwrap_or_default(),
-            preceding_sentences: options.preceding_sentences.clone(),
+            article_title: case.article_title.clone().unwrap_or_default(),
+            preceding_sentences: case.preceding_sentences.clone(),
         };
         if context.is_empty() {
             None
@@ -981,20 +1044,207 @@ async fn run_verify(options: &VerifyCliOptions) -> Result<VerificationOutcome, S
             Some(context)
         }
     };
-
-    let outcome = verify_citation_use_site(
-        &fetch_client,
-        &model_client,
+    verify_citation_use_site(
+        fetch_client,
+        model_client,
         &SystemClock,
-        &panel,
+        panel,
         &request,
         claim_context.as_ref(),
         0,
         verify_options,
     )
     .await
-    .map_err(|error| error.to_string())?;
-    Ok(outcome)
+    .map_err(|error| error.to_string())
+}
+
+/// A metadata sidecar as supplied on disk / inline: all bibliographic fields optional, and
+/// `url` defaults to the case's `source_url` when absent (the harness keys metadata by case).
+#[derive(Debug, Clone, serde::Deserialize)]
+struct MetadataSidecarFile {
+    #[serde(default)]
+    publication: Option<String>,
+    #[serde(default)]
+    published: Option<String>,
+    #[serde(default)]
+    author: Option<String>,
+    #[serde(default)]
+    title: Option<String>,
+    #[serde(default)]
+    url: Option<String>,
+}
+
+impl MetadataSidecarFile {
+    fn into_citoid(self, fallback_url: &str) -> CitoidMetadata {
+        CitoidMetadata {
+            publication: self.publication,
+            published: self.published,
+            author: self.author,
+            title: self.title,
+            url: self.url.unwrap_or_else(|| fallback_url.to_string()),
+        }
+    }
+}
+
+/// Load a `--metadata-json` sidecar file, filling a missing `url` from the source URL.
+fn load_metadata_sidecar(path: &str, source_url: &str) -> Result<CitoidMetadata, String> {
+    let raw = std::fs::read_to_string(path)
+        .map_err(|error| format!("failed to read --metadata-json {path:?}: {error}"))?;
+    let file: MetadataSidecarFile =
+        serde_json::from_str(&raw).map_err(|error| format!("invalid --metadata-json: {error}"))?;
+    Ok(file.into_citoid(source_url))
+}
+
+fn default_repair() -> bool {
+    true
+}
+
+/// Best-effort recovery of a batch line's `id` when the line is valid JSON but fails typed
+/// `BatchCase` deserialization (e.g. missing `claim`, or a wrong-typed field). Keeps a
+/// schema-error result attributable to its input case, honoring the contract that ids echo.
+fn recover_case_id(raw: &str) -> Option<String> {
+    serde_json::from_str::<serde_json::Value>(raw)
+        .ok()
+        .and_then(|value| value.get("id")?.as_str().map(str::to_string))
+}
+
+/// One input line of a `--batch` run. `claim` and `source_url` are required; everything else
+/// is optional. `source_body` (inline text) keeps the run offline; `repair` defaults on.
+#[derive(Debug, Clone, serde::Deserialize)]
+struct BatchCase {
+    #[serde(default)]
+    id: Option<String>,
+    claim: String,
+    source_url: String,
+    #[serde(default)]
+    source_body: Option<String>,
+    #[serde(default)]
+    metadata: Option<MetadataSidecarFile>,
+    #[serde(default)]
+    preceding: Vec<String>,
+    #[serde(default)]
+    article_title: Option<String>,
+    #[serde(default = "default_repair")]
+    repair: bool,
+    #[serde(default)]
+    with_metadata: bool,
+}
+
+impl BatchCase {
+    fn into_verify_case(self) -> VerifyCase {
+        let metadata = self.metadata.map(|m| m.into_citoid(&self.source_url));
+        VerifyCase {
+            claim: self.claim,
+            source_url: self.source_url,
+            source_body: self.source_body,
+            metadata,
+            include_metadata: self.with_metadata,
+            repair: self.repair,
+            preceding_sentences: self.preceding,
+            article_title: self.article_title,
+        }
+    }
+}
+
+/// One output line of a `--batch` run: the case `id` (echoed when present) plus either the
+/// full `VerificationOutcome` or a per-case `error`. A bad case never aborts the batch.
+#[derive(Debug, serde::Serialize)]
+struct BatchResult {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    outcome: Option<VerificationOutcome>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    error: Option<String>,
+}
+
+/// Read the batch input (STDIN or `--batch-file`) and verify every line on one Tokio runtime.
+fn render_batch(batch: &BatchOptions) -> Result<String, String> {
+    let input = match &batch.file {
+        Some(path) => std::fs::read_to_string(path)
+            .map_err(|error| format!("failed to read --batch-file {path:?}: {error}"))?,
+        None => read_stdin().map_err(|error| error.to_string())?,
+    };
+    let runtime = tokio::runtime::Runtime::new()
+        .map_err(|error| format!("failed to start async runtime: {error}"))?;
+    runtime.block_on(run_batch(batch.models.as_deref(), &input))
+}
+
+/// Verify each non-empty JSONL line against one shared panel/client, emitting one result line.
+/// A line that fails to parse or verify becomes an `error` result; the batch continues.
+async fn run_batch(models: Option<&str>, input: &str) -> Result<String, String> {
+    let panel = build_panel(models)?;
+    let model_client = client_from_env()?;
+    let fetch_client = build_fetch_client()?;
+
+    let mut lines = Vec::new();
+    for (index, raw) in input.lines().enumerate() {
+        let raw = raw.trim();
+        if raw.is_empty() {
+            continue;
+        }
+        let result = match serde_json::from_str::<BatchCase>(raw) {
+            Ok(case) => {
+                let id = case.id.clone();
+                match verify_case(
+                    &fetch_client,
+                    &model_client,
+                    &panel,
+                    &case.into_verify_case(),
+                )
+                .await
+                {
+                    Ok(outcome) => BatchResult {
+                        id,
+                        outcome: Some(outcome),
+                        error: None,
+                    },
+                    Err(error) => BatchResult {
+                        id,
+                        outcome: None,
+                        error: Some(error),
+                    },
+                }
+            }
+            Err(error) => BatchResult {
+                id: recover_case_id(raw),
+                outcome: None,
+                error: Some(format!("line {}: could not parse case: {error}", index + 1)),
+            },
+        };
+        lines.push(serde_json::to_string(&result).map_err(|error| error.to_string())?);
+    }
+    Ok(lines.join("\n"))
+}
+
+/// Execute one ad-hoc (claim, source URL) verification against the configured panel.
+///
+/// Reads the inference endpoint, model panel, and (optional) bearer token from the
+/// environment so no secret is hard-coded; performs only read-only GET/POST requests.
+async fn run_verify(options: &VerifyCliOptions) -> Result<VerificationOutcome, String> {
+    let panel = build_panel(options.models.as_deref())?;
+    let model_client = client_from_env()?;
+    let fetch_client = build_fetch_client()?;
+
+    let source_body = resolve_source_body(
+        options.source_file.as_deref(),
+        options.source_body.as_deref(),
+    )?;
+    let metadata = match &options.metadata_json {
+        Some(path) => Some(load_metadata_sidecar(path, &options.source_url)?),
+        None => None,
+    };
+    let case = VerifyCase {
+        claim: options.claim.clone(),
+        source_url: options.source_url.clone(),
+        source_body,
+        metadata,
+        include_metadata: options.include_metadata,
+        repair: options.repair,
+        preceding_sentences: options.preceding_sentences.clone(),
+        article_title: options.article_title.clone(),
+    };
+    verify_case(&fetch_client, &model_client, &panel, &case).await
 }
 
 /// Human-readable verdict block.
@@ -1042,8 +1292,9 @@ mod verify_tests {
     };
 
     use super::{
-        VerifyCliOptions, parse_options, prefetched_from_body, render_verify_text,
-        resolve_source_body, run_locate_probe,
+        BatchCase, MetadataSidecarFile, VerifyCliOptions, load_metadata_sidecar, parse_options,
+        prefetched_from_body, recover_case_id, render_verify_text, resolve_source_body,
+        run_locate_probe,
     };
 
     fn args(items: &[&str]) -> Vec<String> {
@@ -1074,6 +1325,7 @@ mod verify_tests {
                 source_body: None,
                 models: None,
                 article_title: None,
+                metadata_json: None,
             }
         );
         assert!(!options.verdict_only);
@@ -1138,6 +1390,101 @@ mod verify_tests {
         assert_eq!(fetched.status, 200);
         assert_eq!(fetched.content_type, "text/plain");
         assert!(fetched.raw_html.is_none());
+    }
+
+    #[test]
+    fn parses_metadata_json_and_batch_flags() {
+        let verify = parse_options(args(&[
+            "--claim",
+            "c",
+            "--source-url",
+            "https://example.com",
+            "--metadata-json",
+            "/tmp/meta.json",
+        ]))
+        .expect("parses")
+        .verify
+        .expect("verify present");
+        assert_eq!(verify.metadata_json.as_deref(), Some("/tmp/meta.json"));
+
+        let batch = parse_options(args(&["--batch"]))
+            .expect("parses")
+            .batch
+            .expect("batch present");
+        assert_eq!(batch.file, None);
+
+        let batch_file = parse_options(args(&["--batch-file", "/tmp/cases.jsonl"]))
+            .expect("parses")
+            .batch
+            .expect("batch present");
+        assert_eq!(batch_file.file.as_deref(), Some("/tmp/cases.jsonl"));
+    }
+
+    #[test]
+    fn metadata_sidecar_file_fills_missing_url_from_source() {
+        let file: MetadataSidecarFile =
+            serde_json::from_str(r#"{"publication":"The Daily Example","author":"A. Writer"}"#)
+                .expect("parses");
+        let meta = file.into_citoid("https://example.com/article");
+        assert_eq!(meta.publication.as_deref(), Some("The Daily Example"));
+        assert_eq!(meta.author.as_deref(), Some("A. Writer"));
+        assert_eq!(meta.url, "https://example.com/article");
+        assert!(meta.title.is_none());
+    }
+
+    #[test]
+    fn load_metadata_sidecar_reads_a_file_and_prefers_explicit_url() {
+        let path = std::env::temp_dir().join("sp42_metadata_sidecar_test.json");
+        std::fs::write(
+            &path,
+            r#"{"title":"A Title","url":"https://override.example/x"}"#,
+        )
+        .expect("write fixture");
+        let meta = load_metadata_sidecar(path.to_str().expect("utf8 path"), "https://fallback")
+            .expect("loads");
+        assert_eq!(meta.title.as_deref(), Some("A Title"));
+        assert_eq!(meta.url, "https://override.example/x");
+        std::fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn batch_case_parses_with_repair_defaulting_true() {
+        let case: BatchCase = serde_json::from_str(
+            r#"{"id":"c1","claim":"the bridge opened in 1998","source_url":"https://example.com/b","source_body":"text"}"#,
+        )
+        .expect("parses");
+        assert_eq!(case.id.as_deref(), Some("c1"));
+        assert!(case.repair, "repair defaults to true");
+        assert!(!case.with_metadata);
+        let vc = case.into_verify_case();
+        assert_eq!(vc.claim, "the bridge opened in 1998");
+        assert_eq!(vc.source_body.as_deref(), Some("text"));
+        assert!(vc.metadata.is_none());
+    }
+
+    #[test]
+    fn recover_case_id_keeps_schema_errors_attributable() {
+        // Valid JSON missing the required `claim` still fails BatchCase, but its id is recoverable.
+        let schema_error = r#"{"id":"c7","source_url":"https://example.com/b"}"#;
+        assert!(serde_json::from_str::<BatchCase>(schema_error).is_err());
+        assert_eq!(recover_case_id(schema_error).as_deref(), Some("c7"));
+
+        // No id, non-string id, and non-JSON all recover to None (not attributable).
+        assert_eq!(recover_case_id(r#"{"claim":"c"}"#), None);
+        assert_eq!(recover_case_id(r#"{"id":42}"#), None);
+        assert_eq!(recover_case_id("not json"), None);
+    }
+
+    #[test]
+    fn batch_case_metadata_inherits_source_url_when_url_absent() {
+        let case: BatchCase = serde_json::from_str(
+            r#"{"claim":"c","source_url":"https://example.com/b","metadata":{"publication":"P"}}"#,
+        )
+        .expect("parses");
+        let vc = case.into_verify_case();
+        let meta = vc.metadata.expect("metadata present");
+        assert_eq!(meta.publication.as_deref(), Some("P"));
+        assert_eq!(meta.url, "https://example.com/b");
     }
 
     #[test]
@@ -3464,6 +3811,7 @@ mod tests {
                 bare_url: None,
                 verify: None,
                 verify_page: None,
+                batch: None,
                 verdict_only: false,
                 locate_probe: None,
             },
@@ -3499,6 +3847,7 @@ mod tests {
                 bare_url: None,
                 verify: None,
                 verify_page: None,
+                batch: None,
                 verdict_only: false,
                 locate_probe: None,
             },
@@ -3532,6 +3881,7 @@ mod tests {
                 bare_url: None,
                 verify: None,
                 verify_page: None,
+                batch: None,
                 verdict_only: false,
                 locate_probe: None,
             },
@@ -3572,6 +3922,7 @@ mod tests {
             bare_url: None,
             verify: None,
             verify_page: None,
+            batch: None,
             verdict_only: false,
             locate_probe: None,
         };
@@ -3615,6 +3966,7 @@ mod tests {
             bare_url: None,
             verify: None,
             verify_page: None,
+            batch: None,
             verdict_only: false,
             locate_probe: None,
         };

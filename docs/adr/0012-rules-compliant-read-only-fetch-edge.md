@@ -133,19 +133,26 @@ in our process.
    IP-literal range check remains as belt-and-suspenders, since the resolver is
    not guaranteed to fire on literal-IP hosts (no name to resolve).
 
-4. **Redirects: drop the hand-rolled mechanics.** Replace the CLI manual loop and
-   the `guarded_source_client` custom-policy closure with
-   `reqwest::redirect::Policy::limited(5)`. Per-hop SSRF is enforced by the
-   resolver (#3), not by re-checking URL strings, so the bespoke redirect code is
-   unnecessary.
+4. **Redirects: a slimmer custom policy, not a manual loop.** Replace the CLI
+   manual loop and the `guarded_source_client` closure with a `reqwest`
+   redirect `Policy::custom` that caps hops at 5 **and rejects any hop whose
+   target is a non-public IP literal**. DNS-name hops are validated by the
+   resolver (#3) at connect time; literal-IP hops are *not* (reqwest skips DNS
+   for them), so the per-hop literal check must stay in the redirect policy — a
+   plain `Policy::limited(5)` would reopen the redirect-to-private-literal case.
+   The initial URL gets the same literal check pre-flight in `execute`. (This is
+   simpler than the old per-hop full-`check_fetchable_source_url` string check,
+   but it is *not* zero.)
 
 5. **Retry/backoff via maintained middleware, not hand-rolled.** Use
-   `reqwest-retry` + `reqwest-middleware`. Retry only idempotent GETs, on
-   `429`, `500/502/503/504`, `408`, and connect/timeout transport errors; never
-   on other 4xx. Exponential backoff with jitter, ~3 attempts, honoring
-   `Retry-After` when present (capped to a sane maximum so a hostile/buggy header
-   cannot pin the client). This covers both faces, including Citoid's REST
-   `429 + Retry-After`.
+   `reqwest-retry` + `reqwest-middleware`. Retry idempotent GETs on retryable
+   HTTP statuses (`429`, `500/502/503/504`); exponential backoff with jitter,
+   ~3 attempts. Do **not** retry transport/connect errors (see Implementation
+   note 3 for why). **`Retry-After` is not honored by `reqwest-retry`** (verified
+   — its policy sees only retry-count, its strategy only classifies responses);
+   honoring the server's `Retry-After` over computed backoff needs a small custom
+   middleware and is recorded as a follow-up (low priority for a serial,
+   low-volume tool that rarely trips Wikimedia's REST rate limit).
 
 6. **`maxlag` is explicitly out of scope.** It applies to the Action API
    (`api.php`) only (since MediaWiki 1.27) and returns HTTP 200 + `Retry-After`;
@@ -287,22 +294,29 @@ corrected or surfaced — recorded so the design is honest:
    Because of (2), a deterministic SSRF rejection is indistinguishable from a
    transient connect failure at the retry layer, so the default strategy retried
    it `MAX_RETRIES` times (~2.6 s of wasted backoff). The shipped strategy
-   retries only on retryable **HTTP statuses** (5xx/429, `Retry-After`) and never
-   on transport/connect errors — SSRF and dead hosts fail fast. Trade-off:
-   genuine transient *connect* blips are not retried; the high-value retries
-   (server-sent 503/429) are preserved.
+   retries only on retryable **HTTP statuses** (5xx/429) and never on
+   transport/connect errors — SSRF and dead hosts fail fast. Trade-off: genuine
+   transient *connect* blips are not retried; the high-value retries (server-sent
+   503/429) are preserved. **`Retry-After` is not honored** (see decision #5) —
+   `reqwest-retry` has no hook for it; this is a recorded follow-up.
 
 4. **Dependency pin.** `reqwest-retry`'s latest (0.9 / `reqwest-middleware` 0.5)
    targets `reqwest` 0.13; the workspace is on 0.12, so the edge pins
    `reqwest-retry 0.7` + `reqwest-middleware 0.4`. (`genai` already pulls a
    second `reqwest` 0.13 transitively — unrelated and harmless.)
 
-5. **The two-face split is lighter than decision #2 implied.** In the server,
-   Citoid already rides a *separate* general client, not the source client; in
-   the CLI a single guarded client is injected for both, which is correct because
-   `en.wikipedia.org` is public (the guard is a no-op there). No `sp42-core`
-   verify-signature change was needed. A strict typed two-face split would have
-   needed one and was not worth it.
+5. **The two-face split is only partly realized — and decision #2 overstated
+   it.** Citoid is reached from two server paths, and they differ: the *bare-URL
+   repair* path already uses the separate general `reqwest::Client`
+   (`citation_routes::fetch_citoid_object`), but the *verify-page* path passes
+   the single injected source client into `verify_page`, and
+   `citation/verify.rs` uses that same client for the Citoid metadata request.
+   So in verify-page (and in the CLI) Citoid currently rides the **guarded**
+   face, not a trusted one. This works because `en.wikipedia.org` is public (the
+   guard is a no-op there) and was preferred over threading a second client
+   through the `verify_page`/`verify.rs` signature. A strict typed trusted face
+   for Citoid remains a follow-up; decision #2 should be read as the intent, not
+   as fully implemented here.
 
 **LOC, measured (tests excluded, per the consolidation).** Production code is
 ≈ −45 net: ~383 prod lines removed (CLI `CliHttpClient`, server `PlainHttpClient`,

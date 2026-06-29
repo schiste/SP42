@@ -191,13 +191,19 @@ in our process.
   duplicate `execute` bodies, the CLI manual redirect loop + `redirect_location`,
   the `guarded_source_client` redirect-policy closure + `redirect_host_allowed`,
   and the hand-rolled `is_blocked_ipv4/v6` CIDR logic — into one `sp42-fetch`
-  crate. **Production** LOC is roughly break-even (≈ −45 net, not the −130/−150
-  first estimated); the decisive win is de-duplication (4 files / 3 crates → 1)
-  and ≈ −300 lines once duplicated tests collapse. See the Implementation notes
-  for why production code did not shrink as much as sketched.
-- **New dependencies:** `ip_network` (IP classification), `reqwest-retry` +
-  `reqwest-middleware` (retry). No new DNS stack — the resolver wraps the
-  existing system resolver.
+  crate. The implementation shows this is a **net reduction even excluding
+  tests** (≈ −45 production lines — modest, not the −130/−150 first estimated),
+  and ≈ −300 lines once duplicated tests collapse. The decisive win is
+  de-duplication (4 files / 3 crates → 1). See the Implementation notes for why
+  production code did not shrink as much as sketched.
+- **New dependencies, and why they are not bloat:** `ip_network` (IP
+  classification), `reqwest-retry` + `reqwest-middleware` (retry). The build
+  confirms that **adding these three crates still leaves the codebase smaller**
+  (the net reduction above is *after* the additions), and they *replace*
+  security-critical hand-rolled code (CIDR range classification; hand-rolled
+  retry/backoff would otherwise be ~100 lines) with maintained libraries. No new
+  DNS stack — the resolver wraps the existing system resolver. (`reqwest-retry`
+  is pinned to the reqwest-0.12 line; see Implementation notes.)
 - **Closes #34's open items** (retry/backoff, codified timeouts, confirmed UA;
   `maxlag` ruled out with reason) **and #60** (resolved-IP / DNS-rebinding) as a
   side effect of the resolver.

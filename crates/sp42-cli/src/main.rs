@@ -1099,6 +1099,15 @@ fn default_repair() -> bool {
     true
 }
 
+/// Best-effort recovery of a batch line's `id` when the line is valid JSON but fails typed
+/// `BatchCase` deserialization (e.g. missing `claim`, or a wrong-typed field). Keeps a
+/// schema-error result attributable to its input case, honoring the contract that ids echo.
+fn recover_case_id(raw: &str) -> Option<String> {
+    serde_json::from_str::<serde_json::Value>(raw)
+        .ok()
+        .and_then(|value| value.get("id")?.as_str().map(str::to_string))
+}
+
 /// One input line of a `--batch` run. `claim` and `source_url` are required; everything else
 /// is optional. `source_body` (inline text) keeps the run offline; `repair` defaults on.
 #[derive(Debug, Clone, serde::Deserialize)]
@@ -1198,9 +1207,9 @@ async fn run_batch(models: Option<&str>, input: &str) -> Result<String, String> 
                 }
             }
             Err(error) => BatchResult {
-                id: None,
+                id: recover_case_id(raw),
                 outcome: None,
-                error: Some(format!("line {}: invalid JSON: {error}", index + 1)),
+                error: Some(format!("line {}: could not parse case: {error}", index + 1)),
             },
         };
         lines.push(serde_json::to_string(&result).map_err(|error| error.to_string())?);
@@ -1284,7 +1293,8 @@ mod verify_tests {
 
     use super::{
         BatchCase, MetadataSidecarFile, VerifyCliOptions, load_metadata_sidecar, parse_options,
-        prefetched_from_body, render_verify_text, resolve_source_body, run_locate_probe,
+        prefetched_from_body, recover_case_id, render_verify_text, resolve_source_body,
+        run_locate_probe,
     };
 
     fn args(items: &[&str]) -> Vec<String> {
@@ -1450,6 +1460,19 @@ mod verify_tests {
         assert_eq!(vc.claim, "the bridge opened in 1998");
         assert_eq!(vc.source_body.as_deref(), Some("text"));
         assert!(vc.metadata.is_none());
+    }
+
+    #[test]
+    fn recover_case_id_keeps_schema_errors_attributable() {
+        // Valid JSON missing the required `claim` still fails BatchCase, but its id is recoverable.
+        let schema_error = r#"{"id":"c7","source_url":"https://example.com/b"}"#;
+        assert!(serde_json::from_str::<BatchCase>(schema_error).is_err());
+        assert_eq!(recover_case_id(schema_error).as_deref(), Some("c7"));
+
+        // No id, non-string id, and non-JSON all recover to None (not attributable).
+        assert_eq!(recover_case_id(r#"{"claim":"c"}"#), None);
+        assert_eq!(recover_case_id(r#"{"id":42}"#), None);
+        assert_eq!(recover_case_id("not json"), None);
     }
 
     #[test]

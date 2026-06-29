@@ -7,6 +7,7 @@
 //! classes as the design-system migration proceeds. It intentionally has no
 //! dependency on `sp42-app` or domain crates.
 
+pub mod primitives;
 pub mod theme;
 
 /// Trunk-bundled design-system stylesheet.
@@ -18,6 +19,7 @@ pub const DESIGN_SYSTEM_CSS: &str = include_str!("../static/style.css");
 /// Repository-relative path to the design-system stylesheet.
 pub const DESIGN_SYSTEM_CSS_PATH: &str = "crates/sp42-ui/static/style.css";
 
+pub use primitives::*;
 pub use theme::{
     THEME_STORAGE_KEY, Theme, ThemeState, ThemeToggle, apply_theme, restore_theme, stored_theme,
 };

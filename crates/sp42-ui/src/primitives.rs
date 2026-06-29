@@ -1,0 +1,1801 @@
+//! Typed design-system primitives for SP42's Leptos UI.
+//!
+//! These functions own presentation choices through semantic variants. Callers
+//! pass behavior, text, and children, but never raw CSS classes or inline style.
+
+use leptos::prelude::*;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ControlState {
+    Static(bool),
+    Signal(Signal<bool>),
+}
+
+impl Default for ControlState {
+    fn default() -> Self {
+        Self::Static(false)
+    }
+}
+
+impl ControlState {
+    #[must_use]
+    pub fn get(self) -> bool {
+        match self {
+            Self::Static(value) => value,
+            Self::Signal(value) => value.get(),
+        }
+    }
+}
+
+impl From<bool> for ControlState {
+    fn from(value: bool) -> Self {
+        Self::Static(value)
+    }
+}
+
+impl From<Signal<bool>> for ControlState {
+    fn from(value: Signal<bool>) -> Self {
+        Self::Signal(value)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Density {
+    Compact,
+    #[default]
+    Normal,
+    Comfortable,
+}
+
+impl Density {
+    #[must_use]
+    pub const fn class_name(self) -> &'static str {
+        match self {
+            Self::Compact => "sp42-density-compact",
+            Self::Normal => "sp42-density-normal",
+            Self::Comfortable => "sp42-density-comfortable",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Size {
+    Small,
+    #[default]
+    Medium,
+    Large,
+}
+
+impl Size {
+    #[must_use]
+    pub const fn class_name(self) -> &'static str {
+        match self {
+            Self::Small => "sp42-size-small",
+            Self::Medium => "sp42-size-medium",
+            Self::Large => "sp42-size-large",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Surface {
+    #[default]
+    Default,
+    Subtle,
+    Raised,
+    Accent,
+    Success,
+    Warning,
+    Danger,
+}
+
+impl Surface {
+    #[must_use]
+    pub const fn class_name(self) -> &'static str {
+        match self {
+            Self::Default => "sp42-surface-default",
+            Self::Subtle => "sp42-surface-subtle",
+            Self::Raised => "sp42-surface-raised",
+            Self::Accent => "sp42-surface-accent",
+            Self::Success => "sp42-surface-success",
+            Self::Warning => "sp42-surface-warning",
+            Self::Danger => "sp42-surface-danger",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Gap {
+    None,
+    XSmall,
+    Small,
+    #[default]
+    Medium,
+    Large,
+    XLarge,
+}
+
+impl Gap {
+    #[must_use]
+    pub const fn class_name(self) -> &'static str {
+        match self {
+            Self::None => "sp42-gap-none",
+            Self::XSmall => "sp42-gap-xs",
+            Self::Small => "sp42-gap-sm",
+            Self::Medium => "sp42-gap-md",
+            Self::Large => "sp42-gap-lg",
+            Self::XLarge => "sp42-gap-xl",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Align {
+    #[default]
+    Start,
+    Center,
+    End,
+    Stretch,
+    Baseline,
+}
+
+impl Align {
+    #[must_use]
+    pub const fn class_name(self) -> &'static str {
+        match self {
+            Self::Start => "sp42-align-start",
+            Self::Center => "sp42-align-center",
+            Self::End => "sp42-align-end",
+            Self::Stretch => "sp42-align-stretch",
+            Self::Baseline => "sp42-align-baseline",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Justify {
+    #[default]
+    Start,
+    Center,
+    End,
+    Between,
+}
+
+impl Justify {
+    #[must_use]
+    pub const fn class_name(self) -> &'static str {
+        match self {
+            Self::Start => "sp42-justify-start",
+            Self::Center => "sp42-justify-center",
+            Self::End => "sp42-justify-end",
+            Self::Between => "sp42-justify-between",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ButtonTone {
+    #[default]
+    Neutral,
+    Accent,
+    Success,
+    Warning,
+    Danger,
+}
+
+impl ButtonTone {
+    #[must_use]
+    pub const fn class_name(self) -> &'static str {
+        match self {
+            Self::Neutral => "",
+            Self::Accent => "btn-accent",
+            Self::Success => "btn-success",
+            Self::Warning => "btn-warning",
+            Self::Danger => "btn-danger",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ButtonEmphasis {
+    #[default]
+    Solid,
+    Subtle,
+    Ghost,
+}
+
+impl ButtonEmphasis {
+    #[must_use]
+    pub const fn class_name(self) -> &'static str {
+        match self {
+            Self::Solid => "",
+            Self::Subtle => "btn-subtle",
+            Self::Ghost => "btn-ghost",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ButtonType {
+    #[default]
+    Button,
+    Submit,
+    Reset,
+}
+
+impl ButtonType {
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Button => "button",
+            Self::Submit => "submit",
+            Self::Reset => "reset",
+        }
+    }
+}
+
+pub struct ButtonProps {
+    label: String,
+    tone: ButtonTone,
+    size: Size,
+    density: Density,
+    emphasis: ButtonEmphasis,
+    button_type: ButtonType,
+    disabled: ControlState,
+    recommended: bool,
+    title: String,
+    aria_label: String,
+    aria_keyshortcuts: String,
+    on_click: Option<Callback<leptos::ev::MouseEvent>>,
+}
+
+impl ButtonProps {
+    #[must_use]
+    pub fn new(label: impl Into<String>) -> Self {
+        Self {
+            label: label.into(),
+            tone: ButtonTone::default(),
+            size: Size::default(),
+            density: Density::default(),
+            emphasis: ButtonEmphasis::default(),
+            button_type: ButtonType::default(),
+            disabled: ControlState::default(),
+            recommended: false,
+            title: String::new(),
+            aria_label: String::new(),
+            aria_keyshortcuts: String::new(),
+            on_click: None,
+        }
+    }
+
+    #[must_use]
+    pub const fn with_tone(mut self, tone: ButtonTone) -> Self {
+        self.tone = tone;
+        self
+    }
+
+    #[must_use]
+    pub const fn with_size(mut self, size: Size) -> Self {
+        self.size = size;
+        self
+    }
+
+    #[must_use]
+    pub const fn with_density(mut self, density: Density) -> Self {
+        self.density = density;
+        self
+    }
+
+    #[must_use]
+    pub const fn with_emphasis(mut self, emphasis: ButtonEmphasis) -> Self {
+        self.emphasis = emphasis;
+        self
+    }
+
+    #[must_use]
+    pub const fn with_type(mut self, button_type: ButtonType) -> Self {
+        self.button_type = button_type;
+        self
+    }
+
+    #[must_use]
+    pub fn with_disabled(mut self, disabled: impl Into<ControlState>) -> Self {
+        self.disabled = disabled.into();
+        self
+    }
+
+    #[must_use]
+    pub const fn recommended(mut self) -> Self {
+        self.recommended = true;
+        self
+    }
+
+    #[must_use]
+    pub fn with_title(mut self, title: impl Into<String>) -> Self {
+        self.title = title.into();
+        self
+    }
+
+    #[must_use]
+    pub fn with_aria_label(mut self, aria_label: impl Into<String>) -> Self {
+        self.aria_label = aria_label.into();
+        self
+    }
+
+    #[must_use]
+    pub fn with_keyshortcuts(mut self, aria_keyshortcuts: impl Into<String>) -> Self {
+        self.aria_keyshortcuts = aria_keyshortcuts.into();
+        self
+    }
+
+    #[must_use]
+    pub fn on_click(mut self, on_click: impl Into<Callback<leptos::ev::MouseEvent>>) -> Self {
+        self.on_click = Some(on_click.into());
+        self
+    }
+
+    #[must_use]
+    pub fn class_name(&self) -> String {
+        let mut class_name = String::from("btn");
+        push_class(&mut class_name, self.tone.class_name());
+        push_class(&mut class_name, self.size.class_name());
+        push_class(&mut class_name, self.density.class_name());
+        push_class(&mut class_name, self.emphasis.class_name());
+        if self.recommended {
+            push_class(&mut class_name, "btn-recommended");
+        }
+        class_name
+    }
+}
+
+#[must_use]
+pub fn button(props: ButtonProps) -> impl IntoView {
+    let class_name = props.class_name();
+    let button_type = props.button_type.as_str();
+    let disabled = props.disabled;
+    let on_click = props.on_click;
+
+    view! {
+        <button
+            type=button_type
+            class=class_name
+            title=props.title
+            aria-label=props.aria_label
+            aria-keyshortcuts=props.aria_keyshortcuts
+            disabled=move || disabled.get()
+            on:click=move |ev| {
+                if let Some(callback) = on_click {
+                    callback.run(ev);
+                }
+            }
+        >
+            {props.label}
+        </button>
+    }
+}
+
+pub use button as Button;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum StatusTone {
+    #[default]
+    Neutral,
+    Info,
+    Success,
+    Warning,
+    Accent,
+    Danger,
+}
+
+impl StatusTone {
+    #[must_use]
+    pub const fn class_name(self) -> &'static str {
+        match self {
+            Self::Neutral => "sp42-status-badge-neutral",
+            Self::Info => "sp42-status-badge-info",
+            Self::Success => "sp42-status-badge-success",
+            Self::Warning => "sp42-status-badge-warning",
+            Self::Accent => "sp42-status-badge-accent",
+            Self::Danger => "sp42-status-badge-danger",
+        }
+    }
+}
+
+pub struct StatusBadgeProps {
+    label: String,
+    tone: StatusTone,
+    size: Size,
+}
+
+impl StatusBadgeProps {
+    #[must_use]
+    pub fn new(label: impl Into<String>) -> Self {
+        Self {
+            label: label.into(),
+            tone: StatusTone::default(),
+            size: Size::default(),
+        }
+    }
+
+    #[must_use]
+    pub const fn with_tone(mut self, tone: StatusTone) -> Self {
+        self.tone = tone;
+        self
+    }
+
+    #[must_use]
+    pub const fn with_size(mut self, size: Size) -> Self {
+        self.size = size;
+        self
+    }
+
+    #[must_use]
+    pub fn class_name(&self) -> String {
+        let mut class_name = String::from("badge sp42-status-badge");
+        push_class(&mut class_name, self.tone.class_name());
+        push_class(&mut class_name, self.size.class_name());
+        class_name
+    }
+}
+
+#[must_use]
+pub fn status_badge(props: StatusBadgeProps) -> impl IntoView {
+    let class_name = props.class_name();
+
+    view! {
+        <span class=class_name>{props.label}</span>
+    }
+}
+
+pub use status_badge as StatusBadge;
+
+pub struct PanelProps {
+    children: Children,
+    surface: Surface,
+    density: Density,
+}
+
+impl PanelProps {
+    #[must_use]
+    pub fn new(children: Children) -> Self {
+        Self {
+            children,
+            surface: Surface::default(),
+            density: Density::default(),
+        }
+    }
+
+    #[must_use]
+    pub const fn with_surface(mut self, surface: Surface) -> Self {
+        self.surface = surface;
+        self
+    }
+
+    #[must_use]
+    pub const fn with_density(mut self, density: Density) -> Self {
+        self.density = density;
+        self
+    }
+
+    #[must_use]
+    pub fn class_name(&self) -> String {
+        class_names(&[
+            "panel",
+            self.surface.class_name(),
+            self.density.class_name(),
+        ])
+    }
+}
+
+#[must_use]
+pub fn panel(props: PanelProps) -> impl IntoView {
+    let class_name = props.class_name();
+    let children = props.children;
+
+    view! {
+        <section class=class_name>{children()}</section>
+    }
+}
+
+pub use panel as Panel;
+
+pub struct CardProps {
+    children: Children,
+    surface: Surface,
+    density: Density,
+}
+
+impl CardProps {
+    #[must_use]
+    pub fn new(children: Children) -> Self {
+        Self {
+            children,
+            surface: Surface::Subtle,
+            density: Density::default(),
+        }
+    }
+
+    #[must_use]
+    pub const fn with_surface(mut self, surface: Surface) -> Self {
+        self.surface = surface;
+        self
+    }
+
+    #[must_use]
+    pub const fn with_density(mut self, density: Density) -> Self {
+        self.density = density;
+        self
+    }
+
+    #[must_use]
+    pub fn class_name(&self) -> String {
+        class_names(&["card", self.surface.class_name(), self.density.class_name()])
+    }
+}
+
+#[must_use]
+pub fn card(props: CardProps) -> impl IntoView {
+    let class_name = props.class_name();
+    let children = props.children;
+
+    view! {
+        <article class=class_name>{children()}</article>
+    }
+}
+
+pub use card as Card;
+
+pub struct StackProps {
+    children: Children,
+    gap: Gap,
+    align: Align,
+}
+
+impl StackProps {
+    #[must_use]
+    pub fn new(children: Children) -> Self {
+        Self {
+            children,
+            gap: Gap::default(),
+            align: Align::Stretch,
+        }
+    }
+
+    #[must_use]
+    pub const fn with_gap(mut self, gap: Gap) -> Self {
+        self.gap = gap;
+        self
+    }
+
+    #[must_use]
+    pub const fn with_align(mut self, align: Align) -> Self {
+        self.align = align;
+        self
+    }
+
+    #[must_use]
+    pub fn class_name(&self) -> String {
+        class_names(&["sp42-stack", self.gap.class_name(), self.align.class_name()])
+    }
+}
+
+#[must_use]
+pub fn stack(props: StackProps) -> impl IntoView {
+    let class_name = props.class_name();
+    let children = props.children;
+
+    view! {
+        <div class=class_name>{children()}</div>
+    }
+}
+
+pub use stack as Stack;
+
+pub struct InlineProps {
+    children: Children,
+    gap: Gap,
+    align: Align,
+    justify: Justify,
+    wrap: bool,
+}
+
+impl InlineProps {
+    #[must_use]
+    pub fn new(children: Children) -> Self {
+        Self {
+            children,
+            gap: Gap::default(),
+            align: Align::Center,
+            justify: Justify::default(),
+            wrap: true,
+        }
+    }
+
+    #[must_use]
+    pub const fn with_gap(mut self, gap: Gap) -> Self {
+        self.gap = gap;
+        self
+    }
+
+    #[must_use]
+    pub const fn with_align(mut self, align: Align) -> Self {
+        self.align = align;
+        self
+    }
+
+    #[must_use]
+    pub const fn with_justify(mut self, justify: Justify) -> Self {
+        self.justify = justify;
+        self
+    }
+
+    #[must_use]
+    pub const fn without_wrap(mut self) -> Self {
+        self.wrap = false;
+        self
+    }
+
+    #[must_use]
+    pub fn class_name(&self) -> String {
+        let mut class_name = class_names(&[
+            "sp42-inline",
+            self.gap.class_name(),
+            self.align.class_name(),
+            self.justify.class_name(),
+        ]);
+        if self.wrap {
+            push_class(&mut class_name, "sp42-wrap");
+        }
+        class_name
+    }
+}
+
+#[must_use]
+pub fn inline(props: InlineProps) -> impl IntoView {
+    let class_name = props.class_name();
+    let children = props.children;
+
+    view! {
+        <div class=class_name>{children()}</div>
+    }
+}
+
+pub use inline as Inline;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum GridColumns {
+    #[default]
+    One,
+    Two,
+    Three,
+    Four,
+    AutoFit,
+}
+
+impl GridColumns {
+    #[must_use]
+    pub const fn class_name(self) -> &'static str {
+        match self {
+            Self::One => "sp42-grid-one",
+            Self::Two => "sp42-grid-two",
+            Self::Three => "sp42-grid-three",
+            Self::Four => "sp42-grid-four",
+            Self::AutoFit => "sp42-grid-auto-fit",
+        }
+    }
+}
+
+pub struct GridProps {
+    children: Children,
+    columns: GridColumns,
+    gap: Gap,
+    align: Align,
+}
+
+impl GridProps {
+    #[must_use]
+    pub fn new(children: Children) -> Self {
+        Self {
+            children,
+            columns: GridColumns::default(),
+            gap: Gap::default(),
+            align: Align::Stretch,
+        }
+    }
+
+    #[must_use]
+    pub const fn with_columns(mut self, columns: GridColumns) -> Self {
+        self.columns = columns;
+        self
+    }
+
+    #[must_use]
+    pub const fn with_gap(mut self, gap: Gap) -> Self {
+        self.gap = gap;
+        self
+    }
+
+    #[must_use]
+    pub const fn with_align(mut self, align: Align) -> Self {
+        self.align = align;
+        self
+    }
+
+    #[must_use]
+    pub fn class_name(&self) -> String {
+        class_names(&[
+            "sp42-grid",
+            self.columns.class_name(),
+            self.gap.class_name(),
+            self.align.class_name(),
+        ])
+    }
+}
+
+#[must_use]
+pub fn grid(props: GridProps) -> impl IntoView {
+    let class_name = props.class_name();
+    let children = props.children;
+
+    view! {
+        <div class=class_name>{children()}</div>
+    }
+}
+
+pub use grid as Grid;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum TextTone {
+    #[default]
+    Default,
+    Muted,
+    Subtle,
+    Accent,
+    Success,
+    Warning,
+    Danger,
+}
+
+impl TextTone {
+    #[must_use]
+    pub const fn class_name(self) -> &'static str {
+        match self {
+            Self::Default => "sp42-text-default",
+            Self::Muted => "text-muted",
+            Self::Subtle => "sp42-text-subtle",
+            Self::Accent => "text-accent",
+            Self::Success => "text-success",
+            Self::Warning => "text-warning",
+            Self::Danger => "text-danger",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum TextSize {
+    XSmall,
+    Small,
+    #[default]
+    Medium,
+    Large,
+}
+
+impl TextSize {
+    #[must_use]
+    pub const fn class_name(self) -> &'static str {
+        match self {
+            Self::XSmall => "sp42-text-xs",
+            Self::Small => "sp42-text-sm",
+            Self::Medium => "sp42-text-md",
+            Self::Large => "sp42-text-lg",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum TextWeight {
+    #[default]
+    Regular,
+    Medium,
+    Bold,
+}
+
+impl TextWeight {
+    #[must_use]
+    pub const fn class_name(self) -> &'static str {
+        match self {
+            Self::Regular => "sp42-weight-regular",
+            Self::Medium => "sp42-weight-medium",
+            Self::Bold => "sp42-weight-bold",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum TextElement {
+    #[default]
+    Span,
+    Paragraph,
+    Strong,
+    Code,
+}
+
+pub struct TextProps {
+    children: Children,
+    tone: TextTone,
+    size: TextSize,
+    weight: TextWeight,
+    element: TextElement,
+    mono: bool,
+    truncate: bool,
+}
+
+impl TextProps {
+    #[must_use]
+    pub fn new(children: Children) -> Self {
+        Self {
+            children,
+            tone: TextTone::default(),
+            size: TextSize::default(),
+            weight: TextWeight::default(),
+            element: TextElement::default(),
+            mono: false,
+            truncate: false,
+        }
+    }
+
+    #[must_use]
+    pub const fn with_tone(mut self, tone: TextTone) -> Self {
+        self.tone = tone;
+        self
+    }
+
+    #[must_use]
+    pub const fn with_size(mut self, size: TextSize) -> Self {
+        self.size = size;
+        self
+    }
+
+    #[must_use]
+    pub const fn with_weight(mut self, weight: TextWeight) -> Self {
+        self.weight = weight;
+        self
+    }
+
+    #[must_use]
+    pub const fn with_element(mut self, element: TextElement) -> Self {
+        self.element = element;
+        self
+    }
+
+    #[must_use]
+    pub const fn mono(mut self) -> Self {
+        self.mono = true;
+        self
+    }
+
+    #[must_use]
+    pub const fn truncate(mut self) -> Self {
+        self.truncate = true;
+        self
+    }
+
+    #[must_use]
+    pub fn class_name(&self) -> String {
+        let mut class_name = class_names(&[
+            "sp42-text",
+            self.tone.class_name(),
+            self.size.class_name(),
+            self.weight.class_name(),
+        ]);
+        if self.mono {
+            push_class(&mut class_name, "mono");
+        }
+        if self.truncate {
+            push_class(&mut class_name, "truncate");
+        }
+        class_name
+    }
+}
+
+#[must_use]
+pub fn text(props: TextProps) -> AnyView {
+    let class_name = props.class_name();
+    let children = props.children;
+    let content = children();
+
+    match props.element {
+        TextElement::Span => view! { <span class=class_name>{content}</span> }.into_any(),
+        TextElement::Paragraph => view! { <p class=class_name>{content}</p> }.into_any(),
+        TextElement::Strong => view! { <strong class=class_name>{content}</strong> }.into_any(),
+        TextElement::Code => view! { <code class=class_name>{content}</code> }.into_any(),
+    }
+}
+
+pub use text as Text;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum HeadingLevel {
+    One,
+    #[default]
+    Two,
+    Three,
+    Four,
+    Five,
+    Six,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum HeadingSize {
+    Small,
+    #[default]
+    Medium,
+    Large,
+}
+
+impl HeadingSize {
+    #[must_use]
+    pub const fn class_name(self) -> &'static str {
+        match self {
+            Self::Small => "sp42-heading-sm",
+            Self::Medium => "sp42-heading-md",
+            Self::Large => "sp42-heading-lg",
+        }
+    }
+}
+
+pub struct HeadingProps {
+    children: Children,
+    level: HeadingLevel,
+    size: HeadingSize,
+    tone: TextTone,
+    align: Align,
+}
+
+impl HeadingProps {
+    #[must_use]
+    pub fn new(children: Children) -> Self {
+        Self {
+            children,
+            level: HeadingLevel::default(),
+            size: HeadingSize::default(),
+            tone: TextTone::default(),
+            align: Align::Start,
+        }
+    }
+
+    #[must_use]
+    pub const fn with_level(mut self, level: HeadingLevel) -> Self {
+        self.level = level;
+        self
+    }
+
+    #[must_use]
+    pub const fn with_size(mut self, size: HeadingSize) -> Self {
+        self.size = size;
+        self
+    }
+
+    #[must_use]
+    pub const fn with_tone(mut self, tone: TextTone) -> Self {
+        self.tone = tone;
+        self
+    }
+
+    #[must_use]
+    pub const fn with_align(mut self, align: Align) -> Self {
+        self.align = align;
+        self
+    }
+
+    #[must_use]
+    pub fn class_name(&self) -> String {
+        class_names(&[
+            "sp42-heading",
+            self.size.class_name(),
+            self.tone.class_name(),
+            self.align.class_name(),
+        ])
+    }
+}
+
+#[must_use]
+pub fn heading(props: HeadingProps) -> AnyView {
+    let class_name = props.class_name();
+    let children = props.children;
+    let content = children();
+
+    match props.level {
+        HeadingLevel::One => view! { <h1 class=class_name>{content}</h1> }.into_any(),
+        HeadingLevel::Two => view! { <h2 class=class_name>{content}</h2> }.into_any(),
+        HeadingLevel::Three => view! { <h3 class=class_name>{content}</h3> }.into_any(),
+        HeadingLevel::Four => view! { <h4 class=class_name>{content}</h4> }.into_any(),
+        HeadingLevel::Five => view! { <h5 class=class_name>{content}</h5> }.into_any(),
+        HeadingLevel::Six => view! { <h6 class=class_name>{content}</h6> }.into_any(),
+    }
+}
+
+pub use heading as Heading;
+
+pub struct SectionHeaderProps {
+    title: String,
+    actions: Option<Children>,
+    density: Density,
+}
+
+impl SectionHeaderProps {
+    #[must_use]
+    pub fn new(title: impl Into<String>) -> Self {
+        Self {
+            title: title.into(),
+            actions: None,
+            density: Density::Compact,
+        }
+    }
+
+    #[must_use]
+    pub fn with_actions(mut self, actions: Children) -> Self {
+        self.actions = Some(actions);
+        self
+    }
+
+    #[must_use]
+    pub const fn with_density(mut self, density: Density) -> Self {
+        self.density = density;
+        self
+    }
+}
+
+#[must_use]
+pub fn section_header(props: SectionHeaderProps) -> impl IntoView {
+    let actions = props
+        .actions
+        .map(|actions| view! { <div class="sp42-section-actions">{actions()}</div> }.into_any());
+
+    view! {
+        <header class=class_names(&["sp42-section-header", props.density.class_name()])>
+            <span class="section-header">{props.title}</span>
+            {actions}
+        </header>
+    }
+}
+
+pub use section_header as SectionHeader;
+
+pub struct FieldProps {
+    label: String,
+    control: Children,
+    hint: String,
+    error: String,
+    id: String,
+    required: bool,
+    density: Density,
+}
+
+impl FieldProps {
+    #[must_use]
+    pub fn new(label: impl Into<String>, control: Children) -> Self {
+        Self {
+            label: label.into(),
+            control,
+            hint: String::new(),
+            error: String::new(),
+            id: String::new(),
+            required: false,
+            density: Density::default(),
+        }
+    }
+
+    #[must_use]
+    pub fn with_hint(mut self, hint: impl Into<String>) -> Self {
+        self.hint = hint.into();
+        self
+    }
+
+    #[must_use]
+    pub fn with_error(mut self, error: impl Into<String>) -> Self {
+        self.error = error.into();
+        self
+    }
+
+    #[must_use]
+    pub fn with_id(mut self, id: impl Into<String>) -> Self {
+        self.id = id.into();
+        self
+    }
+
+    #[must_use]
+    pub const fn required(mut self) -> Self {
+        self.required = true;
+        self
+    }
+
+    #[must_use]
+    pub const fn with_density(mut self, density: Density) -> Self {
+        self.density = density;
+        self
+    }
+}
+
+#[must_use]
+pub fn field(props: FieldProps) -> impl IntoView {
+    let control = props.control;
+    let required = props
+        .required
+        .then(|| view! { <span class="sp42-field-required">"*"</span> }.into_any());
+    let hint = (!props.hint.is_empty())
+        .then(|| view! { <p class="sp42-field-hint">{props.hint}</p> }.into_any());
+    let error = (!props.error.is_empty())
+        .then(|| view! { <p class="sp42-field-error">{props.error}</p> }.into_any());
+
+    view! {
+        <label for=props.id class=class_names(&["sp42-field", props.density.class_name()])>
+            <span class="sp42-field-label">{props.label}{required}</span>
+            {control()}
+            {hint}
+            {error}
+        </label>
+    }
+}
+
+pub use field as Field;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum TextInputType {
+    #[default]
+    Text,
+    Search,
+    Url,
+    Email,
+    Password,
+    Number,
+}
+
+impl TextInputType {
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Text => "text",
+            Self::Search => "search",
+            Self::Url => "url",
+            Self::Email => "email",
+            Self::Password => "password",
+            Self::Number => "number",
+        }
+    }
+}
+
+pub struct TextInputProps {
+    id: String,
+    name: String,
+    value: String,
+    placeholder: String,
+    input_type: TextInputType,
+    disabled: ControlState,
+    required: bool,
+    density: Density,
+    on_input: Option<Callback<leptos::ev::Event>>,
+    on_change: Option<Callback<leptos::ev::Event>>,
+}
+
+impl TextInputProps {
+    #[must_use]
+    pub fn new(id: impl Into<String>) -> Self {
+        Self {
+            id: id.into(),
+            name: String::new(),
+            value: String::new(),
+            placeholder: String::new(),
+            input_type: TextInputType::default(),
+            disabled: ControlState::default(),
+            required: false,
+            density: Density::default(),
+            on_input: None,
+            on_change: None,
+        }
+    }
+
+    #[must_use]
+    pub fn with_name(mut self, name: impl Into<String>) -> Self {
+        self.name = name.into();
+        self
+    }
+
+    #[must_use]
+    pub fn with_value(mut self, value: impl Into<String>) -> Self {
+        self.value = value.into();
+        self
+    }
+
+    #[must_use]
+    pub fn with_placeholder(mut self, placeholder: impl Into<String>) -> Self {
+        self.placeholder = placeholder.into();
+        self
+    }
+
+    #[must_use]
+    pub const fn with_type(mut self, input_type: TextInputType) -> Self {
+        self.input_type = input_type;
+        self
+    }
+
+    #[must_use]
+    pub fn with_disabled(mut self, disabled: impl Into<ControlState>) -> Self {
+        self.disabled = disabled.into();
+        self
+    }
+
+    #[must_use]
+    pub const fn required(mut self) -> Self {
+        self.required = true;
+        self
+    }
+
+    #[must_use]
+    pub const fn with_density(mut self, density: Density) -> Self {
+        self.density = density;
+        self
+    }
+
+    #[must_use]
+    pub fn on_input(mut self, on_input: impl Into<Callback<leptos::ev::Event>>) -> Self {
+        self.on_input = Some(on_input.into());
+        self
+    }
+
+    #[must_use]
+    pub fn on_change(mut self, on_change: impl Into<Callback<leptos::ev::Event>>) -> Self {
+        self.on_change = Some(on_change.into());
+        self
+    }
+}
+
+#[must_use]
+pub fn text_input(props: TextInputProps) -> impl IntoView {
+    let disabled = props.disabled;
+    let on_input = props.on_input;
+    let on_change = props.on_change;
+
+    view! {
+        <input
+            id=props.id
+            name=props.name
+            type=props.input_type.as_str()
+            class=class_names(&["sp42-input", props.density.class_name()])
+            prop:value=props.value
+            placeholder=props.placeholder
+            disabled=move || disabled.get()
+            required=props.required
+            on:input=move |ev| {
+                if let Some(callback) = on_input {
+                    callback.run(ev);
+                }
+            }
+            on:change=move |ev| {
+                if let Some(callback) = on_change {
+                    callback.run(ev);
+                }
+            }
+        />
+    }
+}
+
+pub use text_input as TextInput;
+
+pub struct SelectOption {
+    value: String,
+    label: String,
+    disabled: bool,
+}
+
+impl SelectOption {
+    #[must_use]
+    pub fn new(value: impl Into<String>, label: impl Into<String>) -> Self {
+        Self {
+            value: value.into(),
+            label: label.into(),
+            disabled: false,
+        }
+    }
+
+    #[must_use]
+    pub const fn disabled(mut self) -> Self {
+        self.disabled = true;
+        self
+    }
+}
+
+pub struct SelectProps {
+    id: String,
+    name: String,
+    value: String,
+    options: Vec<SelectOption>,
+    disabled: ControlState,
+    density: Density,
+    on_change: Option<Callback<leptos::ev::Event>>,
+}
+
+impl SelectProps {
+    #[must_use]
+    pub fn new(id: impl Into<String>, options: Vec<SelectOption>) -> Self {
+        Self {
+            id: id.into(),
+            name: String::new(),
+            value: String::new(),
+            options,
+            disabled: ControlState::default(),
+            density: Density::default(),
+            on_change: None,
+        }
+    }
+
+    #[must_use]
+    pub fn with_name(mut self, name: impl Into<String>) -> Self {
+        self.name = name.into();
+        self
+    }
+
+    #[must_use]
+    pub fn with_value(mut self, value: impl Into<String>) -> Self {
+        self.value = value.into();
+        self
+    }
+
+    #[must_use]
+    pub fn with_disabled(mut self, disabled: impl Into<ControlState>) -> Self {
+        self.disabled = disabled.into();
+        self
+    }
+
+    #[must_use]
+    pub const fn with_density(mut self, density: Density) -> Self {
+        self.density = density;
+        self
+    }
+
+    #[must_use]
+    pub fn on_change(mut self, on_change: impl Into<Callback<leptos::ev::Event>>) -> Self {
+        self.on_change = Some(on_change.into());
+        self
+    }
+}
+
+#[must_use]
+pub fn select(props: SelectProps) -> impl IntoView {
+    let disabled = props.disabled;
+    let on_change = props.on_change;
+    let selected_value = props.value;
+
+    view! {
+        <select
+            id=props.id
+            name=props.name
+            class=class_names(&["sp42-select", props.density.class_name()])
+            disabled=move || disabled.get()
+            on:change=move |ev| {
+                if let Some(callback) = on_change {
+                    callback.run(ev);
+                }
+            }
+        >
+            {props
+                .options
+                .into_iter()
+                .map(|option| {
+                    let selected = option.value == selected_value;
+                    view! {
+                        <option value=option.value selected=selected disabled=option.disabled>
+                            {option.label}
+                        </option>
+                    }
+                })
+                .collect_view()}
+        </select>
+    }
+}
+
+pub use select as Select;
+
+pub struct CheckboxProps {
+    id: String,
+    name: String,
+    label: String,
+    checked: ControlState,
+    disabled: ControlState,
+    density: Density,
+    on_change: Option<Callback<leptos::ev::Event>>,
+}
+
+impl CheckboxProps {
+    #[must_use]
+    pub fn new(id: impl Into<String>, label: impl Into<String>) -> Self {
+        Self {
+            id: id.into(),
+            name: String::new(),
+            label: label.into(),
+            checked: ControlState::default(),
+            disabled: ControlState::default(),
+            density: Density::Compact,
+            on_change: None,
+        }
+    }
+
+    #[must_use]
+    pub fn with_name(mut self, name: impl Into<String>) -> Self {
+        self.name = name.into();
+        self
+    }
+
+    #[must_use]
+    pub fn with_checked(mut self, checked: impl Into<ControlState>) -> Self {
+        self.checked = checked.into();
+        self
+    }
+
+    #[must_use]
+    pub fn with_disabled(mut self, disabled: impl Into<ControlState>) -> Self {
+        self.disabled = disabled.into();
+        self
+    }
+
+    #[must_use]
+    pub const fn with_density(mut self, density: Density) -> Self {
+        self.density = density;
+        self
+    }
+
+    #[must_use]
+    pub fn on_change(mut self, on_change: impl Into<Callback<leptos::ev::Event>>) -> Self {
+        self.on_change = Some(on_change.into());
+        self
+    }
+}
+
+#[must_use]
+pub fn checkbox(props: CheckboxProps) -> impl IntoView {
+    let checked = props.checked;
+    let disabled = props.disabled;
+    let id = props.id;
+    let input_id = id.clone();
+    let on_change = props.on_change;
+
+    view! {
+        <label for=id class=class_names(&["sp42-checkbox-field", props.density.class_name()])>
+            <input
+                id=input_id
+                name=props.name
+                type="checkbox"
+                class="sp42-checkbox"
+                prop:checked=move || checked.get()
+                disabled=move || disabled.get()
+                on:change=move |ev| {
+                    if let Some(callback) = on_change {
+                        callback.run(ev);
+                    }
+                }
+            />
+            <span>{props.label}</span>
+        </label>
+    }
+}
+
+pub use checkbox as Checkbox;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ModalSize {
+    Small,
+    #[default]
+    Medium,
+    Large,
+}
+
+impl ModalSize {
+    #[must_use]
+    pub const fn class_name(self) -> &'static str {
+        match self {
+            Self::Small => "sp42-modal-sm",
+            Self::Medium => "sp42-modal-md",
+            Self::Large => "sp42-modal-lg",
+        }
+    }
+}
+
+pub struct ModalProps {
+    title: String,
+    children: Children,
+    footer: Option<Children>,
+    size: ModalSize,
+}
+
+impl ModalProps {
+    #[must_use]
+    pub fn new(title: impl Into<String>, children: Children) -> Self {
+        Self {
+            title: title.into(),
+            children,
+            footer: None,
+            size: ModalSize::default(),
+        }
+    }
+
+    #[must_use]
+    pub fn with_footer(mut self, footer: Children) -> Self {
+        self.footer = Some(footer);
+        self
+    }
+
+    #[must_use]
+    pub const fn with_size(mut self, size: ModalSize) -> Self {
+        self.size = size;
+        self
+    }
+}
+
+#[must_use]
+pub fn modal(props: ModalProps) -> impl IntoView {
+    let children = props.children;
+    let title = props.title;
+    let aria_label = title.clone();
+    let footer = props
+        .footer
+        .map(|footer| view! { <footer class="sp42-modal-footer">{footer()}</footer> }.into_any());
+
+    view! {
+        <div class="modal-backdrop">
+            <section
+                class=class_names(&["modal", "sp42-modal", props.size.class_name()])
+                role="dialog"
+                aria-modal="true"
+                aria-label=aria_label
+            >
+                <header class="sp42-modal-header">
+                    <h2>{title}</h2>
+                </header>
+                <div class="sp42-modal-body">{children()}</div>
+                {footer}
+            </section>
+        </div>
+    }
+}
+
+pub use modal as Modal;
+
+pub struct DisclosureProps {
+    summary: String,
+    children: Children,
+    open: bool,
+    density: Density,
+}
+
+impl DisclosureProps {
+    #[must_use]
+    pub fn new(summary: impl Into<String>, children: Children) -> Self {
+        Self {
+            summary: summary.into(),
+            children,
+            open: false,
+            density: Density::default(),
+        }
+    }
+
+    #[must_use]
+    pub const fn open(mut self) -> Self {
+        self.open = true;
+        self
+    }
+
+    #[must_use]
+    pub const fn with_density(mut self, density: Density) -> Self {
+        self.density = density;
+        self
+    }
+}
+
+#[must_use]
+pub fn disclosure(props: DisclosureProps) -> impl IntoView {
+    let children = props.children;
+
+    view! {
+        <details class=class_names(&["sp42-disclosure", props.density.class_name()]) open=props.open>
+            <summary>{props.summary}</summary>
+            <div class="sp42-disclosure-body">{children()}</div>
+        </details>
+    }
+}
+
+pub use disclosure as Disclosure;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum SpinnerSize {
+    Small,
+    #[default]
+    Medium,
+    Large,
+}
+
+impl SpinnerSize {
+    #[must_use]
+    pub const fn class_name(self) -> &'static str {
+        match self {
+            Self::Small => "sp42-spinner-sm",
+            Self::Medium => "sp42-spinner-md",
+            Self::Large => "sp42-spinner-lg",
+        }
+    }
+}
+
+pub struct SpinnerProps {
+    label: String,
+    size: SpinnerSize,
+}
+
+impl SpinnerProps {
+    #[must_use]
+    pub fn new(label: impl Into<String>) -> Self {
+        Self {
+            label: label.into(),
+            size: SpinnerSize::default(),
+        }
+    }
+
+    #[must_use]
+    pub const fn with_size(mut self, size: SpinnerSize) -> Self {
+        self.size = size;
+        self
+    }
+}
+
+#[must_use]
+pub fn spinner(props: SpinnerProps) -> impl IntoView {
+    view! {
+        <span class=class_names(&["spinner", props.size.class_name()]) role="status" aria-live="polite">
+            <span class="sp42-visually-hidden">{props.label}</span>
+        </span>
+    }
+}
+
+pub use spinner as Spinner;
+
+pub struct EmptyStateProps {
+    title: String,
+    message: String,
+    actions: Option<Children>,
+}
+
+impl EmptyStateProps {
+    #[must_use]
+    pub fn new(title: impl Into<String>, message: impl Into<String>) -> Self {
+        Self {
+            title: title.into(),
+            message: message.into(),
+            actions: None,
+        }
+    }
+
+    #[must_use]
+    pub fn with_actions(mut self, actions: Children) -> Self {
+        self.actions = Some(actions);
+        self
+    }
+}
+
+#[must_use]
+pub fn empty_state(props: EmptyStateProps) -> impl IntoView {
+    let actions = props
+        .actions
+        .map(|actions| view! { <div class="sp42-state-actions">{actions()}</div> }.into_any());
+
+    view! {
+        <section class="sp42-state sp42-empty-state">
+            <h2>{props.title}</h2>
+            <p>{props.message}</p>
+            {actions}
+        </section>
+    }
+}
+
+pub use empty_state as EmptyState;
+
+pub struct ErrorStateProps {
+    title: String,
+    message: String,
+    actions: Option<Children>,
+}
+
+impl ErrorStateProps {
+    #[must_use]
+    pub fn new(title: impl Into<String>, message: impl Into<String>) -> Self {
+        Self {
+            title: title.into(),
+            message: message.into(),
+            actions: None,
+        }
+    }
+
+    #[must_use]
+    pub fn with_actions(mut self, actions: Children) -> Self {
+        self.actions = Some(actions);
+        self
+    }
+}
+
+#[must_use]
+pub fn error_state(props: ErrorStateProps) -> impl IntoView {
+    let actions = props
+        .actions
+        .map(|actions| view! { <div class="sp42-state-actions">{actions()}</div> }.into_any());
+
+    view! {
+        <section class="sp42-state sp42-error-state" role="alert">
+            <h2>{props.title}</h2>
+            <p>{props.message}</p>
+            {actions}
+        </section>
+    }
+}
+
+pub use error_state as ErrorState;
+
+#[must_use]
+fn class_names(names: &[&str]) -> String {
+    let mut class_name = String::new();
+    for name in names {
+        push_class(&mut class_name, name);
+    }
+    class_name
+}
+
+fn push_class(class_name: &mut String, name: &str) {
+    if name.is_empty() {
+        return;
+    }
+    if !class_name.is_empty() {
+        class_name.push(' ');
+    }
+    class_name.push_str(name);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        ButtonProps, ButtonTone, Density, Gap, GridColumns, GridProps, Size, StatusBadgeProps,
+        StatusTone,
+    };
+    use leptos::prelude::IntoAny;
+
+    #[test]
+    fn status_badge_tone_maps_to_design_system_class() {
+        let badge = StatusBadgeProps::new("Ready").with_tone(StatusTone::Success);
+
+        assert!(badge.class_name().contains("sp42-status-badge-success"));
+        assert!(!badge.class_name().contains("style="));
+    }
+
+    #[test]
+    fn button_variants_are_composable_classes() {
+        let button = ButtonProps::new("Rollback")
+            .with_tone(ButtonTone::Danger)
+            .with_size(Size::Large)
+            .with_density(Density::Comfortable)
+            .recommended();
+
+        let class_name = button.class_name();
+
+        assert!(class_name.contains("btn-danger"));
+        assert!(class_name.contains("sp42-size-large"));
+        assert!(class_name.contains("sp42-density-comfortable"));
+        assert!(class_name.contains("btn-recommended"));
+    }
+
+    #[test]
+    fn grid_class_captures_layout_choices() {
+        let grid = GridProps::new(Box::new(|| ().into_any()))
+            .with_columns(GridColumns::AutoFit)
+            .with_gap(Gap::Large);
+
+        let class_name = grid.class_name();
+
+        assert!(class_name.contains("sp42-grid-auto-fit"));
+        assert!(class_name.contains("sp42-gap-lg"));
+    }
+}

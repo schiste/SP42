@@ -101,6 +101,21 @@ Codex token refresh. Its merge gate is the clean state ADR-0005 describes:
 The check for this gate should be mechanical: after the migration, a grep for
 page/app-local styling should fail the build rather than rely on review.
 
+## Shared primitive API
+
+`crates/sp42-ui/src/primitives.rs` is the starting point for the shared
+component layer. It exposes typed Leptos primitives for the presentation shapes
+that currently account for most page-local styling: buttons, status badges,
+panels/cards, stack/inline/grid layout, text/headings, section headers, fields,
+inputs/selects/checkboxes, modals, disclosures, spinners, and empty/error
+states.
+
+The API is intentionally props-first and variant-only. Callers pass semantic
+choices such as `tone`, `size`, `density`, `surface`, `align`, `gap`, and
+`columns`; they do not pass `class` or `style`. Behavior stays in `sp42-app`
+through typed callbacks and signals, while `sp42-ui` converts variants into the
+owned CSS classes backed by the token layer.
+
 ## Deliberate divergences from Codex
 
 ### Fonts / i18n

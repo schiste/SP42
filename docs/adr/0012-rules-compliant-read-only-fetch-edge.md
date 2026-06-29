@@ -187,12 +187,14 @@ in our process.
 
 ## Consequences
 
-- **Net code removed.** Deletes the two duplicate `execute` bodies, the CLI
-  manual redirect loop + `redirect_location`, the `guarded_source_client`
-  redirect-policy closure + `redirect_host_allowed`, and the hand-rolled
-  `is_blocked_ipv4/v6` CIDR logic — consolidated into one `sp42-fetch` module of
-  a resolver + factory + streamed cap. Roughly −130 to −150 lines, and (more
-  importantly) 4 files across 3 crates collapse to 1.
+- **Code consolidated (measured — see Implementation notes).** Deletes the two
+  duplicate `execute` bodies, the CLI manual redirect loop + `redirect_location`,
+  the `guarded_source_client` redirect-policy closure + `redirect_host_allowed`,
+  and the hand-rolled `is_blocked_ipv4/v6` CIDR logic — into one `sp42-fetch`
+  crate. **Production** LOC is roughly break-even (≈ −45 net, not the −130/−150
+  first estimated); the decisive win is de-duplication (4 files / 3 crates → 1)
+  and ≈ −300 lines once duplicated tests collapse. See the Implementation notes
+  for why production code did not shrink as much as sketched.
 - **New dependencies:** `ip_network` (IP classification), `reqwest-retry` +
   `reqwest-middleware` (retry). No new DNS stack — the resolver wraps the
   existing system resolver.
@@ -202,9 +204,11 @@ in our process.
 - **Future code avoided:** no hand-rolled backoff/jitter/`Retry-After` state
   machine, no separate #60 fix, no perpetual two-client sync.
 - **Migration:** `sp42-cli` and `sp42-server` switch their source fetch to
-  `sp42-fetch`; the Citoid call moves to the trusted face. Behavior is
-  preserved or strengthened; the escape hatch and the report contract are
-  unchanged.
+  `sp42-fetch`. (The server's Citoid call already uses a *separate* general
+  client, and the CLI's single injected client is the guarded one — which works
+  for Citoid because `en.wikipedia.org` is public; see Implementation notes on
+  the two-face decision.) Behavior is preserved or strengthened; the escape
+  hatch and the report contract are unchanged.
 
 ## Alternatives considered
 
@@ -250,3 +254,57 @@ in our process.
   Wikimedia APIs/Rate_limits (REST `429 + Retry-After`); RFC 9110 §9.2.2
   (GET idempotent); OWASP SSRF Prevention Cheat Sheet; `ip_network`,
   `reqwest-retry` crates.
+
+## Implementation notes (ground-truth, 2026-06-29)
+
+The decisions above were validated by building the crate and consolidating the
+CLI, server, inference, and core (all tests green). Five things the build
+corrected or surfaced — recorded so the design is honest:
+
+1. **IP-literal hosts bypass the resolver — the resolver is *not* sufficient
+   alone.** `reqwest` only runs a custom resolver for DNS *names*; an IP-literal
+   host (initial URL *or* a redirect `Location`) connects directly. So the guard
+   needs two companions the original sketch omitted: a **pre-flight literal
+   check** in `execute` (initial URL) and a **custom redirect `Policy`** that
+   rejects non-public literal hops (decision #4's "just `Policy::limited`" was
+   wrong — we keep a custom policy, only simpler than the old per-hop string
+   check). This was caught by a test: a literal `127.0.0.1` pointing at a live
+   loopback server was fetched until the pre-flight check was added.
+
+2. **`reqwest` discards the resolver's error detail.** A DNS-resolved SSRF
+   rejection surfaces only as a generic "error sending request"; the specific
+   reason cannot be recovered at the retry/caller layer (it *is* preserved for
+   the literal pre-flight, which happens outside `reqwest`). Consequence for the
+   verify-page report: a rebinding-style block is reported generically.
+
+3. **Retry strategy must not retry transport errors (decision #5 refined).**
+   Because of (2), a deterministic SSRF rejection is indistinguishable from a
+   transient connect failure at the retry layer, so the default strategy retried
+   it `MAX_RETRIES` times (~2.6 s of wasted backoff). The shipped strategy
+   retries only on retryable **HTTP statuses** (5xx/429, `Retry-After`) and never
+   on transport/connect errors — SSRF and dead hosts fail fast. Trade-off:
+   genuine transient *connect* blips are not retried; the high-value retries
+   (server-sent 503/429) are preserved.
+
+4. **Dependency pin.** `reqwest-retry`'s latest (0.9 / `reqwest-middleware` 0.5)
+   targets `reqwest` 0.13; the workspace is on 0.12, so the edge pins
+   `reqwest-retry 0.7` + `reqwest-middleware 0.4`. (`genai` already pulls a
+   second `reqwest` 0.13 transitively — unrelated and harmless.)
+
+5. **The two-face split is lighter than decision #2 implied.** In the server,
+   Citoid already rides a *separate* general client, not the source client; in
+   the CLI a single guarded client is injected for both, which is correct because
+   `en.wikipedia.org` is public (the guard is a no-op there). No `sp42-core`
+   verify-signature change was needed. A strict typed two-face split would have
+   needed one and was not worth it.
+
+**LOC, measured (tests excluded, per the consolidation).** Production code is
+≈ −45 net: ~383 prod lines removed (CLI `CliHttpClient`, server `PlainHttpClient`,
+inference `guarded_source_client`/`redirect_host_allowed`, core CIDR helpers)
+vs ~338 added (the `sp42-fetch` crate + wiring). The crate's production code came
+in larger than the "lean on libraries" sketch precisely because of (1) and (3):
+the literal pre-flight, custom redirect policy, and custom retry strategy are
+hand-written. Counting tests, the net is ≈ −300 lines as duplicated SSRF tests
+across four crates collapse into one focused suite. **The honest headline is
+de-duplication + correctness (#60 closed, literal/redirect bypasses closed,
+retry added), not a large raw-line reduction.**

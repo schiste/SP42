@@ -1,45 +1,42 @@
 use leptos::prelude::*;
 use sp42_core::{MediaDiffEntry, MediaDiffKind, MediaDiffReport};
+use sp42_ui::{
+    Link, LinkProps, MediaCard, MediaCardProps, MediaGalleryPanel, MediaGalleryPanelProps,
+    MediaGroup, MediaGroupProps, MediaPreview, MediaPreviewProps, ScrollStack, ScrollStackProps,
+    SignatureBlock, SignatureBlockProps, Stack, StackProps, Text, TextProps, TextSize, TextTone,
+    TextWeight,
+};
+
+use super::ui_children;
 
 #[component]
 pub fn MediaDiffGallery(report: Option<MediaDiffReport>, loading: Signal<bool>) -> impl IntoView {
-    view! {
-        <aside
-            aria-label="Media diff"
-            class="panel"
-            style="display:grid;grid-template-rows:auto 1fr;min-width:0;min-height:0;overflow:hidden;"
-        >
-            <div
-                style="display:flex;align-items:center;justify-content:space-between;gap:10px;\
-                       padding:10px 12px;border-block-end:1px solid var(--border);"
-            >
-                <div style="display:grid;gap:2px;">
-                    <strong style="font-size:13px;">"Media diff"</strong>
-                    <span style="font-size:11px;color:var(--muted);">
-                        "Explicit file/gallery references added or removed in wikitext"
-                    </span>
-                </div>
-                {move || {
-                    if loading.get() {
-                        view! { <span style="font-size:11px;color:var(--muted);">"Loading…"</span> }.into_any()
-                    } else {
-                        view! { <span></span> }.into_any()
-                    }
-                }}
-            </div>
-            <div style="overflow:auto;padding:12px;display:grid;gap:12px;align-content:start;">
+    MediaGalleryPanel(
+        MediaGalleryPanelProps::new(
+            "Media diff",
+            "Media diff",
+            "Explicit file/gallery references added or removed in wikitext",
+            ui_children(move || {
+                view! {
+                    {ScrollStack(ScrollStackProps::new(ui_children(move || view! {
                 {move || {
                     if loading.get() {
                         return view! {
-                            <div style="color:var(--muted);font-size:12px;">"Loading image changes…"</div>
+                            {Text(
+                                TextProps::new(ui_children(|| view! { "Loading image changes..." }.into_any()))
+                                    .with_tone(TextTone::Muted)
+                                    .with_size(TextSize::Small)
+                            )}
                         }.into_any();
                     }
 
                     let Some(report) = report.clone() else {
                         return view! {
-                            <div style="color:var(--muted);font-size:12px;">
-                                "No media diff is available for this edit."
-                            </div>
+                            {Text(
+                                TextProps::new(ui_children(|| view! { "No media diff is available for this edit." }.into_any()))
+                                    .with_tone(TextTone::Muted)
+                                    .with_size(TextSize::Small)
+                            )}
                         }.into_any();
                     };
 
@@ -49,21 +46,27 @@ pub fn MediaDiffGallery(report: Option<MediaDiffReport>, loading: Signal<bool>) 
 
                     if added.is_empty() && removed.is_empty() && changed.is_empty() {
                         return view! {
-                            <div style="color:var(--muted);font-size:12px;">
-                                "No image additions or removals detected."
-                            </div>
+                            {Text(
+                                TextProps::new(ui_children(|| view! { "No image additions or removals detected." }.into_any()))
+                                    .with_tone(TextTone::Muted)
+                                    .with_size(TextSize::Small)
+                            )}
                         }.into_any();
                     }
 
                     view! {
-                        {render_group("Added", "var(--success)", added)}
-                        {render_group("Removed", "var(--danger)", removed)}
-                        {render_group("Changed usage", "var(--warning)", changed)}
+                        {render_group("Added", TextTone::Success, added)}
+                        {render_group("Removed", TextTone::Danger, removed)}
+                        {render_group("Changed usage", TextTone::Warning, changed)}
                     }.into_any()
                 }}
-            </div>
-        </aside>
-    }
+                    }.into_any())))}
+                }
+                .into_any()
+            }),
+        )
+        .with_loading(loading),
+    )
 }
 
 fn entries_for_kind(report: &MediaDiffReport, kind: MediaDiffKind) -> Vec<MediaDiffEntry> {
@@ -77,24 +80,26 @@ fn entries_for_kind(report: &MediaDiffReport, kind: MediaDiffKind) -> Vec<MediaD
 
 fn render_group(
     title: &'static str,
-    accent: &'static str,
+    tone: TextTone,
     entries: Vec<MediaDiffEntry>,
 ) -> leptos::prelude::AnyView {
     if entries.is_empty() {
         return view! { <span></span> }.into_any();
     }
 
-    view! {
-        <section style="display:grid;gap:8px;">
-            <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;">
-                <strong style=format!("font-size:12px;color:{accent};")>{title}</strong>
-                <span style="font-size:11px;color:var(--muted);">{entries.len()}</span>
-            </div>
-            <div style="display:grid;gap:10px;">
+    MediaGroup(
+        MediaGroupProps::new(
+            title,
+            entries.len(),
+            ui_children(move || {
+                view! {
                 {entries.into_iter().map(render_entry_card).collect_view()}
-            </div>
-        </section>
-    }
+                }
+                .into_any()
+            }),
+        )
+        .with_tone(tone),
+    )
     .into_any()
 }
 
@@ -104,47 +109,36 @@ fn render_entry_card(entry: MediaDiffEntry) -> leptos::prelude::AnyView {
     let preview_src = entry.preview_url.as_ref().map(ToString::to_string);
     let usage_summary = usage_summary_line(&entry);
 
-    view! {
-        <article
-            style="display:grid;gap:8px;padding:10px;border:1px solid var(--border-light);\
-                   border-radius:var(--radius-sm);background:var(--panel-deep);"
-        >
-            {if let Some(src) = preview_src {
-                view! {
-                    <img
-                        src=src
-                        alt=title.clone()
-                        loading="lazy"
-                        style="width:100%;aspect-ratio:4/3;object-fit:cover;border-radius:var(--radius-sm);\
-                               background:var(--row-tint);"
-                    />
-                }.into_any()
-            } else {
-                view! {
-                    <div
-                        style="display:grid;place-items:center;aspect-ratio:4/3;border-radius:var(--radius-sm);\
-                               background:var(--row-tint);color:var(--muted);font-size:11px;"
-                    >
-                        "Preview unavailable"
-                    </div>
-                }.into_any()
-            }}
-            <div style="display:grid;gap:4px;">
+    MediaCard(MediaCardProps::new(ui_children(move || {
+        view! {
+            {MediaPreview(MediaPreviewProps::new(title.clone(), preview_src))}
+            {Stack(
+                StackProps::new(ui_children(move || view! {
                 {if let Some(href) = page_href {
                     view! {
-                        <a href=href target="_blank" rel="noopener" style="color:var(--text);font-weight:700;">
-                            {title}
-                        </a>
+                        {Link(LinkProps::new(title, href).external())}
                     }.into_any()
                 } else {
-                    view! { <strong style="color:var(--text);">{title}</strong> }.into_any()
+                    view! {
+                        {Text(
+                            TextProps::new(ui_children(move || view! { {title} }.into_any()))
+                                .with_weight(TextWeight::Bold)
+                        )}
+                    }.into_any()
                 }}
-                <div style="font-size:11px;color:var(--muted);">{usage_summary}</div>
+                {Text(
+                    TextProps::new(ui_children(move || view! { {usage_summary} }.into_any()))
+                        .with_tone(TextTone::Muted)
+                        .with_size(TextSize::XSmall)
+                )}
                 {render_signature_block("Before", entry.before_signatures.clone())}
                 {render_signature_block("After", entry.after_signatures.clone())}
-            </div>
-        </article>
-    }
+                }.into_any()))
+                .with_gap(sp42_ui::Gap::XSmall)
+            )}
+        }
+        .into_any()
+    })))
     .into_any()
 }
 
@@ -163,16 +157,7 @@ fn render_signature_block(
         return view! { <span></span> }.into_any();
     }
 
-    view! {
-        <div style="display:grid;gap:2px;">
-            <span style="font-size:10px;font-weight:700;text-transform:uppercase;color:var(--muted);">
-                {label}
-            </span>
-            <span style="font-size:11px;color:var(--text);line-height:1.45;">
-                {signatures.join(" · ")}
-            </span>
-        </div>
-    }.into_any()
+    SignatureBlock(SignatureBlockProps::new(label, signatures.join(" · "))).into_any()
 }
 
 #[cfg(test)]

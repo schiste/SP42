@@ -1,7 +1,11 @@
 use leptos::prelude::*;
 use sp42_patrol::{PatrolScenarioReadiness, ShellStateModel, ShellTimelineStage};
+use sp42_ui::{
+    BadgeHeader, BadgeHeaderProps, Card, CardHeader, CardHeaderProps, CardProps, Grid, GridColumns,
+    GridProps, Panel, PanelProps, TextList, TextListItem, TextListItemProps, TextListProps,
+};
 
-use super::{InspectorFeed, StatusBadge, StatusTone, inspector_entries_from_lines};
+use super::{InspectorFeed, StatusBadge, StatusTone, inspector_entries_from_lines, ui_children};
 
 #[component]
 pub fn ShellStatePanel(model: ShellStateModel) -> impl IntoView {
@@ -9,71 +13,71 @@ pub fn ShellStatePanel(model: ShellStateModel) -> impl IntoView {
     let timeline_lines = shell_state_timeline_lines(&model);
     let panel_lines = shell_state_panel_lines(&model);
     let notes = model.notes.clone();
+    let timeline_count = model.timeline.len();
+    let panel_count = model.panels.len();
+    let note_count = notes.len();
+    let note_tone = if notes.is_empty() {
+        StatusTone::Neutral
+    } else {
+        StatusTone::Success
+    };
 
-    view! {
-        <section
-            class="panel"
-        >
-            <header style="display:grid;gap:7px;">
-                <div style="display:flex;align-items:center;gap:7px;flex-wrap:wrap;">
+    Panel(PanelProps::new(ui_children(move || {
+        view! {
+            {BadgeHeader(BadgeHeaderProps::new(
+                "One shared shell-state view across browser, CLI, and desktop so the patrol workbench tells the same story on every target.",
+                ui_children(move || view! {
                     <StatusBadge label="Workbench State".to_string() tone=StatusTone::Accent />
                     {badges
                         .into_iter()
                         .map(|(label, tone)| view! { <StatusBadge label=label tone=tone /> })
                         .collect_view()}
-                </div>
-                <p style="margin:0;color:var(--muted);">
-                    "One shared shell-state view across browser, CLI, and desktop so the patrol workbench tells the same story on every target."
-                </p>
-            </header>
+                }.into_any()),
+            ))}
 
-            <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:10px;">
-                <article
-                    class="card"
-                >
-                    <div style="display:flex;align-items:center;justify-content:space-between;gap:7px;flex-wrap:wrap;">
-                        <h3 style="margin:0;font-size:1rem;">"Timeline"</h3>
+            {Grid(
+                GridProps::new(ui_children(move || view! {
+                    {Card(CardProps::new(ui_children(move || view! {
+                        {CardHeader(CardHeaderProps::new("Timeline").with_actions(ui_children(move || view! {
                         <StatusBadge
-                            label=format!("{} step(s)", model.timeline.len())
+                            label=format!("{timeline_count} step(s)")
                             tone=StatusTone::Info
                         />
-                    </div>
-                    <InspectorFeed entries=inspector_entries_from_lines(&timeline_lines) />
-                </article>
+                        }.into_any())))}
+                        <InspectorFeed entries=inspector_entries_from_lines(&timeline_lines) />
+                    }.into_any())))}
 
-                <article
-                    class="card"
-                >
-                    <div style="display:flex;align-items:center;justify-content:space-between;gap:7px;flex-wrap:wrap;">
-                        <h3 style="margin:0;font-size:1rem;">"Surface Coverage"</h3>
+                    {Card(CardProps::new(ui_children(move || view! {
+                        {CardHeader(CardHeaderProps::new("Surface Coverage").with_actions(ui_children(move || view! {
                         <StatusBadge
-                            label=format!("{} panel(s)", model.panels.len())
+                            label=format!("{panel_count} panel(s)")
                             tone=StatusTone::Success
                         />
-                    </div>
-                    <InspectorFeed entries=inspector_entries_from_lines(&panel_lines) />
-                </article>
-            </div>
+                        }.into_any())))}
+                        <InspectorFeed entries=inspector_entries_from_lines(&panel_lines) />
+                    }.into_any())))}
+                }.into_any()))
+                .with_columns(GridColumns::AutoFit)
+            )}
 
-            <article
-                class="card"
-            >
-                <div style="display:flex;align-items:center;justify-content:space-between;gap:7px;flex-wrap:wrap;">
-                    <h3 style="margin:0;font-size:1rem;">"Operator Notes"</h3>
-                    <StatusBadge
-                        label=format!("{} note(s)", notes.len())
-                        tone=if notes.is_empty() { StatusTone::Neutral } else { StatusTone::Success }
-                    />
-                </div>
-                <ul style="margin:0;padding-inline-start:17px;color:var(--text);display:grid;gap:4px;">
+            {Card(CardProps::new(ui_children(move || view! {
+                {CardHeader(CardHeaderProps::new("Operator Notes").with_actions(ui_children(move || view! {
+                    <StatusBadge label=format!("{note_count} note(s)") tone=note_tone />
+                }.into_any())))}
+                {TextList(TextListProps::new(ui_children(move || view! {
                     {notes
                         .into_iter()
-                        .map(|line| view! { <li>{line}</li> })
+                        .map(|line| {
+                            TextListItem(TextListItemProps::new(ui_children(move || {
+                                view! { {line} }.into_any()
+                            })))
+                        })
                         .collect_view()}
-                </ul>
-            </article>
-        </section>
-    }
+                }.into_any())))}
+            }.into_any())))}
+        }
+        .into_any()
+    })))
 }
 
 #[must_use]

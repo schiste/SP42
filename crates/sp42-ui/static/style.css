@@ -1082,13 +1082,22 @@ body {
 }
 
 .diff-line-num {
-  width: 44px;
+  width: 56px;
   text-align: end;
   padding-inline-end: 7px;
   color: var(--subtle);
   font-size: 12px;
+  font-family: var(--mono);
   user-select: none;
   flex-shrink: 0;
+}
+
+.diff-line pre {
+  flex: 1;
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-all;
+  unicode-bidi: plaintext;
 }
 
 .diff-insert {
@@ -1795,6 +1804,330 @@ body {
 .sp42-text-preserve-lines {
   white-space: pre-wrap;
   word-break: break-word;
+}
+
+/* ─── Report, list, code, and media patterns ─── */
+.sp42-badge-header {
+  display: grid;
+  gap: var(--space-sm);
+}
+
+.sp42-badge-header p {
+  margin: 0;
+  color: var(--muted);
+}
+
+.sp42-badge-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  flex-wrap: wrap;
+}
+
+.sp42-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-sm);
+  flex-wrap: wrap;
+}
+
+.sp42-card-header h3 {
+  margin: 0;
+  font-size: 1rem;
+  line-height: 1.2;
+}
+
+.sp42-card-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-sm);
+  flex-wrap: wrap;
+}
+
+.sp42-text-list {
+  display: grid;
+  gap: var(--space-xs);
+  margin: 0;
+  padding-inline-start: var(--space-lg);
+  color: var(--text);
+}
+
+.sp42-text-list.sp42-density-normal {
+  gap: var(--space-sm);
+}
+
+.sp42-text-list.sp42-density-comfortable {
+  gap: var(--space-md);
+}
+
+.sp42-code-block {
+  margin: var(--space-md) 0 0;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: var(--mono);
+  font-size: 0.9rem;
+  line-height: 1.55;
+  color: var(--text);
+}
+
+.sp42-scroll-stack {
+  display: grid;
+  gap: var(--space-md);
+  align-content: start;
+  min-height: 0;
+  overflow: auto;
+  padding: var(--space-md);
+}
+
+.sp42-scroll-stack.sp42-density-compact {
+  gap: var(--space-sm);
+  padding: var(--space-sm);
+}
+
+.sp42-scroll-stack.sp42-density-comfortable {
+  gap: var(--space-lg);
+  padding: var(--space-lg);
+}
+
+.sp42-media-panel {
+  display: grid;
+  grid-template-rows: auto 1fr;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--panel);
+}
+
+.sp42-media-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-md);
+  padding: var(--space-md) 12px;
+  border-block-end: 1px solid var(--border);
+}
+
+.sp42-media-panel-title {
+  display: grid;
+  gap: var(--space-xxs);
+  min-width: 0;
+}
+
+.sp42-media-panel-title strong {
+  font-size: var(--font-size-md);
+}
+
+.sp42-media-panel-title span,
+.sp42-media-loading {
+  color: var(--muted);
+  font-size: var(--font-size-xs);
+}
+
+.sp42-media-panel-body {
+  min-height: 0;
+}
+
+.sp42-media-group {
+  display: grid;
+  gap: var(--space-sm);
+}
+
+.sp42-media-group header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-md);
+}
+
+.sp42-media-group header span {
+  color: var(--muted);
+  font-size: var(--font-size-xs);
+}
+
+.sp42-media-group-title {
+  font-size: var(--font-size-sm);
+}
+
+.sp42-media-group-list {
+  display: grid;
+  gap: var(--space-md);
+}
+
+.sp42-media-card {
+  display: grid;
+  gap: var(--space-sm);
+  padding: var(--space-md);
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-sm);
+  background: var(--panel-deep);
+}
+
+.sp42-media-preview {
+  width: 100%;
+  aspect-ratio: 4 / 3;
+  object-fit: cover;
+  border-radius: var(--radius-sm);
+  background: var(--row-tint);
+}
+
+.sp42-media-preview-empty {
+  display: grid;
+  place-items: center;
+  color: var(--muted);
+  font-size: var(--font-size-xs);
+}
+
+.sp42-signature-block {
+  display: grid;
+  gap: var(--space-xxs);
+}
+
+.sp42-signature-block span:first-child {
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.sp42-signature-block span:last-child {
+  color: var(--text);
+  font-size: var(--font-size-xs);
+  line-height: 1.45;
+}
+
+/* ─── Diff patterns ─── */
+.sp42-diff-state {
+  display: grid;
+  place-items: center;
+  height: 100%;
+  color: var(--muted);
+  text-align: center;
+}
+
+.sp42-diff-state p {
+  margin: 0;
+}
+
+.sp42-diff-mode-label {
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.sp42-diff-body {
+  padding: var(--space-md);
+}
+
+.sp42-diff-hunk {
+  display: grid;
+  gap: 6px;
+  margin-block-end: 12px;
+  padding-block-start: var(--space-sm);
+  border-block-start: 1px solid var(--border-light);
+}
+
+.sp42-diff-hunk-header {
+  padding-block-end: 1px;
+}
+
+.sp42-diff-hunk-header > div {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  min-height: 20px;
+}
+
+.sp42-diff-hunk-header strong {
+  color: var(--muted);
+  font-size: var(--font-size-xs);
+  line-height: 1.1;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.sp42-diff-hunk-header span {
+  color: var(--subtle);
+  font-size: 10px;
+  line-height: 1.2;
+}
+
+.sp42-diff-badge {
+  padding: 1px 5px;
+  border-radius: 999px;
+  font-size: 9px;
+  line-height: 1.2;
+}
+
+.sp42-diff-badge-neutral {
+  background: var(--row-tint);
+  color: var(--muted);
+  border: 1px solid var(--border-light);
+}
+
+.sp42-diff-badge-accent {
+  background: var(--accent-bg);
+  color: var(--accent);
+  border: 1px solid var(--accent-border);
+}
+
+.sp42-diff-rows {
+  display: grid;
+  gap: var(--space-xxs);
+}
+
+.sp42-diff-split-header,
+.sp42-diff-split-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: var(--space-md);
+}
+
+.sp42-diff-split-header {
+  padding-block-end: 6px;
+  border-block-end: 1px solid var(--border-light);
+}
+
+.sp42-diff-split-header div {
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.sp42-diff-empty-cell {
+  min-height: 1.2em;
+  border: 1px solid var(--row-tint);
+  border-radius: var(--radius-sm);
+  background: var(--row-tint);
+}
+
+.sp42-diff-line-framed {
+  overflow: hidden;
+  border-radius: var(--radius-sm);
+}
+
+.sp42-diff-prefix {
+  width: 10px;
+  flex-shrink: 0;
+  color: var(--subtle);
+  user-select: none;
+}
+
+.sp42-diff-inline-mark {
+  border-radius: 2px;
+}
+
+.sp42-diff-inline-insert {
+  background: color-mix(in srgb, var(--success) 38%, transparent);
+}
+
+.sp42-diff-inline-delete {
+  background: color-mix(in srgb, var(--danger) 38%, transparent);
 }
 
 /* ─── Inspector Feed ─── */

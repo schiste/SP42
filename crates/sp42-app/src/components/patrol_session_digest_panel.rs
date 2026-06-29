@@ -1,63 +1,69 @@
 use leptos::prelude::*;
 use sp42_patrol::{PatrolScenarioReadiness, PatrolScenarioReport, ReportSeverity};
+use sp42_ui::{
+    BadgeHeader, BadgeHeaderProps, Card, CardHeader, CardHeaderProps, CardProps, Grid, GridColumns,
+    GridProps, Panel, PanelProps, TextList, TextListItem, TextListItemProps, TextListProps,
+};
 
-use super::{InspectorFeed, StatusBadge, StatusTone, inspector_entries_from_lines};
+use super::{InspectorFeed, StatusBadge, StatusTone, inspector_entries_from_lines, ui_children};
 
 #[component]
 pub fn PatrolSessionDigestPanel(report: PatrolScenarioReport) -> impl IntoView {
     let badges = session_digest_badges(&report);
     let digest_lines = session_digest_lines(&report);
     let recommendation = recommended_next_step(&report);
+    let recommendation_tone = recommendation_tone(&report);
     let findings = report.findings.clone();
+    let finding_count = findings.len();
+    let finding_tone = finding_summary_tone(&findings);
 
-    view! {
-        <section
-            class="panel"
-        >
-            <header style="display:grid;gap:7px;">
-                <div style="display:flex;align-items:center;gap:7px;flex-wrap:wrap;">
+    Panel(PanelProps::new(ui_children(move || {
+        view! {
+            {BadgeHeader(BadgeHeaderProps::new(
+                "A patrol-first summary that turns the live queue into a quick review decision before the action rail and diff.",
+                ui_children(move || view! {
                     <StatusBadge label="Session Digest".to_string() tone=StatusTone::Accent />
                     {badges
                         .into_iter()
                         .map(|(label, tone)| view! { <StatusBadge label=label tone=tone /> })
                         .collect_view()}
-                </div>
-                <p style="margin:0;color:var(--muted);">
-                    "A patrol-first summary that turns the live queue into a quick review decision before the action rail and diff."
-                </p>
-            </header>
+                }.into_any()),
+            ))}
 
-            <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:10px;">
-                <article
-                    class="card"
-                >
-                    <div style="display:flex;align-items:center;justify-content:space-between;gap:7px;flex-wrap:wrap;">
-                        <h3 style="margin:0;font-size:1rem;">"Session Flow"</h3>
-                        <StatusBadge label=recommendation tone=recommendation_tone(&report) />
-                    </div>
-                    <InspectorFeed entries=inspector_entries_from_lines(&digest_lines) />
-                </article>
+            {Grid(
+                GridProps::new(ui_children(move || view! {
+                    {Card(CardProps::new(ui_children(move || view! {
+                        {CardHeader(CardHeaderProps::new("Session Flow").with_actions(ui_children(move || view! {
+                            <StatusBadge label=recommendation tone=recommendation_tone />
+                        }.into_any())))}
+                        <InspectorFeed entries=inspector_entries_from_lines(&digest_lines) />
+                    }.into_any())))}
 
-                <article
-                    class="card"
-                >
-                    <div style="display:flex;align-items:center;justify-content:space-between;gap:7px;flex-wrap:wrap;">
-                        <h3 style="margin:0;font-size:1rem;">"Decision Signals"</h3>
+                    {Card(CardProps::new(ui_children(move || view! {
+                        {CardHeader(CardHeaderProps::new("Decision Signals").with_actions(ui_children(move || view! {
                         <StatusBadge
-                            label=format!("{} finding(s)", findings.len())
-                            tone={finding_summary_tone(&findings)}
+                            label=format!("{finding_count} finding(s)")
+                            tone=finding_tone
                         />
-                    </div>
-                    <ul style="margin:0;padding-inline-start:17px;color:var(--text);display:grid;gap:4px;">
+                        }.into_any())))}
+                        {TextList(TextListProps::new(ui_children(move || view! {
                         {findings
                             .into_iter()
-                            .map(|finding| view! { <li>{finding_summary_line(&finding)}</li> })
+                            .map(|finding| {
+                                let line = finding_summary_line(&finding);
+                                TextListItem(TextListItemProps::new(ui_children(move || {
+                                    view! { {line} }.into_any()
+                                })))
+                            })
                             .collect_view()}
-                    </ul>
-                </article>
-            </div>
-        </section>
-    }
+                        }.into_any())))}
+                    }.into_any())))}
+                }.into_any()))
+                .with_columns(GridColumns::AutoFit)
+            )}
+        }
+        .into_any()
+    })))
 }
 
 #[must_use]

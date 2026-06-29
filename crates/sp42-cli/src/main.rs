@@ -11,11 +11,12 @@ use sp42_citation::{render_page_verification_markdown, render_page_verification_
 use sp42_core::routes as route_contracts;
 use sp42_core::{
     CitationFinding, CitationVerificationRequest, ClaimContext, DevAuthBootstrapRequest,
-    DevAuthSessionStatus, GroundingStatus, PageVerificationReport, PageVerificationRequest,
-    QueuedEdit, SessionActionExecutionRequest, SessionActionExecutionResponse, SessionActionKind,
-    SystemClock, VerificationOutcome, VerifyOptions as CoreVerifyOptions,
-    build_dev_auth_bootstrap_request, check_fetchable_source_url, locate_quote, locate_quote_fuzzy,
-    parse_dev_auth_status, verify_citation_use_site,
+    DevAuthSessionStatus, FetchedSource, GroundingStatus, PageVerificationReport,
+    PageVerificationRequest, QueuedEdit, SessionActionExecutionRequest,
+    SessionActionExecutionResponse, SessionActionKind, SystemClock, VerificationOutcome,
+    VerifyOptions as CoreVerifyOptions, build_dev_auth_bootstrap_request,
+    check_fetchable_source_url, locate_quote, locate_quote_fuzzy, parse_dev_auth_status,
+    verify_citation_use_site,
 };
 use sp42_devtools::{
     DEV_PREVIEW_SAMPLE_EVENTS, DEV_PREVIEW_WIKI_ID, DevContextOptions, DevWorkbenchOptions,
@@ -23,7 +24,7 @@ use sp42_devtools::{
     build_dev_context_preview, build_dev_coordination_preview, build_dev_queue,
     build_dev_stream_preview, build_dev_workbench, parse_default_dev_wiki_config,
 };
-use sp42_inference::{client_from_env, panel_from_env};
+use sp42_inference::{client_from_env, panel_from_env, panel_from_models};
 use sp42_patrol::{
     PatrolScenarioReportInputs, ShellStateInputs, build_patrol_scenario_report,
     build_shell_state_model, render_patrol_scenario_markdown, render_patrol_scenario_text,
@@ -94,6 +95,17 @@ struct VerifyCliOptions {
     /// The SIDE co-reference context: preceding sentences (`--preceding-sentence`, repeatable),
     /// in the order given. Empty by default, which keeps the verifier on its no-context path.
     preceding_sentences: Vec<String>,
+    /// Offline source body source. `--source-file <path>` reads a file; `--source-body -`
+    /// reads STDIN; any other `--source-body` value is literal text. When a body is supplied
+    /// the verifier uses it instead of fetching `--source-url` — but the URL is still required
+    /// and supplies the provenance URL and prompt display, so a snapshot stays attributable.
+    source_file: Option<String>,
+    source_body: Option<String>,
+    /// Per-run model panel override (`--models a,b,c`). Falls back to the env panel
+    /// (`SP42_INFERENCE_MODELS`) when unset; the endpoint/token still come from the env.
+    models: Option<String>,
+    /// SIDE article-title context (`--article-title`); empty keeps the no-context path.
+    article_title: Option<String>,
 }
 
 /// Article-level citation verification (`--verify-page`, PRD-0009 / ADR-0011): verify
@@ -278,6 +290,10 @@ fn parse_options(args: impl IntoIterator<Item = String>) -> Result<CliOptions, S
     let mut verify_debug_votes = false;
     let mut verify_repair = true;
     let mut verify_preceding: Vec<String> = Vec::new();
+    let mut verify_source_file = None;
+    let mut verify_source_body = None;
+    let mut verify_models = None;
+    let mut verify_article_title = None;
     let mut verdict_only = false;
     let mut probe_quote = None;
     let mut locate_probe_flag = false;
@@ -308,6 +324,10 @@ fn parse_options(args: impl IntoIterator<Item = String>) -> Result<CliOptions, S
             verify_debug_votes: &mut verify_debug_votes,
             verify_repair: &mut verify_repair,
             verify_preceding: &mut verify_preceding,
+            verify_source_file: &mut verify_source_file,
+            verify_source_body: &mut verify_source_body,
+            verify_models: &mut verify_models,
+            verify_article_title: &mut verify_article_title,
             verdict_only: &mut verdict_only,
             probe_quote: &mut probe_quote,
             locate_probe_flag: &mut locate_probe_flag,
@@ -338,6 +358,10 @@ fn parse_options(args: impl IntoIterator<Item = String>) -> Result<CliOptions, S
         verify_debug_votes,
         verify_repair,
         verify_preceding,
+        verify_source_file,
+        verify_source_body,
+        verify_models,
+        verify_article_title,
     )?;
     let locate_probe = if locate_probe_flag {
         Some(probe_quote.ok_or_else(|| "--locate-probe requires --quote".to_string())?)
@@ -367,6 +391,8 @@ fn parse_options(args: impl IntoIterator<Item = String>) -> Result<CliOptions, S
 }
 
 /// Assemble the verify options, requiring both the claim and the source URL together.
+// Flat verify-flag plumbing; the parser refactor that would group these is tracked in SP42#80.
+#[allow(clippy::too_many_arguments)]
 fn build_verify_options(
     claim: Option<String>,
     source_url: Option<String>,
@@ -374,7 +400,14 @@ fn build_verify_options(
     debug_votes: bool,
     repair: bool,
     preceding_sentences: Vec<String>,
+    source_file: Option<String>,
+    source_body: Option<String>,
+    models: Option<String>,
+    article_title: Option<String>,
 ) -> Result<Option<VerifyCliOptions>, String> {
+    if source_file.is_some() && source_body.is_some() {
+        return Err("use only one of --source-file and --source-body".to_string());
+    }
     match (claim, source_url) {
         (Some(claim), Some(source_url)) => Ok(Some(VerifyCliOptions {
             claim,
@@ -383,6 +416,10 @@ fn build_verify_options(
             debug_votes,
             repair,
             preceding_sentences,
+            source_file,
+            source_body,
+            models,
+            article_title,
         })),
         (None, None) => Ok(None),
         _ => Err("citation verification requires both --claim and --source-url".to_string()),
@@ -414,11 +451,17 @@ struct CliParseState<'a> {
     verify_debug_votes: &'a mut bool,
     verify_repair: &'a mut bool,
     verify_preceding: &'a mut Vec<String>,
+    verify_source_file: &'a mut Option<String>,
+    verify_source_body: &'a mut Option<String>,
+    verify_models: &'a mut Option<String>,
+    verify_article_title: &'a mut Option<String>,
     verdict_only: &'a mut bool,
     probe_quote: &'a mut Option<String>,
     locate_probe_flag: &'a mut bool,
 }
 
+// Flat arg dispatcher paired with `parse_options`; same refactor tracked in SP42#80.
+#[allow(clippy::too_many_lines)]
 fn apply_cli_argument<I>(
     arg: &str,
     args: &mut I,
@@ -505,6 +548,18 @@ where
             state
                 .verify_preceding
                 .push(next_option_value(args, "--preceding-sentence")?);
+        }
+        "--source-file" => {
+            *state.verify_source_file = Some(next_option_value(args, "--source-file")?);
+        }
+        "--source-body" => {
+            *state.verify_source_body = Some(next_option_value(args, "--source-body")?);
+        }
+        "--models" => {
+            *state.verify_models = Some(next_option_value(args, "--models")?);
+        }
+        "--article-title" => {
+            *state.verify_article_title = Some(next_option_value(args, "--article-title")?);
         }
         "--with-metadata" => {
             *state.verify_metadata = true;
@@ -824,12 +879,49 @@ fn render_verify(
     }
 }
 
+/// Resolve the optional offline source body: `--source-file <path>` reads a file,
+/// `--source-body -` reads STDIN, and any other `--source-body` value is literal text.
+/// `None` (neither flag) keeps the verifier on its live-fetch path.
+fn resolve_source_body(
+    source_file: Option<&str>,
+    source_body: Option<&str>,
+) -> Result<Option<String>, String> {
+    match (source_file, source_body) {
+        (Some(path), _) => std::fs::read_to_string(path)
+            .map(Some)
+            .map_err(|error| format!("failed to read --source-file {path:?}: {error}")),
+        (None, Some("-")) => read_stdin().map(Some).map_err(|error| error.to_string()),
+        (None, Some(text)) => Ok(Some(text.to_string())),
+        (None, None) => Ok(None),
+    }
+}
+
+/// Wrap an offline body as a `FetchedSource` the verifier treats as a 200 `text/plain`
+/// response. The eval harness pre-extracts sources to text, so there is no HTML for the
+/// usability gate's structured paywall markers — `raw_html` is `None` by design.
+fn prefetched_from_body(text: String) -> FetchedSource {
+    FetchedSource {
+        text,
+        status: 200,
+        content_type: "text/plain".to_string(),
+        raw_html: None,
+    }
+}
+
 /// Execute one ad-hoc (claim, source URL) verification against the configured panel.
 ///
 /// Reads the inference endpoint, model panel, and (optional) bearer token from the
 /// environment so no secret is hard-coded; performs only read-only GET/POST requests.
 async fn run_verify(options: &VerifyCliOptions) -> Result<VerificationOutcome, String> {
-    let panel = panel_from_env()?;
+    // `--models` overrides the panel for this run; the endpoint/token still come from the env.
+    let panel = match options.models.as_deref() {
+        Some(models) => {
+            let provider = std::env::var("SP42_INFERENCE_PROVIDER")
+                .unwrap_or_else(|_| "configured".to_string());
+            panel_from_models(&provider, models)?
+        }
+        None => panel_from_env()?,
+    };
     let model_client = client_from_env()?;
 
     let source_url = options
@@ -861,17 +953,26 @@ async fn run_verify(options: &VerifyCliOptions) -> Result<VerificationOutcome, S
         max_source_bytes: MAX_SOURCE_BYTES,
     };
 
+    // An offline body (`--source-file`/`--source-body`) is handed to the verifier as a
+    // pre-fetched 200 text/plain source, so the run never touches the network for the body
+    // (reproducible, no re-fetch). `--source-url` still supplies the provenance URL.
+    let prefetched = resolve_source_body(
+        options.source_file.as_deref(),
+        options.source_body.as_deref(),
+    )?
+    .map(prefetched_from_body);
     let verify_options = CoreVerifyOptions {
         include_metadata: options.include_metadata,
         concurrency: 3,
         repair_turn: options.repair,
+        prefetched,
         ..Default::default()
     };
-    // SIDE-style co-reference context (article title unused on the claim+url CLI surface;
-    // the library API is the eval-corpus driver). Empty context stays on the no-context path.
+    // SIDE-style co-reference context. `--article-title` and `--preceding-sentence` populate it;
+    // an empty context stays byte-identical to the no-context path.
     let claim_context = {
         let context = ClaimContext {
-            article_title: String::new(),
+            article_title: options.article_title.clone().unwrap_or_default(),
             preceding_sentences: options.preceding_sentences.clone(),
         };
         if context.is_empty() {
@@ -940,7 +1041,10 @@ mod verify_tests {
         LocatedPassage, PanelAgreement, SourceProvenance, SupportLevel,
     };
 
-    use super::{VerifyCliOptions, parse_options, render_verify_text, run_locate_probe};
+    use super::{
+        VerifyCliOptions, parse_options, prefetched_from_body, render_verify_text,
+        resolve_source_body, run_locate_probe,
+    };
 
     fn args(items: &[&str]) -> Vec<String> {
         items.iter().map(ToString::to_string).collect()
@@ -966,9 +1070,74 @@ mod verify_tests {
                 debug_votes: false,
                 repair: true,
                 preceding_sentences: Vec::new(),
+                source_file: None,
+                source_body: None,
+                models: None,
+                article_title: None,
             }
         );
         assert!(!options.verdict_only);
+    }
+
+    #[test]
+    fn parses_offline_body_model_and_article_title_flags() {
+        let options = parse_options(args(&[
+            "--claim",
+            "c",
+            "--source-url",
+            "https://example.com",
+            "--source-file",
+            "/tmp/body.txt",
+            "--models",
+            "anthropic/claude-opus-4-8",
+            "--article-title",
+            "Morrison Bridge",
+        ]))
+        .expect("parses");
+        let verify = options.verify.expect("verify present");
+        assert_eq!(verify.source_file.as_deref(), Some("/tmp/body.txt"));
+        assert_eq!(verify.models.as_deref(), Some("anthropic/claude-opus-4-8"));
+        assert_eq!(verify.article_title.as_deref(), Some("Morrison Bridge"));
+    }
+
+    #[test]
+    fn source_file_and_source_body_are_mutually_exclusive() {
+        let result = parse_options(args(&[
+            "--claim",
+            "c",
+            "--source-url",
+            "https://example.com",
+            "--source-file",
+            "/tmp/body.txt",
+            "--source-body",
+            "-",
+        ]));
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn resolve_source_body_reads_a_file_and_passes_literal_text() {
+        let dir = std::env::temp_dir();
+        let path = dir.join("sp42_resolve_source_body_test.txt");
+        std::fs::write(&path, "the bridge opened in 2002").expect("write fixture");
+        let from_file =
+            resolve_source_body(Some(path.to_str().expect("utf8 path")), None).expect("reads file");
+        assert_eq!(from_file.as_deref(), Some("the bridge opened in 2002"));
+        std::fs::remove_file(&path).ok();
+
+        let literal = resolve_source_body(None, Some("inline body")).expect("literal");
+        assert_eq!(literal.as_deref(), Some("inline body"));
+
+        assert_eq!(resolve_source_body(None, None).expect("none"), None);
+    }
+
+    #[test]
+    fn prefetched_from_body_is_a_200_text_plain_source() {
+        let fetched = prefetched_from_body("body text".to_string());
+        assert_eq!(fetched.text, "body text");
+        assert_eq!(fetched.status, 200);
+        assert_eq!(fetched.content_type, "text/plain");
+        assert!(fetched.raw_html.is_none());
     }
 
     #[test]

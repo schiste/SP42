@@ -524,7 +524,9 @@ fn rewrite_legacy_argv(args: &[String]) -> Option<Result<Vec<String>, String>> {
     }
     if present("--batch") || present("--batch-file") {
         // `--batch` selected batch mode and read STDIN; `--batch-file <p>` set the input path.
-        // The subcommand spells the path `--file`; `--models` passes through unchanged.
+        // The subcommand spells the path `--file`; `--models` passes through unchanged. The old
+        // global `--format <v>` was accepted but ignored by batch (output is always JSONL), so
+        // it is consumed and dropped here rather than forwarded to a subcommand that lacks it.
         let mut out = vec!["batch".to_string()];
         let mut iter = args.iter();
         while let Some(arg) = iter.next() {
@@ -535,6 +537,9 @@ fn rewrite_legacy_argv(args: &[String]) -> Option<Result<Vec<String>, String>> {
                     if let Some(path) = iter.next() {
                         out.push(path.clone());
                     }
+                }
+                "--format" => {
+                    let _ = iter.next(); // drop the ignored format value
                 }
                 _ => out.push(arg.clone()),
             }
@@ -4753,6 +4758,23 @@ mod legacy_shim_tests {
         assert_eq!(
             rewrite(&["--batch", "--models", "a,b"]),
             Some(argv(&["batch", "--models", "a,b"]))
+        );
+        // The old global --format was ignored by batch (JSONL only); drop it rather than
+        // forward it to a subcommand that has no --format.
+        assert_eq!(
+            rewrite(&["--batch", "--format", "json"]),
+            Some(argv(&["batch"]))
+        );
+        assert_eq!(
+            rewrite(&[
+                "--batch-file",
+                "/tmp/c.jsonl",
+                "--format",
+                "json",
+                "--models",
+                "a"
+            ]),
+            Some(argv(&["batch", "--file", "/tmp/c.jsonl", "--models", "a"]))
         );
     }
 

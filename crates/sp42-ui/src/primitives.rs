@@ -39,6 +39,46 @@ impl From<Signal<bool>> for ControlState {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ValueState {
+    Static(String),
+    Signal(Signal<String>),
+}
+
+impl Default for ValueState {
+    fn default() -> Self {
+        Self::Static(String::new())
+    }
+}
+
+impl ValueState {
+    #[must_use]
+    pub fn get(&self) -> String {
+        match self {
+            Self::Static(value) => value.clone(),
+            Self::Signal(value) => value.get(),
+        }
+    }
+}
+
+impl From<String> for ValueState {
+    fn from(value: String) -> Self {
+        Self::Static(value)
+    }
+}
+
+impl From<&str> for ValueState {
+    fn from(value: &str) -> Self {
+        Self::Static(value.to_string())
+    }
+}
+
+impl From<Signal<String>> for ValueState {
+    fn from(value: Signal<String>) -> Self {
+        Self::Signal(value)
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Density {
     Compact,
@@ -73,6 +113,27 @@ impl Size {
             Self::Small => "sp42-size-small",
             Self::Medium => "sp42-size-medium",
             Self::Large => "sp42-size-large",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ControlWidth {
+    #[default]
+    Auto,
+    Short,
+    Medium,
+    Full,
+}
+
+impl ControlWidth {
+    #[must_use]
+    pub const fn class_name(self) -> &'static str {
+        match self {
+            Self::Auto => "sp42-control-auto",
+            Self::Short => "sp42-control-short",
+            Self::Medium => "sp42-control-medium",
+            Self::Full => "sp42-control-full",
         }
     }
 }
@@ -329,8 +390,11 @@ impl ButtonProps {
     }
 
     #[must_use]
-    pub fn on_click(mut self, on_click: impl Into<Callback<leptos::ev::MouseEvent>>) -> Self {
-        self.on_click = Some(on_click.into());
+    pub fn on_click<F>(mut self, on_click: F) -> Self
+    where
+        F: Fn(leptos::ev::MouseEvent) + Send + Sync + 'static,
+    {
+        self.on_click = Some(Callback::new(on_click));
         self
     }
 
@@ -820,6 +884,27 @@ pub enum TextElement {
     Code,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum TextOverflow {
+    #[default]
+    Normal,
+    Truncate,
+    ClampTwo,
+    PreserveLines,
+}
+
+impl TextOverflow {
+    #[must_use]
+    pub const fn class_name(self) -> &'static str {
+        match self {
+            Self::Normal => "",
+            Self::Truncate => "truncate",
+            Self::ClampTwo => "sp42-text-clamp-two",
+            Self::PreserveLines => "sp42-text-preserve-lines",
+        }
+    }
+}
+
 pub struct TextProps {
     children: Children,
     tone: TextTone,
@@ -827,7 +912,7 @@ pub struct TextProps {
     weight: TextWeight,
     element: TextElement,
     mono: bool,
-    truncate: bool,
+    overflow: TextOverflow,
 }
 
 impl TextProps {
@@ -840,7 +925,7 @@ impl TextProps {
             weight: TextWeight::default(),
             element: TextElement::default(),
             mono: false,
-            truncate: false,
+            overflow: TextOverflow::default(),
         }
     }
 
@@ -876,7 +961,13 @@ impl TextProps {
 
     #[must_use]
     pub const fn truncate(mut self) -> Self {
-        self.truncate = true;
+        self.overflow = TextOverflow::Truncate;
+        self
+    }
+
+    #[must_use]
+    pub const fn with_overflow(mut self, overflow: TextOverflow) -> Self {
+        self.overflow = overflow;
         self
     }
 
@@ -891,9 +982,7 @@ impl TextProps {
         if self.mono {
             push_class(&mut class_name, "mono");
         }
-        if self.truncate {
-            push_class(&mut class_name, "truncate");
-        }
+        push_class(&mut class_name, self.overflow.class_name());
         class_name
     }
 }
@@ -1168,12 +1257,13 @@ impl TextInputType {
 pub struct TextInputProps {
     id: String,
     name: String,
-    value: String,
+    value: ValueState,
     placeholder: String,
     input_type: TextInputType,
     disabled: ControlState,
     required: bool,
     density: Density,
+    width: ControlWidth,
     on_input: Option<Callback<leptos::ev::Event>>,
     on_change: Option<Callback<leptos::ev::Event>>,
 }
@@ -1184,12 +1274,13 @@ impl TextInputProps {
         Self {
             id: id.into(),
             name: String::new(),
-            value: String::new(),
+            value: ValueState::default(),
             placeholder: String::new(),
             input_type: TextInputType::default(),
             disabled: ControlState::default(),
             required: false,
             density: Density::default(),
+            width: ControlWidth::default(),
             on_input: None,
             on_change: None,
         }
@@ -1202,7 +1293,7 @@ impl TextInputProps {
     }
 
     #[must_use]
-    pub fn with_value(mut self, value: impl Into<String>) -> Self {
+    pub fn with_value(mut self, value: impl Into<ValueState>) -> Self {
         self.value = value.into();
         self
     }
@@ -1238,14 +1329,26 @@ impl TextInputProps {
     }
 
     #[must_use]
-    pub fn on_input(mut self, on_input: impl Into<Callback<leptos::ev::Event>>) -> Self {
-        self.on_input = Some(on_input.into());
+    pub const fn with_width(mut self, width: ControlWidth) -> Self {
+        self.width = width;
         self
     }
 
     #[must_use]
-    pub fn on_change(mut self, on_change: impl Into<Callback<leptos::ev::Event>>) -> Self {
-        self.on_change = Some(on_change.into());
+    pub fn on_input<F>(mut self, on_input: F) -> Self
+    where
+        F: Fn(leptos::ev::Event) + Send + Sync + 'static,
+    {
+        self.on_input = Some(Callback::new(on_input));
+        self
+    }
+
+    #[must_use]
+    pub fn on_change<F>(mut self, on_change: F) -> Self
+    where
+        F: Fn(leptos::ev::Event) + Send + Sync + 'static,
+    {
+        self.on_change = Some(Callback::new(on_change));
         self
     }
 }
@@ -1255,14 +1358,15 @@ pub fn text_input(props: TextInputProps) -> impl IntoView {
     let disabled = props.disabled;
     let on_input = props.on_input;
     let on_change = props.on_change;
+    let value = props.value;
 
     view! {
         <input
             id=props.id
             name=props.name
             type=props.input_type.as_str()
-            class=class_names(&["sp42-input", props.density.class_name()])
-            prop:value=props.value
+            class=class_names(&["sp42-input", props.density.class_name(), props.width.class_name()])
+            prop:value=move || value.get()
             placeholder=props.placeholder
             disabled=move || disabled.get()
             required=props.required
@@ -1308,10 +1412,11 @@ impl SelectOption {
 pub struct SelectProps {
     id: String,
     name: String,
-    value: String,
+    value: ValueState,
     options: Vec<SelectOption>,
     disabled: ControlState,
     density: Density,
+    width: ControlWidth,
     on_change: Option<Callback<leptos::ev::Event>>,
 }
 
@@ -1321,10 +1426,11 @@ impl SelectProps {
         Self {
             id: id.into(),
             name: String::new(),
-            value: String::new(),
+            value: ValueState::default(),
             options,
             disabled: ControlState::default(),
             density: Density::default(),
+            width: ControlWidth::default(),
             on_change: None,
         }
     }
@@ -1336,7 +1442,7 @@ impl SelectProps {
     }
 
     #[must_use]
-    pub fn with_value(mut self, value: impl Into<String>) -> Self {
+    pub fn with_value(mut self, value: impl Into<ValueState>) -> Self {
         self.value = value.into();
         self
     }
@@ -1354,8 +1460,17 @@ impl SelectProps {
     }
 
     #[must_use]
-    pub fn on_change(mut self, on_change: impl Into<Callback<leptos::ev::Event>>) -> Self {
-        self.on_change = Some(on_change.into());
+    pub const fn with_width(mut self, width: ControlWidth) -> Self {
+        self.width = width;
+        self
+    }
+
+    #[must_use]
+    pub fn on_change<F>(mut self, on_change: F) -> Self
+    where
+        F: Fn(leptos::ev::Event) + Send + Sync + 'static,
+    {
+        self.on_change = Some(Callback::new(on_change));
         self
     }
 }
@@ -1365,12 +1480,17 @@ pub fn select(props: SelectProps) -> impl IntoView {
     let disabled = props.disabled;
     let on_change = props.on_change;
     let selected_value = props.value;
+    let class_name = class_names(&[
+        "sp42-select",
+        props.density.class_name(),
+        props.width.class_name(),
+    ]);
 
     view! {
         <select
             id=props.id
             name=props.name
-            class=class_names(&["sp42-select", props.density.class_name()])
+            class=class_name
             disabled=move || disabled.get()
             on:change=move |ev| {
                 if let Some(callback) = on_change {
@@ -1382,9 +1502,14 @@ pub fn select(props: SelectProps) -> impl IntoView {
                 .options
                 .into_iter()
                 .map(|option| {
-                    let selected = option.value == selected_value;
+                    let option_value = option.value.clone();
+                    let selected_value = selected_value.clone();
                     view! {
-                        <option value=option.value selected=selected disabled=option.disabled>
+                        <option
+                            value=option.value
+                            selected=move || option_value == selected_value.get()
+                            disabled=option.disabled
+                        >
                             {option.label}
                         </option>
                     }
@@ -1445,8 +1570,11 @@ impl CheckboxProps {
     }
 
     #[must_use]
-    pub fn on_change(mut self, on_change: impl Into<Callback<leptos::ev::Event>>) -> Self {
-        self.on_change = Some(on_change.into());
+    pub fn on_change<F>(mut self, on_change: F) -> Self
+    where
+        F: Fn(leptos::ev::Event) + Send + Sync + 'static,
+    {
+        self.on_change = Some(Callback::new(on_change));
         self
     }
 }
@@ -1735,6 +1863,644 @@ pub fn error_state(props: ErrorStateProps) -> impl IntoView {
 }
 
 pub use error_state as ErrorState;
+
+pub struct ToolbarProps {
+    aria_label: String,
+    children: Children,
+    density: Density,
+}
+
+impl ToolbarProps {
+    #[must_use]
+    pub fn new(aria_label: impl Into<String>, children: Children) -> Self {
+        Self {
+            aria_label: aria_label.into(),
+            children,
+            density: Density::Compact,
+        }
+    }
+
+    #[must_use]
+    pub const fn with_density(mut self, density: Density) -> Self {
+        self.density = density;
+        self
+    }
+}
+
+#[must_use]
+pub fn toolbar(props: ToolbarProps) -> impl IntoView {
+    let children = props.children;
+
+    view! {
+        <div
+            role="toolbar"
+            aria-label=props.aria_label
+            class=class_names(&["sp42-toolbar", props.density.class_name()])
+        >
+            {children()}
+        </div>
+    }
+}
+
+pub use toolbar as Toolbar;
+
+pub struct FilterDisclosureProps {
+    summary: ValueState,
+    children: Children,
+}
+
+impl FilterDisclosureProps {
+    #[must_use]
+    pub fn new(summary: impl Into<ValueState>, children: Children) -> Self {
+        Self {
+            summary: summary.into(),
+            children,
+        }
+    }
+}
+
+#[must_use]
+pub fn filter_disclosure(props: FilterDisclosureProps) -> impl IntoView {
+    let children = props.children;
+    let summary = props.summary;
+
+    view! {
+        <details class="filter-bar-details">
+            <summary class="filter-summary">
+                {move || summary.get()}
+            </summary>
+            <div class="filter-bar">{children()}</div>
+        </details>
+    }
+}
+
+pub use filter_disclosure as FilterDisclosure;
+
+#[must_use]
+pub fn spacer() -> impl IntoView {
+    view! { <div class="flex-spacer"></div> }
+}
+
+pub use spacer as Spacer;
+
+#[must_use]
+pub fn separator() -> impl IntoView {
+    view! { <span class="sp42-separator">"|"</span> }
+}
+
+pub use separator as Separator;
+
+pub struct LinkProps {
+    label: String,
+    href: String,
+    external: bool,
+    size: TextSize,
+}
+
+impl LinkProps {
+    #[must_use]
+    pub fn new(label: impl Into<String>, href: impl Into<String>) -> Self {
+        Self {
+            label: label.into(),
+            href: href.into(),
+            external: false,
+            size: TextSize::Small,
+        }
+    }
+
+    #[must_use]
+    pub const fn external(mut self) -> Self {
+        self.external = true;
+        self
+    }
+
+    #[must_use]
+    pub const fn with_size(mut self, size: TextSize) -> Self {
+        self.size = size;
+        self
+    }
+}
+
+#[must_use]
+pub fn link(props: LinkProps) -> AnyView {
+    let class_name = class_names(&["sp42-link", props.size.class_name()]);
+
+    if props.external {
+        view! {
+            <a href=props.href target="_blank" rel="noopener" class=class_name>
+                {props.label}
+            </a>
+        }
+        .into_any()
+    } else {
+        view! {
+            <a href=props.href class=class_name>
+                {props.label}
+            </a>
+        }
+        .into_any()
+    }
+}
+
+pub use link as Link;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ScoreTone {
+    #[default]
+    Low,
+    Medium,
+    High,
+}
+
+impl ScoreTone {
+    #[must_use]
+    pub const fn for_score(score: i32) -> Self {
+        if score >= 70 {
+            Self::High
+        } else if score >= 30 {
+            Self::Medium
+        } else {
+            Self::Low
+        }
+    }
+
+    #[must_use]
+    pub const fn icon(self) -> &'static str {
+        match self {
+            Self::High => "!!",
+            Self::Medium => "?",
+            Self::Low => "\u{2713}",
+        }
+    }
+
+    #[must_use]
+    pub const fn class_name(self) -> &'static str {
+        match self {
+            Self::Low => "sp42-score-low",
+            Self::Medium => "sp42-score-medium",
+            Self::High => "sp42-score-high",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ScoreTextProps {
+    score: i32,
+    tone: ScoreTone,
+    size: Size,
+    show_icon: bool,
+}
+
+impl ScoreTextProps {
+    #[must_use]
+    pub const fn new(score: i32) -> Self {
+        Self {
+            score,
+            tone: ScoreTone::for_score(score),
+            size: Size::Medium,
+            show_icon: true,
+        }
+    }
+
+    #[must_use]
+    pub const fn with_size(mut self, size: Size) -> Self {
+        self.size = size;
+        self
+    }
+
+    #[must_use]
+    pub const fn without_icon(mut self) -> Self {
+        self.show_icon = false;
+        self
+    }
+
+    #[must_use]
+    pub fn class_name(&self) -> String {
+        class_names(&["sp42-score", self.tone.class_name(), self.size.class_name()])
+    }
+}
+
+#[must_use]
+pub fn score_text(props: ScoreTextProps) -> impl IntoView {
+    let icon = props
+        .show_icon
+        .then(|| view! { <span>{props.tone.icon()}</span> }.into_any());
+
+    view! {
+        <span class=props.class_name()>
+            <span>{props.score}</span>
+            {icon}
+        </span>
+    }
+}
+
+pub use score_text as ScoreText;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum DeltaTone {
+    Positive,
+    Negative,
+    #[default]
+    Neutral,
+}
+
+impl DeltaTone {
+    #[must_use]
+    pub const fn for_delta(delta: i32) -> Self {
+        if delta > 0 {
+            Self::Positive
+        } else if delta < 0 {
+            Self::Negative
+        } else {
+            Self::Neutral
+        }
+    }
+
+    #[must_use]
+    pub const fn class_name(self) -> &'static str {
+        match self {
+            Self::Positive => "sp42-delta-positive",
+            Self::Negative => "sp42-delta-negative",
+            Self::Neutral => "sp42-delta-neutral",
+        }
+    }
+}
+
+pub struct DeltaTextProps {
+    delta: i32,
+    suffix: String,
+    size: TextSize,
+}
+
+impl DeltaTextProps {
+    #[must_use]
+    pub fn new(delta: i32) -> Self {
+        Self {
+            delta,
+            suffix: String::new(),
+            size: TextSize::Small,
+        }
+    }
+
+    #[must_use]
+    pub fn with_suffix(mut self, suffix: impl Into<String>) -> Self {
+        self.suffix = suffix.into();
+        self
+    }
+
+    #[must_use]
+    pub const fn with_size(mut self, size: TextSize) -> Self {
+        self.size = size;
+        self
+    }
+
+    #[must_use]
+    pub fn formatted_value(&self) -> String {
+        let value = if self.delta > 0 {
+            format!("+{}", self.delta)
+        } else {
+            self.delta.to_string()
+        };
+        format!("{value}{}", self.suffix)
+    }
+}
+
+#[must_use]
+pub fn delta_text(props: DeltaTextProps) -> impl IntoView {
+    let delta = props.delta;
+    let size = props.size;
+    let suffix = props.suffix;
+    let value = if delta > 0 {
+        format!("+{delta}")
+    } else {
+        delta.to_string()
+    };
+    let value = format!("{value}{suffix}");
+
+    view! {
+        <span class=class_names(&[
+            "sp42-delta",
+            DeltaTone::for_delta(delta).class_name(),
+            size.class_name()
+        ])>
+            {value}
+        </span>
+    }
+}
+
+pub use delta_text as DeltaText;
+
+pub struct NavigationPaneProps {
+    aria_label: String,
+    heading: String,
+    children: Children,
+}
+
+impl NavigationPaneProps {
+    #[must_use]
+    pub fn new(
+        aria_label: impl Into<String>,
+        heading: impl Into<String>,
+        children: Children,
+    ) -> Self {
+        Self {
+            aria_label: aria_label.into(),
+            heading: heading.into(),
+            children,
+        }
+    }
+}
+
+#[must_use]
+pub fn navigation_pane(props: NavigationPaneProps) -> impl IntoView {
+    let children = props.children;
+
+    view! {
+        <nav role="navigation" aria-label=props.aria_label class="queue-column">
+            <div class="queue-header">{props.heading}</div>
+            <div class="queue-scroll">{children()}</div>
+        </nav>
+    }
+}
+
+pub use navigation_pane as NavigationPane;
+
+pub struct NavigationItemProps {
+    children: Children,
+    selected: ControlState,
+    subdued: bool,
+    tone: ScoreTone,
+    on_click: Option<Callback<leptos::ev::MouseEvent>>,
+}
+
+impl NavigationItemProps {
+    #[must_use]
+    pub fn new(children: Children) -> Self {
+        Self {
+            children,
+            selected: ControlState::default(),
+            subdued: false,
+            tone: ScoreTone::default(),
+            on_click: None,
+        }
+    }
+
+    #[must_use]
+    pub fn with_selected(mut self, selected: impl Into<ControlState>) -> Self {
+        self.selected = selected.into();
+        self
+    }
+
+    #[must_use]
+    pub const fn subdued(mut self) -> Self {
+        self.subdued = true;
+        self
+    }
+
+    #[must_use]
+    pub const fn with_tone(mut self, tone: ScoreTone) -> Self {
+        self.tone = tone;
+        self
+    }
+
+    #[must_use]
+    pub fn on_click<F>(mut self, on_click: F) -> Self
+    where
+        F: Fn(leptos::ev::MouseEvent) + Send + Sync + 'static,
+    {
+        self.on_click = Some(Callback::new(on_click));
+        self
+    }
+
+    #[must_use]
+    pub fn class_name(&self, selected: bool) -> String {
+        navigation_item_class_name(selected, self.subdued, self.tone)
+    }
+}
+
+#[must_use]
+pub fn navigation_item(props: NavigationItemProps) -> impl IntoView {
+    let children = props.children;
+    let selected = props.selected;
+    let subdued = props.subdued;
+    let tone = props.tone;
+    let on_click = props.on_click;
+
+    view! {
+        <button
+            type="button"
+            class=move || {
+                navigation_item_class_name(selected.get(), subdued, tone)
+            }
+            aria-pressed=move || selected.get().to_string()
+            on:click=move |ev| {
+                if let Some(callback) = on_click {
+                    callback.run(ev);
+                }
+            }
+        >
+            {children()}
+        </button>
+    }
+}
+
+pub use navigation_item as NavigationItem;
+
+#[must_use]
+fn navigation_item_class_name(selected: bool, subdued: bool, tone: ScoreTone) -> String {
+    let mut class_name = String::from("queue-item");
+    if selected {
+        push_class(&mut class_name, "sp42-nav-item-selected");
+        push_class(&mut class_name, tone.class_name());
+    }
+    if subdued {
+        push_class(&mut class_name, "sp42-nav-item-subdued");
+    }
+    class_name
+}
+
+pub struct ContextShellProps {
+    children: Children,
+}
+
+impl ContextShellProps {
+    #[must_use]
+    pub fn new(children: Children) -> Self {
+        Self { children }
+    }
+}
+
+#[must_use]
+pub fn context_shell(props: ContextShellProps) -> impl IntoView {
+    let children = props.children;
+
+    view! { <div class="context-header-shell">{children()}</div> }
+}
+
+pub use context_shell as ContextShell;
+
+pub struct ContextBarProps {
+    children: Children,
+}
+
+impl ContextBarProps {
+    #[must_use]
+    pub fn new(children: Children) -> Self {
+        Self { children }
+    }
+}
+
+#[must_use]
+pub fn context_bar(props: ContextBarProps) -> impl IntoView {
+    let children = props.children;
+
+    view! { <div class="context-header">{children()}</div> }
+}
+
+pub use context_bar as ContextBar;
+
+pub struct ScoreButtonProps {
+    score: i32,
+    expanded: ControlState,
+    title: String,
+    on_click: Option<Callback<leptos::ev::MouseEvent>>,
+}
+
+impl ScoreButtonProps {
+    #[must_use]
+    pub fn new(score: i32) -> Self {
+        Self {
+            score,
+            expanded: ControlState::default(),
+            title: String::new(),
+            on_click: None,
+        }
+    }
+
+    #[must_use]
+    pub fn with_expanded(mut self, expanded: impl Into<ControlState>) -> Self {
+        self.expanded = expanded.into();
+        self
+    }
+
+    #[must_use]
+    pub fn with_title(mut self, title: impl Into<String>) -> Self {
+        self.title = title.into();
+        self
+    }
+
+    #[must_use]
+    pub fn on_click<F>(mut self, on_click: F) -> Self
+    where
+        F: Fn(leptos::ev::MouseEvent) + Send + Sync + 'static,
+    {
+        self.on_click = Some(Callback::new(on_click));
+        self
+    }
+}
+
+#[must_use]
+pub fn score_button(props: ScoreButtonProps) -> impl IntoView {
+    let expanded = props.expanded;
+    let on_click = props.on_click;
+
+    view! {
+        <button
+            type="button"
+            class="context-score-button"
+            aria-expanded=move || expanded.get().to_string()
+            title=props.title
+            on:click=move |ev| {
+                if let Some(callback) = on_click {
+                    callback.run(ev);
+                }
+            }
+        >
+            {ScoreText(ScoreTextProps::new(props.score))}
+        </button>
+    }
+}
+
+pub use score_button as ScoreButton;
+
+pub struct ScoreDetailsPanelProps {
+    children: Children,
+}
+
+impl ScoreDetailsPanelProps {
+    #[must_use]
+    pub fn new(children: Children) -> Self {
+        Self { children }
+    }
+}
+
+#[must_use]
+pub fn score_details_panel(props: ScoreDetailsPanelProps) -> impl IntoView {
+    let children = props.children;
+
+    view! {
+        <div class="score-details-panel">
+            <div class="score-details-summary">
+                <span>"Score details"</span>
+            </div>
+            <ul class="score-details-list">{children()}</ul>
+        </div>
+    }
+}
+
+pub use score_details_panel as ScoreDetailsPanel;
+
+pub struct ScoreDetailItemProps {
+    signal: String,
+    weight: i32,
+    note: Option<String>,
+}
+
+impl ScoreDetailItemProps {
+    #[must_use]
+    pub fn new(signal: impl Into<String>, weight: i32) -> Self {
+        Self {
+            signal: signal.into(),
+            weight,
+            note: None,
+        }
+    }
+
+    #[must_use]
+    pub fn with_note(mut self, note: Option<String>) -> Self {
+        self.note = note;
+        self
+    }
+}
+
+#[must_use]
+pub fn score_detail_item(props: ScoreDetailItemProps) -> impl IntoView {
+    let weight = if props.weight > 0 {
+        format!("+{}", props.weight)
+    } else {
+        props.weight.to_string()
+    };
+    let weight_class = if props.weight > 0 {
+        "score-details-weight sp42-score-high"
+    } else {
+        "score-details-weight sp42-score-low"
+    };
+    let note = props
+        .note
+        .map(|note| view! { <div class="score-details-note">{note}</div> }.into_any());
+
+    view! {
+        <li class="score-details-item">
+            <div class="score-details-line">
+                <span class="score-details-signal">{props.signal}</span>
+                <span class=weight_class>{weight}</span>
+            </div>
+            {note}
+        </li>
+    }
+}
+
+pub use score_detail_item as ScoreDetailItem;
 
 #[must_use]
 fn class_names(names: &[&str]) -> String {

@@ -1,6 +1,11 @@
 use leptos::prelude::*;
+use sp42_ui::{
+    Card, CardProps, Gap, Inline, InlineProps, Stack, StackProps, Text, TextOverflow, TextProps,
+    TextSize,
+};
 
 use super::status_badge::{StatusBadge, StatusTone};
+use super::ui_children;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum InspectorLineKind {
@@ -24,36 +29,44 @@ pub struct InspectorEntry {
 
 #[component]
 pub fn InspectorFeed(entries: Vec<InspectorEntry>) -> impl IntoView {
-    view! {
-        <div
-            class="sp42-inspector-feed"
-            style="display:grid;gap:10px;"
-        >
+    Stack(
+        StackProps::new(ui_children(move || {
+            view! {
             {entries
                 .into_iter()
                 .map(|entry| view! { <InspectorEntryRow entry=entry /> })
                 .collect_view()}
-        </div>
-    }
+            }
+            .into_any()
+        }))
+        .with_gap(Gap::Medium),
+    )
 }
 
 #[component]
 fn InspectorEntryRow(entry: InspectorEntry) -> impl IntoView {
     let (tone, label) = kind_meta(entry.kind);
 
-    view! {
-        <article
-            class="sp42-inspector-entry"
-            style="display:grid;gap:4px;padding:10px;border-radius:4px;border:1px solid var(--border);background:var(--panel-deep);"
-        >
-            <div style="display:flex;align-items:center;gap:7px;flex-wrap:wrap;">
-                <StatusBadge label=label.to_string() tone=tone />
-            </div>
-            <p style="margin:0;font-family:ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;font-size:.94rem;line-height:1.5;white-space:pre-wrap;word-break:break-word;color:var(--text);">
-                {entry.text}
-            </p>
-        </article>
-    }
+    Card(
+        CardProps::new(ui_children(move || {
+            view! {
+                {Inline(
+                    InlineProps::new(ui_children(move || {
+                        view! { <StatusBadge label=label.to_string() tone=tone /> }.into_any()
+                    }))
+                    .with_gap(Gap::Small),
+                )}
+                {Text(
+                    TextProps::new(ui_children(move || view! { {entry.text} }.into_any()))
+                        .with_size(TextSize::Large)
+                        .mono()
+                        .with_overflow(TextOverflow::PreserveLines),
+                )}
+            }
+            .into_any()
+        }))
+        .with_density(sp42_ui::Density::Compact),
+    )
 }
 
 #[must_use]

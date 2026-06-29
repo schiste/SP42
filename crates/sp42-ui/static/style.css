@@ -595,6 +595,7 @@ body {
   width: 100%;
   padding: 8px 10px;
   border: none;
+  border-inline-start: 3px solid transparent;
   border-block-end: 1px solid var(--border-light);
   text-align: start;
   cursor: pointer;
@@ -602,6 +603,26 @@ body {
   color: var(--text);
   background: transparent;
   transition: background 120ms, border-color 120ms;
+}
+
+.queue-item.sp42-nav-item-selected {
+  background: var(--selected);
+}
+
+.queue-item.sp42-score-low {
+  border-inline-start-color: var(--success);
+}
+
+.queue-item.sp42-score-medium {
+  border-inline-start-color: var(--warning);
+}
+
+.queue-item.sp42-score-high {
+  border-inline-start-color: var(--danger);
+}
+
+.queue-item.sp42-nav-item-subdued {
+  opacity: 0.5;
 }
 
 .queue-item-top {
@@ -929,7 +950,9 @@ body {
 }
 
 .context-score-button:hover .context-score,
-.context-score-button:focus-visible .context-score {
+.context-score-button:focus-visible .context-score,
+.context-score-button:hover .sp42-score,
+.context-score-button:focus-visible .sp42-score {
   text-decoration: underline;
 }
 
@@ -1511,6 +1534,18 @@ body {
   font-size: var(--font-size-lg);
 }
 
+.sp42-control-short {
+  width: 100px;
+}
+
+.sp42-control-medium {
+  width: 180px;
+}
+
+.sp42-control-full {
+  width: 100%;
+}
+
 .sp42-checkbox-field {
   display: inline-flex;
   align-items: center;
@@ -1670,6 +1705,96 @@ body {
   clip: rect(0 0 0 0);
   white-space: nowrap;
   border: 0;
+}
+
+.sp42-toolbar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-sm);
+  min-width: 0;
+}
+
+.sp42-toolbar.sp42-density-normal {
+  gap: var(--space-md);
+}
+
+.sp42-toolbar.sp42-density-comfortable {
+  gap: var(--space-lg);
+}
+
+.sp42-separator {
+  color: var(--separator-color);
+}
+
+.sp42-link {
+  color: var(--link);
+  text-decoration: none;
+}
+
+.sp42-link:hover {
+  text-decoration: underline;
+}
+
+.sp42-score {
+  display: inline-flex;
+  align-items: baseline;
+  gap: var(--space-xs);
+  flex-shrink: 0;
+  font-weight: 700;
+  line-height: 1.1;
+}
+
+.sp42-score.sp42-size-small {
+  font-size: var(--font-size-sm);
+}
+
+.sp42-score.sp42-size-medium {
+  font-size: 14px;
+}
+
+.sp42-score.sp42-size-large {
+  font-size: var(--font-size-lg);
+}
+
+.sp42-score-low {
+  color: var(--success);
+}
+
+.sp42-score-medium {
+  color: var(--warning);
+}
+
+.sp42-score-high {
+  color: var(--danger);
+}
+
+.sp42-delta {
+  font-weight: 700;
+}
+
+.sp42-delta-positive {
+  color: var(--success);
+}
+
+.sp42-delta-negative {
+  color: var(--danger);
+}
+
+.sp42-delta-neutral {
+  color: var(--muted);
+}
+
+.sp42-text-clamp-two {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.sp42-text-preserve-lines {
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 
 /* ─── Inspector Feed ─── */

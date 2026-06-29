@@ -1,20 +1,3 @@
-/// Shared UI helpers for runtime-computed values that cannot live in CSS.
-
-/// Map a composite risk score to a (color, icon) pair for consistent tier
-/// rendering across the queue column and context sidebar.
-///
-/// The colour is a CSS custom property reference (not a literal) so the tier
-/// follows the active Codex theme — see `sp42-ui/static/style.css`.
-pub fn score_tier(score: i32) -> (&'static str, &'static str) {
-    if score >= 70 {
-        ("var(--danger)", "!!")
-    } else if score >= 30 {
-        ("var(--warning)", "?")
-    } else {
-        ("var(--success)", "\u{2713}")
-    }
-}
-
 /// Map a `wiki_id` (e.g. `"frwiki"`) to its base URL. Falls back to the
 /// French Wikipedia for unrecognised identifiers until multi-wiki support
 /// is implemented.
@@ -30,14 +13,7 @@ pub fn wiki_base_url(wiki_id: &str) -> &'static str {
 
 #[cfg(test)]
 mod tests {
-    use super::{score_tier, wiki_base_url};
-
-    #[test]
-    fn score_tier_maps_thresholds() {
-        assert_eq!(score_tier(70).0, "var(--danger)");
-        assert_eq!(score_tier(30).0, "var(--warning)");
-        assert_eq!(score_tier(0).0, "var(--success)");
-    }
+    use super::wiki_base_url;
 
     #[test]
     fn wiki_base_url_resolves_known_wikis() {

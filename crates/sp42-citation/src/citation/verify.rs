@@ -332,6 +332,11 @@ pub struct VerifyOptions {
     /// instead of fetching — lets the page orchestrator fetch each distinct URL
     /// once. `None` (the default) preserves the byte-identical single-claim path.
     pub prefetched: Option<FetchedSource>,
+    /// Pre-supplied bibliographic metadata sidecar. When `Some`, it is used as the
+    /// verification-prompt context instead of fetching Citoid — lets a caller pass
+    /// known metadata for a reproducible, network-free run. Takes precedence over
+    /// `include_metadata`; `None` (the default) preserves the fetch-or-skip behavior.
+    pub metadata_sidecar: Option<CitoidMetadata>,
 }
 
 impl Default for VerifyOptions {
@@ -342,6 +347,7 @@ impl Default for VerifyOptions {
             params: SamplingParams::deterministic(),
             repair_turn: true,
             prefetched: None,
+            metadata_sidecar: None,
         }
     }
 }
@@ -988,7 +994,9 @@ where
     // Citoid metadata is verification-prompt context only (never grounded, never
     // attached to the finding here). The page report's *display* metadata is fetched
     // separately, deduped and paced, by the server route.
-    let metadata = if options.include_metadata {
+    let metadata = if let Some(sidecar) = options.metadata_sidecar.clone() {
+        Some(sidecar)
+    } else if options.include_metadata {
         fetch_metadata(fetch_client, request.source_url.as_str()).await
     } else {
         None
@@ -1456,6 +1464,68 @@ mod tests {
         assert_eq!(
             outcome.finding.verdict,
             CitationVerdict::Judged(SupportLevel::Supported)
+        );
+    }
+
+    #[test]
+    fn metadata_sidecar_reaches_the_prompt_without_fetching() {
+        use crate::citation::citoid::CitoidMetadata;
+
+        // Same prefetched body + empty HTTP queue (any fetch — body or Citoid — would error),
+        // run once with no metadata and once with a sidecar. The sidecar must (a) avoid a fetch
+        // and (b) change the rendered prompt, observable as a different prompt fingerprint.
+        fn prompt_hash_with(metadata: Option<CitoidMetadata>) -> String {
+            let http = StubHttpClient::new([]);
+            let model_client = StubModelClient::new([Ok(completion(
+                r#"{"verdict": "SUPPORTED", "quote": "cats purr and sleep"}"#,
+            ))]);
+            let request = CitationVerificationRequest {
+                wiki_id: "enwiki".into(),
+                rev_id: 1,
+                title: "Cats".into(),
+                claim: "Cats purr.".into(),
+                source_url: url::Url::parse("https://example.test/a").unwrap(),
+            };
+            let long_body =
+                "This is real article prose that gives the body enough length to be usable. "
+                    .repeat(8)
+                    + "cats purr and sleep all day long. ";
+            let options = VerifyOptions {
+                repair_turn: false,
+                prefetched: Some(super::FetchedSource {
+                    text: long_body,
+                    status: 200,
+                    content_type: String::new(),
+                    raw_html: None,
+                }),
+                metadata_sidecar: metadata,
+                ..VerifyOptions::default()
+            };
+            let outcome = block_on(verify_citation_use_site(
+                &http,
+                &model_client,
+                &FixedClock::new(0),
+                &[model()],
+                &request,
+                None,
+                0,
+                options,
+            ))
+            .expect("verifies from prefetched source");
+            outcome.votes[0].invocation.prompt_hash.clone()
+        }
+
+        let baseline = prompt_hash_with(None);
+        let with_sidecar = prompt_hash_with(Some(CitoidMetadata {
+            publication: Some("The Daily Example".into()),
+            published: None,
+            author: None,
+            title: None,
+            url: "https://example.test/a".into(),
+        }));
+        assert_ne!(
+            baseline, with_sidecar,
+            "metadata sidecar must be rendered into the verification prompt"
         );
     }
 

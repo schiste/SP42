@@ -78,6 +78,27 @@ leaked past the token layer and should be routed through a variable instead.
   panel/diff inline styles all resolve through CSS variables, which is what makes
   the light theme render correctly.
 
+## PR #84 design-system migration gate
+
+PR #84 is the vehicle for the full shared design-system cutover, not just a
+Codex token refresh. Its merge gate is the clean state ADR-0005 describes:
+
+- `sp42-ui` owns visual presentation: tokens, CSS, primitives, component
+  variants, spacing, typography, surfaces, and visual state.
+- `sp42-app` owns behavior and domain composition: data loading, actions,
+  routing, auth/session state, wiki selection, and assembling `sp42-ui`
+  components for app workflows.
+- Page modules may not introduce visual presentation. In page code, `style=`,
+  raw design classes, color literals, spacing literals, typography literals, and
+  page-owned CSS selectors are banned.
+- The only allowed styling escape hatch is dynamic runtime positioning inside
+  `sp42-ui` internals, for UI that cannot be expressed statically (for example a
+  context menu anchored to pointer coordinates). Pages must pass typed data or
+  semantic variants into `sp42-ui`; they must not compute CSS strings.
+
+The check for this gate should be mechanical: after the migration, a grep for
+page/app-local styling should fail the build rather than rely on review.
+
 ## Deliberate divergences from Codex
 
 ### Fonts / i18n

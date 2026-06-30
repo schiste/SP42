@@ -15,11 +15,13 @@ mod http;
 mod probe;
 mod server;
 mod verify;
+mod wikidata;
 
 pub use http::GuardedHttpClient;
 pub use probe::probe_source;
 pub use server::Sp42McpServer;
 pub use verify::verify_claim;
+pub use wikidata::verify_wikidata_statement;
 
 // Re-export the governed core types the contract embeds, so consumers get one import surface
 // and cannot drift from the ADR-0007/0008 verdict taxonomy.
@@ -103,6 +105,19 @@ pub struct VerifyResult {
     /// Measured panel agreement, when a multi-model panel voted.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub agreement: Option<PanelAgreement>,
+}
+
+/// Result of `verify_wikidata_statement`: the rendered claim, its reference URL, and the verdict.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct StatementVerifyResult {
+    /// The statement rendered as a natural-language claim — returned for inspection, since
+    /// rendering is best-effort (PRD-0010 open question #1).
+    pub claim_rendered: String,
+    /// The P854 reference URL the statement was verified against, when the statement carries one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ref_url: Option<String>,
+    /// The verification result. `SourceUnavailable` when the statement has no reference URL.
+    pub result: VerifyResult,
 }
 
 #[cfg(test)]

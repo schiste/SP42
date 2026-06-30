@@ -12,8 +12,12 @@ use schemars::JsonSchema;
 use serde::Deserialize;
 use sp42_inference::GenaiModelClient;
 use sp42_types::{ModelRef, SystemClock};
+use sp42_wiki::WikiRegistry;
 
-use crate::{GuardedHttpClient, Source, StatementRef, probe_source, verify_claim};
+use crate::{
+    GuardedHttpClient, PageInput, Source, StatementRef, probe_source, verify_claim,
+    verify_wikipedia_page,
+};
 
 /// Parameters for the `probe_source` tool.
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -31,11 +35,35 @@ pub struct VerifyParams {
     pub source: Source,
 }
 
-/// The MCP server: holds the injected fetch client, model client, and model panel.
+/// Parameters for the `verify_wikipedia_page` tool.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct PageParams {
+    /// The canonical page title, e.g. `Cosmic latte`.
+    pub title: String,
+    /// The revision id to pin verification to.
+    pub rev_id: u64,
+    /// The wiki to resolve the Parsoid endpoint from; omit for the server's default wiki.
+    #[serde(default)]
+    pub wiki_id: Option<String>,
+    /// An explicit Parsoid REST base URL (e.g. `https://en.wikipedia.org/w/rest.php`), overriding
+    /// the resolved wiki's configured endpoint. Useful for wikis the server ships no config for.
+    #[serde(default)]
+    pub parsoid_url: Option<String>,
+    /// When `true`, fetch and decompose the page but run no panel — return the use-site count and
+    /// implied panel-call count only. The cheap way to size a job before committing inference.
+    #[serde(default)]
+    pub estimate_only: bool,
+    /// Override the default fan-out cap on use-sites verified in one run.
+    #[serde(default)]
+    pub max_use_sites: Option<usize>,
+}
+
+/// The MCP server: holds the injected fetch client, model client, model panel, and wiki registry.
 pub struct Sp42McpServer {
     fetch: GuardedHttpClient,
     model: GenaiModelClient,
     panel: Vec<ModelRef>,
+    registry: WikiRegistry,
 }
 
 impl Sp42McpServer {
@@ -43,12 +71,14 @@ impl Sp42McpServer {
     ///
     /// # Errors
     ///
-    /// Returns an error string if the fetch client, model client, or panel cannot be built.
+    /// Returns an error string if the fetch client, model client, panel, or wiki registry cannot
+    /// be built.
     pub fn from_env() -> Result<Self, String> {
         Ok(Self {
             fetch: GuardedHttpClient::from_env()?,
             model: sp42_inference::client_from_env()?,
             panel: sp42_inference::panel_from_env()?,
+            registry: WikiRegistry::load().map_err(|error| error.to_string())?,
         })
     }
 }
@@ -118,13 +148,57 @@ impl Sp42McpServer {
         .await?;
         serde_json::to_string(&result).map_err(|error| error.to_string())
     }
+
+    /// Verify every URL-bearing citation on a Wikipedia revision (or estimate the job's size).
+    #[tool(
+        description = "Verify every URL-bearing citation on a Wikipedia revision: fetch the page \
+            through Parsoid, decompose it into citation use-sites, and judge each with the model \
+            panel and verbatim grounding. Returns one verdict per use-site. Set estimate_only to \
+            size the job first (use-site count and implied panel calls) without running the panel; \
+            a default fan-out cap (overridable via max_use_sites) bounds a single run.",
+        annotations(read_only_hint = true)
+    )]
+    async fn verify_wikipedia_page(
+        &self,
+        Parameters(params): Parameters<PageParams>,
+    ) -> Result<String, String> {
+        let mut config = match &params.wiki_id {
+            Some(wiki_id) => self
+                .registry
+                .config(wiki_id)
+                .map_err(|error| error.to_string())?,
+            None => self.registry.default_config(),
+        };
+        if let Some(parsoid_url) = &params.parsoid_url {
+            config.parsoid_url = Some(parsoid_url.parse().map_err(|error: url::ParseError| {
+                format!("invalid parsoid_url {parsoid_url:?}: {error}")
+            })?);
+        }
+        let result = verify_wikipedia_page(
+            &self.fetch,
+            &self.model,
+            &SystemClock,
+            &self.panel,
+            &config,
+            &PageInput {
+                title: params.title,
+                rev_id: params.rev_id,
+            },
+            params.estimate_only,
+            params.max_use_sites,
+        )
+        .await?;
+        serde_json::to_string(&result).map_err(|error| error.to_string())
+    }
 }
 
 #[tool_handler(
     name = "sp42-citation",
     version = "0.1.0",
     instructions = "SP42 citation verification. Use probe_source to cheaply screen a source URL, \
-        then verify_claim to judge whether a source supports a claim with verbatim grounding."
+        verify_claim to judge whether a source supports a single claim with verbatim grounding, \
+        verify_wikidata_statement for a Wikidata statement's reference, and verify_wikipedia_page \
+        to verify a whole revision's citations (with estimate_only to size the job first)."
 )]
 impl ServerHandler for Sp42McpServer {}
 
@@ -141,10 +215,15 @@ mod tests {
             router.has_route("verify_wikidata_statement"),
             "verify_wikidata_statement registered"
         );
-        assert_eq!(router.list_all().len(), 3, "the three MVP verbs");
+        assert!(
+            router.has_route("verify_wikipedia_page"),
+            "verify_wikipedia_page registered"
+        );
+        assert_eq!(router.list_all().len(), 4, "the four MVP verbs");
         // Each verb advertises a tool definition the client can introspect.
         assert!(router.get("probe_source").is_some());
         assert!(router.get("verify_claim").is_some());
         assert!(router.get("verify_wikidata_statement").is_some());
+        assert!(router.get("verify_wikipedia_page").is_some());
     }
 }

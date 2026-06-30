@@ -11,6 +11,10 @@
 
 use serde::{Deserialize, Serialize};
 
+mod probe;
+
+pub use probe::probe_source;
+
 // Re-export the governed core types the contract embeds, so consumers get one import surface
 // and cannot drift from the ADR-0007/0008 verdict taxonomy.
 pub use sp42_core::{BodyUsabilityReason, PanelAgreement, Verdict};

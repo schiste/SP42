@@ -11,6 +11,8 @@ workspace = true
 [dependencies]
 serde.workspace = true
 sp42-core = { path = "../sp42-core" }
+sp42-types = { path = "../sp42-types" }
 
 [dev-dependencies]
 serde_json.workspace = true
+tokio.workspace = true

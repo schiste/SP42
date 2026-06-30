@@ -13,7 +13,7 @@ use serde::Deserialize;
 use sp42_inference::GenaiModelClient;
 use sp42_types::{ModelRef, SystemClock};
 
-use crate::{GuardedHttpClient, Source, probe_source, verify_claim};
+use crate::{GuardedHttpClient, Source, StatementRef, probe_source, verify_claim};
 
 /// Parameters for the `probe_source` tool.
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -94,6 +94,30 @@ impl Sp42McpServer {
         .map_err(|error| error.to_string())?;
         serde_json::to_string(&result).map_err(|error| error.to_string())
     }
+
+    /// Verify a Wikidata statement against its P854 reference URL.
+    #[tool(
+        description = "Verify a Wikidata statement against its P854 reference URL. Renders the \
+            statement (entity, property, value) into a natural-language claim, resolves English \
+            labels, and verifies it with verbatim grounding. Returns the rendered claim (for \
+            inspection), the reference URL, and the verdict; a statement with no reference URL \
+            returns SourceUnavailable.",
+        annotations(read_only_hint = true)
+    )]
+    async fn verify_wikidata_statement(
+        &self,
+        Parameters(statement): Parameters<StatementRef>,
+    ) -> Result<String, String> {
+        let result = crate::verify_wikidata_statement(
+            &self.fetch,
+            &self.model,
+            &SystemClock,
+            &self.panel,
+            &statement,
+        )
+        .await?;
+        serde_json::to_string(&result).map_err(|error| error.to_string())
+    }
 }
 
 #[tool_handler(
@@ -113,9 +137,14 @@ mod tests {
         let router = Sp42McpServer::tool_router();
         assert!(router.has_route("probe_source"), "probe_source registered");
         assert!(router.has_route("verify_claim"), "verify_claim registered");
-        assert_eq!(router.list_all().len(), 2, "exactly the two MVP verbs");
+        assert!(
+            router.has_route("verify_wikidata_statement"),
+            "verify_wikidata_statement registered"
+        );
+        assert_eq!(router.list_all().len(), 3, "the three MVP verbs");
         // Each verb advertises a tool definition the client can introspect.
         assert!(router.get("probe_source").is_some());
         assert!(router.get("verify_claim").is_some());
+        assert!(router.get("verify_wikidata_statement").is_some());
     }
 }

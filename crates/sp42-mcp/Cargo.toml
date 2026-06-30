@@ -17,7 +17,9 @@ serde.workspace = true
 serde_json.workspace = true
 sp42-core = { path = "../sp42-core" }
 sp42-inference = { path = "../sp42-inference" }
+sp42-parsoid = { path = "../sp42-parsoid" }
 sp42-types = { path = "../sp42-types" }
+sp42-wiki = { path = "../sp42-wiki" }
 tokio = { workspace = true, features = ["io-std", "rt-multi-thread", "macros"] }
 tracing.workspace = true
 url.workspace = true

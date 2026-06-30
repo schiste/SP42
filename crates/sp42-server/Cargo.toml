@@ -21,6 +21,7 @@ sp42-coordination = { path = "../sp42-coordination" }
 sp42-core = { path = "../sp42-core" }
 sp42-inference = { path = "../sp42-inference" }
 sp42-live = { path = "../sp42-live" }
+sp42-parsoid = { path = "../sp42-parsoid" }
 sp42-patrol = { path = "../sp42-patrol" }
 sp42-reporting = { path = "../sp42-reporting" }
 sp42-types = { path = "../sp42-types" }

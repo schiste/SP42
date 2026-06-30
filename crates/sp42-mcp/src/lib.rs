@@ -12,12 +12,14 @@
 use serde::{Deserialize, Serialize};
 
 mod http;
+mod page;
 mod probe;
 mod server;
 mod verify;
 mod wikidata;
 
 pub use http::GuardedHttpClient;
+pub use page::{PageFinding, PageInput, PageVerifyResult, verify_wikipedia_page};
 pub use probe::probe_source;
 pub use server::Sp42McpServer;
 pub use verify::verify_claim;

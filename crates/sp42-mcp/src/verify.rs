@@ -6,10 +6,11 @@
 //! quote is carried on the result only when it re-located verbatim in the source, so a fabricated
 //! quote is never surfaced as evidence (even if the panel's verdict is otherwise support-class).
 
-use sp42_core::{
-    CitationFinding, CitationVerificationError, CitationVerificationRequest, FetchedSource,
-    VerifyOptions, verify_citation_use_site,
+use sp42_citation::{
+    CitationFinding, CitationVerificationRequest, FetchedSource, VerifyOptions,
+    verify_citation_use_site,
 };
+use sp42_platform::CitationVerificationError;
 use sp42_types::{Clock, HttpClient, ModelClient, ModelRef};
 use url::Url;
 
@@ -53,6 +54,10 @@ where
         options.prefetched = Some(FetchedSource {
             text: text.clone(),
             status: 200,
+            // Caller-supplied text: no transport content-type, and no raw HTML for the
+            // usability gate's structured-paywall check (grounding uses `text`).
+            content_type: "text/plain".to_owned(),
+            raw_html: None,
         });
     }
     let outcome = verify_citation_use_site(

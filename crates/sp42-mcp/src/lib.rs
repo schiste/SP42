@@ -27,7 +27,7 @@ pub use wikidata::verify_wikidata_statement;
 
 // Re-export the governed core types the contract embeds, so consumers get one import surface
 // and cannot drift from the ADR-0007/0008 verdict taxonomy.
-pub use sp42_core::{BodyUsabilityReason, PanelAgreement, Verdict};
+pub use sp42_citation::{BodyUsabilityReason, PanelAgreement, Verdict};
 
 /// The source a claim is verified against.
 ///

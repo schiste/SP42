@@ -14,7 +14,7 @@
 
 use parsoid::prelude::*;
 use parsoid::{Client, ImmutableWikicode};
-use sp42_core::{
+use sp42_platform::{
     BlockKind, BlockRef, CitedSource, ParsoidBlock, WikiConfig, WikitextEditorError,
     WikitextPageRef,
 };
@@ -34,7 +34,7 @@ pub fn editor_client(config: &WikiConfig) -> Result<Client, WikitextEditorError>
     };
     Client::new(
         parsoid_url.as_str().trim_end_matches('/'),
-        sp42_core::branding::USER_AGENT,
+        sp42_platform::branding::USER_AGENT,
     )
     .map_err(|error| WikitextEditorError::Unavailable {
         message: format!("failed to build Parsoid client: {error}"),

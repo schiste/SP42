@@ -11,10 +11,14 @@
 
 use serde::{Deserialize, Serialize};
 
+mod http;
 mod probe;
+mod server;
 mod verify;
 
+pub use http::GuardedHttpClient;
 pub use probe::probe_source;
+pub use server::Sp42McpServer;
 pub use verify::verify_claim;
 
 // Re-export the governed core types the contract embeds, so consumers get one import surface
@@ -26,7 +30,7 @@ pub use sp42_core::{BodyUsabilityReason, PanelAgreement, Verdict};
 /// Either a URL for SP42 to fetch through its hardened pipeline, or content the caller already
 /// fetched — so a caller that just expanded a bare URL (via Citoid) or pulled an archive
 /// snapshot is not forced into a re-fetch.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum Source {
     /// A URL for SP42 to fetch and extract.
@@ -68,7 +72,7 @@ pub struct ProbeResult {
 /// Optional overrides for the model panel.
 ///
 /// Empty fields fall back to the server's configured panel (the `SP42_INFERENCE_*` seam).
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct PanelConfig {
     /// Explicit model ids to vote; empty = the server's configured default panel.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -76,7 +80,7 @@ pub struct PanelConfig {
 }
 
 /// A reference to the Wikidata statement to verify.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct StatementRef {
     /// The Wikidata entity id, e.g. `Q42`.
     pub entity: String,

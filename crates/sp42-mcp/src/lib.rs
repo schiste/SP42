@@ -12,8 +12,10 @@
 use serde::{Deserialize, Serialize};
 
 mod probe;
+mod verify;
 
 pub use probe::probe_source;
+pub use verify::verify_claim;
 
 // Re-export the governed core types the contract embeds, so consumers get one import surface
 // and cannot drift from the ADR-0007/0008 verdict taxonomy.

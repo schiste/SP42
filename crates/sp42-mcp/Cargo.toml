@@ -12,6 +12,7 @@ workspace = true
 serde.workspace = true
 sp42-core = { path = "../sp42-core" }
 sp42-types = { path = "../sp42-types" }
+url.workspace = true
 
 [dev-dependencies]
 serde_json.workspace = true

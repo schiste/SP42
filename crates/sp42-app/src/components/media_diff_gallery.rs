@@ -3,8 +3,8 @@ use sp42_core::{MediaDiffEntry, MediaDiffKind, MediaDiffReport};
 use sp42_ui::{
     Link, LinkProps, MediaCard, MediaCardProps, MediaGalleryPanel, MediaGalleryPanelProps,
     MediaGroup, MediaGroupProps, MediaPreview, MediaPreviewProps, ScrollStack, ScrollStackProps,
-    SignatureBlock, SignatureBlockProps, Stack, StackProps, Text, TextProps, TextSize, TextTone,
-    TextWeight,
+    SignatureBlock, SignatureBlockProps, Size, Stack, StackProps, Text, TextProps, TextWeight,
+    Tone,
 };
 
 use super::ui_children;
@@ -24,8 +24,8 @@ pub fn MediaDiffGallery(report: Option<MediaDiffReport>, loading: Signal<bool>) 
                         return view! {
                             {Text(
                                 TextProps::new(ui_children(|| view! { "Loading image changes..." }.into_any()))
-                                    .with_tone(TextTone::Muted)
-                                    .with_size(TextSize::Small)
+                                    .with_tone(Tone::Muted)
+                                    .with_size(Size::Small)
                             )}
                         }.into_any();
                     }
@@ -34,8 +34,8 @@ pub fn MediaDiffGallery(report: Option<MediaDiffReport>, loading: Signal<bool>) 
                         return view! {
                             {Text(
                                 TextProps::new(ui_children(|| view! { "No media diff is available for this edit." }.into_any()))
-                                    .with_tone(TextTone::Muted)
-                                    .with_size(TextSize::Small)
+                                    .with_tone(Tone::Muted)
+                                    .with_size(Size::Small)
                             )}
                         }.into_any();
                     };
@@ -48,16 +48,16 @@ pub fn MediaDiffGallery(report: Option<MediaDiffReport>, loading: Signal<bool>) 
                         return view! {
                             {Text(
                                 TextProps::new(ui_children(|| view! { "No image additions or removals detected." }.into_any()))
-                                    .with_tone(TextTone::Muted)
-                                    .with_size(TextSize::Small)
+                                    .with_tone(Tone::Muted)
+                                    .with_size(Size::Small)
                             )}
                         }.into_any();
                     }
 
                     view! {
-                        {render_group("Added", TextTone::Success, added)}
-                        {render_group("Removed", TextTone::Danger, removed)}
-                        {render_group("Changed usage", TextTone::Warning, changed)}
+                        {render_group("Added", Tone::Success, added)}
+                        {render_group("Removed", Tone::Danger, removed)}
+                        {render_group("Changed usage", Tone::Warning, changed)}
                     }.into_any()
                 }}
                     }.into_any())))}
@@ -65,7 +65,7 @@ pub fn MediaDiffGallery(report: Option<MediaDiffReport>, loading: Signal<bool>) 
                 .into_any()
             }),
         )
-        .with_loading(loading),
+        .with_state(loading),
     )
 }
 
@@ -80,7 +80,7 @@ fn entries_for_kind(report: &MediaDiffReport, kind: MediaDiffKind) -> Vec<MediaD
 
 fn render_group(
     title: &'static str,
-    tone: TextTone,
+    tone: Tone,
     entries: Vec<MediaDiffEntry>,
 ) -> leptos::prelude::AnyView {
     if entries.is_empty() {
@@ -128,8 +128,8 @@ fn render_entry_card(entry: MediaDiffEntry) -> leptos::prelude::AnyView {
                 }}
                 {Text(
                     TextProps::new(ui_children(move || view! { {usage_summary} }.into_any()))
-                        .with_tone(TextTone::Muted)
-                        .with_size(TextSize::XSmall)
+                        .with_tone(Tone::Muted)
+                        .with_size(Size::XSmall)
                 )}
                 {render_signature_block("Before", entry.before_signatures.clone())}
                 {render_signature_block("After", entry.after_signatures.clone())}

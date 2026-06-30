@@ -1,10 +1,10 @@
 use leptos::prelude::*;
 use sp42_ui::{
-    Card, CardProps, Gap, Inline, InlineProps, Stack, StackProps, Text, TextOverflow, TextProps,
-    TextSize,
+    Card, CardProps, Gap, Inline, InlineProps, Size, Stack, StackProps, Text, TextFamily,
+    TextOverflow, TextProps,
 };
 
-use super::status_badge::{StatusBadge, StatusTone};
+use super::status_badge::{StatusBadge, Tone};
 use super::ui_children;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -58,8 +58,8 @@ fn InspectorEntryRow(entry: InspectorEntry) -> impl IntoView {
                 )}
                 {Text(
                     TextProps::new(ui_children(move || view! { {entry.text} }.into_any()))
-                        .with_size(TextSize::Large)
-                        .mono()
+                        .with_size(Size::Large)
+                        .with_family(TextFamily::Mono)
                         .with_overflow(TextOverflow::PreserveLines),
                 )}
             }
@@ -123,18 +123,18 @@ pub fn classify_inspector_line(line: &str) -> InspectorLineKind {
 }
 
 #[must_use]
-pub fn kind_meta(kind: InspectorLineKind) -> (StatusTone, &'static str) {
+pub fn kind_meta(kind: InspectorLineKind) -> (Tone, &'static str) {
     match kind {
-        InspectorLineKind::Queue => (StatusTone::Accent, "Queue"),
-        InspectorLineKind::Stream => (StatusTone::Info, "Stream"),
-        InspectorLineKind::Backlog => (StatusTone::Warning, "Backlog"),
-        InspectorLineKind::Coordination => (StatusTone::Info, "Coordination"),
-        InspectorLineKind::Auth => (StatusTone::Accent, "Auth"),
-        InspectorLineKind::Diff => (StatusTone::Neutral, "Diff"),
-        InspectorLineKind::Review => (StatusTone::Success, "Review"),
-        InspectorLineKind::Runtime => (StatusTone::Neutral, "Runtime"),
-        InspectorLineKind::Server => (StatusTone::Neutral, "Server"),
-        InspectorLineKind::General => (StatusTone::Neutral, "General"),
+        InspectorLineKind::Queue => (Tone::Accent, "Queue"),
+        InspectorLineKind::Stream => (Tone::Info, "Stream"),
+        InspectorLineKind::Backlog => (Tone::Warning, "Backlog"),
+        InspectorLineKind::Coordination => (Tone::Info, "Coordination"),
+        InspectorLineKind::Auth => (Tone::Accent, "Auth"),
+        InspectorLineKind::Diff => (Tone::Default, "Diff"),
+        InspectorLineKind::Review => (Tone::Success, "Review"),
+        InspectorLineKind::Runtime => (Tone::Default, "Runtime"),
+        InspectorLineKind::Server => (Tone::Default, "Server"),
+        InspectorLineKind::General => (Tone::Default, "General"),
     }
 }
 

@@ -7,10 +7,10 @@ use sp42_ui::{
     BadgeHeader, BadgeHeaderProps, Card, CardHeader, CardHeaderProps, CardProps, CodeBlock,
     CodeBlockProps, Density, Disclosure, DisclosureProps, Gap, Grid, GridColumns, GridProps,
     Inline, InlineProps, Panel, PanelProps, Text, TextList, TextListItem, TextListItemProps,
-    TextListProps, TextProps, TextTone, TextWeight,
+    TextListProps, TextProps, TextWeight, Tone,
 };
 
-use super::{InspectorFeed, StatusBadge, StatusTone, inspector_entries_from_lines, ui_children};
+use super::{InspectorFeed, StatusBadge, inspector_entries_from_lines, ui_children};
 
 #[component]
 pub fn PatrolScenarioPanel(report: PatrolScenarioReport) -> impl IntoView {
@@ -28,7 +28,7 @@ pub fn PatrolScenarioPanel(report: PatrolScenarioReport) -> impl IntoView {
             {BadgeHeader(BadgeHeaderProps::new(
                 "Typed patrol scenario summary derived from the live queue, context, diff, action, stream, backlog, and coordination inputs.",
                 ui_children(move || view! {
-                    <StatusBadge label="Scenario".to_string() tone=StatusTone::Accent />
+                    <StatusBadge label="Scenario".to_string() tone=Tone::Accent />
                     {badges
                         .into_iter()
                         .map(|(label, tone)| view! { <StatusBadge label=label tone=tone /> })
@@ -52,7 +52,7 @@ pub fn PatrolScenarioPanel(report: PatrolScenarioReport) -> impl IntoView {
                         {CardHeader(CardHeaderProps::new("Findings").with_actions(ui_children(move || view! {
                         <StatusBadge
                             label=format!("{section_count} section(s)")
-                            tone=StatusTone::Info
+                            tone=Tone::Info
                         />
                         }.into_any())))}
                     {Grid(GridProps::new(ui_children(move || view! {
@@ -108,7 +108,7 @@ fn FindingCard(finding: PatrolScenarioFinding) -> impl IntoView {
                 )}
                 {Text(
                     TextProps::new(ui_children(move || view! { {message} }.into_any()))
-                        .with_tone(TextTone::Accent)
+                        .with_tone(Tone::Accent)
                 )}
             }
             .into_any()
@@ -120,9 +120,9 @@ fn FindingCard(finding: PatrolScenarioFinding) -> impl IntoView {
 #[component]
 fn ScenarioSectionCard(section: PatrolScenarioSection) -> impl IntoView {
     let tone = if section.available {
-        StatusTone::Success
+        Tone::Success
     } else {
-        StatusTone::Warning
+        Tone::Warning
     };
     let section_name = section.name;
     let summary_lines = section.summary_lines;
@@ -133,9 +133,9 @@ fn ScenarioSectionCard(section: PatrolScenarioSection) -> impl IntoView {
         "missing"
     };
     let availability_tone = if section.available {
-        StatusTone::Success
+        Tone::Success
     } else {
-        StatusTone::Warning
+        Tone::Warning
     };
 
     Card(
@@ -169,7 +169,7 @@ fn ScenarioSectionCard(section: PatrolScenarioSection) -> impl IntoView {
 }
 
 #[must_use]
-pub fn scenario_badges(report: &PatrolScenarioReport) -> Vec<(String, StatusTone)> {
+pub fn scenario_badges(report: &PatrolScenarioReport) -> Vec<(String, Tone)> {
     let (readiness_tone, readiness_label) = readiness_meta(report.readiness);
     let available_sections = report
         .sections
@@ -182,18 +182,18 @@ pub fn scenario_badges(report: &PatrolScenarioReport) -> Vec<(String, StatusTone
         (
             format!("{} queue", report.queue_depth),
             if report.queue_depth == 0 {
-                StatusTone::Warning
+                Tone::Warning
             } else {
-                StatusTone::Success
+                Tone::Success
             },
         ),
         (readiness_label.to_string(), readiness_tone),
         (
             format!("{} available", available_sections),
             if available_sections == report.sections.len() {
-                StatusTone::Success
+                Tone::Success
             } else {
-                StatusTone::Info
+                Tone::Info
             },
         ),
         (
@@ -269,37 +269,37 @@ pub fn scenario_storyboard_lines(report: &PatrolScenarioReport) -> Vec<String> {
 }
 
 #[must_use]
-pub fn readiness_meta(readiness: PatrolScenarioReadiness) -> (StatusTone, &'static str) {
+pub fn readiness_meta(readiness: PatrolScenarioReadiness) -> (Tone, &'static str) {
     match readiness {
-        PatrolScenarioReadiness::Blocked => (StatusTone::Warning, "Blocked"),
-        PatrolScenarioReadiness::Limited => (StatusTone::Info, "Limited"),
-        PatrolScenarioReadiness::Ready => (StatusTone::Success, "Ready"),
+        PatrolScenarioReadiness::Blocked => (Tone::Warning, "Blocked"),
+        PatrolScenarioReadiness::Limited => (Tone::Info, "Limited"),
+        PatrolScenarioReadiness::Ready => (Tone::Success, "Ready"),
     }
 }
 
 #[must_use]
-pub fn finding_meta(severity: ReportSeverity) -> (StatusTone, &'static str) {
+pub fn finding_meta(severity: ReportSeverity) -> (Tone, &'static str) {
     match severity {
-        ReportSeverity::Info => (StatusTone::Info, "Info"),
-        ReportSeverity::Warning => (StatusTone::Warning, "Warning"),
-        ReportSeverity::Blocker => (StatusTone::Accent, "Blocker"),
+        ReportSeverity::Info => (Tone::Info, "Info"),
+        ReportSeverity::Warning => (Tone::Warning, "Warning"),
+        ReportSeverity::Blocker => (Tone::Accent, "Blocker"),
     }
 }
 
 #[must_use]
-pub fn finding_summary_tone(findings: &[PatrolScenarioFinding]) -> StatusTone {
+pub fn finding_summary_tone(findings: &[PatrolScenarioFinding]) -> Tone {
     if findings
         .iter()
         .any(|finding| finding.severity == ReportSeverity::Blocker)
     {
-        StatusTone::Warning
+        Tone::Warning
     } else if findings
         .iter()
         .any(|finding| finding.severity == ReportSeverity::Warning)
     {
-        StatusTone::Accent
+        Tone::Accent
     } else {
-        StatusTone::Success
+        Tone::Success
     }
 }
 
@@ -329,7 +329,7 @@ pub fn ordered_sections(report: &PatrolScenarioReport) -> Vec<PatrolScenarioSect
 
 #[cfg(test)]
 mod tests {
-    use super::StatusTone;
+    use super::Tone;
     use super::{
         finding_summary_tone, ordered_sections, readiness_meta, scenario_badges,
         scenario_storyboard_lines,
@@ -423,7 +423,7 @@ mod tests {
         );
         assert_eq!(
             readiness_meta(PatrolScenarioReadiness::Ready).0,
-            StatusTone::Success
+            Tone::Success
         );
     }
 
@@ -479,12 +479,12 @@ mod tests {
     #[test]
     fn finding_summary_tone_reflects_severity() {
         let mut findings = sample_report().findings;
-        assert_eq!(finding_summary_tone(&findings), StatusTone::Accent);
+        assert_eq!(finding_summary_tone(&findings), Tone::Accent);
         findings.push(PatrolScenarioFinding {
             severity: ReportSeverity::Blocker,
             code: "no_selection".to_string(),
             message: "missing selection".to_string(),
         });
-        assert_eq!(finding_summary_tone(&findings), StatusTone::Warning);
+        assert_eq!(finding_summary_tone(&findings), Tone::Warning);
     }
 }

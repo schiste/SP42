@@ -2,15 +2,14 @@
 
 use leptos::prelude::*;
 
-use super::layout::ControlState;
-use super::typography::TextTone;
+use super::layout::{State, Tone};
 use super::util::class_names;
 
 pub struct MediaGalleryPanelProps {
     aria_label: String,
     title: String,
     description: String,
-    loading: ControlState,
+    loading: State,
     children: Children,
 }
 
@@ -26,13 +25,13 @@ impl MediaGalleryPanelProps {
             aria_label: aria_label.into(),
             title: title.into(),
             description: description.into(),
-            loading: ControlState::default(),
+            loading: State::default(),
             children,
         }
     }
 
     #[must_use]
-    pub fn with_loading(mut self, loading: impl Into<ControlState>) -> Self {
+    pub fn with_state(mut self, loading: impl Into<State>) -> Self {
         self.loading = loading.into();
         self
     }
@@ -68,7 +67,7 @@ pub use media_gallery_panel as MediaGalleryPanel;
 pub struct MediaGroupProps {
     title: String,
     count: usize,
-    tone: TextTone,
+    tone: Tone,
     children: Children,
 }
 
@@ -78,13 +77,13 @@ impl MediaGroupProps {
         Self {
             title: title.into(),
             count,
-            tone: TextTone::Default,
+            tone: Tone::Default,
             children,
         }
     }
 
     #[must_use]
-    pub const fn with_tone(mut self, tone: TextTone) -> Self {
+    pub const fn with_tone(mut self, tone: Tone) -> Self {
         self.tone = tone;
         self
     }
@@ -97,7 +96,7 @@ pub fn media_group(props: MediaGroupProps) -> impl IntoView {
     view! {
         <section class="sp42-media-group">
             <header>
-                <strong class=class_names(&["sp42-media-group-title", props.tone.class_name()])>
+                <strong class=class_names(&["sp42-media-group-title", props.tone.text_class_name()])>
                     {props.title}
                 </strong>
                 <span>{props.count}</span>

@@ -4,7 +4,7 @@ use super::{
     inspector_feed::{
         InspectorFeed, classify_inspector_line, inspector_entries_from_lines, kind_meta,
     },
-    status_badge::{StatusBadge, StatusTone},
+    status_badge::{StatusBadge, Tone},
 };
 
 #[component]
@@ -26,8 +26,8 @@ pub fn DebugPanel(lines: Vec<String>) -> impl IntoView {
         >
             <header style="display:grid;gap:4px;">
                 <div style="display:flex;align-items:center;gap:7px;flex-wrap:wrap;">
-                    <StatusBadge label="Debug Panel".to_string() tone=StatusTone::Accent />
-                    <StatusBadge label=format!("{} lines", queue_depth) tone=StatusTone::Info />
+                    <StatusBadge label="Debug Panel".to_string() tone=Tone::Accent />
+                    <StatusBadge label=format!("{} lines", queue_depth) tone=Tone::Info />
                 </div>
                 <p style="margin:0;color:var(--muted);">
                     "Structured state snapshot for the current dashboard view."
@@ -48,10 +48,10 @@ pub fn DebugPanel(lines: Vec<String>) -> impl IntoView {
     }
 }
 
-fn summarize_kinds(lines: &[String]) -> Vec<(String, usize, StatusTone)> {
+fn summarize_kinds(lines: &[String]) -> Vec<(String, usize, Tone)> {
     use std::collections::BTreeMap;
 
-    let mut counts = BTreeMap::<String, (usize, StatusTone)>::new();
+    let mut counts = BTreeMap::<String, (usize, Tone)>::new();
     for line in lines {
         let kind = classify_inspector_line(line);
         let (tone, label) = kind_meta(kind);

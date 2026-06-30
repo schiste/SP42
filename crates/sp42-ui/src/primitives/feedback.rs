@@ -2,37 +2,12 @@
 
 use leptos::prelude::*;
 
-use super::layout::Size;
+use super::layout::{Size, Tone};
 use super::util::{class_names, push_class};
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum StatusTone {
-    #[default]
-    Neutral,
-    Info,
-    Success,
-    Warning,
-    Accent,
-    Danger,
-}
-
-impl StatusTone {
-    #[must_use]
-    pub const fn class_name(self) -> &'static str {
-        match self {
-            Self::Neutral => "sp42-status-badge-neutral",
-            Self::Info => "sp42-status-badge-info",
-            Self::Success => "sp42-status-badge-success",
-            Self::Warning => "sp42-status-badge-warning",
-            Self::Accent => "sp42-status-badge-accent",
-            Self::Danger => "sp42-status-badge-danger",
-        }
-    }
-}
 
 pub struct StatusBadgeProps {
     label: String,
-    tone: StatusTone,
+    tone: Tone,
     size: Size,
 }
 
@@ -41,13 +16,13 @@ impl StatusBadgeProps {
     pub fn new(label: impl Into<String>) -> Self {
         Self {
             label: label.into(),
-            tone: StatusTone::default(),
+            tone: Tone::default(),
             size: Size::default(),
         }
     }
 
     #[must_use]
-    pub const fn with_tone(mut self, tone: StatusTone) -> Self {
+    pub const fn with_tone(mut self, tone: Tone) -> Self {
         self.tone = tone;
         self
     }
@@ -61,7 +36,7 @@ impl StatusBadgeProps {
     #[must_use]
     pub fn class_name(&self) -> String {
         let mut class_name = String::from("badge sp42-status-badge");
-        push_class(&mut class_name, self.tone.class_name());
+        push_class(&mut class_name, self.tone.status_class_name());
         push_class(&mut class_name, self.size.class_name());
         class_name
     }
@@ -78,28 +53,9 @@ pub fn status_badge(props: StatusBadgeProps) -> impl IntoView {
 
 pub use status_badge as StatusBadge;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum SpinnerSize {
-    Small,
-    #[default]
-    Medium,
-    Large,
-}
-
-impl SpinnerSize {
-    #[must_use]
-    pub const fn class_name(self) -> &'static str {
-        match self {
-            Self::Small => "sp42-spinner-sm",
-            Self::Medium => "sp42-spinner-md",
-            Self::Large => "sp42-spinner-lg",
-        }
-    }
-}
-
 pub struct SpinnerProps {
     label: String,
-    size: SpinnerSize,
+    size: Size,
 }
 
 impl SpinnerProps {
@@ -107,12 +63,12 @@ impl SpinnerProps {
     pub fn new(label: impl Into<String>) -> Self {
         Self {
             label: label.into(),
-            size: SpinnerSize::default(),
+            size: Size::default(),
         }
     }
 
     #[must_use]
-    pub const fn with_size(mut self, size: SpinnerSize) -> Self {
+    pub const fn with_size(mut self, size: Size) -> Self {
         self.size = size;
         self
     }
@@ -121,7 +77,7 @@ impl SpinnerProps {
 #[must_use]
 pub fn spinner(props: SpinnerProps) -> impl IntoView {
     view! {
-        <span class=class_names(&["spinner", props.size.class_name()]) role="status" aria-live="polite">
+        <span class=class_names(&["spinner", props.size.spinner_class_name()]) role="status" aria-live="polite">
             <span class="sp42-visually-hidden">{props.label}</span>
         </span>
     }

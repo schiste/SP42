@@ -2,47 +2,41 @@
 
 use leptos::prelude::*;
 
-use super::layout::{ControlState, ControlWidth, Density, Size, ValueState};
+use super::layout::{Density, Size, State, Tone, ValueState, Width};
 use super::util::{class_names, push_class};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum ButtonTone {
-    #[default]
-    Neutral,
-    Accent,
-    Success,
-    Warning,
-    Danger,
-}
-
-impl ButtonTone {
-    #[must_use]
-    pub const fn class_name(self) -> &'static str {
-        match self {
-            Self::Neutral => "",
-            Self::Accent => "btn-accent",
-            Self::Success => "btn-success",
-            Self::Warning => "btn-warning",
-            Self::Danger => "btn-danger",
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum ButtonEmphasis {
+pub enum ButtonSurface {
     #[default]
     Solid,
     Subtle,
     Ghost,
 }
 
-impl ButtonEmphasis {
+impl ButtonSurface {
     #[must_use]
     pub const fn class_name(self) -> &'static str {
         match self {
             Self::Solid => "",
             Self::Subtle => "btn-subtle",
             Self::Ghost => "btn-ghost",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ButtonState {
+    #[default]
+    Default,
+    Recommended,
+}
+
+impl ButtonState {
+    #[must_use]
+    pub const fn class_name(self) -> &'static str {
+        match self {
+            Self::Default => "",
+            Self::Recommended => "btn-recommended",
         }
     }
 }
@@ -68,13 +62,13 @@ impl ButtonType {
 
 pub struct ButtonProps {
     label: String,
-    tone: ButtonTone,
+    tone: Tone,
     size: Size,
     density: Density,
-    emphasis: ButtonEmphasis,
+    surface: ButtonSurface,
+    state: ButtonState,
     button_type: ButtonType,
-    disabled: ControlState,
-    recommended: bool,
+    disabled: State,
     title: String,
     aria_label: String,
     aria_keyshortcuts: String,
@@ -86,13 +80,13 @@ impl ButtonProps {
     pub fn new(label: impl Into<String>) -> Self {
         Self {
             label: label.into(),
-            tone: ButtonTone::default(),
+            tone: Tone::default(),
             size: Size::default(),
             density: Density::default(),
-            emphasis: ButtonEmphasis::default(),
+            surface: ButtonSurface::default(),
+            state: ButtonState::default(),
             button_type: ButtonType::default(),
-            disabled: ControlState::default(),
-            recommended: false,
+            disabled: State::default(),
             title: String::new(),
             aria_label: String::new(),
             aria_keyshortcuts: String::new(),
@@ -101,7 +95,7 @@ impl ButtonProps {
     }
 
     #[must_use]
-    pub const fn with_tone(mut self, tone: ButtonTone) -> Self {
+    pub const fn with_tone(mut self, tone: Tone) -> Self {
         self.tone = tone;
         self
     }
@@ -119,8 +113,8 @@ impl ButtonProps {
     }
 
     #[must_use]
-    pub const fn with_emphasis(mut self, emphasis: ButtonEmphasis) -> Self {
-        self.emphasis = emphasis;
+    pub const fn with_surface(mut self, surface: ButtonSurface) -> Self {
+        self.surface = surface;
         self
     }
 
@@ -131,14 +125,14 @@ impl ButtonProps {
     }
 
     #[must_use]
-    pub fn with_disabled(mut self, disabled: impl Into<ControlState>) -> Self {
+    pub fn with_disabled(mut self, disabled: impl Into<State>) -> Self {
         self.disabled = disabled.into();
         self
     }
 
     #[must_use]
-    pub const fn recommended(mut self) -> Self {
-        self.recommended = true;
+    pub const fn with_state(mut self, state: ButtonState) -> Self {
+        self.state = state;
         self
     }
 
@@ -172,13 +166,11 @@ impl ButtonProps {
     #[must_use]
     pub fn class_name(&self) -> String {
         let mut class_name = String::from("btn");
-        push_class(&mut class_name, self.tone.class_name());
+        push_class(&mut class_name, self.tone.button_class_name());
         push_class(&mut class_name, self.size.class_name());
         push_class(&mut class_name, self.density.class_name());
-        push_class(&mut class_name, self.emphasis.class_name());
-        if self.recommended {
-            push_class(&mut class_name, "btn-recommended");
-        }
+        push_class(&mut class_name, self.surface.class_name());
+        push_class(&mut class_name, self.state.class_name());
         class_name
     }
 }
@@ -320,10 +312,10 @@ pub struct TextInputProps {
     value: ValueState,
     placeholder: String,
     input_type: TextInputType,
-    disabled: ControlState,
+    disabled: State,
     required: bool,
     density: Density,
-    width: ControlWidth,
+    width: Width,
     on_input: Option<Callback<leptos::ev::Event>>,
     on_change: Option<Callback<leptos::ev::Event>>,
 }
@@ -337,10 +329,10 @@ impl TextInputProps {
             value: ValueState::default(),
             placeholder: String::new(),
             input_type: TextInputType::default(),
-            disabled: ControlState::default(),
+            disabled: State::default(),
             required: false,
             density: Density::default(),
-            width: ControlWidth::default(),
+            width: Width::default(),
             on_input: None,
             on_change: None,
         }
@@ -371,7 +363,7 @@ impl TextInputProps {
     }
 
     #[must_use]
-    pub fn with_disabled(mut self, disabled: impl Into<ControlState>) -> Self {
+    pub fn with_disabled(mut self, disabled: impl Into<State>) -> Self {
         self.disabled = disabled.into();
         self
     }
@@ -389,7 +381,7 @@ impl TextInputProps {
     }
 
     #[must_use]
-    pub const fn with_width(mut self, width: ControlWidth) -> Self {
+    pub const fn with_width(mut self, width: Width) -> Self {
         self.width = width;
         self
     }
@@ -474,9 +466,9 @@ pub struct SelectProps {
     name: String,
     value: ValueState,
     options: Vec<SelectOption>,
-    disabled: ControlState,
+    disabled: State,
     density: Density,
-    width: ControlWidth,
+    width: Width,
     on_change: Option<Callback<leptos::ev::Event>>,
 }
 
@@ -488,9 +480,9 @@ impl SelectProps {
             name: String::new(),
             value: ValueState::default(),
             options,
-            disabled: ControlState::default(),
+            disabled: State::default(),
             density: Density::default(),
-            width: ControlWidth::default(),
+            width: Width::default(),
             on_change: None,
         }
     }
@@ -508,7 +500,7 @@ impl SelectProps {
     }
 
     #[must_use]
-    pub fn with_disabled(mut self, disabled: impl Into<ControlState>) -> Self {
+    pub fn with_disabled(mut self, disabled: impl Into<State>) -> Self {
         self.disabled = disabled.into();
         self
     }
@@ -520,7 +512,7 @@ impl SelectProps {
     }
 
     #[must_use]
-    pub const fn with_width(mut self, width: ControlWidth) -> Self {
+    pub const fn with_width(mut self, width: Width) -> Self {
         self.width = width;
         self
     }
@@ -585,8 +577,8 @@ pub struct CheckboxProps {
     id: String,
     name: String,
     label: String,
-    checked: ControlState,
-    disabled: ControlState,
+    checked: State,
+    disabled: State,
     density: Density,
     on_change: Option<Callback<leptos::ev::Event>>,
 }
@@ -598,8 +590,8 @@ impl CheckboxProps {
             id: id.into(),
             name: String::new(),
             label: label.into(),
-            checked: ControlState::default(),
-            disabled: ControlState::default(),
+            checked: State::default(),
+            disabled: State::default(),
             density: Density::Compact,
             on_change: None,
         }
@@ -612,13 +604,13 @@ impl CheckboxProps {
     }
 
     #[must_use]
-    pub fn with_checked(mut self, checked: impl Into<ControlState>) -> Self {
+    pub fn with_checked(mut self, checked: impl Into<State>) -> Self {
         self.checked = checked.into();
         self
     }
 
     #[must_use]
-    pub fn with_disabled(mut self, disabled: impl Into<ControlState>) -> Self {
+    pub fn with_disabled(mut self, disabled: impl Into<State>) -> Self {
         self.disabled = disabled.into();
         self
     }

@@ -3,8 +3,8 @@ use sp42_core::{EditorIdentity, QueuedEdit};
 use sp42_ui::{
     ContextBar, ContextBarProps, ContextShell, ContextShellProps, DeltaText, DeltaTextProps, Gap,
     Inline, InlineProps, Link, LinkProps, ScoreButton, ScoreButtonProps, ScoreDetailItem,
-    ScoreDetailItemProps, ScoreDetailsPanel, ScoreDetailsPanelProps, Separator, Spacer, Text,
-    TextProps, TextSize, TextTone,
+    ScoreDetailItemProps, ScoreDetailsPanel, ScoreDetailsPanelProps, Separator, Size, Spacer, Text,
+    TextProps, Tone,
 };
 
 use super::{style::wiki_base_url, ui_children};
@@ -21,8 +21,8 @@ pub fn ContextHeader(edit: Option<QueuedEdit>) -> impl IntoView {
                             TextProps::new(ui_children(|| {
                                 view! { "Select an edit to see context." }.into_any()
                             }))
-                            .with_tone(TextTone::Muted)
-                            .with_size(TextSize::Small),
+                            .with_tone(Tone::Muted)
+                            .with_size(Size::Small),
                         )}
                     }
                     .into_any()
@@ -77,7 +77,7 @@ pub fn ContextHeader(edit: Option<QueuedEdit>) -> impl IntoView {
                 view! {
                     {ScoreButton(
                         ScoreButtonProps::new(score)
-                            .with_expanded(Signal::derive(move || show_score_details.get()))
+                            .with_state(Signal::derive(move || show_score_details.get()))
                             .with_title("Show score details")
                             .on_click(move |_| {
                                 set_show_score_details.update(|open| *open = !*open);
@@ -91,14 +91,14 @@ pub fn ContextHeader(edit: Option<QueuedEdit>) -> impl IntoView {
                                     TextProps::new(ui_children(move || {
                                         view! { {user_label} }.into_any()
                                     }))
-                                    .with_size(TextSize::Small),
+                                    .with_size(Size::Small),
                                 )}
                                 {Text(
                                     TextProps::new(ui_children(move || {
                                         view! { {format!("({user_type})")} }.into_any()
                                     }))
-                                    .with_tone(TextTone::Muted)
-                                    .with_size(TextSize::Small),
+                                    .with_tone(Tone::Muted)
+                                    .with_size(Size::Small),
                                 )}
                             }
                             .into_any()
@@ -114,8 +114,8 @@ pub fn ContextHeader(edit: Option<QueuedEdit>) -> impl IntoView {
                                 TextProps::new(ui_children(move || {
                                     view! { {top_signals.join(" · ")} }.into_any()
                                 }))
-                                .with_tone(TextTone::Muted)
-                                .with_size(TextSize::XSmall),
+                                .with_tone(Tone::Muted)
+                                .with_size(Size::XSmall),
                             )}
                         }
                         .into_any()

@@ -2,6 +2,7 @@
 
 use leptos::{html, prelude::*};
 
+use super::layout::Tone;
 use super::util::{class_names, push_class};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -204,26 +205,9 @@ pub fn diff_hunk_header(props: DiffHunkHeaderProps) -> impl IntoView {
 
 pub use diff_hunk_header as DiffHunkHeader;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum DiffBadgeTone {
-    #[default]
-    Neutral,
-    Accent,
-}
-
-impl DiffBadgeTone {
-    #[must_use]
-    pub const fn class_name(self) -> &'static str {
-        match self {
-            Self::Neutral => "sp42-diff-badge-neutral",
-            Self::Accent => "sp42-diff-badge-accent",
-        }
-    }
-}
-
 pub struct DiffBadgeProps {
     label: String,
-    tone: DiffBadgeTone,
+    tone: Tone,
 }
 
 impl DiffBadgeProps {
@@ -231,12 +215,12 @@ impl DiffBadgeProps {
     pub fn new(label: impl Into<String>) -> Self {
         Self {
             label: label.into(),
-            tone: DiffBadgeTone::default(),
+            tone: Tone::default(),
         }
     }
 
     #[must_use]
-    pub const fn with_tone(mut self, tone: DiffBadgeTone) -> Self {
+    pub const fn with_tone(mut self, tone: Tone) -> Self {
         self.tone = tone;
         self
     }
@@ -245,7 +229,7 @@ impl DiffBadgeProps {
 #[must_use]
 pub fn diff_badge(props: DiffBadgeProps) -> impl IntoView {
     view! {
-        <span class=class_names(&["sp42-diff-badge", props.tone.class_name()])>
+        <span class=class_names(&["sp42-diff-badge", props.tone.diff_badge_class_name()])>
             {props.label}
         </span>
     }
@@ -349,6 +333,20 @@ pub fn diff_empty_cell(_: DiffEmptyCellProps) -> impl IntoView {
 
 pub use diff_empty_cell as DiffEmptyCell;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum DiffLineState {
+    #[default]
+    Default,
+    Framed,
+}
+
+impl DiffLineState {
+    #[must_use]
+    pub const fn is_framed(self) -> bool {
+        matches!(self, Self::Framed)
+    }
+}
+
 pub struct DiffLineProps {
     tone: DiffTone,
     aria_label: String,
@@ -356,7 +354,7 @@ pub struct DiffLineProps {
     before_label: Option<String>,
     after_label: Option<String>,
     line_label: Option<String>,
-    framed: bool,
+    state: DiffLineState,
     children: Children,
     on_context_menu: Option<Callback<leptos::ev::MouseEvent>>,
     on_double_click: Option<Callback<leptos::ev::MouseEvent>>,
@@ -377,7 +375,7 @@ impl DiffLineProps {
             before_label: None,
             after_label: None,
             line_label: None,
-            framed: false,
+            state: DiffLineState::default(),
             children,
             on_context_menu: None,
             on_double_click: None,
@@ -403,8 +401,8 @@ impl DiffLineProps {
     }
 
     #[must_use]
-    pub const fn framed(mut self) -> Self {
-        self.framed = true;
+    pub const fn with_state(mut self, state: DiffLineState) -> Self {
+        self.state = state;
         self
     }
 
@@ -433,7 +431,7 @@ pub fn diff_line(props: DiffLineProps) -> impl IntoView {
     let on_context_menu = props.on_context_menu;
     let on_double_click = props.on_double_click;
     let mut class_name = String::from("diff-line");
-    if props.framed {
+    if props.state.is_framed() {
         push_class(&mut class_name, "sp42-diff-line-framed");
     }
 

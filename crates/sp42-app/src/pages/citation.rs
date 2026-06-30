@@ -10,7 +10,7 @@ use sp42_core::{
 use sp42_reporting::ReportSection;
 
 use crate::components::style::wiki_base_url;
-use crate::components::{StatusBadge, StatusTone};
+use crate::components::{StatusBadge, Tone};
 use crate::platform::auth::{bootstrap_dev_auth_session, fetch_dev_auth_session_status};
 use crate::platform::citation::fetch_page_report;
 use crate::platform::config::{is_local_deployment, selected_wiki_id};
@@ -189,10 +189,10 @@ fn PageReportView(report: PageVerificationReport) -> impl IntoView {
     // The verdict tally as a scannable row of chips; a zero count stays neutral so
     // the page only "lights up" red/amber when there is actually something to act on.
     let chips = vec![
-        ("Supported", stats.supported, StatusTone::Success),
-        ("Partial", stats.partial, StatusTone::Warning),
-        ("Not supported", stats.not_supported, StatusTone::Danger),
-        ("Unavailable", stats.source_unavailable, StatusTone::Info),
+        ("Supported", stats.supported, Tone::Success),
+        ("Partial", stats.partial, Tone::Warning),
+        ("Not supported", stats.not_supported, Tone::Danger),
+        ("Unavailable", stats.source_unavailable, Tone::Info),
     ];
     let meta_line = format!(
         "{refs} refs · {verified} use-sites verified · unavailable: {dead} dead, {unusable} unreadable · {skipped} skipped · {failures} extraction failures",
@@ -246,7 +246,7 @@ fn PageReportView(report: PageVerificationReport) -> impl IntoView {
                     {chips
                         .into_iter()
                         .map(|(label, count, tone)| {
-                            let tone = if count == 0 { StatusTone::Neutral } else { tone };
+                            let tone = if count == 0 { Tone::Default } else { tone };
                             view! { <StatusBadge label=format!("{label} {count}") tone=tone /> }
                         })
                         .collect_view()}
@@ -392,10 +392,10 @@ fn FindingCard(finding: CitationFinding, article_url: Option<String>) -> impl In
                 </div>
                 <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;justify-content:flex-end;">
                     {fuzzy.then(|| view! {
-                        <StatusBadge label="fuzzy match".to_string() tone=StatusTone::Warning />
+                        <StatusBadge label="fuzzy match".to_string() tone=Tone::Warning />
                     })}
                     {agreement.map(|label| view! {
-                        <StatusBadge label=label tone=StatusTone::Neutral />
+                        <StatusBadge label=label tone=Tone::Default />
                     })}
                 </div>
             </div>
@@ -499,14 +499,14 @@ fn metadata_line(meta: &CitoidMetadata) -> Option<String> {
 }
 
 /// Section-header tone for a finding group.
-fn group_tone(group: FindingGroup) -> StatusTone {
+fn group_tone(group: FindingGroup) -> Tone {
     match group {
-        FindingGroup::NotSupported => StatusTone::Danger,
-        FindingGroup::Unverified | FindingGroup::Partial => StatusTone::Warning,
-        FindingGroup::DeadLink => StatusTone::Info,
-        FindingGroup::Unreadable => StatusTone::Neutral,
-        FindingGroup::VerifiedViaArchive => StatusTone::Accent,
-        FindingGroup::Supported => StatusTone::Success,
+        FindingGroup::NotSupported => Tone::Danger,
+        FindingGroup::Unverified | FindingGroup::Partial => Tone::Warning,
+        FindingGroup::DeadLink => Tone::Info,
+        FindingGroup::Unreadable => Tone::Default,
+        FindingGroup::VerifiedViaArchive => Tone::Accent,
+        FindingGroup::Supported => Tone::Success,
     }
 }
 
@@ -525,9 +525,9 @@ fn group_border(group: FindingGroup) -> &'static str {
 #[component]
 fn ReportSectionCard(section: ReportSection) -> impl IntoView {
     let tone = if section.available {
-        StatusTone::Success
+        Tone::Success
     } else {
-        StatusTone::Info
+        Tone::Info
     };
 
     view! {
@@ -539,7 +539,7 @@ fn ReportSectionCard(section: ReportSection) -> impl IntoView {
                 <StatusBadge label=section.name.clone() tone=tone />
                 <StatusBadge
                     label=format!("{} line(s)", section.summary_lines.len())
-                    tone=StatusTone::Info
+                    tone=Tone::Info
                 />
             </header>
             <ul class="article-list">

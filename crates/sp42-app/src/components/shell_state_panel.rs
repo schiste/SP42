@@ -5,7 +5,7 @@ use sp42_ui::{
     GridProps, Panel, PanelProps, TextList, TextListItem, TextListItemProps, TextListProps,
 };
 
-use super::{InspectorFeed, StatusBadge, StatusTone, inspector_entries_from_lines, ui_children};
+use super::{InspectorFeed, StatusBadge, Tone, inspector_entries_from_lines, ui_children};
 
 #[component]
 pub fn ShellStatePanel(model: ShellStateModel) -> impl IntoView {
@@ -17,9 +17,9 @@ pub fn ShellStatePanel(model: ShellStateModel) -> impl IntoView {
     let panel_count = model.panels.len();
     let note_count = notes.len();
     let note_tone = if notes.is_empty() {
-        StatusTone::Neutral
+        Tone::Default
     } else {
-        StatusTone::Success
+        Tone::Success
     };
 
     Panel(PanelProps::new(ui_children(move || {
@@ -27,7 +27,7 @@ pub fn ShellStatePanel(model: ShellStateModel) -> impl IntoView {
             {BadgeHeader(BadgeHeaderProps::new(
                 "One shared shell-state view across browser, CLI, and desktop so the patrol workbench tells the same story on every target.",
                 ui_children(move || view! {
-                    <StatusBadge label="Workbench State".to_string() tone=StatusTone::Accent />
+                    <StatusBadge label="Workbench State".to_string() tone=Tone::Accent />
                     {badges
                         .into_iter()
                         .map(|(label, tone)| view! { <StatusBadge label=label tone=tone /> })
@@ -41,7 +41,7 @@ pub fn ShellStatePanel(model: ShellStateModel) -> impl IntoView {
                         {CardHeader(CardHeaderProps::new("Timeline").with_actions(ui_children(move || view! {
                         <StatusBadge
                             label=format!("{timeline_count} step(s)")
-                            tone=StatusTone::Info
+                            tone=Tone::Info
                         />
                         }.into_any())))}
                         <InspectorFeed entries=inspector_entries_from_lines(&timeline_lines) />
@@ -51,7 +51,7 @@ pub fn ShellStatePanel(model: ShellStateModel) -> impl IntoView {
                         {CardHeader(CardHeaderProps::new("Surface Coverage").with_actions(ui_children(move || view! {
                         <StatusBadge
                             label=format!("{panel_count} panel(s)")
-                            tone=StatusTone::Success
+                            tone=Tone::Success
                         />
                         }.into_any())))}
                         <InspectorFeed entries=inspector_entries_from_lines(&panel_lines) />
@@ -81,14 +81,14 @@ pub fn ShellStatePanel(model: ShellStateModel) -> impl IntoView {
 }
 
 #[must_use]
-pub fn shell_state_badges(model: &ShellStateModel) -> Vec<(String, StatusTone)> {
+pub fn shell_state_badges(model: &ShellStateModel) -> Vec<(String, Tone)> {
     vec![
         (
             format!("{} queue", model.queue_depth),
             if model.queue_depth == 0 {
-                StatusTone::Warning
+                Tone::Warning
             } else {
-                StatusTone::Success
+                Tone::Success
             },
         ),
         (
@@ -104,7 +104,7 @@ pub fn shell_state_badges(model: &ShellStateModel) -> Vec<(String, StatusTone)> 
                     .filter(|entry| entry.available)
                     .count()
             ),
-            StatusTone::Info,
+            Tone::Info,
         ),
         (
             model.selected.as_ref().map_or_else(
@@ -112,9 +112,9 @@ pub fn shell_state_badges(model: &ShellStateModel) -> Vec<(String, StatusTone)> 
                 |selected| format!("rev {}", selected.rev_id),
             ),
             if model.selected.is_some() {
-                StatusTone::Accent
+                Tone::Accent
             } else {
-                StatusTone::Warning
+                Tone::Warning
             },
         ),
     ]
@@ -183,10 +183,10 @@ fn readiness_label(readiness: PatrolScenarioReadiness) -> &'static str {
     }
 }
 
-fn readiness_tone(readiness: PatrolScenarioReadiness) -> StatusTone {
+fn readiness_tone(readiness: PatrolScenarioReadiness) -> Tone {
     match readiness {
-        PatrolScenarioReadiness::Blocked => StatusTone::Warning,
-        PatrolScenarioReadiness::Limited => StatusTone::Info,
-        PatrolScenarioReadiness::Ready => StatusTone::Success,
+        PatrolScenarioReadiness::Blocked => Tone::Warning,
+        PatrolScenarioReadiness::Limited => Tone::Info,
+        PatrolScenarioReadiness::Ready => Tone::Success,
     }
 }

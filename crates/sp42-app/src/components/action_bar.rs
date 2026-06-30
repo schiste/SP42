@@ -2,8 +2,8 @@ use leptos::prelude::*;
 use sp42_core::{DevAuthCapabilityReport, SessionActionKind};
 use sp42_live::{LiveOperatorActionPreflight, LiveOperatorActionRecommendation};
 use sp42_ui::{
-    Button, ButtonEmphasis, ButtonProps, ButtonTone, ButtonType, Density, Spacer, Text, TextProps,
-    TextSize, TextTone, Toolbar, ToolbarProps,
+    Button, ButtonProps, ButtonState, ButtonSurface, ButtonType, Density, Size, Spacer, Text,
+    TextProps, Tone, Toolbar, ToolbarProps,
 };
 
 use super::ui_children;
@@ -51,7 +51,7 @@ pub fn ActionBar(
                 view! {
                     {Button(recommend_when(
                         ButtonProps::new("R Rollback")
-                            .with_tone(ButtonTone::Danger)
+                            .with_tone(Tone::Danger)
                             .with_type(ButtonType::Button)
                             .with_title(rollback_title)
                             .with_keyshortcuts("r")
@@ -76,7 +76,7 @@ pub fn ActionBar(
 
                     {Button(recommend_when(
                         ButtonProps::new("P Patrol")
-                            .with_tone(ButtonTone::Success)
+                            .with_tone(Tone::Success)
                             .with_type(ButtonType::Button)
                             .with_title(patrol_title)
                             .with_keyshortcuts("p")
@@ -90,7 +90,7 @@ pub fn ActionBar(
                     {Button(
                         ButtonProps::new("S Skip")
                             .with_type(ButtonType::Button)
-                            .with_emphasis(ButtonEmphasis::Ghost)
+                            .with_surface(ButtonSurface::Ghost)
                             .with_keyshortcuts("s")
                             .with_disabled(Signal::derive(move || !has_selection.get()))
                             .on_click(move |_| on_skip.set(true)),
@@ -110,8 +110,8 @@ pub fn ActionBar(
                             }
                             .into_any()
                         }))
-                        .with_tone(TextTone::Muted)
-                        .with_size(TextSize::XSmall),
+                        .with_tone(Tone::Muted)
+                        .with_size(Size::XSmall),
                     )}
                 }
                 .into_any()
@@ -123,7 +123,7 @@ pub fn ActionBar(
 
 fn recommend_when(props: ButtonProps, recommended: bool) -> ButtonProps {
     if recommended {
-        props.recommended()
+        props.with_state(ButtonState::Recommended)
     } else {
         props
     }

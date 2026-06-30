@@ -5,7 +5,7 @@ use sp42_ui::{
     GridProps, Panel, PanelProps, TextList, TextListItem, TextListItemProps, TextListProps,
 };
 
-use super::{InspectorFeed, StatusBadge, StatusTone, inspector_entries_from_lines, ui_children};
+use super::{InspectorFeed, StatusBadge, Tone, inspector_entries_from_lines, ui_children};
 
 #[component]
 pub fn PatrolSessionDigestPanel(report: PatrolScenarioReport) -> impl IntoView {
@@ -22,7 +22,7 @@ pub fn PatrolSessionDigestPanel(report: PatrolScenarioReport) -> impl IntoView {
             {BadgeHeader(BadgeHeaderProps::new(
                 "A patrol-first summary that turns the live queue into a quick review decision before the action rail and diff.",
                 ui_children(move || view! {
-                    <StatusBadge label="Session Digest".to_string() tone=StatusTone::Accent />
+                    <StatusBadge label="Session Digest".to_string() tone=Tone::Accent />
                     {badges
                         .into_iter()
                         .map(|(label, tone)| view! { <StatusBadge label=label tone=tone /> })
@@ -67,7 +67,7 @@ pub fn PatrolSessionDigestPanel(report: PatrolScenarioReport) -> impl IntoView {
 }
 
 #[must_use]
-pub fn session_digest_badges(report: &PatrolScenarioReport) -> Vec<(String, StatusTone)> {
+pub fn session_digest_badges(report: &PatrolScenarioReport) -> Vec<(String, Tone)> {
     let selected_badge = report
         .selected
         .as_ref()
@@ -75,21 +75,21 @@ pub fn session_digest_badges(report: &PatrolScenarioReport) -> Vec<(String, Stat
             (
                 format!("rev {}", selected.rev_id),
                 if selected.score >= 80 {
-                    StatusTone::Warning
+                    Tone::Warning
                 } else {
-                    StatusTone::Success
+                    Tone::Success
                 },
             )
         })
-        .unwrap_or_else(|| ("no selection".to_string(), StatusTone::Warning));
+        .unwrap_or_else(|| ("no selection".to_string(), Tone::Warning));
 
     vec![
         (
             format!("{} queue", report.queue_depth),
             if report.queue_depth == 0 {
-                StatusTone::Warning
+                Tone::Warning
             } else {
-                StatusTone::Success
+                Tone::Success
             },
         ),
         (
@@ -147,34 +147,34 @@ pub fn recommended_next_step(report: &PatrolScenarioReport) -> String {
 }
 
 #[must_use]
-pub fn recommendation_tone(report: &PatrolScenarioReport) -> StatusTone {
+pub fn recommendation_tone(report: &PatrolScenarioReport) -> Tone {
     if report.queue_depth == 0 || report.readiness == PatrolScenarioReadiness::Blocked {
-        StatusTone::Warning
+        Tone::Warning
     } else if report
         .findings
         .iter()
         .any(|finding| finding.severity != ReportSeverity::Info)
     {
-        StatusTone::Accent
+        Tone::Accent
     } else {
-        StatusTone::Success
+        Tone::Success
     }
 }
 
 #[must_use]
-pub fn finding_summary_tone(findings: &[sp42_patrol::PatrolScenarioFinding]) -> StatusTone {
+pub fn finding_summary_tone(findings: &[sp42_patrol::PatrolScenarioFinding]) -> Tone {
     if findings
         .iter()
         .any(|finding| finding.severity == ReportSeverity::Blocker)
     {
-        StatusTone::Warning
+        Tone::Warning
     } else if findings
         .iter()
         .any(|finding| finding.severity == ReportSeverity::Warning)
     {
-        StatusTone::Accent
+        Tone::Accent
     } else {
-        StatusTone::Success
+        Tone::Success
     }
 }
 
@@ -191,11 +191,11 @@ fn readiness_label(readiness: PatrolScenarioReadiness) -> &'static str {
     }
 }
 
-fn readiness_tone(readiness: PatrolScenarioReadiness) -> StatusTone {
+fn readiness_tone(readiness: PatrolScenarioReadiness) -> Tone {
     match readiness {
-        PatrolScenarioReadiness::Blocked => StatusTone::Warning,
-        PatrolScenarioReadiness::Limited => StatusTone::Info,
-        PatrolScenarioReadiness::Ready => StatusTone::Success,
+        PatrolScenarioReadiness::Blocked => Tone::Warning,
+        PatrolScenarioReadiness::Limited => Tone::Info,
+        PatrolScenarioReadiness::Ready => Tone::Success,
     }
 }
 
@@ -220,7 +220,7 @@ fn section_summary(report: &PatrolScenarioReport, name: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::StatusTone;
+    use super::Tone;
     use super::{
         finding_summary_line, finding_summary_tone, recommended_next_step, session_digest_badges,
         session_digest_lines,
@@ -309,7 +309,7 @@ mod tests {
             message: "selected edit is high risk".to_string(),
         };
 
-        assert_eq!(finding_summary_tone(&[finding.clone()]), StatusTone::Accent);
+        assert_eq!(finding_summary_tone(&[finding.clone()]), Tone::Accent);
         assert!(finding_summary_line(&finding).contains("high_score"));
     }
 }

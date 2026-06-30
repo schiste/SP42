@@ -2,33 +2,14 @@
 
 use leptos::prelude::*;
 
-use super::layout::{Density, ValueState};
+use super::layout::{Density, Size, State, ValueState};
 use super::util::class_names;
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum ModalSize {
-    Small,
-    #[default]
-    Medium,
-    Large,
-}
-
-impl ModalSize {
-    #[must_use]
-    pub const fn class_name(self) -> &'static str {
-        match self {
-            Self::Small => "sp42-modal-sm",
-            Self::Medium => "sp42-modal-md",
-            Self::Large => "sp42-modal-lg",
-        }
-    }
-}
 
 pub struct ModalProps {
     title: String,
     children: Children,
     footer: Option<Children>,
-    size: ModalSize,
+    size: Size,
 }
 
 impl ModalProps {
@@ -38,7 +19,7 @@ impl ModalProps {
             title: title.into(),
             children,
             footer: None,
-            size: ModalSize::default(),
+            size: Size::default(),
         }
     }
 
@@ -49,7 +30,7 @@ impl ModalProps {
     }
 
     #[must_use]
-    pub const fn with_size(mut self, size: ModalSize) -> Self {
+    pub const fn with_size(mut self, size: Size) -> Self {
         self.size = size;
         self
     }
@@ -67,7 +48,7 @@ pub fn modal(props: ModalProps) -> impl IntoView {
     view! {
         <div class="modal-backdrop">
             <section
-                class=class_names(&["modal", "sp42-modal", props.size.class_name()])
+                class=class_names(&["modal", "sp42-modal", props.size.modal_class_name()])
                 role="dialog"
                 aria-modal="true"
                 aria-label=aria_label
@@ -87,7 +68,7 @@ pub use modal as Modal;
 pub struct DisclosureProps {
     summary: String,
     children: Children,
-    open: bool,
+    open: State,
     density: Density,
 }
 
@@ -97,14 +78,14 @@ impl DisclosureProps {
         Self {
             summary: summary.into(),
             children,
-            open: false,
+            open: State::default(),
             density: Density::default(),
         }
     }
 
     #[must_use]
-    pub const fn open(mut self) -> Self {
-        self.open = true;
+    pub fn with_state(mut self, open: impl Into<State>) -> Self {
+        self.open = open.into();
         self
     }
 
@@ -118,9 +99,10 @@ impl DisclosureProps {
 #[must_use]
 pub fn disclosure(props: DisclosureProps) -> impl IntoView {
     let children = props.children;
+    let open = props.open;
 
     view! {
-        <details class=class_names(&["sp42-disclosure", props.density.class_name()]) open=props.open>
+        <details class=class_names(&["sp42-disclosure", props.density.class_name()]) open=move || open.get()>
             <summary>{props.summary}</summary>
             <div class="sp42-disclosure-body">{children()}</div>
         </details>

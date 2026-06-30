@@ -5,18 +5,18 @@ use leptos::prelude::*;
 use super::util::{class_names, push_class};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ControlState {
+pub enum State {
     Static(bool),
     Signal(Signal<bool>),
 }
 
-impl Default for ControlState {
+impl Default for State {
     fn default() -> Self {
         Self::Static(false)
     }
 }
 
-impl ControlState {
+impl State {
     #[must_use]
     pub fn get(self) -> bool {
         match self {
@@ -26,13 +26,13 @@ impl ControlState {
     }
 }
 
-impl From<bool> for ControlState {
+impl From<bool> for State {
     fn from(value: bool) -> Self {
         Self::Static(value)
     }
 }
 
-impl From<Signal<bool>> for ControlState {
+impl From<Signal<bool>> for State {
     fn from(value: Signal<bool>) -> Self {
         Self::Signal(value)
     }
@@ -99,6 +99,7 @@ impl Density {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Size {
+    XSmall,
     Small,
     #[default]
     Medium,
@@ -109,15 +110,53 @@ impl Size {
     #[must_use]
     pub const fn class_name(self) -> &'static str {
         match self {
+            Self::XSmall => "sp42-size-xs",
             Self::Small => "sp42-size-small",
             Self::Medium => "sp42-size-medium",
             Self::Large => "sp42-size-large",
         }
     }
+
+    #[must_use]
+    pub const fn text_class_name(self) -> &'static str {
+        match self {
+            Self::XSmall => "sp42-text-xs",
+            Self::Small => "sp42-text-sm",
+            Self::Medium => "sp42-text-md",
+            Self::Large => "sp42-text-lg",
+        }
+    }
+
+    #[must_use]
+    pub const fn heading_class_name(self) -> &'static str {
+        match self {
+            Self::XSmall | Self::Small => "sp42-heading-sm",
+            Self::Medium => "sp42-heading-md",
+            Self::Large => "sp42-heading-lg",
+        }
+    }
+
+    #[must_use]
+    pub const fn modal_class_name(self) -> &'static str {
+        match self {
+            Self::XSmall | Self::Small => "sp42-modal-sm",
+            Self::Medium => "sp42-modal-md",
+            Self::Large => "sp42-modal-lg",
+        }
+    }
+
+    #[must_use]
+    pub const fn spinner_class_name(self) -> &'static str {
+        match self {
+            Self::XSmall | Self::Small => "sp42-spinner-sm",
+            Self::Medium => "sp42-spinner-md",
+            Self::Large => "sp42-spinner-lg",
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum ControlWidth {
+pub enum Width {
     #[default]
     Auto,
     Short,
@@ -125,7 +164,7 @@ pub enum ControlWidth {
     Full,
 }
 
-impl ControlWidth {
+impl Width {
     #[must_use]
     pub const fn class_name(self) -> &'static str {
         match self {
@@ -133,6 +172,71 @@ impl ControlWidth {
             Self::Short => "sp42-control-short",
             Self::Medium => "sp42-control-medium",
             Self::Full => "sp42-control-full",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Tone {
+    #[default]
+    Default,
+    Muted,
+    Subtle,
+    Info,
+    Accent,
+    Success,
+    Warning,
+    Danger,
+}
+
+impl Tone {
+    #[must_use]
+    pub const fn button_class_name(self) -> &'static str {
+        match self {
+            Self::Accent => "btn-accent",
+            Self::Success => "btn-success",
+            Self::Warning => "btn-warning",
+            Self::Danger => "btn-danger",
+            Self::Default | Self::Muted | Self::Subtle | Self::Info => "",
+        }
+    }
+
+    #[must_use]
+    pub const fn status_class_name(self) -> &'static str {
+        match self {
+            Self::Info => "sp42-status-badge-info",
+            Self::Success => "sp42-status-badge-success",
+            Self::Warning => "sp42-status-badge-warning",
+            Self::Accent => "sp42-status-badge-accent",
+            Self::Danger => "sp42-status-badge-danger",
+            Self::Default | Self::Muted | Self::Subtle => "sp42-status-badge-neutral",
+        }
+    }
+
+    #[must_use]
+    pub const fn text_class_name(self) -> &'static str {
+        match self {
+            Self::Default | Self::Info => "sp42-text-default",
+            Self::Muted => "text-muted",
+            Self::Subtle => "sp42-text-subtle",
+            Self::Accent => "text-accent",
+            Self::Success => "text-success",
+            Self::Warning => "text-warning",
+            Self::Danger => "text-danger",
+        }
+    }
+
+    #[must_use]
+    pub const fn diff_badge_class_name(self) -> &'static str {
+        match self {
+            Self::Accent => "sp42-diff-badge-accent",
+            Self::Default
+            | Self::Muted
+            | Self::Subtle
+            | Self::Info
+            | Self::Success
+            | Self::Warning
+            | Self::Danger => "sp42-diff-badge-neutral",
         }
     }
 }
@@ -230,6 +334,20 @@ impl Justify {
             Self::End => "sp42-justify-end",
             Self::Between => "sp42-justify-between",
         }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum InlineState {
+    #[default]
+    Wrap,
+    NoWrap,
+}
+
+impl InlineState {
+    #[must_use]
+    pub const fn wraps(self) -> bool {
+        matches!(self, Self::Wrap)
     }
 }
 
@@ -380,7 +498,7 @@ pub struct InlineProps {
     gap: Gap,
     align: Align,
     justify: Justify,
-    wrap: bool,
+    state: InlineState,
 }
 
 impl InlineProps {
@@ -391,7 +509,7 @@ impl InlineProps {
             gap: Gap::default(),
             align: Align::Center,
             justify: Justify::default(),
-            wrap: true,
+            state: InlineState::default(),
         }
     }
 
@@ -414,8 +532,8 @@ impl InlineProps {
     }
 
     #[must_use]
-    pub const fn without_wrap(mut self) -> Self {
-        self.wrap = false;
+    pub const fn with_state(mut self, state: InlineState) -> Self {
+        self.state = state;
         self
     }
 
@@ -427,7 +545,7 @@ impl InlineProps {
             self.align.class_name(),
             self.justify.class_name(),
         ]);
-        if self.wrap {
+        if self.state.wraps() {
             push_class(&mut class_name, "sp42-wrap");
         }
         class_name

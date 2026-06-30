@@ -1,21 +1,21 @@
 use super::{
-    Align, BadgeHeaderProps, ButtonEmphasis, ButtonProps, ButtonTone, ButtonType, CardProps,
-    CheckboxProps, CodeBlockProps, ContextBarProps, ContextShellProps, ControlState, ControlWidth,
-    DeltaTextProps, DeltaTone, Density, DiffBadgeProps, DiffBadgeTone, DiffBodyProps,
-    DiffContextMenuItemProps, DiffContextMenuProps, DiffEditPanelProps, DiffEmptyCellProps,
-    DiffHunkHeaderProps, DiffHunkProps, DiffInlineMarkProps, DiffLineProps, DiffModeLabelProps,
-    DiffRowsProps, DiffSeparatorProps, DiffSplitHeaderProps, DiffSplitRowProps, DiffStateProps,
-    DiffStatsBarProps, DiffTone, DiffViewerShellProps, DisclosureProps, EmptyStateProps,
-    ErrorStateProps, FieldProps, FilterDisclosureProps, Gap, GridColumns, GridProps, HeadingLevel,
-    HeadingProps, HeadingSize, InlineProps, Justify, LinkProps, MediaCardProps,
-    MediaGalleryPanelProps, MediaGroupProps, MediaPreviewProps, ModalProps, ModalSize,
-    NavigationItemProps, NavigationPaneProps, PanelProps, RenderedHighlightTone, ScoreButtonProps,
-    ScoreDetailItemProps, ScoreDetailsPanelProps, ScoreTextProps, ScoreTone, ScrollStackProps,
+    Align, BadgeHeaderProps, ButtonProps, ButtonState, ButtonSurface, ButtonType, CardProps,
+    CheckboxProps, CodeBlockProps, ContextBarProps, ContextShellProps, DeltaTextProps, DeltaTone,
+    Density, DiffBadgeProps, DiffBodyProps, DiffContextMenuItemProps, DiffContextMenuProps,
+    DiffEditPanelProps, DiffEmptyCellProps, DiffHunkHeaderProps, DiffHunkProps,
+    DiffInlineMarkProps, DiffLineProps, DiffLineState, DiffModeLabelProps, DiffRowsProps,
+    DiffSeparatorProps, DiffSplitHeaderProps, DiffSplitRowProps, DiffStateProps, DiffStatsBarProps,
+    DiffTone, DiffViewerShellProps, DisclosureProps, EmptyStateProps, ErrorStateProps, FieldProps,
+    FilterDisclosureProps, Gap, GridColumns, GridProps, HeadingLevel, HeadingProps, InlineProps,
+    InlineState, Justify, LinkProps, MediaCardProps, MediaGalleryPanelProps, MediaGroupProps,
+    MediaPreviewProps, ModalProps, NavigationItemProps, NavigationItemState, NavigationPaneProps,
+    PanelProps, RenderedHighlightTone, ScoreButtonProps, ScoreDetailItemProps,
+    ScoreDetailsPanelProps, ScoreTextProps, ScoreTextState, ScoreTone, ScrollStackProps,
     SectionHeaderProps, SelectOption, SelectProps, SignatureBlockProps, Size, SpinnerProps,
-    SpinnerSize, StackProps, StatusBadgeProps, StatusTone, Surface, TextElement, TextInputProps,
-    TextInputType, TextListItemProps, TextListProps, TextOverflow, TextProps, TextSize, TextTone,
-    TextWeight, ToolbarProps, ValueState, badge_header, button, card, card_header, checkbox,
-    code_block, context_bar, context_shell, delta_text, diff_badge, diff_body, diff_context_menu,
+    StackProps, State, StatusBadgeProps, Surface, TextElement, TextFamily, TextInputProps,
+    TextInputType, TextListItemProps, TextListProps, TextOverflow, TextProps, TextWeight, Tone,
+    ToolbarProps, ValueState, Width, badge_header, button, card, card_header, checkbox, code_block,
+    context_bar, context_shell, delta_text, diff_badge, diff_body, diff_context_menu,
     diff_context_menu_item, diff_edit_panel, diff_empty_cell, diff_hunk, diff_hunk_header,
     diff_inline_mark, diff_line, diff_mode_label, diff_rows, diff_separator, diff_split_header,
     diff_split_row, diff_state, diff_stats_bar, diff_viewer_shell, disclosure, empty_state,
@@ -38,7 +38,7 @@ fn view_is_constructible(_: impl IntoView) {}
 
 #[test]
 fn status_badge_tone_maps_to_design_system_class() {
-    let badge = StatusBadgeProps::new("Ready").with_tone(StatusTone::Success);
+    let badge = StatusBadgeProps::new("Ready").with_tone(Tone::Success);
 
     assert!(badge.class_name().contains("sp42-status-badge-success"));
     assert!(!badge.class_name().contains("style="));
@@ -47,10 +47,10 @@ fn status_badge_tone_maps_to_design_system_class() {
 #[test]
 fn button_variants_are_composable_classes() {
     let button = ButtonProps::new("Rollback")
-        .with_tone(ButtonTone::Danger)
+        .with_tone(Tone::Danger)
         .with_size(Size::Large)
         .with_density(Density::Comfortable)
-        .recommended();
+        .with_state(ButtonState::Recommended);
 
     let class_name = button.class_name();
 
@@ -83,10 +83,10 @@ fn primitive_variant_classes_are_semantic() {
     assert_eq!(Size::Small.class_name(), "sp42-size-small");
     assert_eq!(Size::Medium.class_name(), "sp42-size-medium");
     assert_eq!(Size::Large.class_name(), "sp42-size-large");
-    assert_eq!(ControlWidth::Auto.class_name(), "sp42-control-auto");
-    assert_eq!(ControlWidth::Short.class_name(), "sp42-control-short");
-    assert_eq!(ControlWidth::Medium.class_name(), "sp42-control-medium");
-    assert_eq!(ControlWidth::Full.class_name(), "sp42-control-full");
+    assert_eq!(Width::Auto.class_name(), "sp42-control-auto");
+    assert_eq!(Width::Short.class_name(), "sp42-control-short");
+    assert_eq!(Width::Medium.class_name(), "sp42-control-medium");
+    assert_eq!(Width::Full.class_name(), "sp42-control-full");
     assert_eq!(Surface::Default.class_name(), "sp42-surface-default");
     assert_eq!(Surface::Subtle.class_name(), "sp42-surface-subtle");
     assert_eq!(Surface::Raised.class_name(), "sp42-surface-raised");
@@ -113,58 +113,58 @@ fn primitive_variant_classes_are_semantic() {
 
 #[test]
 fn control_variant_classes_are_semantic() {
-    assert_eq!(ButtonTone::Neutral.class_name(), "");
-    assert_eq!(ButtonTone::Accent.class_name(), "btn-accent");
-    assert_eq!(ButtonTone::Success.class_name(), "btn-success");
-    assert_eq!(ButtonTone::Warning.class_name(), "btn-warning");
-    assert_eq!(ButtonTone::Danger.class_name(), "btn-danger");
-    assert_eq!(ButtonEmphasis::Solid.class_name(), "");
-    assert_eq!(ButtonEmphasis::Subtle.class_name(), "btn-subtle");
-    assert_eq!(ButtonEmphasis::Ghost.class_name(), "btn-ghost");
+    assert_eq!(Tone::Default.button_class_name(), "");
+    assert_eq!(Tone::Accent.button_class_name(), "btn-accent");
+    assert_eq!(Tone::Success.button_class_name(), "btn-success");
+    assert_eq!(Tone::Warning.button_class_name(), "btn-warning");
+    assert_eq!(Tone::Danger.button_class_name(), "btn-danger");
+    assert_eq!(ButtonSurface::Solid.class_name(), "");
+    assert_eq!(ButtonSurface::Subtle.class_name(), "btn-subtle");
+    assert_eq!(ButtonSurface::Ghost.class_name(), "btn-ghost");
     assert_eq!(ButtonType::Button.as_str(), "button");
     assert_eq!(ButtonType::Submit.as_str(), "submit");
     assert_eq!(ButtonType::Reset.as_str(), "reset");
     assert_eq!(
-        StatusTone::Neutral.class_name(),
+        Tone::Default.status_class_name(),
         "sp42-status-badge-neutral"
     );
-    assert_eq!(StatusTone::Info.class_name(), "sp42-status-badge-info");
+    assert_eq!(Tone::Info.status_class_name(), "sp42-status-badge-info");
     assert_eq!(
-        StatusTone::Success.class_name(),
+        Tone::Success.status_class_name(),
         "sp42-status-badge-success"
     );
     assert_eq!(
-        StatusTone::Warning.class_name(),
+        Tone::Warning.status_class_name(),
         "sp42-status-badge-warning"
     );
-    assert_eq!(StatusTone::Accent.class_name(), "sp42-status-badge-accent");
-    assert_eq!(StatusTone::Danger.class_name(), "sp42-status-badge-danger");
+    assert_eq!(Tone::Accent.status_class_name(), "sp42-status-badge-accent");
+    assert_eq!(Tone::Danger.status_class_name(), "sp42-status-badge-danger");
     assert_eq!(GridColumns::One.class_name(), "sp42-grid-one");
     assert_eq!(GridColumns::Two.class_name(), "sp42-grid-two");
     assert_eq!(GridColumns::Three.class_name(), "sp42-grid-three");
     assert_eq!(GridColumns::Four.class_name(), "sp42-grid-four");
     assert_eq!(GridColumns::AutoFit.class_name(), "sp42-grid-auto-fit");
-    assert_eq!(ModalSize::Small.class_name(), "sp42-modal-sm");
-    assert_eq!(ModalSize::Medium.class_name(), "sp42-modal-md");
-    assert_eq!(ModalSize::Large.class_name(), "sp42-modal-lg");
-    assert_eq!(SpinnerSize::Small.class_name(), "sp42-spinner-sm");
-    assert_eq!(SpinnerSize::Medium.class_name(), "sp42-spinner-md");
-    assert_eq!(SpinnerSize::Large.class_name(), "sp42-spinner-lg");
+    assert_eq!(Size::Small.modal_class_name(), "sp42-modal-sm");
+    assert_eq!(Size::Medium.modal_class_name(), "sp42-modal-md");
+    assert_eq!(Size::Large.modal_class_name(), "sp42-modal-lg");
+    assert_eq!(Size::Small.spinner_class_name(), "sp42-spinner-sm");
+    assert_eq!(Size::Medium.spinner_class_name(), "sp42-spinner-md");
+    assert_eq!(Size::Large.spinner_class_name(), "sp42-spinner-lg");
 }
 
 #[test]
 fn text_and_score_variant_classes_are_semantic() {
-    assert_eq!(TextTone::Default.class_name(), "sp42-text-default");
-    assert_eq!(TextTone::Muted.class_name(), "text-muted");
-    assert_eq!(TextTone::Subtle.class_name(), "sp42-text-subtle");
-    assert_eq!(TextTone::Accent.class_name(), "text-accent");
-    assert_eq!(TextTone::Success.class_name(), "text-success");
-    assert_eq!(TextTone::Warning.class_name(), "text-warning");
-    assert_eq!(TextTone::Danger.class_name(), "text-danger");
-    assert_eq!(TextSize::XSmall.class_name(), "sp42-text-xs");
-    assert_eq!(TextSize::Small.class_name(), "sp42-text-sm");
-    assert_eq!(TextSize::Medium.class_name(), "sp42-text-md");
-    assert_eq!(TextSize::Large.class_name(), "sp42-text-lg");
+    assert_eq!(Tone::Default.text_class_name(), "sp42-text-default");
+    assert_eq!(Tone::Muted.text_class_name(), "text-muted");
+    assert_eq!(Tone::Subtle.text_class_name(), "sp42-text-subtle");
+    assert_eq!(Tone::Accent.text_class_name(), "text-accent");
+    assert_eq!(Tone::Success.text_class_name(), "text-success");
+    assert_eq!(Tone::Warning.text_class_name(), "text-warning");
+    assert_eq!(Tone::Danger.text_class_name(), "text-danger");
+    assert_eq!(Size::XSmall.text_class_name(), "sp42-text-xs");
+    assert_eq!(Size::Small.text_class_name(), "sp42-text-sm");
+    assert_eq!(Size::Medium.text_class_name(), "sp42-text-md");
+    assert_eq!(Size::Large.text_class_name(), "sp42-text-lg");
     assert_eq!(TextWeight::Regular.class_name(), "sp42-weight-regular");
     assert_eq!(TextWeight::Medium.class_name(), "sp42-weight-medium");
     assert_eq!(TextWeight::Bold.class_name(), "sp42-weight-bold");
@@ -175,9 +175,9 @@ fn text_and_score_variant_classes_are_semantic() {
         TextOverflow::PreserveLines.class_name(),
         "sp42-text-preserve-lines"
     );
-    assert_eq!(HeadingSize::Small.class_name(), "sp42-heading-sm");
-    assert_eq!(HeadingSize::Medium.class_name(), "sp42-heading-md");
-    assert_eq!(HeadingSize::Large.class_name(), "sp42-heading-lg");
+    assert_eq!(Size::Small.heading_class_name(), "sp42-heading-sm");
+    assert_eq!(Size::Medium.heading_class_name(), "sp42-heading-md");
+    assert_eq!(Size::Large.heading_class_name(), "sp42-heading-lg");
     assert_eq!(ScoreTone::for_score(12), ScoreTone::Low);
     assert_eq!(ScoreTone::for_score(42), ScoreTone::Medium);
     assert_eq!(ScoreTone::for_score(90), ScoreTone::High);
@@ -204,10 +204,13 @@ fn complex_view_variant_classes_are_semantic() {
     );
     assert_eq!(DiffTone::Equal.inline_class_name(), "");
     assert_eq!(
-        DiffBadgeTone::Neutral.class_name(),
+        Tone::Default.diff_badge_class_name(),
         "sp42-diff-badge-neutral"
     );
-    assert_eq!(DiffBadgeTone::Accent.class_name(), "sp42-diff-badge-accent");
+    assert_eq!(
+        Tone::Accent.diff_badge_class_name(),
+        "sp42-diff-badge-accent"
+    );
     assert_eq!(
         RenderedHighlightTone::Add.class_name(),
         "rendered-hunk-highlight-add"
@@ -246,25 +249,25 @@ fn prop_builders_compose_expected_class_names() {
             .with_gap(Gap::XSmall)
             .with_align(Align::End)
             .with_justify(Justify::Between)
-            .without_wrap()
+            .with_state(InlineState::NoWrap)
             .class_name()
             .contains("sp42-justify-between")
     );
     assert!(
         TextProps::new(child())
-            .with_tone(TextTone::Danger)
-            .with_size(TextSize::Large)
+            .with_tone(Tone::Danger)
+            .with_size(Size::Large)
             .with_weight(TextWeight::Bold)
             .with_overflow(TextOverflow::PreserveLines)
-            .mono()
+            .with_family(TextFamily::Mono)
             .class_name()
             .contains("mono")
     );
     assert!(
         HeadingProps::new(child())
             .with_level(HeadingLevel::Three)
-            .with_size(HeadingSize::Large)
-            .with_tone(TextTone::Accent)
+            .with_size(Size::Large)
+            .with_tone(Tone::Accent)
             .with_align(Align::Center)
             .class_name()
             .contains("sp42-heading-lg")
@@ -272,7 +275,7 @@ fn prop_builders_compose_expected_class_names() {
     assert!(
         NavigationItemProps::new(child())
             .with_selected(true)
-            .subdued()
+            .with_state(NavigationItemState::Subdued)
             .with_tone(ScoreTone::High)
             .class_name(true)
             .contains("sp42-score-high")
@@ -293,12 +296,12 @@ fn prop_builders_compose_expected_class_names() {
 fn control_components_construct_from_typed_props() {
     view_is_constructible(button(
         ButtonProps::new("Run")
-            .with_tone(ButtonTone::Accent)
+            .with_tone(Tone::Accent)
             .with_size(Size::Small)
             .with_density(Density::Compact)
-            .with_emphasis(ButtonEmphasis::Subtle)
+            .with_surface(ButtonSurface::Subtle)
             .with_type(ButtonType::Submit)
-            .with_disabled(ControlState::Static(false))
+            .with_disabled(State::Static(false))
             .with_title("Run task")
             .with_aria_label("Run task")
             .with_keyshortcuts("Control+Enter")
@@ -306,7 +309,7 @@ fn control_components_construct_from_typed_props() {
     ));
     view_is_constructible(status_badge(
         StatusBadgeProps::new("Ready")
-            .with_tone(StatusTone::Info)
+            .with_tone(Tone::Info)
             .with_size(Size::Small),
     ));
     view_is_constructible(field(
@@ -326,7 +329,7 @@ fn control_components_construct_from_typed_props() {
             .with_disabled(false)
             .required()
             .with_density(Density::Compact)
-            .with_width(ControlWidth::Full)
+            .with_width(Width::Full)
             .on_input(|_| {})
             .on_change(|_| {}),
     ));
@@ -342,7 +345,7 @@ fn control_components_construct_from_typed_props() {
         .with_value(ValueState::from("all"))
         .with_disabled(false)
         .with_density(Density::Normal)
-        .with_width(ControlWidth::Medium)
+        .with_width(Width::Medium)
         .on_change(|_| {}),
     ));
     view_is_constructible(checkbox(
@@ -386,17 +389,17 @@ fn layout_components_construct_from_typed_props() {
     ));
     view_is_constructible(text(
         TextProps::new(child())
-            .with_tone(TextTone::Muted)
-            .with_size(TextSize::Small)
+            .with_tone(Tone::Muted)
+            .with_size(Size::Small)
             .with_weight(TextWeight::Medium)
             .with_element(TextElement::Paragraph)
-            .truncate(),
+            .with_overflow(TextOverflow::Truncate),
     ));
     view_is_constructible(heading(
         HeadingProps::new(child())
             .with_level(HeadingLevel::One)
-            .with_size(HeadingSize::Large)
-            .with_tone(TextTone::Default)
+            .with_size(Size::Large)
+            .with_tone(Tone::Default)
             .with_align(Align::Start),
     ));
     view_is_constructible(section_header(
@@ -414,16 +417,14 @@ fn state_and_navigation_components_construct_from_typed_props() {
     view_is_constructible(modal(
         ModalProps::new("Dialog", child())
             .with_footer(child())
-            .with_size(ModalSize::Large),
+            .with_size(Size::Large),
     ));
     view_is_constructible(disclosure(
         DisclosureProps::new("More", child())
-            .open()
+            .with_state(true)
             .with_density(Density::Compact),
     ));
-    view_is_constructible(spinner(
-        SpinnerProps::new("Loading").with_size(SpinnerSize::Small),
-    ));
+    view_is_constructible(spinner(SpinnerProps::new("Loading").with_size(Size::Small)));
     view_is_constructible(empty_state(
         EmptyStateProps::new("Empty", "No results").with_actions(child()),
     ));
@@ -436,17 +437,17 @@ fn state_and_navigation_components_construct_from_typed_props() {
     )));
     view_is_constructible(spacer());
     view_is_constructible(separator());
-    view_is_constructible(link(
-        LinkProps::new("Docs", "/docs").with_size(TextSize::Small),
-    ));
+    view_is_constructible(link(LinkProps::new("Docs", "/docs").with_size(Size::Small)));
     view_is_constructible(link(
         LinkProps::new("External", "https://example.test").external(),
     ));
-    view_is_constructible(score_text(ScoreTextProps::new(72).without_icon()));
+    view_is_constructible(score_text(
+        ScoreTextProps::new(72).with_state(ScoreTextState::TextOnly),
+    ));
     view_is_constructible(delta_text(
         DeltaTextProps::new(5)
             .with_suffix("%")
-            .with_size(TextSize::Large),
+            .with_size(Size::Large),
     ));
     view_is_constructible(navigation_pane(NavigationPaneProps::new(
         "Queue",
@@ -456,7 +457,7 @@ fn state_and_navigation_components_construct_from_typed_props() {
     view_is_constructible(navigation_item(
         NavigationItemProps::new(child())
             .with_selected(true)
-            .subdued()
+            .with_state(NavigationItemState::Subdued)
             .with_tone(ScoreTone::Medium)
             .on_click(|_| {}),
     ));
@@ -464,7 +465,7 @@ fn state_and_navigation_components_construct_from_typed_props() {
     view_is_constructible(context_bar(ContextBarProps::new(child())));
     view_is_constructible(score_button(
         ScoreButtonProps::new(84)
-            .with_expanded(true)
+            .with_state(true)
             .with_title("Score")
             .on_click(|_| {}),
     ));
@@ -489,10 +490,10 @@ fn report_and_media_components_construct_from_typed_props() {
         ScrollStackProps::new(child()).with_density(Density::Comfortable),
     ));
     view_is_constructible(media_gallery_panel(
-        MediaGalleryPanelProps::new("Media", "Images", "2 files", child()).with_loading(false),
+        MediaGalleryPanelProps::new("Media", "Images", "2 files", child()).with_state(false),
     ));
     view_is_constructible(media_group(
-        MediaGroupProps::new("Added", 2, child()).with_tone(TextTone::Success),
+        MediaGroupProps::new("Added", 2, child()).with_tone(Tone::Success),
     ));
     view_is_constructible(media_card(MediaCardProps::new(child())));
     view_is_constructible(media_preview(MediaPreviewProps::new(
@@ -520,7 +521,7 @@ fn diff_components_construct_from_typed_props() {
         child(),
     )));
     view_is_constructible(diff_badge(
-        DiffBadgeProps::new("Rendered").with_tone(DiffBadgeTone::Accent),
+        DiffBadgeProps::new("Rendered").with_tone(Tone::Accent),
     ));
     view_is_constructible(diff_rows(DiffRowsProps::new(child())));
     view_is_constructible(diff_separator(DiffSeparatorProps::new("Context")));
@@ -534,7 +535,7 @@ fn diff_components_construct_from_typed_props() {
             .with_before_label("12")
             .with_after_label("13")
             .with_line_label("line 13")
-            .framed()
+            .with_state(DiffLineState::Framed)
             .on_context_menu(|_| {})
             .on_double_click(|_| {}),
     ));

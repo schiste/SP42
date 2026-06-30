@@ -3,8 +3,22 @@
 use leptos::prelude::*;
 
 use super::data_display::ScoreTone;
-use super::layout::ControlState;
+use super::layout::State;
 use super::util::push_class;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum NavigationItemState {
+    #[default]
+    Default,
+    Subdued,
+}
+
+impl NavigationItemState {
+    #[must_use]
+    pub const fn is_subdued(self) -> bool {
+        matches!(self, Self::Subdued)
+    }
+}
 
 pub struct NavigationPaneProps {
     aria_label: String,
@@ -43,8 +57,8 @@ pub use navigation_pane as NavigationPane;
 
 pub struct NavigationItemProps {
     children: Children,
-    selected: ControlState,
-    subdued: bool,
+    selected: State,
+    state: NavigationItemState,
     tone: ScoreTone,
     on_click: Option<Callback<leptos::ev::MouseEvent>>,
 }
@@ -54,22 +68,22 @@ impl NavigationItemProps {
     pub fn new(children: Children) -> Self {
         Self {
             children,
-            selected: ControlState::default(),
-            subdued: false,
+            selected: State::default(),
+            state: NavigationItemState::default(),
             tone: ScoreTone::default(),
             on_click: None,
         }
     }
 
     #[must_use]
-    pub fn with_selected(mut self, selected: impl Into<ControlState>) -> Self {
+    pub fn with_selected(mut self, selected: impl Into<State>) -> Self {
         self.selected = selected.into();
         self
     }
 
     #[must_use]
-    pub const fn subdued(mut self) -> Self {
-        self.subdued = true;
+    pub const fn with_state(mut self, state: NavigationItemState) -> Self {
+        self.state = state;
         self
     }
 
@@ -90,7 +104,7 @@ impl NavigationItemProps {
 
     #[must_use]
     pub fn class_name(&self, selected: bool) -> String {
-        navigation_item_class_name(selected, self.subdued, self.tone)
+        navigation_item_class_name(selected, self.state, self.tone)
     }
 }
 
@@ -98,7 +112,7 @@ impl NavigationItemProps {
 pub fn navigation_item(props: NavigationItemProps) -> impl IntoView {
     let children = props.children;
     let selected = props.selected;
-    let subdued = props.subdued;
+    let state = props.state;
     let tone = props.tone;
     let on_click = props.on_click;
 
@@ -106,7 +120,7 @@ pub fn navigation_item(props: NavigationItemProps) -> impl IntoView {
         <button
             type="button"
             class=move || {
-                navigation_item_class_name(selected.get(), subdued, tone)
+                navigation_item_class_name(selected.get(), state, tone)
             }
             aria-pressed=move || selected.get().to_string()
             on:click=move |ev| {
@@ -123,13 +137,17 @@ pub fn navigation_item(props: NavigationItemProps) -> impl IntoView {
 pub use navigation_item as NavigationItem;
 
 #[must_use]
-fn navigation_item_class_name(selected: bool, subdued: bool, tone: ScoreTone) -> String {
+fn navigation_item_class_name(
+    selected: bool,
+    state: NavigationItemState,
+    tone: ScoreTone,
+) -> String {
     let mut class_name = String::from("queue-item");
     if selected {
         push_class(&mut class_name, "sp42-nav-item-selected");
         push_class(&mut class_name, tone.class_name());
     }
-    if subdued {
+    if state.is_subdued() {
         push_class(&mut class_name, "sp42-nav-item-subdued");
     }
     class_name

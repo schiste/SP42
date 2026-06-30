@@ -4,17 +4,16 @@ use sp42_core::{
     InlineSpan, StructuredDiff,
 };
 use sp42_ui::{
-    Button, ButtonEmphasis, ButtonProps, ButtonTone, Card, CardProps, Density, DiffBadge,
-    DiffBadgeProps, DiffBadgeTone, DiffBody, DiffBodyProps, DiffContextMenu, DiffContextMenuItem,
-    DiffContextMenuItemProps, DiffContextMenuProps, DiffEditPanel, DiffEditPanelProps,
-    DiffEmptyCell, DiffEmptyCellProps, DiffHunk, DiffHunkHeader, DiffHunkHeaderProps,
-    DiffHunkProps, DiffInlineMark, DiffInlineMarkProps, DiffLine, DiffLineProps, DiffModeLabel,
-    DiffModeLabelProps, DiffRows, DiffRowsProps, DiffSeparator, DiffSeparatorProps,
-    DiffSplitHeader, DiffSplitHeaderProps, DiffSplitRow, DiffSplitRowProps, DiffState,
-    DiffStateProps, DiffStatsBar, DiffStatsBarProps, DiffTone, DiffViewerShell,
-    DiffViewerShellProps, Gap, Grid, GridColumns, GridProps, RenderedHighlightTone,
-    RenderedHtmlHost, RenderedHtmlHostProps, SectionHeader, SectionHeaderProps, Size, Spacer,
-    Stack, StackProps, Surface, Text, TextProps, TextSize, TextTone,
+    Button, ButtonProps, ButtonSurface, Card, CardProps, Density, DiffBadge, DiffBadgeProps,
+    DiffBody, DiffBodyProps, DiffContextMenu, DiffContextMenuItem, DiffContextMenuItemProps,
+    DiffContextMenuProps, DiffEditPanel, DiffEditPanelProps, DiffEmptyCell, DiffEmptyCellProps,
+    DiffHunk, DiffHunkHeader, DiffHunkHeaderProps, DiffHunkProps, DiffInlineMark,
+    DiffInlineMarkProps, DiffLine, DiffLineProps, DiffLineState, DiffModeLabel, DiffModeLabelProps,
+    DiffRows, DiffRowsProps, DiffSeparator, DiffSeparatorProps, DiffSplitHeader,
+    DiffSplitHeaderProps, DiffSplitRow, DiffSplitRowProps, DiffState, DiffStateProps, DiffStatsBar,
+    DiffStatsBarProps, DiffTone, DiffViewerShell, DiffViewerShellProps, Gap, Grid, GridColumns,
+    GridProps, RenderedHighlightTone, RenderedHtmlHost, RenderedHtmlHostProps, SectionHeader,
+    SectionHeaderProps, Size, Spacer, Stack, StackProps, Surface, Text, TextProps, Tone,
 };
 
 #[cfg(target_arch = "wasm32")]
@@ -380,19 +379,19 @@ fn render_diff_stats_bar(
                 TextProps::new(ui_children(move || {
                     view! { {format!("+{stats_added} added")} }.into_any()
                 }))
-                .with_tone(TextTone::Success),
+                .with_tone(Tone::Success),
             )}
             {Text(
                 TextProps::new(ui_children(move || {
                     view! { {format!("-{stats_removed} removed")} }.into_any()
                 }))
-                .with_tone(TextTone::Danger),
+                .with_tone(Tone::Danger),
             )}
             {Text(
                 TextProps::new(ui_children(move || {
                     view! { {format!("{stats_unchanged} unchanged")} }.into_any()
                 }))
-                .with_tone(TextTone::Muted),
+                .with_tone(Tone::Muted),
             )}
             {DiffModeLabel(DiffModeLabelProps::new(mode_label))}
             {render_display_mode_controls(diff_mode, display_mode, set_display_mode)}
@@ -404,7 +403,7 @@ fn render_diff_stats_bar(
                 };
                 Button(
                     ButtonProps::new(label)
-                        .with_emphasis(ButtonEmphasis::Ghost)
+                        .with_surface(ButtonSurface::Ghost)
                         .with_density(Density::Compact)
                         .with_size(Size::Small)
                         .on_click(move |_| set_show_full.update(|value| *value = !*value)),
@@ -432,13 +431,13 @@ fn render_display_mode_controls(
             view! {
                 {move || {
                     let emphasis = if display_mode.get() == DiffDisplayMode::SideBySide {
-                        ButtonEmphasis::Subtle
+                        ButtonSurface::Subtle
                     } else {
-                        ButtonEmphasis::Ghost
+                        ButtonSurface::Ghost
                     };
                     Button(
                         ButtonProps::new("Side by side")
-                            .with_emphasis(emphasis)
+                            .with_surface(emphasis)
                             .with_density(Density::Compact)
                             .with_size(Size::Small)
                             .on_click(move |_| set_display_mode.set(DiffDisplayMode::SideBySide)),
@@ -447,13 +446,13 @@ fn render_display_mode_controls(
                 }}
                 {move || {
                     let emphasis = if display_mode.get() == DiffDisplayMode::Unified {
-                        ButtonEmphasis::Subtle
+                        ButtonSurface::Subtle
                     } else {
-                        ButtonEmphasis::Ghost
+                        ButtonSurface::Ghost
                     };
                     Button(
                         ButtonProps::new("Unified")
-                            .with_emphasis(emphasis)
+                            .with_surface(emphasis)
                             .with_density(Density::Compact)
                             .with_size(Size::Small)
                             .on_click(move |_| set_display_mode.set(DiffDisplayMode::Unified)),
@@ -578,7 +577,7 @@ fn render_rendered_hunk_toggle(
             };
             Button(
                 ButtonProps::new(label)
-                    .with_emphasis(ButtonEmphasis::Ghost)
+                    .with_surface(ButtonSurface::Ghost)
                     .with_density(Density::Compact)
                     .with_size(Size::Small)
                     .on_click({
@@ -622,8 +621,8 @@ fn render_rendered_hunk_preview(
                     CardProps::new(ui_children(|| view! {
                         {Text(
                             TextProps::new(ui_children(|| view! { "Rendering hunk context..." }.into_any()))
-                                .with_tone(TextTone::Muted)
-                                .with_size(TextSize::XSmall)
+                                .with_tone(Tone::Muted)
+                                .with_size(Size::XSmall)
                         )}
                     }.into_any()))
                     .with_density(Density::Compact),
@@ -634,13 +633,13 @@ fn render_rendered_hunk_preview(
                     CardProps::new(ui_children(move || view! {
                         {Text(
                             TextProps::new(ui_children(|| view! { "Rendered preview unavailable" }.into_any()))
-                                .with_tone(TextTone::Danger)
-                                .with_size(TextSize::XSmall)
+                                .with_tone(Tone::Danger)
+                                .with_size(Size::XSmall)
                         )}
                         {Text(
                             TextProps::new(ui_children(move || view! { {error} }.into_any()))
-                                .with_tone(TextTone::Muted)
-                                .with_size(TextSize::XSmall)
+                                .with_tone(Tone::Muted)
+                                .with_size(Size::XSmall)
                         )}
                     }.into_any()))
                     .with_density(Density::Compact)
@@ -707,8 +706,8 @@ fn render_rendered_hunk_preview(
                             .map(|warning| {
                                 Text(
                                     TextProps::new(ui_children(move || view! { {warning} }.into_any()))
-                                        .with_tone(TextTone::Muted)
-                                        .with_size(TextSize::XSmall),
+                                        .with_tone(Tone::Muted)
+                                        .with_size(Size::XSmall),
                                 )
                             })
                             .collect_view()}
@@ -785,7 +784,7 @@ fn render_hunk_header(
                     .map(|badge| {
                         DiffBadge(
                             DiffBadgeProps::new(badge)
-                                .with_tone(DiffBadgeTone::Accent)
+                                .with_tone(Tone::Accent)
                         )
                         .into_any()
                     })
@@ -800,8 +799,8 @@ fn render_hunk_header(
                     .map(|text| {
                         Text(
                             TextProps::new(ui_children(move || view! { {text} }.into_any()))
-                                .with_tone(TextTone::Muted)
-                                .with_size(TextSize::XSmall)
+                                .with_tone(Tone::Muted)
+                                .with_size(Size::XSmall)
                         )
                         .into_any()
                     })
@@ -980,7 +979,7 @@ fn render_side_by_side_cell(
             ui_children(move || render_inline_diff_content(text, inline_highlights)),
         )
         .with_line_label(line_label)
-        .framed()
+        .with_state(DiffLineState::Framed)
         .on_context_menu(contextmenu),
     )
     .into_any()
@@ -1288,13 +1287,13 @@ fn render_segment_data(
                             ui_children(move || view! {
                                 {Button(
                                     ButtonProps::new("Save edit (Ctrl+Enter)")
-                                        .with_tone(ButtonTone::Success)
+                                        .with_tone(Tone::Success)
                                         .with_density(Density::Compact)
                                         .on_click(move |e| save_click(e.into()))
                                 )}
                                 {Button(
                                     ButtonProps::new("Cancel (Esc)")
-                                        .with_emphasis(ButtonEmphasis::Ghost)
+                                        .with_surface(ButtonSurface::Ghost)
                                         .with_density(Density::Compact)
                                         .on_click(cancel)
                                 )}

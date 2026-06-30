@@ -2,8 +2,7 @@
 
 use leptos::prelude::*;
 
-use super::layout::{ControlState, Density, Size};
-use super::typography::TextSize;
+use super::layout::{Density, Size, State};
 use super::util::class_names;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -50,7 +49,14 @@ pub struct ScoreTextProps {
     score: i32,
     tone: ScoreTone,
     size: Size,
-    show_icon: bool,
+    state: ScoreTextState,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ScoreTextState {
+    #[default]
+    WithIcon,
+    TextOnly,
 }
 
 impl ScoreTextProps {
@@ -60,7 +66,7 @@ impl ScoreTextProps {
             score,
             tone: ScoreTone::for_score(score),
             size: Size::Medium,
-            show_icon: true,
+            state: ScoreTextState::WithIcon,
         }
     }
 
@@ -71,8 +77,8 @@ impl ScoreTextProps {
     }
 
     #[must_use]
-    pub const fn without_icon(mut self) -> Self {
-        self.show_icon = false;
+    pub const fn with_state(mut self, state: ScoreTextState) -> Self {
+        self.state = state;
         self
     }
 
@@ -85,7 +91,8 @@ impl ScoreTextProps {
 #[must_use]
 pub fn score_text(props: ScoreTextProps) -> impl IntoView {
     let icon = props
-        .show_icon
+        .state
+        .eq(&ScoreTextState::WithIcon)
         .then(|| view! { <span>{props.tone.icon()}</span> }.into_any());
 
     view! {
@@ -131,7 +138,7 @@ impl DeltaTone {
 pub struct DeltaTextProps {
     delta: i32,
     suffix: String,
-    size: TextSize,
+    size: Size,
 }
 
 impl DeltaTextProps {
@@ -140,7 +147,7 @@ impl DeltaTextProps {
         Self {
             delta,
             suffix: String::new(),
-            size: TextSize::Small,
+            size: Size::Small,
         }
     }
 
@@ -151,7 +158,7 @@ impl DeltaTextProps {
     }
 
     #[must_use]
-    pub const fn with_size(mut self, size: TextSize) -> Self {
+    pub const fn with_size(mut self, size: Size) -> Self {
         self.size = size;
         self
     }
@@ -183,7 +190,7 @@ pub fn delta_text(props: DeltaTextProps) -> impl IntoView {
         <span class=class_names(&[
             "sp42-delta",
             DeltaTone::for_delta(delta).class_name(),
-            size.class_name()
+            size.text_class_name()
         ])>
             {value}
         </span>
@@ -193,7 +200,7 @@ pub fn delta_text(props: DeltaTextProps) -> impl IntoView {
 pub use delta_text as DeltaText;
 pub struct ScoreButtonProps {
     score: i32,
-    expanded: ControlState,
+    expanded: State,
     title: String,
     on_click: Option<Callback<leptos::ev::MouseEvent>>,
 }
@@ -203,14 +210,14 @@ impl ScoreButtonProps {
     pub fn new(score: i32) -> Self {
         Self {
             score,
-            expanded: ControlState::default(),
+            expanded: State::default(),
             title: String::new(),
             on_click: None,
         }
     }
 
     #[must_use]
-    pub fn with_expanded(mut self, expanded: impl Into<ControlState>) -> Self {
+    pub fn with_state(mut self, expanded: impl Into<State>) -> Self {
         self.expanded = expanded.into();
         self
     }

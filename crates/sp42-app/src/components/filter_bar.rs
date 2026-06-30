@@ -2,9 +2,9 @@ use leptos::prelude::*;
 use sp42_core::FlagState;
 use sp42_live::LiveOperatorQuery;
 use sp42_ui::{
-    Button, ButtonEmphasis, ButtonProps, Checkbox, CheckboxProps, ControlWidth, Density,
-    FilterDisclosure, FilterDisclosureProps, Gap, Inline, InlineProps, Select, SelectOption,
-    SelectProps, Separator, Spacer, Text, TextInput, TextInputProps, TextProps, TextSize, TextTone,
+    Button, ButtonProps, ButtonSurface, Checkbox, CheckboxProps, Density, FilterDisclosure,
+    FilterDisclosureProps, Gap, Inline, InlineProps, Select, SelectOption, SelectProps, Separator,
+    Size, Spacer, Text, TextInput, TextInputProps, TextProps, Tone, Width,
 };
 
 use super::ui_children;
@@ -215,7 +215,7 @@ pub fn FilterBar(
                                     }))
                                     .with_placeholder("e.g. mw-reverted")
                                     .with_density(Density::Compact)
-                                    .with_width(ControlWidth::Short)
+                                    .with_width(Width::Short)
                                     .on_change(move |ev| {
                                         let value = event_target_input_value(&ev);
                                         update_filter!(move |f| {
@@ -272,7 +272,7 @@ pub fn FilterBar(
 
                 {Button(
                     ButtonProps::new("Load older \u{25b8}")
-                        .with_emphasis(ButtonEmphasis::Ghost)
+                        .with_surface(ButtonSurface::Ghost)
                         .with_density(Density::Compact)
                         .with_disabled(Signal::derive(move || next_continue.get().is_none()))
                         .on_click(move |_| {
@@ -292,8 +292,8 @@ pub fn FilterBar(
 fn filter_label(label: &'static str) -> AnyView {
     Text(
         TextProps::new(ui_children(move || view! { {label} }.into_any()))
-            .with_tone(TextTone::Muted)
-            .with_size(TextSize::Small),
+            .with_tone(Tone::Muted)
+            .with_size(Size::Small),
     )
 }
 

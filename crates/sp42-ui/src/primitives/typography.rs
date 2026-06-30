@@ -2,56 +2,8 @@
 
 use leptos::prelude::*;
 
-use super::layout::{Align, Density};
+use super::layout::{Align, Density, Size, Tone};
 use super::util::{class_names, push_class};
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum TextTone {
-    #[default]
-    Default,
-    Muted,
-    Subtle,
-    Accent,
-    Success,
-    Warning,
-    Danger,
-}
-
-impl TextTone {
-    #[must_use]
-    pub const fn class_name(self) -> &'static str {
-        match self {
-            Self::Default => "sp42-text-default",
-            Self::Muted => "text-muted",
-            Self::Subtle => "sp42-text-subtle",
-            Self::Accent => "text-accent",
-            Self::Success => "text-success",
-            Self::Warning => "text-warning",
-            Self::Danger => "text-danger",
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum TextSize {
-    XSmall,
-    Small,
-    #[default]
-    Medium,
-    Large,
-}
-
-impl TextSize {
-    #[must_use]
-    pub const fn class_name(self) -> &'static str {
-        match self {
-            Self::XSmall => "sp42-text-xs",
-            Self::Small => "sp42-text-sm",
-            Self::Medium => "sp42-text-md",
-            Self::Large => "sp42-text-lg",
-        }
-    }
-}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum TextWeight {
@@ -68,6 +20,23 @@ impl TextWeight {
             Self::Regular => "sp42-weight-regular",
             Self::Medium => "sp42-weight-medium",
             Self::Bold => "sp42-weight-bold",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum TextFamily {
+    #[default]
+    Default,
+    Mono,
+}
+
+impl TextFamily {
+    #[must_use]
+    pub const fn class_name(self) -> &'static str {
+        match self {
+            Self::Default => "",
+            Self::Mono => "mono",
         }
     }
 }
@@ -104,11 +73,11 @@ impl TextOverflow {
 
 pub struct TextProps {
     children: Children,
-    tone: TextTone,
-    size: TextSize,
+    tone: Tone,
+    size: Size,
     weight: TextWeight,
     element: TextElement,
-    mono: bool,
+    family: TextFamily,
     overflow: TextOverflow,
 }
 
@@ -117,23 +86,23 @@ impl TextProps {
     pub fn new(children: Children) -> Self {
         Self {
             children,
-            tone: TextTone::default(),
-            size: TextSize::default(),
+            tone: Tone::default(),
+            size: Size::default(),
             weight: TextWeight::default(),
             element: TextElement::default(),
-            mono: false,
+            family: TextFamily::default(),
             overflow: TextOverflow::default(),
         }
     }
 
     #[must_use]
-    pub const fn with_tone(mut self, tone: TextTone) -> Self {
+    pub const fn with_tone(mut self, tone: Tone) -> Self {
         self.tone = tone;
         self
     }
 
     #[must_use]
-    pub const fn with_size(mut self, size: TextSize) -> Self {
+    pub const fn with_size(mut self, size: Size) -> Self {
         self.size = size;
         self
     }
@@ -151,14 +120,8 @@ impl TextProps {
     }
 
     #[must_use]
-    pub const fn mono(mut self) -> Self {
-        self.mono = true;
-        self
-    }
-
-    #[must_use]
-    pub const fn truncate(mut self) -> Self {
-        self.overflow = TextOverflow::Truncate;
+    pub const fn with_family(mut self, family: TextFamily) -> Self {
+        self.family = family;
         self
     }
 
@@ -172,13 +135,11 @@ impl TextProps {
     pub fn class_name(&self) -> String {
         let mut class_name = class_names(&[
             "sp42-text",
-            self.tone.class_name(),
-            self.size.class_name(),
+            self.tone.text_class_name(),
+            self.size.text_class_name(),
             self.weight.class_name(),
         ]);
-        if self.mono {
-            push_class(&mut class_name, "mono");
-        }
+        push_class(&mut class_name, self.family.class_name());
         push_class(&mut class_name, self.overflow.class_name());
         class_name
     }
@@ -211,30 +172,11 @@ pub enum HeadingLevel {
     Six,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum HeadingSize {
-    Small,
-    #[default]
-    Medium,
-    Large,
-}
-
-impl HeadingSize {
-    #[must_use]
-    pub const fn class_name(self) -> &'static str {
-        match self {
-            Self::Small => "sp42-heading-sm",
-            Self::Medium => "sp42-heading-md",
-            Self::Large => "sp42-heading-lg",
-        }
-    }
-}
-
 pub struct HeadingProps {
     children: Children,
     level: HeadingLevel,
-    size: HeadingSize,
-    tone: TextTone,
+    size: Size,
+    tone: Tone,
     align: Align,
 }
 
@@ -244,8 +186,8 @@ impl HeadingProps {
         Self {
             children,
             level: HeadingLevel::default(),
-            size: HeadingSize::default(),
-            tone: TextTone::default(),
+            size: Size::default(),
+            tone: Tone::default(),
             align: Align::Start,
         }
     }
@@ -257,13 +199,13 @@ impl HeadingProps {
     }
 
     #[must_use]
-    pub const fn with_size(mut self, size: HeadingSize) -> Self {
+    pub const fn with_size(mut self, size: Size) -> Self {
         self.size = size;
         self
     }
 
     #[must_use]
-    pub const fn with_tone(mut self, tone: TextTone) -> Self {
+    pub const fn with_tone(mut self, tone: Tone) -> Self {
         self.tone = tone;
         self
     }
@@ -278,8 +220,8 @@ impl HeadingProps {
     pub fn class_name(&self) -> String {
         class_names(&[
             "sp42-heading",
-            self.size.class_name(),
-            self.tone.class_name(),
+            self.size.heading_class_name(),
+            self.tone.text_class_name(),
             self.align.class_name(),
         ])
     }
@@ -351,7 +293,7 @@ pub struct LinkProps {
     label: String,
     href: String,
     external: bool,
-    size: TextSize,
+    size: Size,
 }
 
 impl LinkProps {
@@ -361,7 +303,7 @@ impl LinkProps {
             label: label.into(),
             href: href.into(),
             external: false,
-            size: TextSize::Small,
+            size: Size::Small,
         }
     }
 
@@ -372,7 +314,7 @@ impl LinkProps {
     }
 
     #[must_use]
-    pub const fn with_size(mut self, size: TextSize) -> Self {
+    pub const fn with_size(mut self, size: Size) -> Self {
         self.size = size;
         self
     }
@@ -380,7 +322,7 @@ impl LinkProps {
 
 #[must_use]
 pub fn link(props: LinkProps) -> AnyView {
-    let class_name = class_names(&["sp42-link", props.size.class_name()]);
+    let class_name = class_names(&["sp42-link", props.size.text_class_name()]);
 
     if props.external {
         view! {

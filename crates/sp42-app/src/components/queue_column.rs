@@ -2,9 +2,9 @@ use leptos::prelude::*;
 use sp42_core::{EditorIdentity, QueuedEdit};
 use sp42_ui::{
     Align, DeltaText, DeltaTextProps, EmptyState, EmptyStateProps, Gap, Inline, InlineProps,
-    NavigationItem, NavigationItemProps, NavigationPane, NavigationPaneProps, ScoreText,
-    ScoreTextProps, ScoreTone, Size, Stack, StackProps, StatusBadgeProps, StatusTone, Text,
-    TextOverflow, TextProps, TextSize, TextTone,
+    InlineState, NavigationItem, NavigationItemProps, NavigationItemState, NavigationPane,
+    NavigationPaneProps, ScoreText, ScoreTextProps, ScoreTextState, ScoreTone, Size, Stack,
+    StackProps, StatusBadgeProps, Text, TextOverflow, TextProps, Tone,
 };
 
 use super::ui_children;
@@ -62,14 +62,14 @@ pub fn QueueColumn(
                                             view! {
                                                 {ScoreText(
                                                     ScoreTextProps::new(score)
-                                                        .without_icon()
+                                                        .with_state(ScoreTextState::TextOnly)
                                                         .with_size(Size::Medium),
                                                 )}
                                                 {Text(
                                                     TextProps::new(ui_children(move || {
                                                         view! { {title} }.into_any()
                                                     }))
-                                                    .with_size(TextSize::Small)
+                                                    .with_size(Size::Small)
                                                     .with_overflow(TextOverflow::ClampTwo),
                                                 )}
                                             }
@@ -77,7 +77,7 @@ pub fn QueueColumn(
                                         }))
                                         .with_gap(Gap::Small)
                                         .with_align(Align::Baseline)
-                                        .without_wrap(),
+                                        .with_state(InlineState::NoWrap),
                                     )}
                                     {Inline(
                                         InlineProps::new(ui_children(move || {
@@ -86,17 +86,17 @@ pub fn QueueColumn(
                                                     TextProps::new(ui_children(move || {
                                                         view! { {user} }.into_any()
                                                     }))
-                                                    .with_tone(TextTone::Muted)
-                                                    .with_size(TextSize::XSmall),
+                                                    .with_tone(Tone::Muted)
+                                                    .with_size(Size::XSmall),
                                                 )}
                                                 {DeltaText(
                                                     DeltaTextProps::new(delta)
-                                                        .with_size(TextSize::XSmall),
+                                                        .with_size(Size::XSmall),
                                                 )}
                                                 {if is_patrolled {
                                                     sp42_ui::StatusBadge(
                                                         StatusBadgeProps::new("P")
-                                                            .with_tone(StatusTone::Success)
+                                                            .with_tone(Tone::Success)
                                                             .with_size(Size::Small),
                                                     ).into_any()
                                                 } else {
@@ -105,7 +105,7 @@ pub fn QueueColumn(
                                                 {if group_count > 1 {
                                                     sp42_ui::StatusBadge(
                                                         StatusBadgeProps::new(format!("{group_count} edits"))
-                                                            .with_tone(StatusTone::Accent)
+                                                            .with_tone(Tone::Accent)
                                                             .with_size(Size::Small),
                                                     ).into_any()
                                                 } else {
@@ -144,5 +144,9 @@ fn navigation_item_props(
         .with_selected(selected)
         .with_tone(ScoreTone::for_score(score))
         .on_click(on_click);
-    if is_patrolled { props.subdued() } else { props }
+    if is_patrolled {
+        props.with_state(NavigationItemState::Subdued)
+    } else {
+        props
+    }
 }

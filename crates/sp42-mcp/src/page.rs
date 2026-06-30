@@ -11,10 +11,11 @@
 //! bounds a single run on a citation-heavy page; when it bites, `truncated` says so.
 
 use serde::{Deserialize, Serialize};
-use sp42_core::{
-    CitationFinding, PageVerificationReport, PageVerificationRequest, VerifyOptions, WikiConfig,
-    WikitextPageRef, extract_use_sites, verify_page,
+use sp42_citation::{
+    CitationFinding, PageVerificationReport, PageVerificationRequest, VerifyOptions,
+    extract_use_sites, verify_page,
 };
+use sp42_platform::{WikiConfig, WikitextPageRef};
 use sp42_types::{Clock, HttpClient, ModelClient, ModelRef};
 
 use crate::Verdict;
@@ -134,7 +135,7 @@ async fn verify_extracted<C, M>(
     model_client: &M,
     clock: &dyn Clock,
     panel: &[ModelRef],
-    blocks: Vec<sp42_core::ParsoidBlock>,
+    blocks: Vec<sp42_platform::ParsoidBlock>,
     request: &PageVerificationRequest,
     estimate_only: bool,
     max_use_sites: Option<usize>,
@@ -209,7 +210,8 @@ fn to_page_finding(finding: CitationFinding) -> PageFinding {
 mod tests {
     use std::collections::BTreeMap;
 
-    use sp42_core::{BlockKind, BlockRef, CitedSource, PageVerificationRequest, ParsoidBlock};
+    use sp42_citation::PageVerificationRequest;
+    use sp42_platform::{BlockKind, BlockRef, CitedSource, ParsoidBlock};
     use sp42_types::{
         FixedClock, HttpResponse, ModelCompletion, ModelRef, StubHttpClient, StubModelClient,
     };

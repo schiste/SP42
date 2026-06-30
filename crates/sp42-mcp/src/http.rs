@@ -7,7 +7,7 @@
 //! the verb logic above it is stub-tested in `probe`/`verify`.
 
 use async_trait::async_trait;
-use sp42_core::check_fetchable_source_url;
+use sp42_citation::check_fetchable_source_url;
 use sp42_inference::guarded_source_client;
 use sp42_types::{HttpClient, HttpClientError, HttpMethod, HttpRequest, HttpResponse};
 

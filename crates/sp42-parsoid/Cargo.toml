@@ -11,5 +11,5 @@ workspace = true
 [dependencies]
 parsoid.workspace = true
 serde_json.workspace = true
-sp42-core = { path = "../sp42-core" }
+sp42-platform = { path = "../sp42-platform" }
 url.workspace = true

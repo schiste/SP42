@@ -5,7 +5,7 @@
 //! called. The verb's value is distinguishing *unreachable* from *reachable-but-unextractable*,
 //! so a consumer learns that a human could still read a source the pipeline cannot use.
 
-use sp42_core::{classify_body_usability, fetch_source};
+use sp42_citation::{classify_body_usability, fetch_source};
 use sp42_types::HttpClient;
 
 use crate::ProbeResult;

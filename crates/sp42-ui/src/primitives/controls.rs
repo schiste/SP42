@@ -311,6 +311,9 @@ pub struct TextInputProps {
     name: String,
     value: ValueState,
     placeholder: String,
+    aria_label: String,
+    autocomplete: String,
+    list: String,
     input_type: TextInputType,
     disabled: State,
     required: bool,
@@ -328,6 +331,9 @@ impl TextInputProps {
             name: String::new(),
             value: ValueState::default(),
             placeholder: String::new(),
+            aria_label: String::new(),
+            autocomplete: String::new(),
+            list: String::new(),
             input_type: TextInputType::default(),
             disabled: State::default(),
             required: false,
@@ -353,6 +359,24 @@ impl TextInputProps {
     #[must_use]
     pub fn with_placeholder(mut self, placeholder: impl Into<String>) -> Self {
         self.placeholder = placeholder.into();
+        self
+    }
+
+    #[must_use]
+    pub fn with_aria_label(mut self, aria_label: impl Into<String>) -> Self {
+        self.aria_label = aria_label.into();
+        self
+    }
+
+    #[must_use]
+    pub fn with_autocomplete(mut self, autocomplete: impl Into<String>) -> Self {
+        self.autocomplete = autocomplete.into();
+        self
+    }
+
+    #[must_use]
+    pub fn with_list(mut self, list: impl Into<String>) -> Self {
+        self.list = list.into();
         self
     }
 
@@ -420,6 +444,9 @@ pub fn text_input(props: TextInputProps) -> impl IntoView {
             class=class_names(&["sp42-input", props.density.class_name(), props.width.class_name()])
             prop:value=move || value.get()
             placeholder=props.placeholder
+            aria-label=props.aria_label
+            autocomplete=props.autocomplete
+            list=props.list
             disabled=move || disabled.get()
             required=props.required
             on:input=move |ev| {

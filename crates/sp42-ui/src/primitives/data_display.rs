@@ -2,7 +2,7 @@
 
 use leptos::prelude::*;
 
-use super::layout::{Density, Size, State};
+use super::layout::{Density, Size, State, Tone};
 use super::util::class_names;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -512,3 +512,433 @@ pub fn scroll_stack(props: ScrollStackProps) -> impl IntoView {
 }
 
 pub use scroll_stack as ScrollStack;
+
+pub struct ResultListProps {
+    children: Children,
+    density: Density,
+}
+
+impl ResultListProps {
+    #[must_use]
+    pub fn new(children: Children) -> Self {
+        Self {
+            children,
+            density: Density::Compact,
+        }
+    }
+
+    #[must_use]
+    pub const fn with_density(mut self, density: Density) -> Self {
+        self.density = density;
+        self
+    }
+}
+
+#[must_use]
+pub fn result_list(props: ResultListProps) -> impl IntoView {
+    let children = props.children;
+
+    view! {
+        <div class=class_names(&["sp42-result-list", props.density.class_name()])>
+            {children()}
+        </div>
+    }
+}
+
+pub use result_list as ResultList;
+
+pub struct ResultCardProps {
+    children: Children,
+    tone: Tone,
+    density: Density,
+}
+
+impl ResultCardProps {
+    #[must_use]
+    pub fn new(children: Children) -> Self {
+        Self {
+            children,
+            tone: Tone::default(),
+            density: Density::Compact,
+        }
+    }
+
+    #[must_use]
+    pub const fn with_tone(mut self, tone: Tone) -> Self {
+        self.tone = tone;
+        self
+    }
+
+    #[must_use]
+    pub const fn with_density(mut self, density: Density) -> Self {
+        self.density = density;
+        self
+    }
+}
+
+#[must_use]
+pub fn result_card(props: ResultCardProps) -> impl IntoView {
+    let children = props.children;
+
+    view! {
+        <article class=class_names(&[
+            "sp42-result-card",
+            result_tone_class_name(props.tone),
+            props.density.class_name()
+        ])>
+            {children()}
+        </article>
+    }
+}
+
+pub use result_card as ResultCard;
+
+pub struct ResultCardHeaderProps {
+    leading: Children,
+    actions: Option<Children>,
+}
+
+impl ResultCardHeaderProps {
+    #[must_use]
+    pub fn new(leading: Children) -> Self {
+        Self {
+            leading,
+            actions: None,
+        }
+    }
+
+    #[must_use]
+    pub fn with_actions(mut self, actions: Children) -> Self {
+        self.actions = Some(actions);
+        self
+    }
+}
+
+#[must_use]
+pub fn result_card_header(props: ResultCardHeaderProps) -> impl IntoView {
+    let leading = props.leading;
+    let actions = props.actions.map(|actions| {
+        view! { <div class="sp42-result-card-actions">{actions()}</div> }.into_any()
+    });
+
+    view! {
+        <header class="sp42-result-card-header">
+            <div class="sp42-result-card-title">{leading()}</div>
+            {actions}
+        </header>
+    }
+}
+
+pub use result_card_header as ResultCardHeader;
+
+pub struct ResultDisclosureProps {
+    summary: Children,
+    children: Children,
+    tone: Tone,
+    open: State,
+}
+
+impl ResultDisclosureProps {
+    #[must_use]
+    pub fn new(summary: Children, children: Children) -> Self {
+        Self {
+            summary,
+            children,
+            tone: Tone::default(),
+            open: State::default(),
+        }
+    }
+
+    #[must_use]
+    pub const fn with_tone(mut self, tone: Tone) -> Self {
+        self.tone = tone;
+        self
+    }
+
+    #[must_use]
+    pub fn with_state(mut self, open: impl Into<State>) -> Self {
+        self.open = open.into();
+        self
+    }
+}
+
+#[must_use]
+pub fn result_disclosure(props: ResultDisclosureProps) -> impl IntoView {
+    let summary = props.summary;
+    let children = props.children;
+    let open = props.open;
+
+    view! {
+        <details
+            class=class_names(&["sp42-result-disclosure", result_tone_class_name(props.tone)])
+            open=move || open.get()
+        >
+            <summary>{summary()}</summary>
+            <div class="sp42-result-disclosure-body">{children()}</div>
+        </details>
+    }
+}
+
+pub use result_disclosure as ResultDisclosure;
+
+pub struct MetaTextProps {
+    children: Children,
+    density: Density,
+}
+
+impl MetaTextProps {
+    #[must_use]
+    pub fn new(children: Children) -> Self {
+        Self {
+            children,
+            density: Density::Compact,
+        }
+    }
+
+    #[must_use]
+    pub const fn with_density(mut self, density: Density) -> Self {
+        self.density = density;
+        self
+    }
+}
+
+#[must_use]
+pub fn meta_text(props: MetaTextProps) -> impl IntoView {
+    let children = props.children;
+
+    view! {
+        <div class=class_names(&["sp42-meta-text", props.density.class_name()])>
+            {children()}
+        </div>
+    }
+}
+
+pub use meta_text as MetaText;
+
+pub struct EmptyTextProps {
+    message: String,
+}
+
+impl EmptyTextProps {
+    #[must_use]
+    pub fn new(message: impl Into<String>) -> Self {
+        Self {
+            message: message.into(),
+        }
+    }
+}
+
+#[must_use]
+pub fn empty_text(props: EmptyTextProps) -> impl IntoView {
+    view! { <p class="sp42-empty-text">{props.message}</p> }
+}
+
+pub use empty_text as EmptyText;
+
+pub struct NotesPanelProps {
+    title: String,
+    children: Children,
+}
+
+impl NotesPanelProps {
+    #[must_use]
+    pub fn new(title: impl Into<String>, children: Children) -> Self {
+        Self {
+            title: title.into(),
+            children,
+        }
+    }
+}
+
+#[must_use]
+pub fn notes_panel(props: NotesPanelProps) -> impl IntoView {
+    let children = props.children;
+
+    view! {
+        <section class="sp42-notes-panel">
+            <span class="section-header">{props.title}</span>
+            {children()}
+        </section>
+    }
+}
+
+pub use notes_panel as NotesPanel;
+
+pub struct RawReportDisclosureProps {
+    summary: String,
+    text: String,
+}
+
+impl RawReportDisclosureProps {
+    #[must_use]
+    pub fn new(summary: impl Into<String>, text: impl Into<String>) -> Self {
+        Self {
+            summary: summary.into(),
+            text: text.into(),
+        }
+    }
+}
+
+#[must_use]
+pub fn raw_report_disclosure(props: RawReportDisclosureProps) -> impl IntoView {
+    view! {
+        <details class="sp42-raw-report">
+            <summary>{props.summary}</summary>
+            <pre class="sp42-raw-report-body">{props.text}</pre>
+        </details>
+    }
+}
+
+pub use raw_report_disclosure as RawReportDisclosure;
+
+pub struct EvidenceDisclosureProps {
+    summary: String,
+    children: Children,
+}
+
+impl EvidenceDisclosureProps {
+    #[must_use]
+    pub fn new(summary: impl Into<String>, children: Children) -> Self {
+        Self {
+            summary: summary.into(),
+            children,
+        }
+    }
+}
+
+#[must_use]
+pub fn evidence_disclosure(props: EvidenceDisclosureProps) -> impl IntoView {
+    let children = props.children;
+
+    view! {
+        <details class="sp42-evidence-disclosure">
+            <summary>{props.summary}</summary>
+            {children()}
+        </details>
+    }
+}
+
+pub use evidence_disclosure as EvidenceDisclosure;
+
+pub struct EvidenceBlockProps {
+    label: String,
+    text: String,
+    tone: Tone,
+}
+
+impl EvidenceBlockProps {
+    #[must_use]
+    pub fn new(label: impl Into<String>, text: impl Into<String>) -> Self {
+        Self {
+            label: label.into(),
+            text: text.into(),
+            tone: Tone::default(),
+        }
+    }
+
+    #[must_use]
+    pub const fn with_tone(mut self, tone: Tone) -> Self {
+        self.tone = tone;
+        self
+    }
+}
+
+#[must_use]
+pub fn evidence_block(props: EvidenceBlockProps) -> impl IntoView {
+    view! {
+        <div class="sp42-evidence-block">
+            <span>{props.label}</span>
+            <blockquote class=class_names(&[
+                "sp42-evidence-quote",
+                result_tone_class_name(props.tone)
+            ])>
+                {props.text}
+            </blockquote>
+        </div>
+    }
+}
+
+pub use evidence_block as EvidenceBlock;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ShortcutDefinition {
+    pub label: String,
+    pub keys: String,
+}
+
+impl ShortcutDefinition {
+    #[must_use]
+    pub fn new(label: impl Into<String>, keys: impl Into<String>) -> Self {
+        Self {
+            label: label.into(),
+            keys: keys.into(),
+        }
+    }
+}
+
+pub struct ShortcutListProps {
+    shortcuts: Vec<ShortcutDefinition>,
+}
+
+impl ShortcutListProps {
+    #[must_use]
+    pub fn new(shortcuts: Vec<ShortcutDefinition>) -> Self {
+        Self { shortcuts }
+    }
+}
+
+#[must_use]
+pub fn shortcut_list(props: ShortcutListProps) -> impl IntoView {
+    view! {
+        <div class="sp42-shortcut-list">
+            {props
+                .shortcuts
+                .into_iter()
+                .map(|shortcut| ShortcutRow(ShortcutRowProps::new(shortcut.label, shortcut.keys)))
+                .collect_view()}
+        </div>
+    }
+}
+
+pub use shortcut_list as ShortcutList;
+
+pub struct ShortcutRowProps {
+    label: String,
+    keys: String,
+}
+
+impl ShortcutRowProps {
+    #[must_use]
+    pub fn new(label: impl Into<String>, keys: impl Into<String>) -> Self {
+        Self {
+            label: label.into(),
+            keys: keys.into(),
+        }
+    }
+}
+
+#[must_use]
+pub fn shortcut_row(props: ShortcutRowProps) -> impl IntoView {
+    view! {
+        <div class="sp42-shortcut-row">
+            <span>{props.label}</span>
+            <kbd>{props.keys}</kbd>
+        </div>
+    }
+}
+
+pub use shortcut_row as ShortcutRow;
+
+#[must_use]
+fn result_tone_class_name(tone: Tone) -> &'static str {
+    match tone {
+        Tone::Success => "sp42-tone-success",
+        Tone::Warning => "sp42-tone-warning",
+        Tone::Danger => "sp42-tone-danger",
+        Tone::Info => "sp42-tone-info",
+        Tone::Accent => "sp42-tone-accent",
+        Tone::Muted => "sp42-tone-muted",
+        Tone::Subtle => "sp42-tone-subtle",
+        Tone::Default => "sp42-tone-default",
+    }
+}

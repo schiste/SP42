@@ -1,6 +1,17 @@
 use leptos::prelude::*;
 use sp42_core::{ArticleInventory, ArticleReference, MediaReference};
+use sp42_ui::{
+    Button, ButtonProps, ButtonType, CommandBar, CommandBarProps, CommandTitle, CommandTitleProps,
+    DataPanel, DataPanelProps, Density, EmptyText, EmptyTextProps, Field, FieldProps,
+    InventoryHeader, InventoryHeaderProps, InventoryShell, InventoryShellProps, MetaText,
+    MetaTextProps, NotesPanel, NotesPanelProps, PageShell, PageShellProps, PanelGrid,
+    PanelGridProps, ResultCard, ResultCardHeader, ResultCardHeaderProps, ResultCardProps,
+    ResultList, ResultListProps, Size, StatGrid, StatGridProps, StatItem, StatItemProps,
+    StatusRegion, StatusRegionProps, Text, TextElement, TextInput, TextInputProps, TextProps, Tone,
+    Width,
+};
 
+use crate::components::ui_children;
 use crate::platform::article::fetch_article_inventory;
 use crate::platform::config::selected_wiki_id;
 
@@ -38,88 +49,97 @@ pub fn ArticleSurface() -> impl IntoView {
         }
     });
 
-    view! {
-        <section class="article-workspace">
-            <form
-                class="article-command-bar"
-                on:submit=move |ev| {
+    PageShell(PageShellProps::new(ui_children(move || {
+        view! {
+            {CommandBar(
+                CommandBarProps::new(ui_children(move || view! {
+                    {CommandTitle(CommandTitleProps::new(
+                        "Article Workspace",
+                        "Current page inventory",
+                    ))}
+                    {Field(FieldProps::new(
+                        "Wiki",
+                        ui_children(move || view! {
+                            {TextInput(
+                                TextInputProps::new("article-wiki")
+                                    .with_value(Signal::derive(move || wiki_id.get()))
+                                    .with_width(Width::Short)
+                                    .with_density(Density::Compact)
+                                    .on_input(move |ev| set_wiki_id.set(input_value(&ev)))
+                            )}
+                        }.into_any()),
+                    ))}
+                    {Field(FieldProps::new(
+                        "Title",
+                        ui_children(move || view! {
+                            {TextInput(
+                                TextInputProps::new("article-title")
+                                    .with_value(Signal::derive(move || title.get()))
+                                    .with_placeholder("Article title")
+                                    .with_width(Width::Full)
+                                    .with_density(Density::Compact)
+                                    .on_input(move |ev| set_title.set(input_value(&ev)))
+                            )}
+                        }.into_any()),
+                    ))}
+                    {Button(
+                        ButtonProps::new("Load")
+                            .with_type(ButtonType::Submit)
+                            .with_tone(Tone::Success)
+                            .with_density(Density::Compact)
+                            .with_disabled(Signal::derive(move || loading.get()))
+                    )}
+                }.into_any()))
+                .on_submit(move |ev| {
                     ev.prevent_default();
                     load_action.dispatch_local(());
-                }
-            >
-                <div class="article-command-title">
-                    <span class="section-header">"Article Workspace"</span>
-                    <strong>"Current page inventory"</strong>
-                </div>
-                <label class="article-field">
-                    <span>"Wiki"</span>
-                    <input
-                        class="article-input article-input-short"
-                        type="text"
-                        prop:value=move || wiki_id.get()
-                        on:input=move |ev| set_wiki_id.set(input_value(&ev))
-                    />
-                </label>
-                <label class="article-field article-field-title">
-                    <span>"Title"</span>
-                    <input
-                        class="article-input"
-                        type="text"
-                        placeholder="Article title"
-                        prop:value=move || title.get()
-                        on:input=move |ev| set_title.set(input_value(&ev))
-                    />
-                </label>
-                <button class="btn btn-compact btn-success" type="submit" disabled=move || loading.get()>
-                    {move || if loading.get() { "Loading" } else { "Load" }}
-                </button>
-            </form>
+                })
+            )}
 
             {move || {
                 if let Some(error) = load_error.get() {
-                    return view! {
-                        <div class="article-state article-state-error">{error}</div>
-                    }.into_any();
+                    return StatusRegion(
+                        StatusRegionProps::new(ui_children(move || view! { {error} }.into_any()))
+                            .with_tone(Tone::Danger),
+                    )
+                    .into_any();
                 }
                 if let Some(next_inventory) = inventory.get() {
                     return view! {
                         <ArticleInventoryView inventory=next_inventory />
                     }.into_any();
                 }
-                view! {
-                    <div class="article-state">
+                StatusRegion(StatusRegionProps::new(ui_children(|| {
+                    view! {
                         "Load an article to see sections, citations, templates, categories, media references, and cross-project links."
-                    </div>
-                }.into_any()
+                    }
+                    .into_any()
+                })))
+                .into_any()
             }}
-        </section>
-    }
+        }
+        .into_any()
+    })))
 }
 
 #[component]
 fn ArticleInventoryView(inventory: ArticleInventory) -> impl IntoView {
     let summary = inventory_summary(&inventory);
-    view! {
-        <div class="article-inventory">
-            <header class="article-inventory-header">
-                <div>
-                    <span class="section-header">{inventory.wiki_id.clone()}</span>
-                    <h1>{inventory.title.clone()}</h1>
-                </div>
-                <div class="article-stat-grid">
-                    {summary
-                        .into_iter()
-                        .map(|(label, value)| view! {
-                            <div class="article-stat">
-                                <span>{label}</span>
-                                <strong>{value}</strong>
-                            </div>
-                        })
-                        .collect_view()}
-                </div>
-            </header>
+    InventoryShell(InventoryShellProps::new(ui_children(move || {
+        view! {
+            {InventoryHeader(
+                InventoryHeaderProps::new(inventory.wiki_id.clone(), inventory.title.clone())
+                    .with_actions(ui_children(move || view! {
+                        {StatGrid(StatGridProps::new(ui_children(move || view! {
+                            {summary
+                                .into_iter()
+                                .map(|(label, value)| StatItem(StatItemProps::new(label, value)))
+                                .collect_view()}
+                        }.into_any())))}
+                    }.into_any()))
+            )}
 
-            <div class="article-panels">
+            {PanelGrid(PanelGridProps::new(ui_children(move || view! {
                 <InventoryPanel title="Sections".to_string() count=inventory.section_count>
                     <CompactList values=inventory.section_headings.clone() empty="No section headings detected.".to_string() />
                 </InventoryPanel>
@@ -138,113 +158,126 @@ fn ArticleInventoryView(inventory: ArticleInventory) -> impl IntoView {
                 <InventoryPanel title="Cross-project links".to_string() count=inventory.interwiki_links.len()>
                     <CompactList values=inventory.interwiki_links.clone() empty="No interwiki or sister-project links detected.".to_string() />
                 </InventoryPanel>
-            </div>
+            }.into_any())))}
 
-            <section class="article-notes">
-                <span class="section-header">"Readiness Notes"</span>
+            {NotesPanel(NotesPanelProps::new("Readiness Notes", ui_children(move || view! {
                 {inventory.notes
                     .into_iter()
                     .map(|note| view! { <p>{note}</p> })
                     .collect_view()}
-            </section>
-        </div>
-    }
+            }.into_any())))}
+        }
+        .into_any()
+    })))
 }
 
 #[component]
 fn InventoryPanel(title: String, count: usize, children: Children) -> impl IntoView {
-    view! {
-        <section class="article-panel">
-            <header class="article-panel-header">
-                <span>{title}</span>
-                <strong>{count}</strong>
-            </header>
-            {children()}
-        </section>
-    }
+    DataPanel(DataPanelProps::new(title, children).with_count(count.to_string()))
 }
 
 #[component]
 fn CompactList(values: Vec<String>, empty: String) -> impl IntoView {
     if values.is_empty() {
-        return view! { <p class="article-empty">{empty}</p> }.into_any();
+        return EmptyText(EmptyTextProps::new(empty)).into_any();
     }
 
-    view! {
-        <ul class="article-list">
+    ResultList(ResultListProps::new(ui_children(move || {
+        view! {
             {values
                 .into_iter()
                 .take(16)
-                .map(|value| view! { <li>{value}</li> })
+                .map(|value| {
+                    ResultCard(ResultCardProps::new(ui_children(move || {
+                        view! { <span>{value}</span> }.into_any()
+                    })))
+                })
                 .collect_view()}
-        </ul>
-    }
+        }
+        .into_any()
+    })))
     .into_any()
 }
 
 #[component]
 fn ReferenceList(references: Vec<ArticleReference>) -> impl IntoView {
     if references.is_empty() {
-        return view! {
-            <p class="article-empty">"No <ref> tags detected."</p>
-        }
-        .into_any();
+        return EmptyText(EmptyTextProps::new("No <ref> tags detected.")).into_any();
     }
 
-    view! {
-        <div class="article-reference-list">
+    ResultList(ResultListProps::new(ui_children(move || {
+        view! {
             {references
                 .into_iter()
                 .take(12)
                 .map(|reference| {
+                    let ordinal = reference.ordinal;
                     let name = reference.name.unwrap_or_else(|| "unnamed".to_string());
                     let status = if reference.has_content { "content" } else { "reuse" };
-                    view! {
-                        <article class="article-reference">
-                            <div class="article-reference-top">
-                                <strong>{format!("#{} {name}", reference.ordinal)}</strong>
-                                <span>{status}</span>
-                            </div>
-                            <div class="article-reference-meta">
-                                {format!(
-                                    "{} citation template(s), {} URL(s)",
-                                    reference.citation_template_count,
-                                    reference.bare_urls.len()
-                                )}
-                            </div>
-                            <p>{reference.preview}</p>
-                        </article>
-                    }
+                    let citation_count = reference.citation_template_count;
+                    let url_count = reference.bare_urls.len();
+                    let preview = reference.preview;
+                    ResultCard(ResultCardProps::new(ui_children(move || {
+                        view! {
+                            {ResultCardHeader(
+                                ResultCardHeaderProps::new(ui_children(move || {
+                                    view! { <strong>{format!("#{ordinal} {name}")}</strong> }
+                                        .into_any()
+                                }))
+                                .with_actions(ui_children(move || {
+                                    view! { <span>{status}</span> }.into_any()
+                                }))
+                            )}
+                            {MetaText(MetaTextProps::new(ui_children(move || {
+                                view! {
+                                    {format!("{citation_count} citation template(s), {url_count} URL(s)")}
+                                }
+                                .into_any()
+                            })))}
+                            {Text(
+                                TextProps::new(ui_children(move || view! { {preview} }.into_any()))
+                                    .with_tone(Tone::Muted)
+                                    .with_size(Size::Small)
+                                    .with_element(TextElement::Paragraph)
+                            )}
+                        }
+                        .into_any()
+                    })))
                 })
                 .collect_view()}
-        </div>
-    }
+        }
+        .into_any()
+    })))
     .into_any()
 }
 
 #[component]
 fn MediaList(references: Vec<MediaReference>) -> impl IntoView {
     if references.is_empty() {
-        return view! {
-            <p class="article-empty">"No file, gallery, or template media references detected."</p>
-        }
+        return EmptyText(EmptyTextProps::new(
+            "No file, gallery, or template media references detected.",
+        ))
         .into_any();
     }
 
-    view! {
-        <ul class="article-list">
+    ResultList(ResultListProps::new(ui_children(move || {
+        view! {
             {references
                 .into_iter()
                 .take(12)
-                .map(|reference| view! {
-                    <li>
-                        <strong>{reference.display_title}</strong>
-                        <span>{reference.usage_signature}</span>
-                    </li>
+                .map(|reference| {
+                    ResultCard(ResultCardProps::new(ui_children(move || {
+                        view! {
+                            <strong>{reference.display_title}</strong>
+                            <span>{reference.usage_signature}</span>
+                        }
+                        .into_any()
+                    })))
                 })
                 .collect_view()}
-        </ul>
-    }
+        }
+        .into_any()
+    })))
     .into_any()
 }
 

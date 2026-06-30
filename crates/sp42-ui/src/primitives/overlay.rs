@@ -2,6 +2,8 @@
 
 use leptos::prelude::*;
 
+use super::controls::{Button, ButtonProps, ButtonSurface};
+use super::data_display::{ShortcutDefinition, ShortcutList, ShortcutListProps};
 use super::layout::{Density, Size, State, ValueState};
 use super::util::class_names;
 
@@ -142,3 +144,98 @@ pub fn filter_disclosure(props: FilterDisclosureProps) -> impl IntoView {
 }
 
 pub use filter_disclosure as FilterDisclosure;
+
+pub struct KeyboardShortcutModalProps {
+    title: String,
+    shortcuts: Vec<ShortcutDefinition>,
+    on_close: Option<Callback<leptos::ev::MouseEvent>>,
+}
+
+impl KeyboardShortcutModalProps {
+    #[must_use]
+    pub fn new(title: impl Into<String>, shortcuts: Vec<ShortcutDefinition>) -> Self {
+        Self {
+            title: title.into(),
+            shortcuts,
+            on_close: None,
+        }
+    }
+
+    #[must_use]
+    pub fn on_close<F>(mut self, on_close: F) -> Self
+    where
+        F: Fn(leptos::ev::MouseEvent) + Send + Sync + 'static,
+    {
+        self.on_close = Some(Callback::new(on_close));
+        self
+    }
+}
+
+#[must_use]
+pub fn keyboard_shortcut_modal(props: KeyboardShortcutModalProps) -> impl IntoView {
+    let close_backdrop = props.on_close;
+    let close_button = props.on_close;
+    let title = props.title;
+    let aria_label = title.clone();
+
+    view! {
+        <div
+            class="modal-backdrop"
+            on:click=move |ev| {
+                if let Some(callback) = &close_backdrop {
+                    callback.run(ev);
+                }
+            }
+        >
+            <section
+                class="modal sp42-modal sp42-modal-sm"
+                role="dialog"
+                aria-modal="true"
+                aria-label=aria_label
+                on:click=move |ev| ev.stop_propagation()
+            >
+                <header class="sp42-modal-header">
+                    <h2>{title}</h2>
+                </header>
+                {ShortcutList(ShortcutListProps::new(props.shortcuts))}
+                <footer class="sp42-modal-footer">
+                    {Button(
+                        ButtonProps::new("Close")
+                            .with_surface(ButtonSurface::Ghost)
+                            .on_click(move |ev| {
+                                if let Some(callback) = &close_button {
+                                    callback.run(ev);
+                                }
+                            })
+                    )}
+                </footer>
+            </section>
+        </div>
+    }
+}
+
+pub use keyboard_shortcut_modal as KeyboardShortcutModal;
+
+pub struct FullscreenOverlayProps {
+    children: Children,
+}
+
+impl FullscreenOverlayProps {
+    #[must_use]
+    pub fn new(children: Children) -> Self {
+        Self { children }
+    }
+}
+
+#[must_use]
+pub fn fullscreen_overlay(props: FullscreenOverlayProps) -> impl IntoView {
+    let children = props.children;
+
+    view! {
+        <div class="sp42-fullscreen-overlay">
+            <div class="sp42-fullscreen-overlay-inner">{children()}</div>
+        </div>
+    }
+}
+
+pub use fullscreen_overlay as FullscreenOverlay;

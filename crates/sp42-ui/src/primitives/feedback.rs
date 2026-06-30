@@ -164,3 +164,156 @@ pub fn error_state(props: ErrorStateProps) -> impl IntoView {
 }
 
 pub use error_state as ErrorState;
+
+#[derive(Clone, Copy)]
+pub enum ToneState {
+    Static(Tone),
+    Signal(Signal<Tone>),
+}
+
+impl Default for ToneState {
+    fn default() -> Self {
+        Self::Static(Tone::default())
+    }
+}
+
+impl ToneState {
+    #[must_use]
+    pub fn get(self) -> Tone {
+        match self {
+            Self::Static(tone) => tone,
+            Self::Signal(tone) => tone.get(),
+        }
+    }
+}
+
+impl From<Tone> for ToneState {
+    fn from(value: Tone) -> Self {
+        Self::Static(value)
+    }
+}
+
+impl From<Signal<Tone>> for ToneState {
+    fn from(value: Signal<Tone>) -> Self {
+        Self::Signal(value)
+    }
+}
+
+pub struct StatusRegionProps {
+    children: Children,
+    tone: Tone,
+}
+
+impl StatusRegionProps {
+    #[must_use]
+    pub fn new(children: Children) -> Self {
+        Self {
+            children,
+            tone: Tone::Muted,
+        }
+    }
+
+    #[must_use]
+    pub const fn with_tone(mut self, tone: Tone) -> Self {
+        self.tone = tone;
+        self
+    }
+}
+
+#[must_use]
+pub fn status_region(props: StatusRegionProps) -> impl IntoView {
+    let children = props.children;
+
+    view! {
+        <section class=class_names(&["sp42-status-region", tone_region_class_name(props.tone)]) role="status" aria-live="polite">
+            {children()}
+        </section>
+    }
+}
+
+pub use status_region as StatusRegion;
+
+pub struct LoadingRegionProps {
+    label: String,
+}
+
+impl LoadingRegionProps {
+    #[must_use]
+    pub fn new(label: impl Into<String>) -> Self {
+        Self {
+            label: label.into(),
+        }
+    }
+}
+
+#[must_use]
+pub fn loading_region(props: LoadingRegionProps) -> impl IntoView {
+    view! {
+        <section class="sp42-status-region" role="status" aria-live="polite">
+            {Spinner(SpinnerProps::new(props.label.clone()))}
+            <p>{props.label}</p>
+        </section>
+    }
+}
+
+pub use loading_region as LoadingRegion;
+
+pub struct StatusDotProps {
+    tone: ToneState,
+    label: String,
+}
+
+impl StatusDotProps {
+    #[must_use]
+    pub fn new(label: impl Into<String>) -> Self {
+        Self {
+            tone: ToneState::default(),
+            label: label.into(),
+        }
+    }
+
+    #[must_use]
+    pub fn with_tone(mut self, tone: impl Into<ToneState>) -> Self {
+        self.tone = tone.into();
+        self
+    }
+}
+
+#[must_use]
+pub fn status_dot(props: StatusDotProps) -> impl IntoView {
+    let tone = props.tone;
+
+    view! {
+        <span
+            class=move || class_names(&["sp42-status-dot", tone_dot_class_name(tone.get())])
+            role="status"
+            aria-label=props.label
+        ></span>
+    }
+}
+
+pub use status_dot as StatusDot;
+
+#[must_use]
+fn tone_region_class_name(tone: Tone) -> &'static str {
+    match tone {
+        Tone::Danger => "sp42-status-region-danger",
+        Tone::Warning => "sp42-status-region-warning",
+        Tone::Success => "sp42-status-region-success",
+        Tone::Accent => "sp42-status-region-accent",
+        Tone::Info => "sp42-status-region-info",
+        Tone::Default | Tone::Muted | Tone::Subtle => "sp42-status-region-muted",
+    }
+}
+
+#[must_use]
+fn tone_dot_class_name(tone: Tone) -> &'static str {
+    match tone {
+        Tone::Danger => "sp42-status-dot-danger",
+        Tone::Warning => "sp42-status-dot-warning",
+        Tone::Success => "sp42-status-dot-success",
+        Tone::Accent => "sp42-status-dot-accent",
+        Tone::Info => "sp42-status-dot-info",
+        Tone::Default | Tone::Muted | Tone::Subtle => "sp42-status-dot-muted",
+    }
+}

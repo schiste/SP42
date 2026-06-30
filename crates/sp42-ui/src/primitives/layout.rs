@@ -646,6 +646,268 @@ pub fn grid(props: GridProps) -> impl IntoView {
 
 pub use grid as Grid;
 
+pub struct PageShellProps {
+    children: Children,
+}
+
+impl PageShellProps {
+    #[must_use]
+    pub fn new(children: Children) -> Self {
+        Self { children }
+    }
+}
+
+#[must_use]
+pub fn page_shell(props: PageShellProps) -> impl IntoView {
+    let children = props.children;
+
+    view! { <section class="sp42-page-shell">{children()}</section> }
+}
+
+pub use page_shell as PageShell;
+
+pub struct CommandBarProps {
+    children: Children,
+    on_submit: Option<Callback<leptos::ev::SubmitEvent>>,
+}
+
+impl CommandBarProps {
+    #[must_use]
+    pub fn new(children: Children) -> Self {
+        Self {
+            children,
+            on_submit: None,
+        }
+    }
+
+    #[must_use]
+    pub fn on_submit<F>(mut self, on_submit: F) -> Self
+    where
+        F: Fn(leptos::ev::SubmitEvent) + Send + Sync + 'static,
+    {
+        self.on_submit = Some(Callback::new(on_submit));
+        self
+    }
+}
+
+#[must_use]
+pub fn command_bar(props: CommandBarProps) -> impl IntoView {
+    let children = props.children;
+    let on_submit = props.on_submit;
+
+    view! {
+        <form
+            class="sp42-command-bar"
+            on:submit=move |ev| {
+                if let Some(callback) = on_submit {
+                    callback.run(ev);
+                }
+            }
+        >
+            {children()}
+        </form>
+    }
+}
+
+pub use command_bar as CommandBar;
+
+pub struct CommandTitleProps {
+    eyebrow: String,
+    title: String,
+}
+
+impl CommandTitleProps {
+    #[must_use]
+    pub fn new(eyebrow: impl Into<String>, title: impl Into<String>) -> Self {
+        Self {
+            eyebrow: eyebrow.into(),
+            title: title.into(),
+        }
+    }
+}
+
+#[must_use]
+pub fn command_title(props: CommandTitleProps) -> impl IntoView {
+    view! {
+        <div class="sp42-command-title">
+            <span class="section-header">{props.eyebrow}</span>
+            <strong>{props.title}</strong>
+        </div>
+    }
+}
+
+pub use command_title as CommandTitle;
+
+pub struct InventoryShellProps {
+    children: Children,
+}
+
+impl InventoryShellProps {
+    #[must_use]
+    pub fn new(children: Children) -> Self {
+        Self { children }
+    }
+}
+
+#[must_use]
+pub fn inventory_shell(props: InventoryShellProps) -> impl IntoView {
+    let children = props.children;
+
+    view! { <div class="sp42-inventory-shell">{children()}</div> }
+}
+
+pub use inventory_shell as InventoryShell;
+
+pub struct InventoryHeaderProps {
+    eyebrow: String,
+    title: String,
+    actions: Option<Children>,
+}
+
+impl InventoryHeaderProps {
+    #[must_use]
+    pub fn new(eyebrow: impl Into<String>, title: impl Into<String>) -> Self {
+        Self {
+            eyebrow: eyebrow.into(),
+            title: title.into(),
+            actions: None,
+        }
+    }
+
+    #[must_use]
+    pub fn with_actions(mut self, actions: Children) -> Self {
+        self.actions = Some(actions);
+        self
+    }
+}
+
+#[must_use]
+pub fn inventory_header(props: InventoryHeaderProps) -> impl IntoView {
+    let actions = props.actions.map(|actions| actions().into_any());
+
+    view! {
+        <header class="sp42-inventory-header">
+            <div>
+                <span class="section-header">{props.eyebrow}</span>
+                <h1>{props.title}</h1>
+            </div>
+            {actions}
+        </header>
+    }
+}
+
+pub use inventory_header as InventoryHeader;
+
+pub struct StatGridProps {
+    children: Children,
+}
+
+impl StatGridProps {
+    #[must_use]
+    pub fn new(children: Children) -> Self {
+        Self { children }
+    }
+}
+
+#[must_use]
+pub fn stat_grid(props: StatGridProps) -> impl IntoView {
+    let children = props.children;
+
+    view! { <div class="sp42-stat-grid">{children()}</div> }
+}
+
+pub use stat_grid as StatGrid;
+
+pub struct StatItemProps {
+    label: String,
+    value: String,
+}
+
+impl StatItemProps {
+    #[must_use]
+    pub fn new(label: impl Into<String>, value: impl Into<String>) -> Self {
+        Self {
+            label: label.into(),
+            value: value.into(),
+        }
+    }
+}
+
+#[must_use]
+pub fn stat_item(props: StatItemProps) -> impl IntoView {
+    view! {
+        <div class="sp42-stat-item">
+            <span>{props.label}</span>
+            <strong>{props.value}</strong>
+        </div>
+    }
+}
+
+pub use stat_item as StatItem;
+
+pub struct PanelGridProps {
+    children: Children,
+}
+
+impl PanelGridProps {
+    #[must_use]
+    pub fn new(children: Children) -> Self {
+        Self { children }
+    }
+}
+
+#[must_use]
+pub fn panel_grid(props: PanelGridProps) -> impl IntoView {
+    let children = props.children;
+
+    view! { <div class="sp42-panel-grid">{children()}</div> }
+}
+
+pub use panel_grid as PanelGrid;
+
+pub struct DataPanelProps {
+    title: String,
+    count: Option<String>,
+    children: Children,
+}
+
+impl DataPanelProps {
+    #[must_use]
+    pub fn new(title: impl Into<String>, children: Children) -> Self {
+        Self {
+            title: title.into(),
+            count: None,
+            children,
+        }
+    }
+
+    #[must_use]
+    pub fn with_count(mut self, count: impl Into<String>) -> Self {
+        self.count = Some(count.into());
+        self
+    }
+}
+
+#[must_use]
+pub fn data_panel(props: DataPanelProps) -> impl IntoView {
+    let children = props.children;
+    let count = props
+        .count
+        .map(|count| view! { <strong>{count}</strong> }.into_any());
+
+    view! {
+        <section class="sp42-data-panel">
+            <header class="sp42-data-panel-header">
+                <span>{props.title}</span>
+                {count}
+            </header>
+            {children()}
+        </section>
+    }
+}
+
+pub use data_panel as DataPanel;
+
 pub struct ToolbarProps {
     aria_label: String,
     children: Children,
@@ -685,6 +947,199 @@ pub fn toolbar(props: ToolbarProps) -> impl IntoView {
 }
 
 pub use toolbar as Toolbar;
+
+pub struct StatusBarProps {
+    children: Children,
+}
+
+impl StatusBarProps {
+    #[must_use]
+    pub fn new(children: Children) -> Self {
+        Self { children }
+    }
+}
+
+#[must_use]
+pub fn status_bar(props: StatusBarProps) -> impl IntoView {
+    let children = props.children;
+
+    view! { <div class="sp42-status-bar">{children()}</div> }
+}
+
+pub use status_bar as StatusBar;
+
+pub struct ActionBarShellProps {
+    children: Children,
+}
+
+impl ActionBarShellProps {
+    #[must_use]
+    pub fn new(children: Children) -> Self {
+        Self { children }
+    }
+}
+
+#[must_use]
+pub fn action_bar_shell(props: ActionBarShellProps) -> impl IntoView {
+    let children = props.children;
+
+    view! { <div class="sp42-action-bar">{children()}</div> }
+}
+
+pub use action_bar_shell as ActionBarShell;
+
+pub struct SplitWorkAreaProps {
+    primary: Children,
+    aside: Option<Children>,
+}
+
+impl SplitWorkAreaProps {
+    #[must_use]
+    pub fn new(primary: Children) -> Self {
+        Self {
+            primary,
+            aside: None,
+        }
+    }
+
+    #[must_use]
+    pub fn with_aside(mut self, aside: Children) -> Self {
+        self.aside = Some(aside);
+        self
+    }
+}
+
+#[must_use]
+pub fn split_work_area(props: SplitWorkAreaProps) -> impl IntoView {
+    let primary = props.primary;
+    let has_aside = props.aside.is_some();
+    let class_name = class_names(&[
+        "sp42-split-work-area",
+        if has_aside {
+            "sp42-split-work-area-with-aside"
+        } else {
+            ""
+        },
+    ]);
+    let aside = props
+        .aside
+        .map(|aside| view! { <aside class="sp42-split-work-aside">{aside()}</aside> }.into_any());
+
+    view! {
+        <div class=class_name>
+            <div class="sp42-split-work-primary">{primary()}</div>
+            {aside}
+        </div>
+    }
+}
+
+pub use split_work_area as SplitWorkArea;
+
+pub struct WorkspaceMainProps {
+    children: Children,
+}
+
+impl WorkspaceMainProps {
+    #[must_use]
+    pub fn new(children: Children) -> Self {
+        Self { children }
+    }
+}
+
+#[must_use]
+pub fn workspace_main(props: WorkspaceMainProps) -> impl IntoView {
+    let children = props.children;
+
+    view! { <div class="sp42-workspace-main">{children()}</div> }
+}
+
+pub use workspace_main as WorkspaceMain;
+
+pub struct WorkspaceGridProps {
+    children: Children,
+    on_keydown: Option<Callback<leptos::ev::KeyboardEvent>>,
+}
+
+impl WorkspaceGridProps {
+    #[must_use]
+    pub fn new(children: Children) -> Self {
+        Self {
+            children,
+            on_keydown: None,
+        }
+    }
+
+    #[must_use]
+    pub fn on_keydown<F>(mut self, on_keydown: F) -> Self
+    where
+        F: Fn(leptos::ev::KeyboardEvent) + Send + Sync + 'static,
+    {
+        self.on_keydown = Some(Callback::new(on_keydown));
+        self
+    }
+}
+
+#[must_use]
+pub fn workspace_grid(props: WorkspaceGridProps) -> impl IntoView {
+    let children = props.children;
+    let on_keydown = props.on_keydown;
+
+    view! {
+        <div
+            tabindex="0"
+            class="sp42-workspace-grid"
+            on:keydown=move |event| {
+                if let Some(callback) = on_keydown {
+                    callback.run(event);
+                }
+            }
+        >
+            {children()}
+        </div>
+    }
+}
+
+pub use workspace_grid as WorkspaceGrid;
+
+pub struct GateShellProps {
+    children: Children,
+}
+
+impl GateShellProps {
+    #[must_use]
+    pub fn new(children: Children) -> Self {
+        Self { children }
+    }
+}
+
+#[must_use]
+pub fn gate_shell(props: GateShellProps) -> impl IntoView {
+    let children = props.children;
+
+    view! { <div class="sp42-gate-shell">{children()}</div> }
+}
+
+pub use gate_shell as GateShell;
+
+pub struct GateCardProps {
+    children: Children,
+}
+
+impl GateCardProps {
+    #[must_use]
+    pub fn new(children: Children) -> Self {
+        Self { children }
+    }
+}
+
+#[must_use]
+pub fn gate_card(props: GateCardProps) -> impl IntoView {
+    let children = props.children;
+
+    view! { <section class="sp42-gate-card">{children()}</section> }
+}
+
+pub use gate_card as GateCard;
 
 #[must_use]
 pub fn spacer() -> impl IntoView {

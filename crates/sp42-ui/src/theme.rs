@@ -103,7 +103,7 @@ pub fn theme_toggle(state: ThemeState) -> impl IntoView {
     view! {
         <button
             type="button"
-            class="workspace-tab workspace-theme-toggle"
+            class="sp42-workspace-tab sp42-workspace-theme-toggle"
             on:click=move |_| state.toggle()
             aria-label=move || state.current().get().toggle_aria_label()
             title=move || state.current().get().toggle_title()

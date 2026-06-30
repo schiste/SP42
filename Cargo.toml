@@ -9,6 +9,7 @@ members = [
     "crates/sp42-desktop",
     "crates/sp42-inference",
     "crates/sp42-live",
+    "crates/sp42-mcp",
     "crates/sp42-patrol",
     "crates/sp42-platform",
     "crates/sp42-reporting",

@@ -33,7 +33,6 @@ use crate::action_routes::{
 use crate::config_for_state_wiki;
 use crate::http_errors::{forbidden_error, unauthorized_error};
 use crate::runtime_adapters::BearerHttpClient;
-use crate::runtime_adapters::PlainHttpClient;
 use crate::session_runtime::{current_session_snapshot, validate_csrf_header};
 use crate::state::AppState;
 
@@ -320,12 +319,13 @@ pub(crate) async fn post_verify_page(
         )
     })?;
 
-    let http_client = PlainHttpClient::new().map_err(|error| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(serde_json::json!({ "error": error })),
-        )
-    })?;
+    let http_client =
+        sp42_fetch::source_client_from_env(sp42_core::branding::USER_AGENT).map_err(|error| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({ "error": error })),
+            )
+        })?;
 
     // `rev_id == 0` means "latest": resolve it to a concrete revision before
     // verifying, so the report records the exact revision that was checked. Use the

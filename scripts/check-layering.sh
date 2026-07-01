@@ -50,6 +50,7 @@ LAYER = {
     "sp42-inference": "platform",
     "sp42-live": "platform",
     "sp42-reporting": "platform",
+    "sp42-fetch": "platform",
     # shells
     "sp42-cli": "shell",
     "sp42-app": "shell",

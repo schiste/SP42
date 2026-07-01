@@ -1005,7 +1005,7 @@ mod tests {
         let block_count = blocks.len();
         let use_site_count = extract.use_sites.len();
 
-        let http = crate::runtime_adapters::PlainHttpClient::new()
+        let http = sp42_fetch::source_client_from_env(sp42_core::branding::USER_AGENT)
             .expect("guarded source client should build");
         let model = sp42_inference::client_from_env()
             .expect("set SP42_INFERENCE_URL/TOKEN for the smoke test");

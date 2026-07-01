@@ -105,10 +105,16 @@ only under ADR-0010's confirm discipline.
 For a book citation in the revision under review, SP42 resolves it to catalog
 records **only from identifiers it already trusts**:
 
-- The key is the **ISBN** carried by the cite template (SP42 already extracts cite
-  metadata via Citoid). SP42 calls Open Library's read API (`/isbn/{isbn}.json` →
-  edition, then its `works` and, when present, the linked Internet Archive scan
-  `ocaid`).
+- The key is the **ISBN** (or OCLC/LCCN/OLID) carried by the cite template, read
+  **directly from the citation's template parameters** via Parsoid `data-mw` — the same
+  structured-extraction path ADR-0011 already uses for a cite's `url`/`archive-url`.
+  This is a **new cite-template identifier extractor the MVP must add**, and it is
+  precisely what lets a book ref stop being `skipped { NonUrlSource }`: today the
+  article extractor drops a ref with no URL before any Citoid call, and Citoid is a
+  URL→metadata sidecar that does not carry ISBN — so the identifier cannot come from
+  Citoid and must be pulled from the template itself. With an identifier in hand, SP42
+  calls Open Library's read API (`/isbn/{isbn}.json` → edition, then its `works` and,
+  when present, the linked Internet Archive scan `ocaid`).
 - **Matching is gated on a positive identifier.** With an ISBN (or another unique
   identifier — OCLC, LCCN, an explicit OLID) the resolution is reliable. **Without
   one, SP42 does not guess** from title+author (too error-prone; the classic
@@ -148,11 +154,21 @@ When resolution yields an Internet Archive scan with searchable full text:
   URLs support page anchors + search highlighting) so the operator can jump to the
   page that supports — or contradicts — the claim.
 - **Availability signal (resolved Q4):** SP42 treats a book as groundable when the
-  Open Library edition has an `ocaid` **and** the archive.org item is a text item
-  with a full-text index (search-inside returns a result set). A book that resolves
-  but is not indexed / returns no searchable text (no scan, or an image-only item)
-  degrades to `SourceUnavailable`, reusing the existing reason split (`unreachable`
-  vs `unusable`, ADR-0011 Decision 7) rather than adding a book-specific verdict.
+  Open Library edition has an `ocaid` **and** the archive.org item is a text item with
+  a full-text index (search-inside can run).
+- **"No usable body" and "searched, found nothing" are different outcomes (ADR-0007).**
+  Two empty results must not be conflated:
+  - *No usable body* — no `ocaid`, not a text item, or no full-text index so
+    search-inside cannot run at all → `SourceUnavailable`, reusing the `unreachable` vs
+    `unusable` split (ADR-0011 Decision 7). SP42 could not read the book.
+  - *Searched, nothing found* — the scan **is** indexed and search-inside ran but
+    returned **zero matching snippets** (after both the cited-page and whole-book
+    passes) → **`not_supported`**, not `SourceUnavailable`: the source exists and was
+    searched, it simply yielded no supporting passage. Reporting this as unavailable
+    would hide genuine not-supported book citations from the reviewer and the report
+    stats. Because keyword/OCR search can miss a differently-worded passage (the same
+    false-negative risk as the OCR-miss item in Risks), this stays conservative and the
+    scanned-page deep link lets the operator confirm.
 
 ### Layer 3 — Enrich (operator-confirmed write; ADR-0010 discipline)
 
@@ -226,9 +242,13 @@ Open Library / Internet Archive responses — no live network in tests (ADR-0009
       fallback path.
 - [ ] The verdict carries a page-anchored deep link into the scan, verified by a
       renderer test.
-- [ ] A resolved book whose scan is not full-text-searchable (no `ocaid` / no index /
-      empty result set) degrades to `SourceUnavailable` (correct `unreachable`/
-      `unusable` split), not a fabricated verdict, verified by a fixture test.
+- [ ] A resolved book with **no usable body** (no `ocaid`, not a text item, or no
+      full-text index) degrades to `SourceUnavailable` (correct `unreachable`/`unusable`
+      split), verified by a fixture test.
+- [ ] A resolved book whose scan **is** indexed but whose search-inside returns **zero
+      matching snippets** (after both passes) is reported `not_supported`, **not**
+      `SourceUnavailable`, verified by a fixture test asserting the verdict and that the
+      report stats count it as not-supported.
 - [ ] A thin Open Library record yields a field-level enrichment proposal whose
       **structured** fields are each populated **verbatim** from a named source
       (Open Library / Citoid / Wikidata), verified by a renderer test over replayed

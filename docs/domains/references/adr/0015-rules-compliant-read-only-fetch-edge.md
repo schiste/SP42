@@ -112,7 +112,9 @@ in our process.
    and a dedicated crate (not `sp42-inference`, the only existing reqwest home)
    avoids forcing the CLI fetch to depend on the model crate — `CliHttpClient`
    deliberately holds no model bearer, and that property must survive. The
-   `HttpClient` trait stays in `sp42-types`. This deletes both duplicate
+   `HttpClient` trait stays in `sp42-types`. Read-only is enforced at the edge:
+   only GET and HEAD are accepted, and all body-bearing / state-changing methods
+   are rejected before reqwest builds the request. This deletes both duplicate
    `execute` implementations in favor of one.
 
 2. **Trust is expressed by which resolver is attached, not by separate client
@@ -135,7 +137,10 @@ in our process.
    which closes the resolve-then-connect TOCTOU window (#60) as a side effect.
    `ip_network` replaces the hand-rolled `is_blocked_ipv4/v6` CIDR logic. A small
    IP-literal range check remains as belt-and-suspenders, since the resolver is
-   not guaranteed to fire on literal-IP hosts (no name to resolve).
+   not guaranteed to fire on literal-IP hosts (no name to resolve). The guarded
+   source face also disables system proxy discovery (`no_proxy()`); otherwise a
+   deployment-level `HTTP_PROXY` / `HTTPS_PROXY` can move target-host resolution
+   into the proxy and bypass the local resolver guard.
 
 4. **Redirects: a slimmer custom policy, not a manual loop.** Replace the CLI
    manual loop and the `guarded_source_client` closure with a `reqwest`
@@ -187,8 +192,9 @@ in our process.
     than at three independent call sites. It swaps the guarded resolver for a
     pass-through one **and** makes the initial IP-literal pre-flight and
     redirect-literal checks accept private / loopback literals. It does not
-    disable the non-address safety limits: timeouts, redirect cap, response-size
-    cap, retry policy, or shared User-Agent.
+    disable the non-address safety limits: GET/HEAD-only enforcement, system
+    proxy bypass, timeouts, redirect cap, response-size cap, retry policy, or
+    shared User-Agent.
 
 11. **Deploy-layer controls are the primary modern mitigation; the in-code guard
     is defense-in-depth.** The ADR records IMDSv2 + egress filtering as the
@@ -227,9 +233,9 @@ in our process.
   reqwest-version pin. No new DNS stack — the resolver wraps the existing system
   resolver. Net: the codebase gets smaller *and* the external-dependency count
   rises by one.
-- **Closes #34's open items** (retry/backoff, codified timeouts, confirmed UA;
-  `maxlag` ruled out with reason) **and #60** (resolved-IP / DNS-rebinding) as a
-  side effect of the resolver.
+- **Closes #34's open items** (GET/HEAD-only enforcement, retry/backoff,
+  codified timeouts, confirmed UA; `maxlag` ruled out with reason) **and #60**
+  (resolved-IP / DNS-rebinding) as a side effect of the resolver.
 - **Future drift avoided:** no separate #60 fix, no perpetual two-client sync,
   and no retry dependency whose API cannot observe `Retry-After`. The accepted
   retry code is deliberately narrow: status-only, idempotent GETs, three
@@ -291,7 +297,7 @@ in our process.
 ## Implementation notes (ground-truth, 2026-06-29)
 
 The decisions above were validated by building the crate and consolidating the
-CLI, server, inference, and core (all tests green). Five things the build
+CLI, server, inference, and core (all tests green). Several things the build
 corrected or surfaced — recorded so the design is honest:
 
 1. **IP-literal hosts bypass the resolver — the resolver is *not* sufficient
@@ -345,6 +351,14 @@ corrected or surfaced — recorded so the design is honest:
    (or a DNS answer of that form) reached loopback/metadata via the embedded
    IPv4. `is_public_ip` now unwraps `to_ipv4_mapped()` and classifies the
    embedded IPv4 first.
+
+7. **System proxies bypass the guarded resolver unless disabled.** `reqwest`
+   honors `HTTP_PROXY` / `HTTPS_PROXY` by default; if the guarded source face
+   sends source URLs through such a proxy, the proxy resolves the target host and
+   the local resolver never classifies the DNS answer. The source face therefore
+   calls `no_proxy()` unless a future proxy integration becomes the trusted
+   enforcement point and performs the same private-address checks itself. This
+   does not constrain the trusted Wikimedia face.
 
 **LOC, measured (tests excluded, per the consolidation).** Production code is
 ≈ −45 net: ~383 prod lines removed (CLI `CliHttpClient`, server `PlainHttpClient`,

@@ -237,13 +237,16 @@ in our process.
       GET/HEAD-only, UA, and proxy bypass (decisions #1–#12). Archive/adapter
       hosts are attacker-*reachable* via the citation URL, so they are treated as
       untrusted (guarded face), not trusted like the hardcoded Citoid host.
-    - **`HttpResponse` exposes the final (post-redirect) URL.** `ViewerShell`
-      host-rules must match the host actually served, which can differ from the
-      citation `url=` after redirects; `HttpResponse` today carries no final URL.
-      The edge therefore adds a `final_url` field to `HttpResponse`, set to the
-      last hop the guarded client actually fetched. Recovery host-matching (and
-      any future redirect-aware classification) keys off `final_url`; existing
-      consumers ignore it (`#[serde(default)]`, back-compatible).
+    - **`HttpResponse` will expose the final (post-redirect) URL — added with
+      Piece 2.** `ViewerShell` host-rules must match the host actually served,
+      which can differ from the citation `url=` after redirects; `HttpResponse`
+      today carries no final URL. The decision is that a `final_url` field is
+      added to `HttpResponse` (set to the last hop the guarded client fetched,
+      `#[serde(default)]` so existing consumers ignore it), but it lands **in the
+      Piece 2 change that consumes it** (the `ViewerShell` matcher), not in the
+      live-edge crate — adding a dormant field now would churn ~60 `HttpResponse`
+      construction sites across the workspace for no current reader. The live
+      edge (this ADR's implementation) does not add the field.
 
 ## Consequences
 

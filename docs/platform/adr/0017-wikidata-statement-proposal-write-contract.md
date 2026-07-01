@@ -84,7 +84,15 @@ it relays a sourced triple.
 - **ADR-0007 (anti-fabrication grounding):** governs *which* facts may be proposed — a
   statement without a verbatim-located source passage is declined.
 - **ADR-0016 (entity read):** consumed to observe `lastrevid` and current statements
-  for the drift baseline and the before/after render.
+  for the drift baseline and the before/after render — including the shared
+  statement/reference parser promoted from PR #103.
+- **PRD-0010 / PR #103 (`verify_wikidata_statement`):** the exact inverse of this
+  contract. #103 *verifies* an existing statement against its P854 reference; this ADR
+  *proposes* a new statement carrying that reference. They are two ends of one loop —
+  a statement this lane writes is precisely what #103's verb would later verify — and
+  they share the statement/reference model (ADR-0016) and the ADR-0007 grounding gate,
+  so the "fact → referenced statement" and "statement → verified reference" directions
+  never diverge in how a statement or its P854 reference is represented.
 - **ADR-0014 (resolve any project):** the write lands under the operator's project
   session.
 

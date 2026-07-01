@@ -114,12 +114,20 @@ it is platform; the workflows are thin domain policy.
   source, and it lands only on operator confirmation (ADR-0010), attributed to the
   operator's own account. Structured triples are *safer* than the free-text
   description crossing in PRD-0009 — there is no prose to synthesize, only a sourced
-  triple.
+  triple. Governed by ADR-0017, and the exact inverse of PR #103's
+  `verify_wikidata_statement`: #103 *verifies* an existing statement against its
+  reference, this *proposes* a new statement carrying one — the same statement + P854
+  model, two directions of one loop.
 - **Wikidata → sources (follows citation→facts).** Mine the references already
   attached to Wikidata's statements about X to surface additional candidate sources
   for a claim under review, feeding the existing citation-verification and
   bare-URL-repair flows. Read-only — a smaller delta on the read module, sequenced
-  second only because Q5 prioritized the write capability.
+  second only because Q5 prioritized the write capability. **This reuses the
+  statement/P854-reference reading that PR #103 (PRD-0010) already built** in
+  `verify_wikidata_statement` — promoted to platform per ADR-0016 — rather than a new
+  read path; the references it harvests are the same ones #103 reads. (The official
+  read-only Wikimedia-DE Wikidata MCP, which #103's PRD notes, is an alternative
+  external read source for statements/references and the P31/P279 hierarchy.)
 
 Everything reuses the same substrate: the platform read module reads entities; the
 workflows are thin domain policy; every write is operator-confirmed, sourced, and

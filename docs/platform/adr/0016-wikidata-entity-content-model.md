@@ -44,14 +44,23 @@ patrolling domain consumes it now, and the citation↔Wikidata workflows will to
    revision-content fetch). **All content-model routing keys on this value, never on
    the wiki id.**
 
-2. **Entity revision read via the Action API.** Fetch the target revision and its
-   parent with `prop=revisions&rvslots=main&rvprop=ids|content|contentmodel|…`,
-   returning entity JSON for both. This parallels the existing wikitext
-   revision-content fetch and preserves parity (arbitrary historical revisions, parent
-   lookup). The Wikibase **REST** API is deliberately *not* used for the read/diff path
-   — it is weaker for arbitrary old revisions — though it may suit later writes. The
-   edge is a pure builder/parser over the injected `HttpClient` trait (ADR-0004),
-   fixture-replayed with no live network in tests (ADR-0009).
+2. **Entity revision read — reuse and promote the entity/statement parser from
+   PR #103.** PR #103's `verify_wikidata_statement` (`sp42-mcp/src/wikidata.rs`)
+   already reads entity JSON (from the keyless `Special:EntityData/{id}.json`
+   endpoint) and parses statements, labels, item-values, and P854 references. That
+   parsing/rendering logic is exactly what `EntityDiff` and the write lane (ADR-0017)
+   also need, so this ADR **promotes it out of the `sp42-mcp` shell into platform** and
+   reuses it — #103 was simply its first consumer, and the reuse-by-design rule puts a
+   twice-used mechanism in platform, not a shell. The diff fetch retrieves the change's
+   revision **and its parent**: the Action API `prop=revisions&rvslots=main&rvprop=ids|content|contentmodel`
+   returns both revisions' entity JSON in one call and carries `contentmodel` for
+   Decision 1, while `Special:EntityData/{id}.json?revision={rev}` (the endpoint #103
+   already uses) is an equivalent per-revision read — the entity JSON body is the same
+   either way, so the shared parser is endpoint-agnostic and the exact fetch endpoint is
+   an implementation detail to settle with #103. The Wikibase **REST** API is not used
+   for the read/diff path (weaker for arbitrary old revisions; may suit later writes).
+   Either way the edge is a pure builder/parser over the injected `HttpClient` trait
+   (ADR-0004), fixture-replayed with no live network in tests (ADR-0009).
 
 3. **`EntityDiff` is a new structured type, a sibling to `StructuredDiff` — not an
    extension of it.** It diffs two entity revisions into classified changes over
@@ -101,6 +110,17 @@ patrolling domain consumes it now, and the citation↔Wikidata workflows will to
 
 ## Relation to prior ADRs
 
+- **PRD-0010 / PR #103 (citation-verification MCP surface):** #103 ships the *first*
+  Wikidata read in the codebase — `verify_wikidata_statement` reads an entity and its
+  P854 reference and verifies the statement via the existing `verify_claim` pipeline.
+  This ADR does **not** compete with it: it **promotes #103's entity/statement parser
+  to platform** (Decision 2) so the MCP verb, the patrol entity diff, and the write
+  lane (ADR-0017) share one Wikidata read model instead of drifting into two. #103's
+  verb (verify an *existing* statement's reference) and this ADR's `EntityDiff` (review
+  a *change*) are different consumers of the same read; both stay abstention-biased and
+  grounded (ADR-0007). Coordination point: if #103 merges first, the promotion is a
+  refactor-in-place of `sp42-mcp/src/wikidata.rs`; if this lands first, #103's verb
+  consumes the platform parser from the start.
 - **ADR-0014 (resolve any project):** this makes the resolved-but-unusable Wikidata
   target *usable*; resolution is unchanged.
 - **ADR-0004 / ADR-0013 (crate boundaries / layered architecture):** `EntityDiff` is a

@@ -299,6 +299,19 @@ Open Library / Internet Archive responses — no live network in tests (ADR-0009
   behind it — an assisted edit, not a bot. Respect Open Library rate limits and
   import/bot policy; if community practice requires more for assisted enrichment, the
   write lane stays disabled until resolved (same posture as PRD-0008's frwiki gate).
+- **Duplicating existing Open Library ↔ Wikidata sync.** OL and Wikidata already
+  exchange data: the P648 "Open Library ID" property links them, OL runs an official
+  Wikidata Integration (pulling author bios, photos, awards, and notable works *from*
+  Wikidata and pushing OL IDs *to* it), and `cdrini/openlibrary-wikidata-bot` does
+  identifier sync/cleanup. Mitigation: this lane must **not** re-do author-level
+  Wikidata sync OL already owns — it targets **edition-level, source-derived fields**
+  (ISBN-13 alongside ISBN-10, page count, subjects, cover, and the source-grounded
+  description) that the existing sync does not cover. Pulling a linked Wikidata item as
+  *description context* (Q3) is consistent with OL already ingesting Wikidata author
+  data, not a parallel pipeline. Author-biography enrichment is explicitly out of scope
+  (OL's own integration handles it). Sibling note: the Wikidata write direction
+  (PRD-0011 / ADR-0017) records the same de-duplication and the FRBR work/edition
+  sourcing rule.
 - **Synthesized description drifts from its sources (the one fabrication surface).**
   The description is the only generative field, so it is the only place a claim can
   appear that no source backs. Mitigations: it is proposed only when a rich sourced

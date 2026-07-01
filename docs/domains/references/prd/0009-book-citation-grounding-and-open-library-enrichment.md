@@ -53,10 +53,12 @@ Yes, and it is two distinct systems:
 
 - **Open Library** (`openlibrary.org`) — the Internet Archive's wiki-model,
   anyone-with-an-account-can-edit bibliographic catalog of *works* and *editions*.
-  Records are readable as JSON (`GET /isbn/{isbn}.json`, `/works/OL…W.json`,
-  `/books/OL…M.json`, or the multi-identifier `/api/books`) and writable — either by
+  Records are readable as JSON (the multi-identifier `/api/books`, the Read API, or
+  `/works/OL…W.json` / `/books/OL…M.json` by record id) and writable — either by
   `PUT`ing the record URL as JSON or via `POST /api/import` for a whole edition —
-  under a login session. Every edit is attributed and reversible (wiki history).
+  under a login session. (The `/isbn/{isbn}.json` path is *not* purely read-only — it
+  is documented under *Import by ISBN* and can import-on-miss — so the resolve lane
+  deliberately avoids it; see Layer 1.) Every edit is attributed and reversible (wiki history).
   **This is the "editable book metadata" the enrichment lane targets.**
 - **archive.org item metadata** — metadata on a specific scanned item, writable via
   `POST archive.org/metadata/{identifier}` with a JSON-Patch body and IA-S3
@@ -113,8 +115,14 @@ records **only from identifiers it already trusts**:
   article extractor drops a ref with no URL before any Citoid call, and Citoid is a
   URL→metadata sidecar that does not carry ISBN — so the identifier cannot come from
   Citoid and must be pulled from the template itself. With an identifier in hand, SP42
-  calls Open Library's read API (`/isbn/{isbn}.json` → edition, then its `works` and,
-  when present, the linked Internet Archive scan `ocaid`).
+  resolves it through a **strictly side-effect-free** Open Library read — the Books API
+  (`/api/books?bibkeys=ISBN:{isbn}&jscmd=data&format=json`) or the Read API
+  (`/api/volumes/brief/isbn/{isbn}.json`) — reaching the edition, its `works`, and (when
+  present) the linked Internet Archive scan `ocaid`. It **must not** use the
+  `/isbn/{isbn}.json` endpoint, which Open Library documents under *Import by ISBN* and
+  which can **attempt an import or stage metadata on a miss** — a write side-effect that
+  would violate this lane's read-only, no-auth promise and the "enrich existing only"
+  boundary. A miss is simply "no record found," never a create.
 - **Matching is gated on a positive identifier.** With an ISBN (or another unique
   identifier — OCLC, LCCN, an explicit OLID) the resolution is reliable. **Without
   one, SP42 does not guess** from title+author (too error-prone; the classic
@@ -229,9 +237,11 @@ list when the PRD moves to `Implemented`. All tests replay recorded
 Open Library / Internet Archive responses — no live network in tests (ADR-0009).*
 
 - [ ] A book citation carrying an ISBN resolves to its Open Library edition/work and
-      (when present) its Internet Archive scan, verified over a replayed
-      `/isbn/{isbn}.json` fixture; a citation with **no** resolvable identifier stays
-      `skipped` with the refined reason, verified by a fixture test.
+      (when present) its Internet Archive scan through a **side-effect-free** read
+      (Books/Read API, **not** `/isbn/{isbn}.json`), verified over a replayed
+      `/api/books` fixture; a resolution **miss issues no import/write** (asserted by
+      the mock client seeing only the read endpoint), and a citation with **no**
+      resolvable identifier stays `skipped` with the refined reason.
 - [ ] A resolved book with a searchable scan produces a `supported` / `partial` /
       `not_supported` verdict whose supporting passage is **verbatim-located in the
       returned search-inside snippet**, verified by a replayed search-inside fixture;

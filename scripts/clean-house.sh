@@ -2,33 +2,43 @@
 # SP42 build-artifact cleanup + self-heal.
 #
 # Modes:
-#   (no args)        Remove generated runtime/packaging artifacts (the original
-#                    light clean): .tmp, coverage, dist trees, .DS_Store.
-#   --auto           Self-heal: the light clean PLUS bound the Cargo target so it
-#                    cannot grow without limit — drop disposable trees (doc,
-#                    llvm-cov), prune stale per-worktree build dirs, and shed the
-#                    duplicate `debug` profile / size-cap when over budget, while
-#                    KEEPING the active profile's cache warm. Designed to run at
-#                    the end of every heavy local build (ci-all, pre-push).
-#   --purge-target   Also remove the entire Cargo target dir (cold rebuild next).
+#   (no args)        Light clean: remove generated runtime/packaging artifacts
+#                    (.tmp, coverage, dist trees, .DS_Store). The served `dist`
+#                    trees are KEPT (with a warning) while a local dev stack is
+#                    running, so the live frontend is never pulled out from under
+#                    `trunk serve` (which would 404 the app).
+#   --auto           Self-heal (used by pre-push / ci-all): the light clean PLUS
+#   --keep-last      keep only the MOST RECENT build session's data — every other
+#                    profile/target tree (older profiles, prior CI runs, orphaned
+#                    worktree build dirs) under target/ and target/.build is
+#                    dropped, along with disposable doc / llvm-cov trees. The
+#                    active session's cache stays warm; anything else cold-rebuilds
+#                    on next use. `--auto` and `--keep-last` are synonyms.
+#   --purge-target   Remove the entire Cargo target dir (next build is fully cold).
 #
 # Opt-out / tuning (env):
-#   SP42_KEEP_ARTIFACTS=1     Skip --auto self-heal entirely (keep everything).
-#   SP42_TARGET_CAP_GB=N      Target-size budget for --auto (default 8).
-#   SP42_BUILD_STALE_DAYS=N   Age (days) after which a per-worktree build tree is
-#                             pruned in --auto (default 3).
+#   SP42_KEEP_ARTIFACTS=1     Skip the self-heal entirely (keep everything).
+#   SP42_BUILD_GRACE_MIN=N    Build trees modified within N minutes of the newest
+#                             count as part of "the last build" and are kept, so a
+#                             single session that touches several profiles (e.g.
+#                             debug + wasm for dev-local, or ci for the gates) is
+#                             kept together. Default 45.
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$repo_root"
 
+print_help() {
+  /usr/bin/awk 'NR == 1 { next } /^# ?/ { sub(/^# ?/, ""); print; next } { exit }' "$0"
+}
+
 mode="light"
 for arg in "$@"; do
   case "$arg" in
-    --auto) mode="auto" ;;
+    --auto | --keep-last) mode="auto" ;;
     --purge-target) mode="purge" ;;
     --help | -h)
-      sed -n '2,28p' "$0" | sed 's/^# \{0,1\}//'
+      print_help
       exit 0
       ;;
     *)
@@ -38,29 +48,46 @@ for arg in "$@"; do
   esac
 done
 
-# --auto is the only mode that honors the keep-artifacts opt-out; explicit manual
-# runs always do what they say.
+# --auto/--keep-last is the only mode that honors the keep-artifacts opt-out;
+# explicit manual runs always do what they say.
 if [[ "$mode" == "auto" && "${SP42_KEEP_ARTIFACTS:-0}" == "1" ]]; then
   printf 'SP42 self-heal skipped (SP42_KEEP_ARTIFACTS=1).\n'
   exit 0
 fi
 
-dir_kb() { du -sk "$1" 2>/dev/null | cut -f1 || echo 0; }
 human() { du -sh "$1" 2>/dev/null | cut -f1 || echo 0; }
 
+# A live dev stack holds the served dist tree open; deleting it 404s the app until
+# the next rebuild. Detect trunk serve / the running sp42-server so the light clean
+# can spare those trees.
+dev_stack_running() {
+  pgrep -f 'trunk serve' >/dev/null 2>&1 || pgrep -f '[s]p42-server' >/dev/null 2>&1
+}
+
 # --- 1. Always: light clean (runtime/packaging junk + editor cruft) -----------
+# Safe to remove regardless of a running stack (not served live).
 light_paths=(
   ".tmp"
   ".sp42-runtime"
   "coverage"
+  "crates/sp42-desktop/src-tauri/target"
+)
+# Served by trunk serve / the browser shell — only removed when no stack is up.
+dist_paths=(
   "dist"
   "crates/sp42-app/dist"
   "target/dist"
-  "crates/sp42-desktop/src-tauri/target"
 )
 for path in "${light_paths[@]}"; do
   /bin/rm -rf "$path"
 done
+if dev_stack_running; then
+  printf 'SP42 cleanup: dev stack is running — keeping dist trees so the live app does not 404 (re-run after stopping it to reclaim them).\n' >&2
+else
+  for path in "${dist_paths[@]}"; do
+    /bin/rm -rf "$path"
+  done
+fi
 /usr/bin/find "$repo_root" -name '.DS_Store' -delete 2>/dev/null || true
 
 # Build-output tee logs live outside the repo (regenerated on demand).
@@ -77,42 +104,104 @@ if [[ "$mode" == "purge" ]]; then
   exit 0
 fi
 
-# --- 2. --auto self-heal: bound target/, keep the warm cache ------------------
+# --- 2. Self-heal: keep only the most recent build session --------------------
 [[ -d target ]] || { printf 'SP42 self-heal: no target dir, nothing to do.\n'; exit 0; }
 
 before="$(human target)"
-cap_gb="${SP42_TARGET_CAP_GB:-8}"
-stale_days="${SP42_BUILD_STALE_DAYS:-3}"
-cap_kb=$((cap_gb * 1024 * 1024))
+grace_min="${SP42_BUILD_GRACE_MIN:-45}"
+grace_s=$((grace_min * 60))
 
 # 2a. Disposable final-artifact trees — regenerated on demand by their gate.
 /bin/rm -rf target/doc target/llvm-cov-target 2>/dev/null || true
 
-# 2b. Prune stale per-worktree/profile build trees. The `build-dir` config keys
-#     a full build tree per workspace path (each git worktree + sub-workspace);
-#     ones not touched in $stale_days are almost certainly orphaned worktrees.
+# 2b. Keep only the last build session's trees. Cargo shards this workspace's
+#     configured build-dir under target/.build/<prefix>/<hash>/, then stores host
+#     profile intermediates at .../<profile> and target-specific intermediates at
+#     .../<target-triple>/<profile>. Matching final artifacts live at
+#     target/<profile> or target/<target-triple>/<profile>. We key recency on each
+#     profile tree's newest *file* mtime — directory mtimes are unreliable (cargo
+#     writes into deep subdirs, and stat/clean passes touch the parents). Any
+#     profile tree whose newest file predates the global newest by more than the
+#     grace window — older profiles, stale CI runs, orphaned worktree hashes — is
+#     dropped, along with its matching final artifacts unless another kept tree
+#     still maps to the same final directory.
+# Epoch mtime of a file, portably: GNU coreutils uses `stat -c %Y`, BSD/macOS
+# uses `stat -f %m`. Probe once and reuse — getting this wrong returns no mtime,
+# which silently disables the whole keep-last pass (every tree looks un-aged).
+if stat -c '%Y' . >/dev/null 2>&1; then
+  stat_mtime=(stat -c '%Y')   # GNU
+else
+  stat_mtime=(stat -f '%m')   # BSD/macOS
+fi
+newest_file_mtime() {
+  # `head -1` closes the pipe early; with `set -o pipefail` the SIGPIPE'd `sort`
+  # would otherwise abort the script under `set -e`. The stdout is still captured.
+  /usr/bin/find "$1" -type f -exec "${stat_mtime[@]}" {} + 2>/dev/null | sort -rn | head -1 || true
+}
+cargo_profile_tree() {
+  [[ -d "$1/.fingerprint" || -d "$1/deps" || -d "$1/build" || -d "$1/incremental" || -d "$1/examples" ]]
+}
+final_artifact_tree_for_profile() {
+  local rel parts_count
+  rel="${1#target/.build/}"
+  IFS=/ read -r -a parts <<< "$rel"
+  parts_count="${#parts[@]}"
+  case "$parts_count" in
+    3) printf 'target/%s\n' "${parts[2]}" ;;
+    4) printf 'target/%s/%s\n' "${parts[2]}" "${parts[3]}" ;;
+    *) return 1 ;;
+  esac
+}
+array_contains() {
+  local needle item
+  needle="$1"
+  shift
+  for item in "$@"; do
+    [[ "$item" == "$needle" ]] && return 0
+  done
+  return 1
+}
+
 if [[ -d target/.build ]]; then
-  /usr/bin/find target/.build -mindepth 2 -maxdepth 2 -type d -mtime "+${stale_days}" \
-    -exec /bin/rm -rf {} + 2>/dev/null || true
-  # drop now-empty hash-prefix dirs left behind
-  /usr/bin/find target/.build -mindepth 1 -maxdepth 1 -type d -empty -delete 2>/dev/null || true
-fi
+  profile_trees=()
+  profile_mtimes=()
+  profile_finals=()
+  newest=0
+  while IFS= read -r profile_tree; do
+    [[ -d "$profile_tree" ]] || continue
+    cargo_profile_tree "$profile_tree" || continue
+    modified="$(newest_file_mtime "$profile_tree")"
+    [[ -n "$modified" ]] || continue
+    final_tree="$(final_artifact_tree_for_profile "$profile_tree")" || continue
+    profile_trees+=("$profile_tree")
+    profile_mtimes+=("$modified")
+    profile_finals+=("$final_tree")
+    # if-guard, not `(( … )) && …`: a false arithmetic command returns exit 1,
+    # which would trip `set -e`.
+    if (( modified > newest )); then
+      newest="$modified"
+    fi
+  done < <(/usr/bin/find target/.build -mindepth 3 -maxdepth 4 -type d)
 
-# 2c. Still over budget? Shed the duplicate `debug` profile — the `ci` profile is
-#     the canonical local one (see .cargo aliases); a stray `debug` tree is the
-#     usual culprit. Only when `ci` artifacts exist, so we never strand the only
-#     cache present.
-if [[ $(dir_kb target) -gt $cap_kb && -d target/ci ]]; then
-  /bin/rm -rf target/debug 2>/dev/null || true
-  /usr/bin/find target/.build -mindepth 3 -maxdepth 3 -type d -name debug \
-    -exec /bin/rm -rf {} + 2>/dev/null || true
-fi
-
-# 2d. Last resort: if cargo-sweep is installed, LRU-evict down toward the cap.
-if [[ $(dir_kb target) -gt $cap_kb ]] && command -v cargo-sweep >/dev/null 2>&1; then
-  cargo sweep --maxsize "$((cap_gb * 1024))" >/dev/null 2>&1 || true
+  if (( newest > 0 )); then
+    stale_finals=()
+    kept_finals=()
+    for i in "${!profile_trees[@]}"; do
+      if (( newest - profile_mtimes[i] > grace_s )); then
+        /bin/rm -rf "${profile_trees[i]}"     # intermediates for this profile/target
+        stale_finals+=("${profile_finals[i]}")
+      else
+        kept_finals+=("${profile_finals[i]}")
+      fi
+    done
+    for final_tree in "${stale_finals[@]}"; do
+      array_contains "$final_tree" "${kept_finals[@]}" || /bin/rm -rf "$final_tree"
+    done
+  fi
+  # drop now-empty leaf / hash dirs left behind
+  /usr/bin/find target/.build -mindepth 1 -type d -empty -delete 2>/dev/null || true
 fi
 
 after="$(human target)"
-printf 'SP42 self-heal: target %s -> %s (cap %sGB; set SP42_KEEP_ARTIFACTS=1 to skip).\n' \
-  "$before" "$after" "$cap_gb"
+printf 'SP42 self-heal: kept the last build session — target %s -> %s (grace %smin; SP42_KEEP_ARTIFACTS=1 to skip).\n' \
+  "$before" "$after" "$grace_min"

@@ -534,16 +534,14 @@ fn rewrite_legacy_argv(args: &[String]) -> Option<Result<Vec<String>, String>> {
                 "--batch" => {}
                 "--batch-file" => {
                     out.push("--file".to_string());
-                    let path = match iter.next() {
-                        Some(path) => path,
-                        None => return Some(Err("--batch-file requires a value".to_string())),
+                    let Some(path) = iter.next() else {
+                        return Some(Err("--batch-file requires a value".to_string()));
                     };
                     out.push(path.clone());
                 }
                 "--format" => {
-                    let value = match iter.next() {
-                        Some(value) => value,
-                        None => return Some(Err("--format requires a value".to_string())),
+                    let Some(value) = iter.next() else {
+                        return Some(Err("--format requires a value".to_string()));
                     };
                     if let Err(message) = validate_legacy_output_format(value) {
                         return Some(Err(message));

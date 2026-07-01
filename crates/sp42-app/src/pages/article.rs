@@ -7,8 +7,8 @@ use sp42_ui::{
     MetaTextProps, NotesPanel, NotesPanelProps, PageShell, PageShellProps, PanelGrid,
     PanelGridProps, ResultCard, ResultCardHeader, ResultCardHeaderProps, ResultCardProps,
     ResultList, ResultListProps, Size, StatGrid, StatGridProps, StatItem, StatItemProps,
-    StatusRegion, StatusRegionProps, Text, TextElement, TextInput, TextInputProps, TextProps, Tone,
-    Width,
+    StatusRegion, StatusRegionProps, Text, TextElement, TextInput, TextInputProps, TextProps,
+    TextWeight, Tone, Width,
 };
 
 use crate::components::ui_children;
@@ -163,7 +163,12 @@ fn ArticleInventoryView(inventory: ArticleInventory) -> impl IntoView {
             {NotesPanel(NotesPanelProps::new("Readiness Notes", ui_children(move || view! {
                 {inventory.notes
                     .into_iter()
-                    .map(|note| view! { <p>{note}</p> })
+                    .map(|note| {
+                        Text(
+                            TextProps::new(ui_children(move || view! { {note} }.into_any()))
+                                .with_element(TextElement::Paragraph),
+                        )
+                    })
                     .collect_view()}
             }.into_any())))}
         }
@@ -189,7 +194,11 @@ fn CompactList(values: Vec<String>, empty: String) -> impl IntoView {
                 .take(16)
                 .map(|value| {
                     ResultCard(ResultCardProps::new(ui_children(move || {
-                        view! { <span>{value}</span> }.into_any()
+                        view! {
+                            {Text(TextProps::new(ui_children(move || {
+                                view! { {value} }.into_any()
+                            })))}
+                        }.into_any()
                     })))
                 })
                 .collect_view()}
@@ -221,11 +230,22 @@ fn ReferenceList(references: Vec<ArticleReference>) -> impl IntoView {
                         view! {
                             {ResultCardHeader(
                                 ResultCardHeaderProps::new(ui_children(move || {
-                                    view! { <strong>{format!("#{ordinal} {name}")}</strong> }
-                                        .into_any()
+                                    view! {
+                                        {Text(
+                                            TextProps::new(ui_children(move || {
+                                                view! { {format!("#{ordinal} {name}")} }.into_any()
+                                            }))
+                                            .with_weight(TextWeight::Bold)
+                                        )}
+                                    }
+                                    .into_any()
                                 }))
                                 .with_actions(ui_children(move || {
-                                    view! { <span>{status}</span> }.into_any()
+                                    view! {
+                                        {MetaText(MetaTextProps::new(ui_children(move || {
+                                            view! { {status} }.into_any()
+                                        })))}
+                                    }.into_any()
                                 }))
                             )}
                             {MetaText(MetaTextProps::new(ui_children(move || {
@@ -268,8 +288,19 @@ fn MediaList(references: Vec<MediaReference>) -> impl IntoView {
                 .map(|reference| {
                     ResultCard(ResultCardProps::new(ui_children(move || {
                         view! {
-                            <strong>{reference.display_title}</strong>
-                            <span>{reference.usage_signature}</span>
+                            {Text(
+                                TextProps::new(ui_children(move || {
+                                    view! { {reference.display_title} }.into_any()
+                                }))
+                                .with_weight(TextWeight::Bold)
+                            )}
+                            {Text(
+                                TextProps::new(ui_children(move || {
+                                    view! { {reference.usage_signature} }.into_any()
+                                }))
+                                .with_tone(Tone::Muted)
+                                .with_size(Size::Small)
+                            )}
                         }
                         .into_any()
                     })))

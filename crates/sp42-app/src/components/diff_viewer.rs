@@ -328,7 +328,7 @@ pub fn DiffViewer(
             }.into_any())))}
             {move || {
                 let Some((x, y, text)) = menu_pos.get() else {
-                    return view! { <span></span> }.into_any();
+                    return ().into_any();
                 };
                 let dismiss = move |_| set_menu_pos.set(None);
                 let citation_click = {
@@ -563,7 +563,7 @@ fn render_rendered_hunk_toggle(
     rendered_hunks: RenderedHunkPreviewController,
 ) -> leptos::tachys::view::any_view::AnyView {
     let Some(context) = rendered_context else {
-        return view! { <span></span> }.into_any();
+        return ().into_any();
     };
 
     let toggle_context = context.clone();
@@ -598,7 +598,7 @@ fn render_rendered_hunk_preview(
     rendered_hunks: RenderedHunkPreviewController,
 ) -> leptos::tachys::view::any_view::AnyView {
     if rendered_context.is_none() {
-        return view! { <span></span> }.into_any();
+        return ().into_any();
     }
 
     let before_highlights = collect_rendered_highlight_phrases(
@@ -613,7 +613,7 @@ fn render_rendered_hunk_preview(
     view! {
         {move || {
             if !rendered_hunks.is_expanded(hunk_index) {
-                return view! { <span></span> }.into_any();
+                return ().into_any();
             }
 
             if rendered_hunks.is_loading(hunk_index) {
@@ -648,7 +648,7 @@ fn render_rendered_hunk_preview(
                 .into_any()
             } else {
                 let Some(preview) = rendered_hunks.preview(hunk_index) else {
-                    return view! { <span></span> }.into_any();
+                    return ().into_any();
                 };
 
                 let warnings = preview.warnings.clone();
@@ -788,7 +788,7 @@ fn render_hunk_header(
                         )
                         .into_any()
                     })
-                    .unwrap_or_else(|| view! { <span></span> }.into_any())}
+                    .unwrap_or_else(|| ().into_any())}
                 {marker_badges
                     .iter()
                     .map(|label| {
@@ -804,7 +804,7 @@ fn render_hunk_header(
                         )
                         .into_any()
                     })
-                    .unwrap_or_else(|| view! { <span></span> }.into_any())}
+                    .unwrap_or_else(|| ().into_any())}
                 {rendered_toggle}
             }
             .into_any()
@@ -987,7 +987,7 @@ fn render_side_by_side_cell(
 
 fn render_inline_diff_content(text: String, inline_highlights: Vec<InlineSpan>) -> AnyView {
     if inline_highlights.is_empty() {
-        return view! { <span>{text}</span> }.into_any();
+        return DiffInlineMark(DiffInlineMarkProps::new(DiffTone::Equal, text));
     }
 
     inline_highlights

@@ -84,7 +84,7 @@ fn render_group(
     entries: Vec<MediaDiffEntry>,
 ) -> leptos::prelude::AnyView {
     if entries.is_empty() {
-        return view! { <span></span> }.into_any();
+        return ().into_any();
     }
 
     MediaGroup(
@@ -154,7 +154,7 @@ fn render_signature_block(
     signatures: Vec<String>,
 ) -> leptos::prelude::AnyView {
     if signatures.is_empty() {
-        return view! { <span></span> }.into_any();
+        return ().into_any();
     }
 
     SignatureBlock(SignatureBlockProps::new(label, signatures.join(" · "))).into_any()

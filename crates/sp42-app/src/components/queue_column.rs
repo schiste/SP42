@@ -100,7 +100,7 @@ pub fn QueueColumn(
                                                             .with_size(Size::Small),
                                                     ).into_any()
                                                 } else {
-                                                    view! { <span></span> }.into_any()
+                                                    ().into_any()
                                                 }}
                                                 {if group_count > 1 {
                                                     sp42_ui::StatusBadge(
@@ -109,7 +109,7 @@ pub fn QueueColumn(
                                                             .with_size(Size::Small),
                                                     ).into_any()
                                                 } else {
-                                                    view! { <span></span> }.into_any()
+                                                    ().into_any()
                                                 }}
                                             }
                                             .into_any()

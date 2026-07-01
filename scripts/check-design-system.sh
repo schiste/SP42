@@ -44,9 +44,21 @@ PAGE_FILES = [
     for path in FILES
     if str(path).startswith("crates/sp42-app/src/pages/") and path.suffix == ".rs"
 ]
+APP_PRESENTATION_FILES = [
+    path
+    for path in FILES
+    if (
+        str(path).startswith("crates/sp42-app/src/pages/")
+        or str(path).startswith("crates/sp42-app/src/components/")
+    )
+    and path.suffix == ".rs"
+]
 
 STYLE_ATTR = re.compile(r"\bstyle\s*=")
 CLASS_ATTR = re.compile(r"\bclass\s*=")
+RAW_DOM_TAG = re.compile(
+    r"<\s*/?\s*(?:div|span|p|strong|button|input|select|textarea|section|main|header|footer|aside|nav|ul|ol|li|details|summary)\b"
+)
 CSS_LENGTH = re.compile(r"(?<![A-Za-z0-9_])\d+(?:\.\d+)?(?:px|rem|em|vh|vw|vmin|vmax|ch|lh)\b")
 FONT_LITERAL = re.compile(r"\b(?:font-size|font-weight|font-family|line-height|letter-spacing)\b")
 SEMANTIC_CLASS_ALLOW = "sp42-design-allow: semantic-class"
@@ -72,6 +84,16 @@ for path in PAGE_FILES:
                 path,
                 line_no,
                 "page code may not contain spacing/font literals; add a typed sp42-ui prop or variant",
+                line,
+            )
+
+for path in APP_PRESENTATION_FILES:
+    for line_no, line in enumerate(read_lines(path), start=1):
+        if RAW_DOM_TAG.search(line):
+            fail(
+                path,
+                line_no,
+                "sp42-app presentation code may not render raw DOM tags; use sp42-ui primitives",
                 line,
             )
 

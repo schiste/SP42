@@ -120,7 +120,7 @@ pub fn ContextHeader(edit: Option<QueuedEdit>) -> impl IntoView {
                         }
                         .into_any()
                     } else {
-                        view! { <span></span> }.into_any()
+                        ().into_any()
                     }}
                     {Spacer()}
                     {Link(LinkProps::new("View on wiki", diff_url).external())}
@@ -129,7 +129,7 @@ pub fn ContextHeader(edit: Option<QueuedEdit>) -> impl IntoView {
             })))}
             {move || {
                 if !show_score_details.get() {
-                    return view! { <span></span> }.into_any();
+                    return ().into_any();
                 }
                 let details = score_contributions
                     .iter()

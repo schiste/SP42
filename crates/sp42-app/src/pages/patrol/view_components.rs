@@ -9,9 +9,9 @@ use sp42_ui::{
     HeadingProps, Inline, InlineProps, KeyboardShortcutModal, KeyboardShortcutModalProps,
     LoadingRegion, LoadingRegionProps, MetaText, MetaTextProps, ResultCard, ResultCardProps,
     ResultList, ResultListProps, ShortcutDefinition, Size, Spacer, SplitWorkArea,
-    SplitWorkAreaProps, StatusBadge, StatusBadgeProps, StatusBar, StatusBarProps, StatusDot,
-    StatusDotProps, StatusRegion, StatusRegionProps, Text, TextElement, TextInput, TextInputProps,
-    TextProps, Tone, Width, WorkspaceMain, WorkspaceMainProps,
+    SplitWorkAreaProps, Stack, StackProps, StatusBadge, StatusBadgeProps, StatusBar,
+    StatusBarProps, StatusDot, StatusDotProps, StatusRegion, StatusRegionProps, Text, TextElement,
+    TextInput, TextInputProps, TextProps, Tone, Width, WorkspaceMain, WorkspaceMainProps,
 };
 
 use crate::components::action_bar::ActionBar;
@@ -65,13 +65,20 @@ pub(super) fn AuthRequiredView(
                     .into_any()
                 }
             }}
-            {MetaText(MetaTextProps::new(ui_children(move || {
-                view! {
-                    <div>{format!("Bridge mode: {bridge_mode}")}</div>
-                    <div>{format!("Local token: {}", if has_token { "present" } else { "missing" })}</div>
-                }
-                .into_any()
-            })))}
+            {Stack(
+                StackProps::new(ui_children(move || view! {
+                    {MetaText(MetaTextProps::new(ui_children(move || {
+                        view! { {format!("Bridge mode: {bridge_mode}")} }.into_any()
+                    })))}
+                    {MetaText(MetaTextProps::new(ui_children(move || {
+                        view! {
+                            {format!("Local token: {}", if has_token { "present" } else { "missing" })}
+                        }
+                        .into_any()
+                    })))}
+                }.into_any()))
+                .with_gap(Gap::XSmall)
+            )}
             {(!has_token).then(|| {
                 Text(
                     TextProps::new(ui_children(|| {
@@ -111,7 +118,7 @@ pub(super) fn HelpModal(
     view! {
         {move || {
             if !show_help.get() {
-                return view! { <span></span> }.into_any();
+                return ().into_any();
             }
             KeyboardShortcutModal(
                 KeyboardShortcutModalProps::new(
@@ -143,7 +150,7 @@ pub(super) fn BackofficeModal(
     view! {
         {move || {
             if !show_backoffice.get() {
-                return view! { <span></span> }.into_any();
+                return ().into_any();
             }
             let view = view_data.get();
             FullscreenOverlay(FullscreenOverlayProps::new(ui_children(move || {
@@ -192,7 +199,7 @@ pub(super) fn ActionHistoryPanel(
     history_entries: Vec<sp42_core::ActionExecutionLogEntry>,
 ) -> impl IntoView {
     if history_entries.is_empty() {
-        return view! { <span></span> }.into_any();
+        return ().into_any();
     }
 
     let history_count = history_entries.len();
@@ -275,13 +282,28 @@ pub(super) fn SessionBar(
                     .get()
                     .map(|view| {
                         view! {
-                            <span>{view.wiki_id.clone()}</span>
-                            <span>{view.auth.username.clone().unwrap_or_else(|| "-".to_string())}</span>
-                            <span>{format!("{} edits", view.queue.len())}</span>
+                            {Text(TextProps::new(ui_children(move || {
+                                view! { {view.wiki_id.clone()} }.into_any()
+                            })))}
+                            {Text(TextProps::new(ui_children(move || {
+                                view! {
+                                    {view.auth.username.clone().unwrap_or_else(|| "-".to_string())}
+                                }
+                                .into_any()
+                            })))}
+                            {Text(TextProps::new(ui_children(move || {
+                                view! { {format!("{} edits", view.queue.len())} }.into_any()
+                            })))}
                         }
                         .into_any()
                     })
-                    .unwrap_or_else(|| view! { <span>"loading..."</span> }.into_any())
+                    .unwrap_or_else(|| {
+                        Text(
+                            TextProps::new(ui_children(|| view! { "loading..." }.into_any()))
+                                .with_tone(Tone::Muted),
+                        )
+                        .into_any()
+                    })
             }}
             {Spacer()}
             {StatusDot(
@@ -296,7 +318,7 @@ pub(super) fn SessionBar(
                     )
                     .into_any()
                 } else {
-                    view! { <span></span> }.into_any()
+                    ().into_any()
                 }
             }}
             {Button(

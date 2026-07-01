@@ -17,7 +17,7 @@ use sp42_ui::{
     RawReportDisclosureProps, ResultCard, ResultCardHeader, ResultCardHeaderProps, ResultCardProps,
     ResultDisclosure, ResultDisclosureProps, ResultList, ResultListProps, StatusBadge,
     StatusBadgeProps, StatusRegion, StatusRegionProps, Text, TextElement, TextInput,
-    TextInputProps, TextProps, Tone, Width,
+    TextInputProps, TextProps, TextWeight, Tone, Width,
 };
 
 use crate::components::style::wiki_base_url;
@@ -416,7 +416,12 @@ fn FindingCard(finding: CitationFinding, article_url: Option<String>) -> impl In
             {ResultCardHeader(
                 ResultCardHeaderProps::new(ui_children(move || {
                     view! {
-                        <strong>{format!("#{ordinal}")}</strong>
+                        {Text(
+                            TextProps::new(ui_children(move || {
+                                view! { {format!("#{ordinal}")} }.into_any()
+                            }))
+                            .with_weight(TextWeight::Bold)
+                        )}
                         {(!ref_id.is_empty()).then(|| {
                             MetaText(MetaTextProps::new(ui_children(move || {
                                 view! { {ref_id.clone()} }.into_any()
@@ -564,7 +569,12 @@ fn ReportSectionCard(section: ReportSection) -> impl IntoView {
                                 .into_iter()
                                 .map(|line| {
                                     ResultCard(ResultCardProps::new(ui_children(move || {
-                                        view! { <span>{line}</span> }.into_any()
+                                        view! {
+                                            {Text(TextProps::new(ui_children(move || {
+                                                view! { {line} }.into_any()
+                                            })))}
+                                        }
+                                        .into_any()
                                     })))
                                 })
                                 .collect_view()}

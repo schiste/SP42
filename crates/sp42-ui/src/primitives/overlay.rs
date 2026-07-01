@@ -48,9 +48,9 @@ pub fn modal(props: ModalProps) -> impl IntoView {
         .map(|footer| view! { <footer class="sp42-modal-footer">{footer()}</footer> }.into_any());
 
     view! {
-        <div class="modal-backdrop">
+        <div class="sp42-modal-backdrop">
             <section
-                class=class_names(&["modal", "sp42-modal", props.size.modal_class_name()])
+                class=class_names(&["sp42-modal", props.size.modal_class_name()])
                 role="dialog"
                 aria-modal="true"
                 aria-label=aria_label
@@ -180,7 +180,7 @@ pub fn keyboard_shortcut_modal(props: KeyboardShortcutModalProps) -> impl IntoVi
 
     view! {
         <div
-            class="modal-backdrop"
+            class="sp42-modal-backdrop"
             on:click=move |ev| {
                 if let Some(callback) = &close_backdrop {
                     callback.run(ev);
@@ -188,7 +188,7 @@ pub fn keyboard_shortcut_modal(props: KeyboardShortcutModalProps) -> impl IntoVi
             }
         >
             <section
-                class="modal sp42-modal sp42-modal-sm"
+                class="sp42-modal sp42-modal-sm"
                 role="dialog"
                 aria-modal="true"
                 aria-label=aria_label

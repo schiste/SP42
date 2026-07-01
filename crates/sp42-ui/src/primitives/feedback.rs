@@ -35,7 +35,7 @@ impl StatusBadgeProps {
 
     #[must_use]
     pub fn class_name(&self) -> String {
-        let mut class_name = String::from("badge sp42-status-badge");
+        let mut class_name = String::from("sp42-badge sp42-status-badge");
         push_class(&mut class_name, self.tone.status_class_name());
         push_class(&mut class_name, self.size.class_name());
         class_name
@@ -77,7 +77,7 @@ impl SpinnerProps {
 #[must_use]
 pub fn spinner(props: SpinnerProps) -> impl IntoView {
     view! {
-        <span class=class_names(&["spinner", props.size.spinner_class_name()]) role="status" aria-live="polite">
+        <span class=class_names(&["sp42-spinner", props.size.spinner_class_name()]) role="status" aria-live="polite">
             <span class="sp42-visually-hidden">{props.label}</span>
         </span>
     }

@@ -394,7 +394,7 @@ body {
 
 
 /* ─── Buttons (Codex CSS-only button conventions) ─── */
-.btn {
+.sp42-button {
   min-height: 48px;
   padding: 6px 20px;
   border: 1px solid var(--border-emphasis);
@@ -408,116 +408,109 @@ body {
   color: var(--text);
 }
 
-.btn:hover:not(:disabled):not(.btn-danger):not(.btn-success):not(.btn-accent):not(.btn-warning):not(.btn-subtle):not(.btn-ghost) {
+.sp42-button:hover:not(:disabled):not(.sp42-button-danger):not(.sp42-button-success):not(.sp42-button-accent):not(.sp42-button-warning):not(.sp42-button-subtle):not(.sp42-button-ghost) {
   background: var(--accent-bg);
   border-color: var(--accent-border);
 }
 
-.btn:disabled {
+.sp42-button:disabled {
   opacity: 0.4;
   cursor: default;
 }
 
-.btn:focus-visible {
+.sp42-button:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
 }
 
-.btn-danger {
+.sp42-button-danger {
   background: var(--danger-bg);
   color: var(--danger-light);
   border-color: var(--danger-border);
 }
 
-.btn-danger:hover:not(:disabled) {
+.sp42-button-danger:hover:not(:disabled) {
   background: color-mix(in srgb, var(--danger-bg) 84%, var(--danger) 16%);
   border-color: var(--danger);
 }
 
-.btn-success {
+.sp42-button-success {
   background: var(--success-bg);
   color: var(--success-light);
   border-color: var(--success-border);
 }
 
-.btn-success:hover:not(:disabled) {
+.sp42-button-success:hover:not(:disabled) {
   background: color-mix(in srgb, var(--success-bg) 84%, var(--success) 16%);
   border-color: var(--success);
 }
 
-.btn-accent {
+.sp42-button-accent {
   background: var(--accent-bg);
   color: var(--text);
   border-color: var(--accent-border);
 }
 
-.btn-accent:hover:not(:disabled) {
+.sp42-button-accent:hover:not(:disabled) {
   background: color-mix(in srgb, var(--accent-bg) 84%, var(--accent) 16%);
   border-color: var(--accent);
 }
 
-.btn-warning {
+.sp42-button-warning {
   background: var(--tone-caution-bg);
   color: var(--tone-caution-text);
   border-color: var(--tone-caution-border);
 }
 
-.btn-warning:hover:not(:disabled) {
+.sp42-button-warning:hover:not(:disabled) {
   background: color-mix(in srgb, var(--tone-caution-bg) 84%, var(--warning) 16%);
   border-color: var(--warning);
 }
 
-.btn-subtle {
+.sp42-button-subtle {
   background: var(--panel-deep);
   color: var(--muted);
   border-color: var(--border-light);
 }
 
-.btn-subtle:hover:not(:disabled) {
+.sp42-button-subtle:hover:not(:disabled) {
   background: var(--accent-bg);
   color: var(--accent);
   border-color: var(--accent-border);
 }
 
-.btn-ghost {
+.sp42-button-ghost {
   background: transparent;
   border-color: transparent;
   color: var(--muted);
 }
 
-.btn-ghost:hover:not(:disabled) {
+.sp42-button-ghost:hover:not(:disabled) {
   background: var(--accent-bg);
   border-color: transparent;
   color: var(--accent);
 }
 
-.btn-compact {
-  min-height: 32px;
-  padding: 2px 10px;
-  font-size: 12px;
-  font-weight: 400;
-}
-
-.btn.sp42-size-small,
-.btn.sp42-density-compact {
+.sp42-button.sp42-size-small,
+.sp42-button.sp42-density-compact {
   min-height: var(--control-height-compact);
   padding: var(--space-xxs) var(--space-md);
   font-size: var(--font-size-sm);
 }
 
-.btn.sp42-size-medium,
-.btn.sp42-density-normal {
+.sp42-button.sp42-size-medium,
+.sp42-button.sp42-density-normal {
   min-height: var(--control-height-normal);
 }
 
-.btn.sp42-size-large,
-.btn.sp42-density-comfortable {
+.sp42-button.sp42-size-large,
+.sp42-button.sp42-density-comfortable {
   min-height: var(--control-height-comfortable);
   padding: var(--space-sm) var(--space-xl);
   font-size: var(--font-size-lg);
 }
 
-.btn-recommended {
+.sp42-button-recommended {
   box-shadow: var(--ring);
   animation: sp42-pulse 2s ease-in-out infinite;
 }
@@ -566,7 +559,7 @@ body {
 }
 
 /* ─── Panels & Cards ─── */
-.panel {
+.sp42-panel {
   display: grid;
   gap: 10px;
   padding: 17px;
@@ -575,7 +568,7 @@ body {
   background: var(--panel);
 }
 
-.card {
+.sp42-card {
   display: grid;
   gap: 7px;
   padding: 10px 17px;
@@ -809,7 +802,7 @@ body {
 }
 
 /* ─── Modal ─── */
-.modal-backdrop {
+.sp42-modal-backdrop {
   position: fixed;
   inset: 0;
   display: grid;
@@ -818,7 +811,7 @@ body {
   z-index: 100;
 }
 
-.modal {
+.sp42-modal {
   max-width: 400px;
   width: 90%;
   padding: 27px;
@@ -828,7 +821,7 @@ body {
 }
 
 /* ─── Badge ─── */
-.badge {
+.sp42-badge {
   display: inline-flex;
   align-items: center;
   gap: 4px;
@@ -892,54 +885,54 @@ body {
   font-size: var(--font-size-sm);
 }
 
-.panel.sp42-surface-default {
+.sp42-panel.sp42-surface-default {
   background: var(--panel);
 }
 
-.panel.sp42-surface-subtle,
-.card.sp42-surface-default,
-.card.sp42-surface-subtle {
+.sp42-panel.sp42-surface-subtle,
+.sp42-card.sp42-surface-default,
+.sp42-card.sp42-surface-subtle {
   background: var(--panel-inner);
 }
 
-.panel.sp42-surface-raised,
-.card.sp42-surface-raised {
+.sp42-panel.sp42-surface-raised,
+.sp42-card.sp42-surface-raised {
   background: var(--panel);
   box-shadow: 0 4px 18px rgba(0, 0, 0, 0.24);
 }
 
-.panel.sp42-surface-accent,
-.card.sp42-surface-accent {
+.sp42-panel.sp42-surface-accent,
+.sp42-card.sp42-surface-accent {
   background: var(--accent-bg);
   border-color: var(--accent-border);
 }
 
-.panel.sp42-surface-success,
-.card.sp42-surface-success {
+.sp42-panel.sp42-surface-success,
+.sp42-card.sp42-surface-success {
   background: var(--success-bg);
   border-color: var(--success-border);
 }
 
-.panel.sp42-surface-warning,
-.card.sp42-surface-warning {
+.sp42-panel.sp42-surface-warning,
+.sp42-card.sp42-surface-warning {
   background: var(--tone-caution-bg);
   border-color: var(--tone-caution-border);
 }
 
-.panel.sp42-surface-danger,
-.card.sp42-surface-danger {
+.sp42-panel.sp42-surface-danger,
+.sp42-card.sp42-surface-danger {
   background: var(--danger-bg);
   border-color: var(--danger-border);
 }
 
-.panel.sp42-density-compact,
-.card.sp42-density-compact {
+.sp42-panel.sp42-density-compact,
+.sp42-card.sp42-density-compact {
   gap: var(--space-sm);
   padding: var(--space-md);
 }
 
-.panel.sp42-density-comfortable,
-.card.sp42-density-comfortable {
+.sp42-panel.sp42-density-comfortable,
+.sp42-card.sp42-density-comfortable {
   gap: var(--space-lg);
   padding: var(--space-xl);
 }
@@ -1299,18 +1292,18 @@ body {
   padding: 0 var(--space-sm) var(--space-sm);
 }
 
-.spinner.sp42-spinner-sm {
+.sp42-spinner.sp42-spinner-sm {
   width: 16px;
   height: 16px;
   border-width: 2px;
 }
 
-.spinner.sp42-spinner-md {
+.sp42-spinner.sp42-spinner-md {
   width: 24px;
   height: 24px;
 }
 
-.spinner.sp42-spinner-lg {
+.sp42-spinner.sp42-spinner-lg {
   width: 36px;
   height: 36px;
   border-width: 4px;
@@ -2537,7 +2530,7 @@ body {
   }
 }
 
-.spinner {
+.sp42-spinner {
   width: 24px;
   height: 24px;
   border: 3px solid var(--border);

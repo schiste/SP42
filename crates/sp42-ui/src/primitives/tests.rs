@@ -54,10 +54,11 @@ fn button_variants_are_composable_classes() {
 
     let class_name = button.class_name();
 
-    assert!(class_name.contains("btn-danger"));
+    assert!(class_name.contains("sp42-button"));
+    assert!(class_name.contains("sp42-button-danger"));
     assert!(class_name.contains("sp42-size-large"));
     assert!(class_name.contains("sp42-density-comfortable"));
-    assert!(class_name.contains("btn-recommended"));
+    assert!(class_name.contains("sp42-button-recommended"));
 }
 
 #[test]
@@ -114,13 +115,13 @@ fn primitive_variant_classes_are_semantic() {
 #[test]
 fn control_variant_classes_are_semantic() {
     assert_eq!(Tone::Default.button_class_name(), "");
-    assert_eq!(Tone::Accent.button_class_name(), "btn-accent");
-    assert_eq!(Tone::Success.button_class_name(), "btn-success");
-    assert_eq!(Tone::Warning.button_class_name(), "btn-warning");
-    assert_eq!(Tone::Danger.button_class_name(), "btn-danger");
+    assert_eq!(Tone::Accent.button_class_name(), "sp42-button-accent");
+    assert_eq!(Tone::Success.button_class_name(), "sp42-button-success");
+    assert_eq!(Tone::Warning.button_class_name(), "sp42-button-warning");
+    assert_eq!(Tone::Danger.button_class_name(), "sp42-button-danger");
     assert_eq!(ButtonSurface::Solid.class_name(), "");
-    assert_eq!(ButtonSurface::Subtle.class_name(), "btn-subtle");
-    assert_eq!(ButtonSurface::Ghost.class_name(), "btn-ghost");
+    assert_eq!(ButtonSurface::Subtle.class_name(), "sp42-button-subtle");
+    assert_eq!(ButtonSurface::Ghost.class_name(), "sp42-button-ghost");
     assert_eq!(ButtonType::Button.as_str(), "button");
     assert_eq!(ButtonType::Submit.as_str(), "submit");
     assert_eq!(ButtonType::Reset.as_str(), "reset");

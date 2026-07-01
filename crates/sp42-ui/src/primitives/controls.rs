@@ -18,8 +18,8 @@ impl ButtonSurface {
     pub const fn class_name(self) -> &'static str {
         match self {
             Self::Solid => "",
-            Self::Subtle => "btn-subtle",
-            Self::Ghost => "btn-ghost",
+            Self::Subtle => "sp42-button-subtle",
+            Self::Ghost => "sp42-button-ghost",
         }
     }
 }
@@ -36,7 +36,7 @@ impl ButtonState {
     pub const fn class_name(self) -> &'static str {
         match self {
             Self::Default => "",
-            Self::Recommended => "btn-recommended",
+            Self::Recommended => "sp42-button-recommended",
         }
     }
 }
@@ -165,7 +165,7 @@ impl ButtonProps {
 
     #[must_use]
     pub fn class_name(&self) -> String {
-        let mut class_name = String::from("btn");
+        let mut class_name = String::from("sp42-button");
         push_class(&mut class_name, self.tone.button_class_name());
         push_class(&mut class_name, self.size.class_name());
         push_class(&mut class_name, self.density.class_name());

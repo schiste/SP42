@@ -193,10 +193,10 @@ impl Tone {
     #[must_use]
     pub const fn button_class_name(self) -> &'static str {
         match self {
-            Self::Accent => "btn-accent",
-            Self::Success => "btn-success",
-            Self::Warning => "btn-warning",
-            Self::Danger => "btn-danger",
+            Self::Accent => "sp42-button-accent",
+            Self::Success => "sp42-button-success",
+            Self::Warning => "sp42-button-warning",
+            Self::Danger => "sp42-button-danger",
             Self::Default | Self::Muted | Self::Subtle | Self::Info => "",
         }
     }
@@ -382,7 +382,7 @@ impl PanelProps {
     #[must_use]
     pub fn class_name(&self) -> String {
         class_names(&[
-            "panel",
+            "sp42-panel",
             self.surface.class_name(),
             self.density.class_name(),
         ])
@@ -431,7 +431,11 @@ impl CardProps {
 
     #[must_use]
     pub fn class_name(&self) -> String {
-        class_names(&["card", self.surface.class_name(), self.density.class_name()])
+        class_names(&[
+            "sp42-card",
+            self.surface.class_name(),
+            self.density.class_name(),
+        ])
     }
 }
 

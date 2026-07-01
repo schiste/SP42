@@ -10,7 +10,7 @@
 no implementation — §18 explicitly leaves the "Leptos component API" out of scope.
 That gap is filled by accident: the patrol UI has three sources of visual truth
 that disagree. The contract names tokens (`--surface-base`, `--space-*`);
-`sp42-app/static/style.css` uses different names (`--bg`, `--danger`) and has no
+`sp42-ui/static/style.css` uses different names (`--bg`, `--danger`) and has no
 spacing/type scale; components hardcode the rest.
 
 Measured today: **176** inline `style=` attributes, **43** hex/`rgba()` literals
@@ -145,9 +145,25 @@ legacy debt only shrinks, and no one is blocked by code they did not touch.
 
 ## Migration
 
-Small commits, no behaviour change per slice; enforcement live from slice 1 via
-the ratchet. (1) Scaffold `sp42-ui`, move `style.css` in (aliased), wire the
-check + baseline. (2) Add the space/type/diff tokens. (3) Land the
+PR #84 is the vehicle for the full deployment, not a token-only staging PR. The
+work may still land as small commits, but the PR merge gate is the final clean
+state:
+
+- `sp42-ui` owns visual presentation: tokens, CSS, primitives, component
+  variants, spacing, typography, surfaces, and visual state.
+- `sp42-app` owns behavior and domain composition: data loading, actions,
+  routing, auth/session state, wiki selection, and assembling `sp42-ui`
+  components for app workflows.
+- Page modules may not introduce visual presentation. In page code, `style=`,
+  raw design classes, color literals, spacing literals, typography literals, and
+  page-owned CSS selectors are banned.
+- The only allowed styling escape hatch is dynamic runtime positioning inside
+  `sp42-ui` internals, for UI that cannot be expressed statically (for example a
+  context menu anchored to pointer coordinates). Pages must pass typed data or
+  semantic variants into `sp42-ui`; they must not compute CSS strings.
+
+Implementation order: (1) Scaffold `sp42-ui`, move `style.css` in (aliased), and
+wire the mechanical check. (2) Add the space/type/diff tokens. (3) Land the
 score→severity *semantic* in a Leptos-free home, not in `sp42-ui`: add `Tier`,
 `score_tier(score) -> Tier`, and `StatusTone` (with their tests) to the
 scoring/domain layer (`sp42-core` now, a `sp42-types`/scoring-policy slice later)
@@ -156,8 +172,9 @@ policy, not a widget (Scoring Constitution §14.3). `sp42-ui` then maps `Tier` �
 `Color`+`Icon` and `sp42-cli` maps `Tier` → ANSI/glyph. Move `tone_colors` into
 `sp42-ui`; route `wiki_base_url` to `sp42-wiki` (not `sp42-ui` — it is a domain
 concern, and `sp42-ui` takes no domain deps). Fix `StatusBadge` and
-`--font-sans`. (4) Land primitives one at a time, deleting superseded CSS/inline
-and lowering the baseline, until baselines hit zero and aliases are removed.
+`--font-sans`. (4) Land primitives and patterns, deleting superseded CSS/inline
+styles as the app migrates. The final check must fail on any remaining page or
+app-local styling, rather than relying on review.
 
 ## Alternatives
 
@@ -183,4 +200,4 @@ and lowering the baseline, until baselines hit zero and aliases are removed.
 
 - No change to the contract's *rules* beyond the two reconciliations above.
 - No redesign, no light mode, no back-office polish, no server CI (future option).
-- No all-at-once rewrite; no domain logic in `sp42-ui`.
+- No domain logic in `sp42-ui`.

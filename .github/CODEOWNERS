@@ -32,6 +32,7 @@
 # --- Shells (leads) ---------------------------------------------------------
 /crates/sp42-cli/                   @schiste
 /crates/sp42-app/                   @schiste
+/crates/sp42-ui/                    @schiste
 /crates/sp42-desktop/               @schiste
 /crates/sp42-server/                @schiste
 /crates/sp42-devtools/              @schiste

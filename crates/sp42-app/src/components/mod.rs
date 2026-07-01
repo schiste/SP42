@@ -1,5 +1,7 @@
 //! UI components for the browser application.
 
+use leptos::prelude::{AnyView, Children};
+
 pub(crate) mod action_bar;
 pub(crate) mod context_header;
 pub(crate) mod diff_viewer;
@@ -19,4 +21,8 @@ pub(crate) use inspector_feed::{InspectorFeed, inspector_entries_from_lines};
 pub(crate) use patrol_scenario_panel::PatrolScenarioPanel;
 pub(crate) use patrol_session_digest_panel::PatrolSessionDigestPanel;
 pub(crate) use shell_state_panel::ShellStatePanel;
-pub(crate) use status_badge::{StatusBadge, StatusTone};
+pub(crate) use status_badge::{StatusBadge, Tone};
+
+pub(crate) fn ui_children(render: impl FnOnce() -> AnyView + Send + 'static) -> Children {
+    Box::new(render)
+}

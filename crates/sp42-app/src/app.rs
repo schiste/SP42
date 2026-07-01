@@ -1,5 +1,15 @@
 use leptos::prelude::*;
+use sp42_ui::{
+    Button, ButtonProps, ButtonSurface, ButtonType, Density, Field, FieldProps, Gap, GateCard,
+    GateCardProps, GateShell, GateShellProps, Heading, HeadingLevel, HeadingProps, Link, LinkProps,
+    Stack, StackProps, Text, TextElement, TextInput, TextInputProps, TextInputType, TextProps,
+    Tone, Width, WorkspaceBody, WorkspaceBodyProps, WorkspaceBrand, WorkspaceBrandProps,
+    WorkspaceInlineForm, WorkspaceInlineFormProps, WorkspaceNav, WorkspaceNavProps,
+    WorkspaceSession, WorkspaceSessionProps, WorkspaceShell, WorkspaceShellProps, WorkspaceTab,
+    WorkspaceTabProps, WorkspaceTabs, WorkspaceTabsProps,
+};
 
+use crate::components::ui_children;
 use crate::platform::auth::{
     AuthSession, begin_login, bootstrap_dev_auth_session, fetch_auth_session, logout,
     save_local_credentials,
@@ -82,11 +92,18 @@ pub fn App() -> impl IntoView {
 
     view! {
         {move || match auth.get() {
-            AuthState::Loading => view! {
-                <div class="auth-gate">
-                    <p class="auth-gate-status">"Checking your Wikimedia session…"</p>
-                </div>
-            }
+            AuthState::Loading => GateShell(GateShellProps::new(ui_children(|| {
+                view! {
+                    {Text(
+                        TextProps::new(ui_children(|| {
+                            view! { "Checking your Wikimedia session..." }.into_any()
+                        }))
+                        .with_tone(Tone::Muted)
+                        .with_element(TextElement::Paragraph)
+                    )}
+                }
+                .into_any()
+            })))
             .into_any(),
             AuthState::Ready(session) if session.authenticated => {
                 view! { <Workspace session=session refresh=refresh /> }.into_any()
@@ -130,9 +147,9 @@ fn LoginGate(session: AuthSession, refresh: Callback<()>) -> impl IntoView {
     // a developer can paste credentials straight into .env.wikimedia.local
     // (ADR-0014) instead of editing files by hand.
     if is_local_deployment() && !session.oauth_client_ready && !session.local_token_available {
-        return view! {
-            <div class="auth-gate"><LocalSetupPanel /></div>
-        }
+        return GateShell(GateShellProps::new(ui_children(|| {
+            view! { <LocalSetupPanel /> }.into_any()
+        })))
         .into_any();
     }
 
@@ -140,19 +157,24 @@ fn LoginGate(session: AuthSession, refresh: Callback<()>) -> impl IntoView {
     let start_login = move |_| begin_login(&login_path, &current_login_next());
 
     let primary = if session.oauth_client_ready {
-        view! {
-            <button class="btn btn-success" type="button" on:click=start_login>
-                "Log in with your Wikimedia account"
-            </button>
-        }
+        Button(
+            ButtonProps::new("Log in with your Wikimedia account")
+                .with_tone(Tone::Success)
+                .on_click(start_login),
+        )
         .into_any()
     } else {
-        view! {
-            <p class="auth-gate-error">
-                "Wikimedia OAuth is not configured on this server "
-                "(set WIKIMEDIA_CLIENT_APPLICATION_KEY and WIKIMEDIA_CLIENT_APPLICATION_SECRET)."
-            </p>
-        }
+        Text(
+            TextProps::new(ui_children(|| {
+                view! {
+                    "Wikimedia OAuth is not configured on this server (set WIKIMEDIA_CLIENT_APPLICATION_KEY and WIKIMEDIA_CLIENT_APPLICATION_SECRET)."
+                }
+                .into_any()
+            }))
+            .with_tone(Tone::Danger)
+            .with_size(sp42_ui::Size::Small)
+            .with_element(TextElement::Paragraph),
+        )
         .into_any()
     };
 
@@ -170,36 +192,42 @@ fn LoginGate(session: AuthSession, refresh: Callback<()>) -> impl IntoView {
         refresh.run(());
     });
     let secondary = if is_local_deployment() && session.local_token_available {
-        view! {
-            <button
-                class="btn btn-ghost"
-                type="button"
-                on:click=move |_| {
+        Button(
+            ButtonProps::new("Use local developer token")
+                .with_surface(ButtonSurface::Ghost)
+                .on_click(move |_| {
                     dev_bootstrap.dispatch_local(());
-                }
-            >
-                "Use local developer token"
-            </button>
-        }
+                }),
+        )
         .into_any()
     } else {
         ().into_any()
     };
 
-    view! {
-        <div class="auth-gate">
-            <div class="auth-gate-card">
-                <div class="workspace-brand">"SP42"</div>
-                <h1 class="auth-gate-title">"Sign in to continue"</h1>
-                <p class="auth-gate-lead">
-                    "SP42 patrols and edits Wikimedia projects using your own account. \
-                     Log in with Wikimedia to use the workspace."
-                </p>
+    GateShell(GateShellProps::new(ui_children(move || {
+        view! {
+            {GateCard(GateCardProps::new(ui_children(move || view! {
+                {WorkspaceBrand(WorkspaceBrandProps::new("SP42"))}
+                {Heading(
+                    HeadingProps::new(ui_children(|| view! { "Sign in to continue" }.into_any()))
+                        .with_level(HeadingLevel::One)
+                        .with_size(sp42_ui::Size::Large)
+                )}
+                {Text(
+                    TextProps::new(ui_children(|| {
+                        view! {
+                            "SP42 patrols and edits Wikimedia projects using your own account. Log in with Wikimedia to use the workspace."
+                        }
+                        .into_any()
+                    }))
+                    .with_element(TextElement::Paragraph)
+                )}
                 {primary}
                 {secondary}
-            </div>
-        </div>
-    }
+            }.into_any())))}
+        }
+        .into_any()
+    })))
     .into_any()
 }
 
@@ -222,81 +250,116 @@ fn LocalSetupPanel() -> impl IntoView {
         set_result.set(Some(outcome));
     });
 
-    view! {
-        <div class="auth-gate-card">
-            <div class="workspace-brand">"SP42"</div>
-            <h1 class="auth-gate-title">"Set up local access"</h1>
-            <p class="auth-gate-lead">
-                "No Wikimedia credentials found. Paste a personal OAuth2 access token to start \
-                 right away, or your OAuth consumer key + secret for the full login flow. "
-                <a
-                    href="https://meta.wikimedia.org/wiki/Special:OAuthConsumerRegistration/propose/oauth2"
-                    target="_blank"
-                    rel="noreferrer"
-                >
-                    "Where do I get these?"
-                </a>
-            </p>
+    GateCard(GateCardProps::new(ui_children(move || {
+        view! {
+            {WorkspaceBrand(WorkspaceBrandProps::new("SP42"))}
+            {Heading(
+                HeadingProps::new(ui_children(|| view! { "Set up local access" }.into_any()))
+                    .with_level(HeadingLevel::One)
+                    .with_size(sp42_ui::Size::Large)
+            )}
+            {Text(
+                TextProps::new(ui_children(|| {
+                    view! {
+                        "No Wikimedia credentials found. Paste a personal OAuth2 access token to start right away, or your OAuth consumer key + secret for the full login flow. "
+                        {Link(
+                            LinkProps::new(
+                                "Where do I get these?",
+                                "https://meta.wikimedia.org/wiki/Special:OAuthConsumerRegistration/propose/oauth2",
+                            )
+                            .external()
+                        )}
+                    }
+                    .into_any()
+                }))
+                .with_element(TextElement::Paragraph)
+            )}
             <form
-                class="auth-setup-form"
                 on:submit=move |ev| {
                     ev.prevent_default();
                     save.dispatch_local(());
                 }
             >
-                <label class="auth-setup-field">
-                    <span>"Access token (quickest)"</span>
-                    <input
-                        type="password"
-                        autocomplete="off"
-                        prop:value=move || token.get()
-                        on:input=move |ev| set_token.set(event_target_value(&ev))
-                    />
-                </label>
-                <label class="auth-setup-field">
-                    <span>"OAuth consumer key (optional)"</span>
-                    <input
-                        type="text"
-                        autocomplete="off"
-                        prop:value=move || key.get()
-                        on:input=move |ev| set_key.set(event_target_value(&ev))
-                    />
-                </label>
-                <label class="auth-setup-field">
-                    <span>"OAuth consumer secret (optional)"</span>
-                    <input
-                        type="password"
-                        autocomplete="off"
-                        prop:value=move || secret.get()
-                        on:input=move |ev| set_secret.set(event_target_value(&ev))
-                    />
-                </label>
-                <button class="btn btn-success" type="submit">
-                    "Save to .env.wikimedia.local"
-                </button>
+                {Stack(StackProps::new(ui_children(move || view! {
+                    {Field(FieldProps::new(
+                        "Access token (quickest)",
+                        ui_children(move || view! {
+                            {TextInput(
+                                TextInputProps::new("local-access-token")
+                                    .with_type(TextInputType::Password)
+                                    .with_autocomplete("off")
+                                    .with_value(Signal::derive(move || token.get()))
+                                    .with_width(Width::Full)
+                                    .on_input(move |ev| set_token.set(event_target_value(&ev)))
+                            )}
+                        }.into_any()),
+                    ))}
+                    {Field(FieldProps::new(
+                        "OAuth consumer key (optional)",
+                        ui_children(move || view! {
+                            {TextInput(
+                                TextInputProps::new("local-oauth-key")
+                                    .with_autocomplete("off")
+                                    .with_value(Signal::derive(move || key.get()))
+                                    .with_width(Width::Full)
+                                    .on_input(move |ev| set_key.set(event_target_value(&ev)))
+                            )}
+                        }.into_any()),
+                    ))}
+                    {Field(FieldProps::new(
+                        "OAuth consumer secret (optional)",
+                        ui_children(move || view! {
+                            {TextInput(
+                                TextInputProps::new("local-oauth-secret")
+                                    .with_type(TextInputType::Password)
+                                    .with_autocomplete("off")
+                                    .with_value(Signal::derive(move || secret.get()))
+                                    .with_width(Width::Full)
+                                    .on_input(move |ev| set_secret.set(event_target_value(&ev)))
+                            )}
+                        }.into_any()),
+                    ))}
+                    {Button(
+                        ButtonProps::new("Save to .env.wikimedia.local")
+                            .with_type(ButtonType::Submit)
+                            .with_tone(Tone::Success)
+                    )}
+                }.into_any())).with_gap(Gap::Small))}
             </form>
             {move || match result.get() {
-                Some(Ok(file)) => view! {
-                    <p class="auth-gate-status">
-                        "Saved to " {file}
-                        ". Restart the dev server (Ctrl-C, then ./scripts/dev-local.sh) to apply."
-                    </p>
-                }
+                Some(Ok(file)) => Text(
+                    TextProps::new(ui_children(move || {
+                        view! {
+                            "Saved to " {file}
+                            ". Restart the dev server (Ctrl-C, then ./scripts/dev-local.sh) to apply."
+                        }
+                        .into_any()
+                    }))
+                    .with_tone(Tone::Muted)
+                    .with_size(sp42_ui::Size::Small)
+                    .with_element(TextElement::Paragraph),
+                )
                 .into_any(),
-                Some(Err(error)) => view! {
-                    <p class="auth-gate-error">{error}</p>
-                }
+                Some(Err(error)) => Text(
+                    TextProps::new(ui_children(move || view! { {error} }.into_any()))
+                        .with_tone(Tone::Danger)
+                        .with_size(sp42_ui::Size::Small)
+                        .with_element(TextElement::Paragraph),
+                )
                 .into_any(),
                 None => ().into_any(),
             }}
-        </div>
-    }
+        }
+        .into_any()
+    })))
 }
 
 /// The authenticated workspace (the former `App` body) plus a session header.
 #[component]
 fn Workspace(session: AuthSession, refresh: Callback<()>) -> impl IntoView {
+    use sp42_ui::theme::{ThemeToggle, restore_theme};
     let (active_view, set_active_view) = signal(initial_workspace_view());
+    let theme = restore_theme();
 
     let show_patrol = move |_| {
         set_workspace_hash(WorkspaceView::Patrol);
@@ -310,7 +373,6 @@ fn Workspace(session: AuthSession, refresh: Callback<()>) -> impl IntoView {
         set_workspace_hash(WorkspaceView::Citation);
         set_active_view.set(WorkspaceView::Citation);
     };
-
     let username = session
         .username
         .clone()
@@ -335,80 +397,94 @@ fn Workspace(session: AuthSession, refresh: Callback<()>) -> impl IntoView {
         true
     });
 
-    view! {
-        <div class="workspace-shell">
-            <nav class="workspace-nav" aria-label="SP42 workspace">
-                <div class="workspace-brand">"SP42"</div>
-                <div class="workspace-tabs" role="tablist" aria-label="Workspace views">
-                    <button
-                        type="button"
-                        class=move || workspace_tab_class(active_view.get() == WorkspaceView::Patrol)
-                        aria-selected=move || (active_view.get() == WorkspaceView::Patrol).to_string()
-                        on:click=show_patrol
-                    >
-                        "Patrol"
-                    </button>
-                    <button
-                        type="button"
-                        class=move || workspace_tab_class(active_view.get() == WorkspaceView::Article)
-                        aria-selected=move || (active_view.get() == WorkspaceView::Article).to_string()
-                        on:click=show_article
-                    >
-                        "Article"
-                    </button>
-                    <button
-                        type="button"
-                        class=move || workspace_tab_class(active_view.get() == WorkspaceView::Citation)
-                        aria-selected=move || (active_view.get() == WorkspaceView::Citation).to_string()
-                        on:click=show_citation
-                    >
-                        "Citations"
-                    </button>
-                </div>
-                <form
-                    class="workspace-wiki-picker"
-                    on:submit=move |ev| {
-                        ev.prevent_default();
-                        request_wiki_switch(&wiki_input.get_untracked());
-                    }
-                >
-                    <label class="workspace-wiki-label" for="wiki-picker">"Wiki"</label>
-                    <input
-                        id="wiki-picker"
-                        class="workspace-wiki-input"
-                        type="text"
-                        list="sp42-wiki-suggestions"
-                        prop:value=move || wiki_input.get()
-                        on:input=move |ev| set_wiki_input.set(event_target_value(&ev))
-                        aria-label="Wikimedia project (dbname, e.g. enwiki, commonswiki)"
-                    />
-                    <datalist id="sp42-wiki-suggestions">
-                        {move || {
-                            wiki_options
-                                .get()
-                                .into_iter()
-                                .map(|id| view! { <option value=id></option> })
-                                .collect_view()
-                        }}
-                    </datalist>
-                    <button class="btn btn-ghost btn-compact" type="submit">
-                        "Switch"
-                    </button>
-                </form>
-                <div class="workspace-session">
-                    <span class="workspace-session-user">{username}</span>
-                    <button
-                        class="btn btn-ghost btn-compact"
-                        type="button"
-                        on:click=move |_| {
-                            do_logout.dispatch_local(());
-                        }
-                    >
-                        "Log out"
-                    </button>
-                </div>
-            </nav>
-            <main class="workspace-body">
+    WorkspaceShell(WorkspaceShellProps::new(ui_children(move || {
+        view! {
+            {WorkspaceNav(WorkspaceNavProps::new(
+                "SP42 workspace",
+                ui_children(move || view! {
+                    {WorkspaceBrand(WorkspaceBrandProps::new("SP42"))}
+                    {WorkspaceTabs(
+                        WorkspaceTabsProps::new(
+                            "Workspace views",
+                            ui_children(move || view! {
+                                {WorkspaceTab(
+                                    WorkspaceTabProps::new("Patrol")
+                                        .with_selected(Signal::derive(move || {
+                                            active_view.get() == WorkspaceView::Patrol
+                                        }))
+                                        .on_click(show_patrol)
+                                )}
+                                {WorkspaceTab(
+                                    WorkspaceTabProps::new("Article")
+                                        .with_selected(Signal::derive(move || {
+                                            active_view.get() == WorkspaceView::Article
+                                        }))
+                                        .on_click(show_article)
+                                )}
+                                {WorkspaceTab(
+                                    WorkspaceTabProps::new("Citations")
+                                        .with_selected(Signal::derive(move || {
+                                            active_view.get() == WorkspaceView::Citation
+                                        }))
+                                        .on_click(show_citation)
+                                )}
+                            }.into_any()),
+                        )
+                    )}
+                    {WorkspaceInlineForm(
+                        WorkspaceInlineFormProps::new(ui_children(move || view! {
+                            {Field(FieldProps::new(
+                                "Wiki",
+                                ui_children(move || view! {
+                                    {TextInput(
+                                        TextInputProps::new("wiki-picker")
+                                            .with_value(Signal::derive(move || wiki_input.get()))
+                                            .with_list("sp42-wiki-suggestions")
+                                            .with_aria_label("Wikimedia project (dbname, e.g. enwiki, commonswiki)")
+                                            .with_width(Width::Medium)
+                                            .with_density(Density::Compact)
+                                            .on_input(move |ev| {
+                                                set_wiki_input.set(event_target_value(&ev));
+                                            })
+                                    )}
+                                }.into_any()),
+                            ))}
+                            <datalist id="sp42-wiki-suggestions">
+                                {move || {
+                                    wiki_options
+                                        .get()
+                                        .into_iter()
+                                        .map(|id| view! { <option value=id></option> })
+                                        .collect_view()
+                                }}
+                            </datalist>
+                            {Button(
+                                ButtonProps::new("Switch")
+                                    .with_type(ButtonType::Submit)
+                                    .with_surface(ButtonSurface::Ghost)
+                                    .with_density(Density::Compact)
+                            )}
+                        }.into_any()))
+                        .on_submit(move |ev| {
+                            ev.prevent_default();
+                            request_wiki_switch(&wiki_input.get_untracked());
+                        })
+                    )}
+                    {WorkspaceSession(WorkspaceSessionProps::new(ui_children(move || view! {
+                        <span>{username.clone()}</span>
+                        {Button(
+                            ButtonProps::new("Log out")
+                                .with_surface(ButtonSurface::Ghost)
+                                .with_density(Density::Compact)
+                                .on_click(move |_| {
+                                    do_logout.dispatch_local(());
+                                })
+                        )}
+                    }.into_any())))}
+                    {ThemeToggle(theme)}
+                }.into_any()),
+            ))}
+            {WorkspaceBody(WorkspaceBodyProps::new(ui_children(move || view! {
                 {move || match active_view.get() {
                     WorkspaceView::Patrol => view! {
                         <crate::pages::patrol::PatrolSurface />
@@ -423,9 +499,10 @@ fn Workspace(session: AuthSession, refresh: Callback<()>) -> impl IntoView {
                     }
                     .into_any(),
                 }}
-            </main>
-        </div>
-    }
+            }.into_any())))}
+        }
+        .into_any()
+    })))
 }
 
 /// Fetch the full list of resolvable Wikimedia `wiki_id`s for the picker
@@ -473,14 +550,6 @@ fn current_login_next() -> String {
             }
         })
         .unwrap_or_else(|| "/".to_string())
-}
-
-fn workspace_tab_class(active: bool) -> &'static str {
-    if active {
-        "workspace-tab workspace-tab-active"
-    } else {
-        "workspace-tab"
-    }
 }
 
 fn initial_workspace_view() -> WorkspaceView {

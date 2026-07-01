@@ -3,6 +3,18 @@ use sp42_core::{
     DiffHunkKind, DiffLineSpan, DiffMarker, DiffMode, DiffMoveRole, DiffSegment, DiffSegmentKind,
     InlineSpan, StructuredDiff,
 };
+use sp42_ui::{
+    Button, ButtonProps, ButtonSurface, Card, CardProps, Density, DiffBadge, DiffBadgeProps,
+    DiffBody, DiffBodyProps, DiffContextMenu, DiffContextMenuItem, DiffContextMenuItemProps,
+    DiffContextMenuProps, DiffEditPanel, DiffEditPanelProps, DiffEmptyCell, DiffEmptyCellProps,
+    DiffHunk, DiffHunkHeader, DiffHunkHeaderProps, DiffHunkProps, DiffInlineMark,
+    DiffInlineMarkProps, DiffLine, DiffLineProps, DiffLineState, DiffModeLabel, DiffModeLabelProps,
+    DiffRows, DiffRowsProps, DiffSeparator, DiffSeparatorProps, DiffSplitHeader,
+    DiffSplitHeaderProps, DiffSplitRow, DiffSplitRowProps, DiffState, DiffStateProps, DiffStatsBar,
+    DiffStatsBarProps, DiffTone, DiffViewerShell, DiffViewerShellProps, Gap, Grid, GridColumns,
+    GridProps, RenderedHighlightTone, RenderedHtmlHost, RenderedHtmlHostProps, SectionHeader,
+    SectionHeaderProps, Size, Spacer, Stack, StackProps, Surface, Text, TextProps, Tone,
+};
 
 #[cfg(target_arch = "wasm32")]
 use crate::components::rendered_highlight::find_rendered_highlight_matches;
@@ -12,6 +24,8 @@ use crate::components::rendered_highlight::{
 use crate::components::rendered_hunk_preview::{
     RenderedHunkContext, RenderedHunkPreviewController, create_rendered_hunk_preview_controller,
 };
+
+use super::ui_children;
 
 /// Action triggered from the diff context menu.
 #[derive(Debug, Clone)]
@@ -135,20 +149,18 @@ pub fn DiffViewer(
     let _ = (&on_edit, &editing_line, &set_editing_line);
 
     let Some(diff) = diff else {
-        return view! {
-            <div role="main" aria-label="Diff viewer" class="grid-center text-muted" style="height:100%;">
-                <p>"No diff available for this edit."</p>
-            </div>
-        }
+        return DiffState(DiffStateProps::new(
+            "Diff viewer",
+            "No diff available for this edit.",
+        ))
         .into_any();
     };
 
     if diff.segments.is_empty() {
-        return view! {
-            <div role="main" aria-label="Diff viewer" class="grid-center text-muted" style="height:100%;">
-                <p>"No content change (page move, protection, or tag-only edit)."</p>
-            </div>
-        }
+        return DiffState(DiffStateProps::new(
+            "Diff viewer",
+            "No content change (page move, protection, or tag-only edit).",
+        ))
         .into_any();
     }
 
@@ -210,57 +222,23 @@ pub fn DiffViewer(
         })
         .collect();
 
-    view! {
-        <div role="main" aria-label="Diff viewer" class="diff-viewer">
-            <div class="diff-stats">
-                <span class="text-success">
-                    {format!("+{stats_added} added")}
-                </span>
-                <span class="text-danger">
-                    {format!("-{stats_removed} removed")}
-                </span>
-                <span>
-                    {format!("{stats_unchanged} unchanged")}
-                </span>
-                <span
-                    class="diff-mode"
-                    style="text-transform:uppercase;letter-spacing:0.04em;"
-                >
-                    {mode_label}
-                </span>
-                {if diff_mode == DiffMode::Lines {
-                    view! {
-                        <div style="display:flex;gap:4px;margin-inline-start:auto;">
-                            <button
-                                class="btn btn-ghost btn-compact"
-                                style:opacity=move || if display_mode.get() == DiffDisplayMode::SideBySide { "1" } else { "0.7" }
-                                on:click=move |_| set_display_mode.set(DiffDisplayMode::SideBySide)
-                            >
-                                "Side by side"
-                            </button>
-                            <button
-                                class="btn btn-ghost btn-compact"
-                                style:opacity=move || if display_mode.get() == DiffDisplayMode::Unified { "1" } else { "0.7" }
-                                on:click=move |_| set_display_mode.set(DiffDisplayMode::Unified)
-                            >
-                                "Unified"
-                            </button>
-                        </div>
-                    }.into_any()
-                } else {
-                    view! { <span style="margin-inline-start:auto;"></span> }.into_any()
-                }}
+    DiffViewerShell(DiffViewerShellProps::new(
+        "Diff viewer",
+        ui_children(move || {
+            view! {
+            {render_diff_stats_bar(
+                stats_added,
+                stats_removed,
+                stats_unchanged,
+                diff_mode,
+                mode_label,
+                show_full,
+                set_show_full,
+                display_mode,
+                set_display_mode,
+            )}
 
-                <button
-                    class="btn btn-ghost btn-compact"
-                    style="padding:2px 8px;font-size:11px;"
-                    on:click=move |_| set_show_full.update(|v| *v = !*v)
-                >
-                    {move || if show_full.get() { "Show changes only" } else { "Show full diff" }}
-                </button>
-            </div>
-
-            <div style="padding:10px;">
+            {DiffBody(DiffBodyProps::new(ui_children(move || view! {
                 {move || {
                     let has_menu = on_tag.is_some();
                     let render = |seg: &SegmentData, line: usize| {
@@ -334,11 +312,9 @@ pub fn DiffViewer(
                             .map(|vis| match vis {
                                 SegmentVisibility::Separator(n) => {
                                     let n = *n;
-                                    view! {
-                                        <div class="diff-separator">
-                                            {format!("... {n} unchanged lines ...")}
-                                        </div>
-                                    }
+                                    DiffSeparator(DiffSeparatorProps::new(format!(
+                                        "... {n} unchanged lines ..."
+                                    )))
                                     .into_any()
                                 }
                                 SegmentVisibility::Visible(idx) => {
@@ -349,10 +325,10 @@ pub fn DiffViewer(
                             .into_any()
                     }
                 }}
-            </div>
+            }.into_any())))}
             {move || {
                 let Some((x, y, text)) = menu_pos.get() else {
-                    return view! { <span></span> }.into_any();
+                    return ().into_any();
                 };
                 let dismiss = move |_| set_menu_pos.set(None);
                 let citation_click = {
@@ -364,22 +340,129 @@ pub fn DiffViewer(
                         set_menu_pos.set(None);
                     }
                 };
-                view! {
-                    <div class="context-menu-backdrop" on:click=dismiss>
-                        <div
-                            class="context-menu"
-                            style=format!("left:{x}px;top:{y}px;")
-                            on:click=move |ev| ev.stop_propagation()
-                        >
-                            <button class="context-menu-item" on:click=citation_click>
-                                "Citation needed"
-                            </button>
-                        </div>
-                    </div>
-                }.into_any()
+                DiffContextMenu(
+                    DiffContextMenuProps::new(
+                        x,
+                        y,
+                        ui_children(move || view! {
+                            {DiffContextMenuItem(
+                                DiffContextMenuItemProps::new("Citation needed")
+                                    .on_click(citation_click)
+                            )}
+                        }.into_any()),
+                    )
+                    .on_backdrop_click(dismiss),
+                )
+                .into_any()
             }}
-        </div>
+        }
+        .into_any()
+        }),
+    ))
+    .into_any()
+}
+
+fn render_diff_stats_bar(
+    stats_added: usize,
+    stats_removed: usize,
+    stats_unchanged: usize,
+    diff_mode: DiffMode,
+    mode_label: &'static str,
+    show_full: ReadSignal<bool>,
+    set_show_full: WriteSignal<bool>,
+    display_mode: ReadSignal<DiffDisplayMode>,
+    set_display_mode: WriteSignal<DiffDisplayMode>,
+) -> AnyView {
+    DiffStatsBar(DiffStatsBarProps::new(ui_children(move || {
+        view! {
+            {Text(
+                TextProps::new(ui_children(move || {
+                    view! { {format!("+{stats_added} added")} }.into_any()
+                }))
+                .with_tone(Tone::Success),
+            )}
+            {Text(
+                TextProps::new(ui_children(move || {
+                    view! { {format!("-{stats_removed} removed")} }.into_any()
+                }))
+                .with_tone(Tone::Danger),
+            )}
+            {Text(
+                TextProps::new(ui_children(move || {
+                    view! { {format!("{stats_unchanged} unchanged")} }.into_any()
+                }))
+                .with_tone(Tone::Muted),
+            )}
+            {DiffModeLabel(DiffModeLabelProps::new(mode_label))}
+            {render_display_mode_controls(diff_mode, display_mode, set_display_mode)}
+            {move || {
+                let label = if show_full.get() {
+                    "Show changes only"
+                } else {
+                    "Show full diff"
+                };
+                Button(
+                    ButtonProps::new(label)
+                        .with_surface(ButtonSurface::Ghost)
+                        .with_density(Density::Compact)
+                        .with_size(Size::Small)
+                        .on_click(move |_| set_show_full.update(|value| *value = !*value)),
+                )
+                .into_any()
+            }}
+        }
+        .into_any()
+    })))
+    .into_any()
+}
+
+fn render_display_mode_controls(
+    diff_mode: DiffMode,
+    display_mode: ReadSignal<DiffDisplayMode>,
+    set_display_mode: WriteSignal<DiffDisplayMode>,
+) -> AnyView {
+    if diff_mode != DiffMode::Lines {
+        return Spacer().into_any();
     }
+
+    sp42_ui::Toolbar(sp42_ui::ToolbarProps::new(
+        "Diff display mode",
+        ui_children(move || {
+            view! {
+                {move || {
+                    let emphasis = if display_mode.get() == DiffDisplayMode::SideBySide {
+                        ButtonSurface::Subtle
+                    } else {
+                        ButtonSurface::Ghost
+                    };
+                    Button(
+                        ButtonProps::new("Side by side")
+                            .with_surface(emphasis)
+                            .with_density(Density::Compact)
+                            .with_size(Size::Small)
+                            .on_click(move |_| set_display_mode.set(DiffDisplayMode::SideBySide)),
+                    )
+                    .into_any()
+                }}
+                {move || {
+                    let emphasis = if display_mode.get() == DiffDisplayMode::Unified {
+                        ButtonSurface::Subtle
+                    } else {
+                        ButtonSurface::Ghost
+                    };
+                    Button(
+                        ButtonProps::new("Unified")
+                            .with_surface(emphasis)
+                            .with_density(Density::Compact)
+                            .with_size(Size::Small)
+                            .on_click(move |_| set_display_mode.set(DiffDisplayMode::Unified)),
+                    )
+                    .into_any()
+                }}
+            }
+            .into_any()
+        }),
+    ))
     .into_any()
 }
 
@@ -398,30 +481,29 @@ fn render_hunk(
 ) -> leptos::tachys::view::any_view::AnyView {
     let rendered_toggle =
         render_rendered_hunk_toggle(hunk_index, rendered_context.clone(), rendered_hunks);
+    let hunk_data = hunk.clone();
+    let preview_hunk = hunk_data.clone();
 
-    view! {
-        <section
-            style="display:grid;gap:6px;margin-block-end:12px;padding:7px 0 0;\
-                   border-block-start:1px solid var(--border-light);"
-        >
-            {render_hunk_header(hunk, ordinal, rendered_toggle)}
+    DiffHunk(DiffHunkProps::new(ui_children(move || {
+        view! {
+            {render_hunk_header(&hunk_data, ordinal, rendered_toggle)}
             {render_rendered_hunk_preview(
-                hunk,
+                &preview_hunk,
                 hunk_index,
                 rendered_context.clone(),
                 rendered_hunks,
             )}
-            <div style="display:grid;gap:2px;">
-                {hunk
+            {DiffRows(DiffRowsProps::new(ui_children(move || view! {
+                {hunk_data
                     .segments
                     .iter()
                     .enumerate()
                     .map(|(index, segment)| {
-                        let fallback = hunk
+                        let fallback = hunk_data
                             .before
                             .as_ref()
                             .map_or_else(
-                                || hunk.after.as_ref().map_or(ordinal, |span| span.start_line + index),
+                                || hunk_data.after.as_ref().map_or(ordinal, |span| span.start_line + index),
                                 |span| span.start_line + index,
                             );
                         render_segment_data(
@@ -436,9 +518,10 @@ fn render_hunk(
                         )
                     })
                     .collect_view()}
-            </div>
-        </section>
-    }
+            }.into_any())))}
+        }
+        .into_any()
+    })))
     .into_any()
 }
 
@@ -455,22 +538,22 @@ fn render_hunk_side_by_side(
     let rows = build_side_by_side_rows(&hunk.segments, diff_mode);
     let rendered_toggle =
         render_rendered_hunk_toggle(hunk_index, rendered_context.clone(), rendered_hunks);
+    let hunk_data = hunk.clone();
+    let preview_hunk = hunk_data.clone();
 
-    view! {
-        <section
-            style="display:grid;gap:6px;margin-block-end:12px;padding:7px 0 0;\
-                   border-block-start:1px solid var(--border-light);"
-        >
-            {render_hunk_header(hunk, ordinal, rendered_toggle)}
+    DiffHunk(DiffHunkProps::new(ui_children(move || {
+        view! {
+            {render_hunk_header(&hunk_data, ordinal, rendered_toggle)}
             {render_rendered_hunk_preview(
-                hunk,
+                &preview_hunk,
                 hunk_index,
                 rendered_context.clone(),
                 rendered_hunks,
             )}
             {render_side_by_side_rows(rows, diff_mode, has_menu, set_menu_pos)}
-        </section>
-    }
+        }
+        .into_any()
+    })))
     .into_any()
 }
 
@@ -480,26 +563,30 @@ fn render_rendered_hunk_toggle(
     rendered_hunks: RenderedHunkPreviewController,
 ) -> leptos::tachys::view::any_view::AnyView {
     let Some(context) = rendered_context else {
-        return view! { <span></span> }.into_any();
+        return ().into_any();
     };
 
     let toggle_context = context.clone();
-    let toggle = move |_| rendered_hunks.toggle(toggle_context.clone(), hunk_index);
 
     view! {
-        <button
-            class="btn btn-ghost btn-compact"
-            style="min-height:22px;padding:1px 8px;font-size:10px;margin-inline-start:auto;"
-            on:click=toggle
-        >
-            {move || {
-                if rendered_hunks.is_expanded(hunk_index) {
-                    "Hide rendered"
-                } else {
-                    "Show rendered"
-                }
-            }}
-        </button>
+        {move || {
+            let label = if rendered_hunks.is_expanded(hunk_index) {
+                "Hide rendered"
+            } else {
+                "Show rendered"
+            };
+            Button(
+                ButtonProps::new(label)
+                    .with_surface(ButtonSurface::Ghost)
+                    .with_density(Density::Compact)
+                    .with_size(Size::Small)
+                    .on_click({
+                        let toggle_context = toggle_context.clone();
+                        move |_| rendered_hunks.toggle(toggle_context.clone(), hunk_index)
+                    }),
+            )
+            .into_any()
+        }}
     }
     .into_any()
 }
@@ -511,7 +598,7 @@ fn render_rendered_hunk_preview(
     rendered_hunks: RenderedHunkPreviewController,
 ) -> leptos::tachys::view::any_view::AnyView {
     if rendered_context.is_none() {
-        return view! { <span></span> }.into_any();
+        return ().into_any();
     }
 
     let before_highlights = collect_rendered_highlight_phrases(
@@ -526,68 +613,107 @@ fn render_rendered_hunk_preview(
     view! {
         {move || {
             if !rendered_hunks.is_expanded(hunk_index) {
-                return view! { <span></span> }.into_any();
+                return ().into_any();
             }
 
             if rendered_hunks.is_loading(hunk_index) {
-                view! {
-                    <div class="card" style="padding:10px;gap:6px;">
-                        <div class="text-muted" style="font-size:11px;">"Rendering hunk context..."</div>
-                    </div>
-                }
+                Card(
+                    CardProps::new(ui_children(|| view! {
+                        {Text(
+                            TextProps::new(ui_children(|| view! { "Rendering hunk context..." }.into_any()))
+                                .with_tone(Tone::Muted)
+                                .with_size(Size::XSmall)
+                        )}
+                    }.into_any()))
+                    .with_density(Density::Compact),
+                )
                 .into_any()
             } else if let Some(error) = rendered_hunks.error(hunk_index) {
-                view! {
-                    <div class="card" style="padding:10px;gap:6px;border-color:rgba(239,68,68,.3);">
-                        <strong style="font-size:11px;color:#fca5a5;">"Rendered preview unavailable"</strong>
-                        <div style="font-size:11px;color:var(--muted);">{error}</div>
-                    </div>
-                }
+                Card(
+                    CardProps::new(ui_children(move || view! {
+                        {Text(
+                            TextProps::new(ui_children(|| view! { "Rendered preview unavailable" }.into_any()))
+                                .with_tone(Tone::Danger)
+                                .with_size(Size::XSmall)
+                        )}
+                        {Text(
+                            TextProps::new(ui_children(move || view! { {error} }.into_any()))
+                                .with_tone(Tone::Muted)
+                                .with_size(Size::XSmall)
+                        )}
+                    }.into_any()))
+                    .with_density(Density::Compact)
+                    .with_surface(Surface::Danger),
+                )
                 .into_any()
             } else {
                 let Some(preview) = rendered_hunks.preview(hunk_index) else {
-                    return view! { <span></span> }.into_any();
+                    return ().into_any();
                 };
 
                 let warnings = preview.warnings.clone();
                 let before = preview.before.clone();
                 let after = preview.after.clone();
-                view! {
-                    <div class="card" style="padding:10px;gap:8px;">
-                        <div style="display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:10px;">
-                            <div style="display:grid;gap:6px;min-width:0;">
-                                <div class="section-header">{"Before · "}{before.section_label.clone()}</div>
-                                <div class="card" style="padding:8px;background:rgba(255,255,255,0.02);min-width:0;">
-                                    <RenderedHtmlPane
-                                        html=before.html.clone()
-                                        highlight_phrases=before_highlights.clone()
-                                        highlight_class="rendered-hunk-highlight-remove"
-                                    />
-                                </div>
-                            </div>
-                            <div style="display:grid;gap:6px;min-width:0;">
-                                <div class="section-header">{"After · "}{after.section_label.clone()}</div>
-                                <div class="card" style="padding:8px;background:rgba(255,255,255,0.02);min-width:0;">
-                                    <RenderedHtmlPane
-                                        html=after.html.clone()
-                                        highlight_phrases=after_highlights.clone()
-                                        highlight_class="rendered-hunk-highlight-add"
-                                    />
-                                </div>
-                            </div>
-                        </div>
+                let before_highlights = before_highlights.clone();
+                let after_highlights = after_highlights.clone();
+                Card(
+                    CardProps::new(ui_children(move || view! {
+                        {Grid(
+                            GridProps::new(ui_children(move || view! {
+                                {Stack(
+                                    StackProps::new(ui_children(move || view! {
+                                        {SectionHeader(SectionHeaderProps::new(format!(
+                                            "Before · {}",
+                                            before.section_label.clone()
+                                        )))}
+                                        {Card(
+                                            CardProps::new(ui_children(move || view! {
+                                                <RenderedHtmlPane
+                                                    html=before.html.clone()
+                                                    highlight_phrases=before_highlights.clone()
+                                                    highlight_tone=RenderedHighlightTone::Remove
+                                                />
+                                            }.into_any()))
+                                            .with_density(Density::Compact)
+                                        )}
+                                    }.into_any()))
+                                    .with_gap(Gap::Small)
+                                )}
+                                {Stack(
+                                    StackProps::new(ui_children(move || view! {
+                                        {SectionHeader(SectionHeaderProps::new(format!(
+                                            "After · {}",
+                                            after.section_label.clone()
+                                        )))}
+                                        {Card(
+                                            CardProps::new(ui_children(move || view! {
+                                                <RenderedHtmlPane
+                                                    html=after.html.clone()
+                                                    highlight_phrases=after_highlights.clone()
+                                                    highlight_tone=RenderedHighlightTone::Add
+                                                />
+                                            }.into_any()))
+                                            .with_density(Density::Compact)
+                                        )}
+                                    }.into_any()))
+                                    .with_gap(Gap::Small)
+                                )}
+                            }.into_any()))
+                            .with_columns(GridColumns::Two)
+                        )}
                         {warnings
                             .into_iter()
                             .map(|warning| {
-                                view! {
-                                    <div style="font-size:10px;line-height:1.35;color:var(--muted);">
-                                        {warning}
-                                    </div>
-                                }
+                                Text(
+                                    TextProps::new(ui_children(move || view! { {warning} }.into_any()))
+                                        .with_tone(Tone::Muted)
+                                        .with_size(Size::XSmall),
+                                )
                             })
                             .collect_view()}
-                    </div>
-                }
+                    }.into_any()))
+                    .with_density(Density::Compact),
+                )
                 .into_any()
             }
         }}
@@ -609,9 +735,10 @@ fn rendered_highlight_sources(
 fn RenderedHtmlPane(
     html: String,
     highlight_phrases: Vec<RenderedHighlightPhrase>,
-    highlight_class: &'static str,
+    highlight_tone: RenderedHighlightTone,
 ) -> impl IntoView {
     let container_ref = NodeRef::<html::Div>::new();
+    let highlight_class = highlight_tone.class_name();
 
     Effect::new(move |_| {
         if let Some(container) = container_ref.get() {
@@ -627,7 +754,7 @@ fn RenderedHtmlPane(
         }
     });
 
-    view! { <div class="rendered-hunk-html" node_ref=container_ref></div> }
+    RenderedHtmlHost(RenderedHtmlHostProps::new(container_ref))
 }
 
 fn render_hunk_header(
@@ -646,60 +773,43 @@ fn render_hunk_header(
         DiffMoveRole::Source => "Moved from here",
         DiffMoveRole::Target => "Moved to here",
     });
-    let _note = hunk.notes.first().cloned();
+    let note = hunk.notes.first().cloned();
 
-    view! {
-        <header style="padding:0 0 1px;">
-            <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;min-height:20px;">
-                <strong style="font-size:11px;text-transform:uppercase;letter-spacing:0.06em;color:var(--muted);line-height:1.1;">
-                    {title}
-                </strong>
-                <span style="font-size:10px;color:var(--subtle);line-height:1.2;">
-                    {section_label}
-                </span>
-                {move || {
-                    move_badge
-                        .map(|badge| {
-                            view! {
-                                <span
-                                    style="padding:1px 5px;border-radius:999px;font-size:9px;line-height:1.2;\
-                                           background:rgba(59,130,246,.12);color:#bfdbfe;border:1px solid rgba(59,130,246,.22);"
-                                >
-                                    {badge}
-                                </span>
-                            }
-                            .into_any()
-                        })
-                        .unwrap_or_else(|| view! { <span></span> }.into_any())
-                }}
+    DiffHunkHeader(DiffHunkHeaderProps::new(
+        title,
+        section_label,
+        ui_children(move || {
+            view! {
+                {move_badge
+                    .map(|badge| {
+                        DiffBadge(
+                            DiffBadgeProps::new(badge)
+                                .with_tone(Tone::Accent)
+                        )
+                        .into_any()
+                    })
+                    .unwrap_or_else(|| ().into_any())}
                 {marker_badges
                     .iter()
                     .map(|label| {
-                        let label = (*label).to_string();
-                        view! {
-                            <span
-                                style="padding:1px 5px;border-radius:999px;font-size:9px;line-height:1.2;\
-                                       background:rgba(248,250,252,.05);color:var(--muted);border:1px solid var(--border-light);"
-                            >
-                                {label}
-                            </span>
-                        }
+                        DiffBadge(DiffBadgeProps::new((*label).to_string()))
                     })
                     .collect_view()}
-                note.clone()
+                {note
                     .map(|text| {
-                        view! {
-                            <span style="font-size:10px;line-height:1.2;color:var(--muted);">
-                                {text}
-                            </span>
-                        }
+                        Text(
+                            TextProps::new(ui_children(move || view! { {text} }.into_any()))
+                                .with_tone(Tone::Muted)
+                                .with_size(Size::XSmall)
+                        )
                         .into_any()
                     })
-                    .unwrap_or_else(|| view! { <span></span> }.into_any())
+                    .unwrap_or_else(|| ().into_any())}
                 {rendered_toggle}
-            </div>
-        </header>
-    }
+            }
+            .into_any()
+        }),
+    ))
     .into_any()
 }
 
@@ -758,26 +868,17 @@ fn render_side_by_side_rows(
     has_menu: bool,
     set_menu_pos: WriteSignal<Option<(i32, i32, String)>>,
 ) -> leptos::tachys::view::any_view::AnyView {
-    view! {
-        <div style="display:grid;gap:2px;">
-            <div
-                style="display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:10px;\
-                       padding:0 0 6px;border-block-end:1px solid var(--border-light);"
-            >
-                <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.08em;color:var(--muted);">
-                    "Before"
-                </div>
-                <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.08em;color:var(--muted);">
-                    "After"
-                </div>
-            </div>
+    DiffRows(DiffRowsProps::new(ui_children(move || {
+        view! {
+            {DiffSplitHeader(DiffSplitHeaderProps::new("Before", "After"))}
             {rows
                 .into_iter()
                 .enumerate()
                 .map(|(index, row)| render_side_by_side_row(&row, index + 1, diff_mode, has_menu, set_menu_pos))
                 .collect_view()}
-        </div>
-    }
+        }
+        .into_any()
+    })))
     .into_any()
 }
 
@@ -788,8 +889,10 @@ fn render_side_by_side_row(
     has_menu: bool,
     set_menu_pos: WriteSignal<Option<(i32, i32, String)>>,
 ) -> leptos::tachys::view::any_view::AnyView {
-    view! {
-        <div style="display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:10px;">
+    let row = row.clone();
+
+    DiffSplitRow(DiffSplitRowProps::new(ui_children(move || {
+        view! {
             {render_side_by_side_cell(
                 row.left.as_ref(),
                 fallback_line_num,
@@ -806,8 +909,9 @@ fn render_side_by_side_row(
                 set_menu_pos,
                 true,
             )}
-        </div>
-    }
+        }
+        .into_any()
+    })))
     .into_any()
 }
 
@@ -820,19 +924,13 @@ fn render_side_by_side_cell(
     allow_insert_menu: bool,
 ) -> leptos::tachys::view::any_view::AnyView {
     let Some(cell) = cell else {
-        return view! {
-            <div
-                style="min-height:1.2em;border-radius:var(--radius-sm);background:rgba(255,255,255,0.02);\
-                       border:1px solid rgba(255,255,255,0.03);"
-            ></div>
-        }
-        .into_any();
+        return DiffEmptyCell(DiffEmptyCellProps).into_any();
     };
 
-    let (class, prefix) = match cell.kind {
-        DiffSegmentKind::Delete => ("diff-delete", "-"),
-        DiffSegmentKind::Insert => ("diff-insert", "+"),
-        DiffSegmentKind::Equal => ("diff-equal", " "),
+    let (tone, prefix) = match cell.kind {
+        DiffSegmentKind::Delete => (DiffTone::Delete, "-"),
+        DiffSegmentKind::Insert => (DiffTone::Insert, "+"),
+        DiffSegmentKind::Equal => (DiffTone::Equal, " "),
     };
     let aria = match cell.kind {
         DiffSegmentKind::Delete => "Removed: ",
@@ -841,9 +939,10 @@ fn render_side_by_side_cell(
     };
     let aria_text = format!("{aria}{}", cell.text.trim_end());
     let text = cell.text.clone();
-    let has_highlights = !cell.inline_highlights.is_empty();
+    let inline_highlights = cell.inline_highlights.clone();
     let menu_text = text.clone();
     let is_insert = allow_insert_menu && cell.kind == DiffSegmentKind::Insert;
+    let line_label = cell.line_label.clone();
 
     let contextmenu = move |ev: leptos::ev::MouseEvent| {
         if is_insert && has_menu {
@@ -872,50 +971,46 @@ fn render_side_by_side_cell(
         }
     };
 
-    view! {
-        <div
-            class="diff-line"
-            aria-label=aria_text
-            on:contextmenu=contextmenu
-            style="border-radius:var(--radius-sm);overflow:hidden;"
-        >
-            <span
-                class="diff-line-num"
-                aria-hidden="true"
-                style="width:56px;font-family:var(--font-mono);"
-            >
-                {cell.line_label.clone()}
-            </span>
-            <span style="width:10px;color:var(--subtle);flex-shrink:0;user-select:none;">
-                {prefix}
-            </span>
-            <pre
-                class=class
-                dir="auto"
-                style="margin:0;flex:1;white-space:pre-wrap;word-break:break-all;unicode-bidi:plaintext;"
-            >
-                {if has_highlights {
-                    cell
-                        .inline_highlights
-                        .iter()
-                        .map(|span| {
-                            let highlight_style = inline_highlight_style(span);
-                            let t = span.text.clone();
-                            if highlight_style.is_empty() {
-                                view! { <span>{t}</span> }.into_any()
-                            } else {
-                                view! { <mark style=highlight_style>{t}</mark> }.into_any()
-                            }
-                        })
-                        .collect_view()
-                        .into_any()
-                } else {
-                    view! { <span>{text}</span> }.into_any()
-                }}
-            </pre>
-        </div>
-    }
+    DiffLine(
+        DiffLineProps::new(
+            tone,
+            prefix,
+            aria_text,
+            ui_children(move || render_inline_diff_content(text, inline_highlights)),
+        )
+        .with_line_label(line_label)
+        .with_state(DiffLineState::Framed)
+        .on_context_menu(contextmenu),
+    )
     .into_any()
+}
+
+fn render_inline_diff_content(text: String, inline_highlights: Vec<InlineSpan>) -> AnyView {
+    if inline_highlights.is_empty() {
+        return DiffInlineMark(DiffInlineMarkProps::new(DiffTone::Equal, text));
+    }
+
+    inline_highlights
+        .into_iter()
+        .map(|span| DiffInlineMark(DiffInlineMarkProps::new(inline_diff_tone(&span), span.text)))
+        .collect_view()
+        .into_any()
+}
+
+fn inline_diff_tone(span: &InlineSpan) -> DiffTone {
+    if span.text.trim().is_empty() {
+        DiffTone::Equal
+    } else {
+        diff_tone(span.kind)
+    }
+}
+
+fn diff_tone(kind: DiffSegmentKind) -> DiffTone {
+    match kind {
+        DiffSegmentKind::Delete => DiffTone::Delete,
+        DiffSegmentKind::Insert => DiffTone::Insert,
+        DiffSegmentKind::Equal => DiffTone::Equal,
+    }
 }
 
 fn hunk_title(hunk: &HunkData, ordinal: usize) -> String {
@@ -1111,18 +1206,6 @@ fn collect_text_nodes(node: &web_sys::Node, nodes: &mut Vec<web_sys::Text>) {
     }
 }
 
-fn inline_highlight_style(span: &InlineSpan) -> &'static str {
-    if span.text.trim().is_empty() {
-        return "";
-    }
-
-    match span.kind {
-        DiffSegmentKind::Delete => "background:rgba(239,68,68,.35);border-radius:2px;",
-        DiffSegmentKind::Insert => "background:rgba(34,197,94,.35);border-radius:2px;",
-        DiffSegmentKind::Equal => "",
-    }
-}
-
 fn render_segment_data(
     segment: &SegmentData,
     fallback_line_num: usize,
@@ -1133,10 +1216,10 @@ fn render_segment_data(
     set_editing_line: WriteSignal<Option<(usize, String)>>,
     on_edit: Option<WriteSignal<Option<EditAction>>>,
 ) -> leptos::tachys::view::any_view::AnyView {
-    let (class, prefix) = match segment.kind {
-        DiffSegmentKind::Delete => ("diff-delete", "-"),
-        DiffSegmentKind::Insert => ("diff-insert", "+"),
-        DiffSegmentKind::Equal => ("diff-equal", " "),
+    let (tone, prefix) = match segment.kind {
+        DiffSegmentKind::Delete => (DiffTone::Delete, "-"),
+        DiffSegmentKind::Insert => (DiffTone::Insert, "+"),
+        DiffSegmentKind::Equal => (DiffTone::Equal, " "),
     };
     let aria = match segment.kind {
         DiffSegmentKind::Delete => "Removed: ",
@@ -1150,7 +1233,6 @@ fn render_segment_data(
     let before_line = format_line_label(segment.before.as_ref(), diff_mode, fallback_line_num);
     let after_line = format_line_label(segment.after.as_ref(), diff_mode, fallback_line_num);
 
-    let has_highlights = !segment.inline_highlights.is_empty();
     let highlights = segment.inline_highlights.clone();
 
     let line_idx = fallback_line_num;
@@ -1197,26 +1279,28 @@ fn render_segment_data(
                             }
                         }
                     };
-                    return view! {
-                        <div class="diff-edit-container">
-                            <textarea
-                                id=format!("sp42-edit-{line_idx}")
-                                class="diff-edit-textarea"
-                                rows="4"
-                                on:keydown=keydown
-                            >
-                                {text.trim_end().to_string()}
-                            </textarea>
-                            <div class="diff-edit-actions">
-                                <button class="btn btn-success btn-compact" on:click=move |e| save(e.into())>
-                                    "Save edit (Ctrl+Enter)"
-                                </button>
-                                <button class="btn btn-ghost btn-compact" on:click=cancel>
-                                    "Cancel (Esc)"
-                                </button>
-                            </div>
-                        </div>
-                    }.into_any();
+                    let save_click = save.clone();
+                    return DiffEditPanel(
+                        DiffEditPanelProps::new(
+                            format!("sp42-edit-{line_idx}"),
+                            text.trim_end().to_string(),
+                            ui_children(move || view! {
+                                {Button(
+                                    ButtonProps::new("Save edit (Ctrl+Enter)")
+                                        .with_tone(Tone::Success)
+                                        .with_density(Density::Compact)
+                                        .on_click(move |e| save_click(e.into()))
+                                )}
+                                {Button(
+                                    ButtonProps::new("Cancel (Esc)")
+                                        .with_surface(ButtonSurface::Ghost)
+                                        .with_density(Density::Compact)
+                                        .on_click(cancel)
+                                )}
+                            }.into_any()),
+                        )
+                        .on_keydown(keydown),
+                    ).into_any();
                 }
             }
 
@@ -1258,30 +1342,22 @@ fn render_segment_data(
                     }
                 }
             };
+            let line_text = text.clone();
+            let line_highlights = highlights.clone();
 
-            view! {
-                <div class="diff-line" aria-label=aria_text.clone() on:contextmenu=contextmenu on:dblclick=dblclick>
-                    <span class="diff-line-num" aria-hidden="true" style="width:56px;font-family:var(--font-mono);">
-                        {before_line.clone()}
-                    </span>
-                    <span class="diff-line-num" aria-hidden="true" style="width:56px;font-family:var(--font-mono);">
-                        {after_line.clone()}
-                    </span>
-                    <span style="width:10px;color:var(--subtle);flex-shrink:0;user-select:none;">{prefix}</span>
-                    <pre class=class dir="auto" style="margin:0;flex:1;white-space:pre-wrap;word-break:break-all;unicode-bidi:plaintext;">
-                        {if has_highlights {
-                            highlights.iter().map(|span| {
-                                let hs = inline_highlight_style(span);
-                                let t = span.text.clone();
-                                if hs.is_empty() { view! { <span>{t}</span> }.into_any() }
-                                else { view! { <mark style=hs>{t}</mark> }.into_any() }
-                            }).collect_view().into_any()
-                        } else {
-                            view! { <span>{text.clone()}</span> }.into_any()
-                        }}
-                    </pre>
-                </div>
-            }.into_any()
+            DiffLine(
+                DiffLineProps::new(
+                    tone,
+                    prefix,
+                    aria_text.clone(),
+                    ui_children(move || render_inline_diff_content(line_text, line_highlights)),
+                )
+                .with_before_label(before_line.clone())
+                .with_after_label(after_line.clone())
+                .on_context_menu(contextmenu)
+                .on_double_click(dblclick),
+            )
+            .into_any()
         }}
     }
     .into_any()
@@ -1311,10 +1387,11 @@ fn format_line_label(
 #[cfg(test)]
 mod tests {
     use sp42_core::{DiffLineSpan, DiffMode, DiffSegment, DiffSegmentKind};
+    use sp42_ui::DiffTone;
 
     use super::{
         SegmentData, SegmentVisibility, build_side_by_side_rows, compute_visibility,
-        format_line_label,
+        format_line_label, inline_diff_tone,
     };
 
     fn segment(kind: DiffSegmentKind) -> DiffSegment {
@@ -1487,11 +1564,11 @@ mod tests {
     #[test]
     fn whitespace_only_inline_spans_are_not_emphasized() {
         assert_eq!(
-            super::inline_highlight_style(&sp42_core::InlineSpan {
+            inline_diff_tone(&sp42_core::InlineSpan {
                 kind: DiffSegmentKind::Delete,
                 text: "               ".to_string(),
             }),
-            ""
+            DiffTone::Equal
         );
     }
 }

@@ -2,11 +2,20 @@ use std::fs;
 use std::path::Path;
 
 fn main() {
-    let static_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("static");
-    for asset in ["manifest.json", "sw.js", "offline.html"] {
+    let app_static_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("static");
+    println!(
+        "cargo:rerun-if-changed={}",
+        app_static_dir.join("sw.js").display()
+    );
+
+    let ui_static_dir = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .join("sp42-ui")
+        .join("static");
+    for asset in ["manifest.json", "offline.html"] {
         println!(
             "cargo:rerun-if-changed={}",
-            static_dir.join(asset).display()
+            ui_static_dir.join(asset).display()
         );
     }
 

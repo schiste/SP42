@@ -1,6 +1,8 @@
 use leptos::prelude::*;
+use sp42_ui::{WorkspaceGrid, WorkspaceGridProps};
 
 use crate::components::filter_bar::FilterBar;
+use crate::components::ui_children;
 use crate::platform::config::selected_wiki_id;
 
 mod action_controller;
@@ -153,23 +155,8 @@ pub fn PatrolSurface() -> impl IntoView {
                 }
             }
 
-            view! {
-                <div
-                    tabindex="0"
-                    on:keydown=move |event| {
-                        handle_patrol_keydown(
-                            event,
-                            set_action_trigger,
-                            set_skip_trigger,
-                            selected_index,
-                            queue_signal,
-                            set_selected_rev_id,
-                            set_show_backoffice,
-                            set_show_help,
-                        );
-                    }
-                    class="patrol-grid"
-                >
+            WorkspaceGrid(
+                WorkspaceGridProps::new(ui_children(move || view! {
 
                     <HelpModal show_help=show_help set_show_help=set_show_help />
 
@@ -222,8 +209,21 @@ pub fn PatrolSurface() -> impl IntoView {
                         set_action_trigger=set_action_trigger
                         set_skip_trigger=set_skip_trigger
                     />
-                </div>
-            }.into_any()
+                }.into_any()))
+                .on_keydown(move |event| {
+                        handle_patrol_keydown(
+                            event,
+                            set_action_trigger,
+                            set_skip_trigger,
+                            selected_index,
+                            queue_signal,
+                            set_selected_rev_id,
+                            set_show_backoffice,
+                            set_show_help,
+                        );
+                })
+            )
+            .into_any()
         }}
     }
 }

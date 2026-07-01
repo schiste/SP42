@@ -3079,6 +3079,7 @@ dependencies = [
  "sp42-patrol",
  "sp42-reporting",
  "sp42-types",
+ "sp42-ui",
  "sp42-wiki",
  "url",
  "wasm-bindgen",
@@ -3308,6 +3309,14 @@ dependencies = [
  "serde",
  "thiserror 2.0.18",
  "url",
+]
+
+[[package]]
+name = "sp42-ui"
+version = "0.1.0"
+dependencies = [
+ "leptos",
+ "web-sys",
 ]
 
 [[package]]

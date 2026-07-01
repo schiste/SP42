@@ -42,6 +42,7 @@ jobs:
               - 'crates/sp42-core/**'
               - 'crates/sp42-server/**'
               - 'crates/sp42-app/**'
+              - 'crates/sp42-ui/**'
               - 'Cargo.toml'
               - 'Cargo.lock'
               - 'rust-toolchain.toml'
@@ -89,6 +90,8 @@ jobs:
         run: cargo ci-doc
       - name: Layer check (ADR-0013 dependency direction)
         run: ./scripts/check-layering.sh
+      - name: Design-system gate
+        run: ./scripts/check-design-system.sh
       - name: Forbidden-pattern guard (added lines)
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}

@@ -9,78 +9,28 @@
     <meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate, max-age=0" />
     <meta http-equiv="Pragma" content="no-cache" />
     <meta http-equiv="Expires" content="0" />
-    <meta name="theme-color" content="#0b1726" />
     <meta name="description" content="SP42 Wikipedia patrolling workbench." />
     <link rel="manifest" href="/manifest.json" />
     <link rel="icon" href="/icons/sp42-icon-192.svg" />
     <link rel="apple-touch-icon" href="/icons/sp42-icon-192.svg" />
-    <style>
-      :root {
-        color-scheme: dark;
-        --bg: #08111d;
-        --bg-accent: #102138;
-        --panel: rgba(9, 21, 38, 0.9);
-        --text: #e5eef9;
-        --muted: #9db3c9;
-        --line: rgba(157, 179, 201, 0.24);
-        --accent: #52c7b8;
-      }
-
-      html,
-      body {
-        margin: 0;
-        min-height: 100%;
-        background:
-          radial-gradient(circle at top, rgba(82, 199, 184, 0.12), transparent 30%),
-          linear-gradient(180deg, var(--bg-accent), var(--bg));
-        color: var(--text);
-        font-family:
-          "IBM Plex Sans", "Avenir Next", "Segoe UI", sans-serif;
-      }
-
-      body {
-        min-height: 100vh;
-      }
-
-      .sp42-loading-shell {
-        display: grid;
-        place-items: center;
-        min-height: 100vh;
-        padding: 2rem;
-      }
-
-      .sp42-loading-card {
-        width: min(38rem, 100%);
-        padding: 1.5rem;
-        border: 1px solid var(--line);
-        border-radius: 1.25rem;
-        background: var(--panel);
-        box-shadow: 0 24px 80px rgba(0, 0, 0, 0.28);
-      }
-
-      .sp42-loading-card h1 {
-        margin: 0 0 0.5rem;
-        font-size: clamp(1.8rem, 4vw, 2.8rem);
-        letter-spacing: 0.03em;
-      }
-
-      .sp42-loading-card p {
-        margin: 0.5rem 0 0;
-        color: var(--muted);
-        line-height: 1.5;
-      }
-
-      .sp42-loading-card strong {
-        color: var(--accent);
-      }
-    </style>
+    <script>
+      // Restore the saved Codex theme before first paint to avoid a flash.
+      // Mirrors sp42_ui::theme (localStorage key "sp42-theme"). Dark is default.
+      (function () {
+        try {
+          if (localStorage.getItem("sp42-theme") === "light") {
+            document.documentElement.setAttribute("data-theme", "light");
+          }
+        } catch (_) {}
+      })();
+    </script>
     <title>SP42</title>
     <link data-trunk rel="rust" href="crates/sp42-app/Cargo.toml" data-target-name="sp42_app" data-wasm-opt="0" />
-    <link data-trunk rel="copy-file" href="crates/sp42-app/static/manifest.json" />
+    <link data-trunk rel="copy-file" href="crates/sp42-ui/static/manifest.json" />
     <link data-trunk rel="copy-file" href="crates/sp42-app/static/sw.js" />
-    <link data-trunk rel="copy-file" href="crates/sp42-app/static/offline.html" />
-    <link data-trunk rel="copy-dir" href="crates/sp42-app/static/icons" />
-    <link data-trunk rel="css" href="crates/sp42-app/static/style.css" />
+    <link data-trunk rel="copy-file" href="crates/sp42-ui/static/offline.html" />
+    <link data-trunk rel="copy-dir" href="crates/sp42-ui/static/icons" />
+    <link data-trunk rel="css" href="crates/sp42-ui/static/style.css" />
     <script src="/runtime-config.js"></script>
     <script>
       (async () => {

@@ -3,8 +3,14 @@ use sp42_patrol::{
     PatrolScenarioFinding, PatrolScenarioReadiness, PatrolScenarioReport, PatrolScenarioSection,
     ReportSeverity, render_patrol_scenario_text,
 };
+use sp42_ui::{
+    BadgeHeader, BadgeHeaderProps, Card, CardHeader, CardHeaderProps, CardProps, CodeBlock,
+    CodeBlockProps, Density, Disclosure, DisclosureProps, Gap, Grid, GridColumns, GridProps,
+    Inline, InlineProps, Panel, PanelProps, Text, TextList, TextListItem, TextListItemProps,
+    TextListProps, TextProps, TextWeight, Tone,
+};
 
-use super::{InspectorFeed, StatusBadge, StatusTone, inspector_entries_from_lines};
+use super::{InspectorFeed, StatusBadge, inspector_entries_from_lines, ui_children};
 
 #[component]
 pub fn PatrolScenarioPanel(report: PatrolScenarioReport) -> impl IntoView {
@@ -13,125 +19,157 @@ pub fn PatrolScenarioPanel(report: PatrolScenarioReport) -> impl IntoView {
     let section_cards = ordered_sections(&report);
     let findings = report.findings.clone();
     let report_text = render_patrol_scenario_text(&report);
+    let finding_count = findings.len();
+    let finding_tone = finding_summary_tone(&findings);
+    let section_count = report.sections.len();
 
-    view! {
-        <section
-            class="panel"
-        >
-            <header style="display:grid;gap:7px;">
-                <div style="display:flex;align-items:center;gap:7px;flex-wrap:wrap;">
-                    <StatusBadge label="Scenario".to_string() tone=StatusTone::Accent />
+    Panel(PanelProps::new(ui_children(move || {
+        view! {
+            {BadgeHeader(BadgeHeaderProps::new(
+                "Typed patrol scenario summary derived from the live queue, context, diff, action, stream, backlog, and coordination inputs.",
+                ui_children(move || view! {
+                    <StatusBadge label="Scenario".to_string() tone=Tone::Accent />
                     {badges
                         .into_iter()
                         .map(|(label, tone)| view! { <StatusBadge label=label tone=tone /> })
                         .collect_view()}
-                </div>
-                <p style="margin:0;color:#8b9fc0;">
-                    "Typed patrol scenario summary derived from the live queue, context, diff, action, stream, backlog, and coordination inputs."
-                </p>
-            </header>
+                }.into_any()),
+            ))}
 
-            <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:10px;">
-                <article
-                    class="card"
-                >
-                    <div style="display:flex;align-items:center;justify-content:space-between;gap:7px;flex-wrap:wrap;">
-                        <h3 style="margin:0;font-size:1rem;">"Queue to Action Narrative"</h3>
+            {Grid(
+                GridProps::new(ui_children(move || view! {
+                    {Card(CardProps::new(ui_children(move || view! {
+                        {CardHeader(CardHeaderProps::new("Queue to Action Narrative").with_actions(ui_children(move || view! {
                         <StatusBadge
-                            label=format!("{} findings", findings.len())
-                            tone={finding_summary_tone(&findings)}
+                            label=format!("{finding_count} findings")
+                            tone=finding_tone
                         />
-                    </div>
-                    <InspectorFeed entries=inspector_entries_from_lines(&narrative_lines) />
-                </article>
+                        }.into_any())))}
+                        <InspectorFeed entries=inspector_entries_from_lines(&narrative_lines) />
+                    }.into_any())))}
 
-                <article
-                    class="card"
-                >
-                    <div style="display:flex;align-items:center;justify-content:space-between;gap:7px;flex-wrap:wrap;">
-                        <h3 style="margin:0;font-size:1rem;">"Findings"</h3>
+                    {Card(CardProps::new(ui_children(move || view! {
+                        {CardHeader(CardHeaderProps::new("Findings").with_actions(ui_children(move || view! {
                         <StatusBadge
-                            label=format!("{} section(s)", report.sections.len())
-                            tone=StatusTone::Info
+                            label=format!("{section_count} section(s)")
+                            tone=Tone::Info
                         />
-                    </div>
-                    <div style="display:grid;gap:7px;">
+                        }.into_any())))}
+                    {Grid(GridProps::new(ui_children(move || view! {
                         {findings
                             .into_iter()
                             .map(|finding| view! { <FindingCard finding=finding /> })
                             .collect_view()}
-                    </div>
-                </article>
-            </div>
+                    }.into_any())).with_gap(Gap::Small))}
+                    }.into_any())))}
+                }.into_any()))
+                .with_columns(GridColumns::AutoFit)
+            )}
 
-            <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px;">
+            {Grid(
+                GridProps::new(ui_children(move || view! {
                 {section_cards
                     .into_iter()
                     .map(|section| view! { <ScenarioSectionCard section=section /> })
                     .collect_view()}
-            </div>
+                }.into_any()))
+                .with_columns(GridColumns::AutoFit)
+            )}
 
-            <details
-                style="padding:10px 17px;border-radius:4px;border:1px solid rgba(148,163,184,.14);background:rgba(8,15,29,.58);"
-            >
-                <summary style="cursor:pointer;font-weight:700;">"Technical snapshot"</summary>
-                <pre
-                    style="margin:.75rem 0 0;overflow:auto;white-space:pre-wrap;word-break:break-word;font-family:ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;font-size:.9rem;line-height:1.55;color:#eff4ff;"
-                >{report_text}</pre>
-            </details>
-        </section>
-    }
+            {Disclosure(DisclosureProps::new(
+                "Technical snapshot",
+                ui_children(move || view! {
+                    {CodeBlock(CodeBlockProps::new(report_text))}
+                }.into_any()),
+            ))}
+        }
+        .into_any()
+    })))
 }
 
 #[component]
 fn FindingCard(finding: PatrolScenarioFinding) -> impl IntoView {
     let (tone, label) = finding_meta(finding.severity);
+    let code = finding.code;
+    let message = finding.message;
 
-    view! {
-        <article
-            style="display:grid;gap:4px;padding:10px;border-radius:4px;border:1px solid rgba(148,163,184,.18);background:rgba(8,15,29,.44);"
-        >
-            <div style="display:flex;align-items:center;gap:7px;flex-wrap:wrap;">
-                <StatusBadge label=label.to_string() tone=tone />
-                <span style="color:#dce4f2;font-size:.82rem;font-weight:600;">{finding.code}</span>
-            </div>
-            <p style="margin:0;color:#d6e4ff;line-height:1.5;">{finding.message}</p>
-        </article>
-    }
+    Card(
+        CardProps::new(ui_children(move || {
+            view! {
+                {Inline(
+                    InlineProps::new(ui_children(move || view! {
+                        <StatusBadge label=label.to_string() tone=tone />
+                        {Text(
+                            TextProps::new(ui_children(move || view! { {code} }.into_any()))
+                                .with_weight(TextWeight::Medium)
+                        )}
+                    }.into_any()))
+                    .with_gap(Gap::Small)
+                )}
+                {Text(
+                    TextProps::new(ui_children(move || view! { {message} }.into_any()))
+                        .with_tone(Tone::Accent)
+                )}
+            }
+            .into_any()
+        }))
+        .with_density(Density::Compact),
+    )
 }
 
 #[component]
 fn ScenarioSectionCard(section: PatrolScenarioSection) -> impl IntoView {
     let tone = if section.available {
-        StatusTone::Success
+        Tone::Success
     } else {
-        StatusTone::Warning
+        Tone::Warning
+    };
+    let section_name = section.name;
+    let summary_lines = section.summary_lines;
+
+    let availability_label = if section.available {
+        "available"
+    } else {
+        "missing"
+    };
+    let availability_tone = if section.available {
+        Tone::Success
+    } else {
+        Tone::Warning
     };
 
-    view! {
-        <article
-            style="display:grid;gap:7px;padding:10px;border-radius:4px;border:1px solid rgba(148,163,184,.18);background:rgba(8,15,29,.42);"
-        >
-            <div style="display:flex;align-items:center;justify-content:space-between;gap:7px;flex-wrap:wrap;">
-                <StatusBadge label=section.name.clone() tone=tone />
-                <StatusBadge
-                    label=if section.available { "available".to_string() } else { "missing".to_string() }
-                    tone=if section.available { StatusTone::Success } else { StatusTone::Warning }
-                />
-            </div>
-            <ul style="margin:0;padding-inline-start:17px;color:#eff4ff;display:grid;gap:4px;">
-                {section
-                    .summary_lines
+    Card(
+        CardProps::new(ui_children(move || {
+            view! {
+                {Inline(
+                    InlineProps::new(ui_children(move || view! {
+                        <StatusBadge label=section_name tone=tone />
+                        <StatusBadge
+                            label=availability_label.to_string()
+                            tone=availability_tone
+                        />
+                    }.into_any()))
+                    .with_justify(sp42_ui::Justify::Between)
+                )}
+                {TextList(TextListProps::new(ui_children(move || view! {
+                {summary_lines
                     .into_iter()
-                    .map(|line| view! { <li>{line}</li> })
+                    .map(|line| {
+                        TextListItem(TextListItemProps::new(ui_children(move || {
+                            view! { {line} }.into_any()
+                        })))
+                    })
                     .collect_view()}
-            </ul>
-        </article>
-    }
+                }.into_any())))}
+            }
+            .into_any()
+        }))
+        .with_density(Density::Compact),
+    )
 }
 
 #[must_use]
-pub fn scenario_badges(report: &PatrolScenarioReport) -> Vec<(String, StatusTone)> {
+pub fn scenario_badges(report: &PatrolScenarioReport) -> Vec<(String, Tone)> {
     let (readiness_tone, readiness_label) = readiness_meta(report.readiness);
     let available_sections = report
         .sections
@@ -144,18 +182,18 @@ pub fn scenario_badges(report: &PatrolScenarioReport) -> Vec<(String, StatusTone
         (
             format!("{} queue", report.queue_depth),
             if report.queue_depth == 0 {
-                StatusTone::Warning
+                Tone::Warning
             } else {
-                StatusTone::Success
+                Tone::Success
             },
         ),
         (readiness_label.to_string(), readiness_tone),
         (
             format!("{} available", available_sections),
             if available_sections == report.sections.len() {
-                StatusTone::Success
+                Tone::Success
             } else {
-                StatusTone::Info
+                Tone::Info
             },
         ),
         (
@@ -231,37 +269,37 @@ pub fn scenario_storyboard_lines(report: &PatrolScenarioReport) -> Vec<String> {
 }
 
 #[must_use]
-pub fn readiness_meta(readiness: PatrolScenarioReadiness) -> (StatusTone, &'static str) {
+pub fn readiness_meta(readiness: PatrolScenarioReadiness) -> (Tone, &'static str) {
     match readiness {
-        PatrolScenarioReadiness::Blocked => (StatusTone::Warning, "Blocked"),
-        PatrolScenarioReadiness::Limited => (StatusTone::Info, "Limited"),
-        PatrolScenarioReadiness::Ready => (StatusTone::Success, "Ready"),
+        PatrolScenarioReadiness::Blocked => (Tone::Warning, "Blocked"),
+        PatrolScenarioReadiness::Limited => (Tone::Info, "Limited"),
+        PatrolScenarioReadiness::Ready => (Tone::Success, "Ready"),
     }
 }
 
 #[must_use]
-pub fn finding_meta(severity: ReportSeverity) -> (StatusTone, &'static str) {
+pub fn finding_meta(severity: ReportSeverity) -> (Tone, &'static str) {
     match severity {
-        ReportSeverity::Info => (StatusTone::Info, "Info"),
-        ReportSeverity::Warning => (StatusTone::Warning, "Warning"),
-        ReportSeverity::Blocker => (StatusTone::Accent, "Blocker"),
+        ReportSeverity::Info => (Tone::Info, "Info"),
+        ReportSeverity::Warning => (Tone::Warning, "Warning"),
+        ReportSeverity::Blocker => (Tone::Accent, "Blocker"),
     }
 }
 
 #[must_use]
-pub fn finding_summary_tone(findings: &[PatrolScenarioFinding]) -> StatusTone {
+pub fn finding_summary_tone(findings: &[PatrolScenarioFinding]) -> Tone {
     if findings
         .iter()
         .any(|finding| finding.severity == ReportSeverity::Blocker)
     {
-        StatusTone::Warning
+        Tone::Warning
     } else if findings
         .iter()
         .any(|finding| finding.severity == ReportSeverity::Warning)
     {
-        StatusTone::Accent
+        Tone::Accent
     } else {
-        StatusTone::Success
+        Tone::Success
     }
 }
 
@@ -291,7 +329,7 @@ pub fn ordered_sections(report: &PatrolScenarioReport) -> Vec<PatrolScenarioSect
 
 #[cfg(test)]
 mod tests {
-    use super::StatusTone;
+    use super::Tone;
     use super::{
         finding_summary_tone, ordered_sections, readiness_meta, scenario_badges,
         scenario_storyboard_lines,
@@ -385,7 +423,7 @@ mod tests {
         );
         assert_eq!(
             readiness_meta(PatrolScenarioReadiness::Ready).0,
-            StatusTone::Success
+            Tone::Success
         );
     }
 
@@ -441,12 +479,12 @@ mod tests {
     #[test]
     fn finding_summary_tone_reflects_severity() {
         let mut findings = sample_report().findings;
-        assert_eq!(finding_summary_tone(&findings), StatusTone::Accent);
+        assert_eq!(finding_summary_tone(&findings), Tone::Accent);
         findings.push(PatrolScenarioFinding {
             severity: ReportSeverity::Blocker,
             code: "no_selection".to_string(),
             message: "missing selection".to_string(),
         });
-        assert_eq!(finding_summary_tone(&findings), StatusTone::Warning);
+        assert_eq!(finding_summary_tone(&findings), Tone::Warning);
     }
 }

@@ -8,9 +8,20 @@ use sp42_core::{
     PageVerificationReport, parse_page_target,
 };
 use sp42_reporting::ReportSection;
+use sp42_ui::{
+    Button, ButtonProps, ButtonType, CommandBar, CommandBarProps, CommandTitle, CommandTitleProps,
+    DataPanel, DataPanelProps, Density, EvidenceBlock, EvidenceBlockProps, EvidenceDisclosure,
+    EvidenceDisclosureProps, Field, FieldProps, Gap, Inline, InlineProps, InventoryHeader,
+    InventoryHeaderProps, InventoryShell, InventoryShellProps, Link, LinkProps, MetaText,
+    MetaTextProps, PageShell, PageShellProps, PanelGrid, PanelGridProps, RawReportDisclosure,
+    RawReportDisclosureProps, ResultCard, ResultCardHeader, ResultCardHeaderProps, ResultCardProps,
+    ResultDisclosure, ResultDisclosureProps, ResultList, ResultListProps, StatusBadge,
+    StatusBadgeProps, StatusRegion, StatusRegionProps, Text, TextElement, TextInput,
+    TextInputProps, TextProps, TextWeight, Tone, Width,
+};
 
 use crate::components::style::wiki_base_url;
-use crate::components::{StatusBadge, StatusTone};
+use crate::components::ui_children;
 use crate::platform::auth::{bootstrap_dev_auth_session, fetch_dev_auth_session_status};
 use crate::platform::citation::fetch_page_report;
 use crate::platform::config::{is_local_deployment, selected_wiki_id};
@@ -111,72 +122,90 @@ pub fn CitationSurface() -> impl IntoView {
         }
     });
 
-    view! {
-        <section class="article-workspace">
-            <form
-                class="article-command-bar"
-                on:submit=move |ev| {
+    PageShell(PageShellProps::new(ui_children(move || {
+        view! {
+            {CommandBar(
+                CommandBarProps::new(ui_children(move || view! {
+                    {CommandTitle(CommandTitleProps::new(
+                        "Citation Review",
+                        "Verify every citation on a revision",
+                    ))}
+                    {Field(FieldProps::new(
+                        "Wiki",
+                        ui_children(move || view! {
+                            {TextInput(
+                                TextInputProps::new("citation-wiki")
+                                    .with_value(Signal::derive(move || wiki_id.get()))
+                                    .with_width(Width::Short)
+                                    .with_density(Density::Compact)
+                                    .on_input(move |ev| set_wiki_id.set(input_value(&ev)))
+                            )}
+                        }.into_any()),
+                    ))}
+                    {Field(FieldProps::new(
+                        "Title",
+                        ui_children(move || view! {
+                            {TextInput(
+                                TextInputProps::new("citation-title")
+                                    .with_value(Signal::derive(move || title.get()))
+                                    .with_placeholder("Article title or URL")
+                                    .with_width(Width::Full)
+                                    .with_density(Density::Compact)
+                                    .on_input(move |ev| set_title.set(input_value(&ev)))
+                            )}
+                        }.into_any()),
+                    ))}
+                    {Field(FieldProps::new(
+                        "Revision",
+                        ui_children(move || view! {
+                            {TextInput(
+                                TextInputProps::new("citation-revision")
+                                    .with_value(Signal::derive(move || rev.get()))
+                                    .with_placeholder("latest")
+                                    .with_width(Width::Short)
+                                    .with_density(Density::Compact)
+                                    .on_input(move |ev| set_rev.set(input_value(&ev)))
+                            )}
+                        }.into_any()),
+                    ))}
+                    {Button(
+                        ButtonProps::new("Verify")
+                            .with_type(ButtonType::Submit)
+                            .with_tone(Tone::Success)
+                            .with_density(Density::Compact)
+                            .with_disabled(Signal::derive(move || loading.get()))
+                    )}
+                }.into_any()))
+                .on_submit(move |ev| {
                     ev.prevent_default();
                     load_action.dispatch_local(());
-                }
-            >
-                <div class="article-command-title">
-                    <span class="section-header">"Citation Review"</span>
-                    <strong>"Verify every citation on a revision"</strong>
-                </div>
-                <label class="article-field">
-                    <span>"Wiki"</span>
-                    <input
-                        class="article-input article-input-short"
-                        type="text"
-                        prop:value=move || wiki_id.get()
-                        on:input=move |ev| set_wiki_id.set(input_value(&ev))
-                    />
-                </label>
-                <label class="article-field article-field-title">
-                    <span>"Title"</span>
-                    <input
-                        class="article-input"
-                        type="text"
-                        placeholder="Article title or URL"
-                        prop:value=move || title.get()
-                        on:input=move |ev| set_title.set(input_value(&ev))
-                    />
-                </label>
-                <label class="article-field">
-                    <span>"Revision"</span>
-                    <input
-                        class="article-input article-input-short"
-                        type="text"
-                        placeholder="latest"
-                        prop:value=move || rev.get()
-                        on:input=move |ev| set_rev.set(input_value(&ev))
-                    />
-                </label>
-                <button class="btn btn-compact btn-success" type="submit" disabled=move || loading.get()>
-                    {move || if loading.get() { "Verifying" } else { "Verify" }}
-                </button>
-            </form>
+                })
+            )}
 
             {move || {
                 if let Some(error) = load_error.get() {
-                    return view! {
-                        <div class="article-state article-state-error">{error}</div>
-                    }.into_any();
+                    return StatusRegion(
+                        StatusRegionProps::new(ui_children(move || view! { {error} }.into_any()))
+                            .with_tone(Tone::Danger),
+                    )
+                    .into_any();
                 }
                 if let Some(current_report) = report.get() {
                     return view! {
                         <PageReportView report=current_report />
                     }.into_any();
                 }
-                view! {
-                    <div class="article-state">
+                StatusRegion(StatusRegionProps::new(ui_children(|| {
+                    view! {
                         "Verify a revision to see per-citation verdicts, the evidence located in each source, and which citations need attention."
-                    </div>
-                }.into_any()
+                    }
+                    .into_any()
+                })))
+                .into_any()
             }}
-        </section>
-    }
+        }
+        .into_any()
+    })))
 }
 
 #[component]
@@ -189,10 +218,10 @@ fn PageReportView(report: PageVerificationReport) -> impl IntoView {
     // The verdict tally as a scannable row of chips; a zero count stays neutral so
     // the page only "lights up" red/amber when there is actually something to act on.
     let chips = vec![
-        ("Supported", stats.supported, StatusTone::Success),
-        ("Partial", stats.partial, StatusTone::Warning),
-        ("Not supported", stats.not_supported, StatusTone::Danger),
-        ("Unavailable", stats.source_unavailable, StatusTone::Info),
+        ("Supported", stats.supported, Tone::Success),
+        ("Partial", stats.partial, Tone::Warning),
+        ("Not supported", stats.not_supported, Tone::Danger),
+        ("Unavailable", stats.source_unavailable, Tone::Info),
     ];
     let meta_line = format!(
         "{refs} refs · {verified} use-sites verified · unavailable: {dead} dead, {unusable} unreadable · {skipped} skipped · {failures} extraction failures",
@@ -235,29 +264,31 @@ fn PageReportView(report: PageVerificationReport) -> impl IntoView {
         .collect();
     let report_text = render_page_verification_text(&report);
 
-    view! {
-        <div class="article-inventory">
-            <header class="article-inventory-header">
-                <div>
-                    <span class="section-header">{wiki.clone()}" · rev "{rev}</span>
-                    <h1>{title.clone()}</h1>
-                </div>
-                <div style="display:flex;gap:6px;flex-wrap:wrap;">
-                    {chips
-                        .into_iter()
-                        .map(|(label, count, tone)| {
-                            let tone = if count == 0 { StatusTone::Neutral } else { tone };
-                            view! { <StatusBadge label=format!("{label} {count}") tone=tone /> }
-                        })
-                        .collect_view()}
-                </div>
-            </header>
-            <p class="article-reference-meta" style="margin:0;">{meta_line}</p>
-            <p class="article-reference-meta" style="margin:0;">
-                {format!("{problem_count} of {total} citation(s) need attention")}
-            </p>
+    InventoryShell(InventoryShellProps::new(ui_children(move || {
+        view! {
+            {InventoryHeader(
+                InventoryHeaderProps::new(format!("{wiki} · rev {rev}"), title.clone())
+                    .with_actions(ui_children(move || view! {
+                        {Inline(InlineProps::new(ui_children(move || view! {
+                            {chips
+                                .into_iter()
+                                .map(|(label, count, tone)| {
+                                    let tone = if count == 0 { Tone::Default } else { tone };
+                                    StatusBadge(
+                                        StatusBadgeProps::new(format!("{label} {count}"))
+                                            .with_tone(tone),
+                                    )
+                                })
+                                .collect_view()}
+                        }.into_any())).with_gap(Gap::Small))}
+                    }.into_any()))
+            )}
+            {MetaText(MetaTextProps::new(ui_children(move || view! { {meta_line.clone()} }.into_any())))}
+            {MetaText(MetaTextProps::new(ui_children(move || {
+                view! { {format!("{problem_count} of {total} citation(s) need attention")} }.into_any()
+            })))}
 
-            <div style="display:grid;gap:10px;">
+            {ResultList(ResultListProps::new(ui_children(move || view! {
                 {grouped
                     .into_iter()
                     .map(|(group, items)| view! {
@@ -270,25 +301,19 @@ fn PageReportView(report: PageVerificationReport) -> impl IntoView {
                         />
                     })
                     .collect_view()}
-            </div>
+            }.into_any())))}
 
-            <div class="article-panels">
+            {PanelGrid(PanelGridProps::new(ui_children(move || view! {
                 {other_sections
                     .into_iter()
                     .map(|section| view! { <ReportSectionCard section=section /> })
                     .collect_view()}
-            </div>
+            }.into_any())))}
 
-            <details
-                style="padding:10px 17px;border-radius:4px;border:1px solid rgba(148,163,184,.14);background:rgba(8,15,29,.58);"
-            >
-                <summary style="cursor:pointer;font-weight:700;">"Raw text report"</summary>
-                <pre
-                    style="margin:.75rem 0 0;overflow:auto;white-space:pre-wrap;word-break:break-word;font-family:ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;font-size:.9rem;line-height:1.55;color:#eff4ff;"
-                >{report_text}</pre>
-            </details>
-        </div>
-    }
+            {RawReportDisclosure(RawReportDisclosureProps::new("Raw text report", report_text))}
+        }
+        .into_any()
+    })))
 }
 
 /// One verdict-group section: a collapsible block whose header names the group and
@@ -305,24 +330,26 @@ fn FindingGroupSection(
     let count = findings.len();
     let open = !group.collapsed_by_default();
     let tone = group_tone(group);
-    let border = group_border(group);
     let group_title = group.title().to_string();
     let hint = group.hint();
 
-    view! {
-        <details
-            open=open
-            style=format!(
-                "border:1px solid var(--border);border-inline-start:3px solid {border};border-radius:6px;background:var(--panel-inner);padding:10px 12px;"
-            )
-        >
-            <summary style="cursor:pointer;display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
-                <StatusBadge label=format!("{group_title} · {count}") tone=tone />
-                {hint.map(|text| view! {
-                    <span class="article-reference-meta">{text}</span>
-                })}
-            </summary>
-            <div class="article-reference-list" style="margin-top:10px;">
+    ResultDisclosure(
+        ResultDisclosureProps::new(
+            ui_children(move || {
+                view! {
+                    {StatusBadge(
+                        StatusBadgeProps::new(format!("{group_title} · {count}"))
+                            .with_tone(tone),
+                    )}
+                    {hint.map(|text| {
+                        MetaText(MetaTextProps::new(ui_children(move || view! { {text} }.into_any())))
+                    })}
+                }
+                .into_any()
+            }),
+            ui_children(move || {
+                view! {
+                    {ResultList(ResultListProps::new(ui_children(move || view! {
                 {findings
                     .into_iter()
                     .map(|finding| {
@@ -331,9 +358,14 @@ fn FindingGroupSection(
                         view! { <FindingCard finding=finding article_url=article_url /> }
                     })
                     .collect_view()}
-            </div>
-        </details>
-    }
+                    }.into_any())))}
+                }
+                .into_any()
+            }),
+        )
+        .with_tone(tone)
+        .with_state(open),
+    )
 }
 
 /// A deep link to the citation's inline marker on the verified revision, so an
@@ -379,107 +411,107 @@ fn FindingCard(finding: CitationFinding, article_url: Option<String>) -> impl In
     let source_meta = finding.metadata.as_ref().and_then(metadata_line);
     let has_evidence = quote.is_some() || excerpt.is_some();
 
-    view! {
-        <article class="article-reference">
-            <div style="display:flex;justify-content:space-between;gap:8px;align-items:baseline;">
-                <div style="min-width:0;">
-                    <strong>{format!("#{ordinal}")}</strong>
-                    {(!ref_id.is_empty()).then(|| view! {
-                        <span style="font-size:10px;color:#8b9fc0;margin-inline-start:6px;overflow-wrap:anywhere;">
-                            {ref_id.clone()}
-                        </span>
-                    })}
-                </div>
-                <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;justify-content:flex-end;">
-                    {fuzzy.then(|| view! {
-                        <StatusBadge label="fuzzy match".to_string() tone=StatusTone::Warning />
-                    })}
-                    {agreement.map(|label| view! {
-                        <StatusBadge label=label tone=StatusTone::Neutral />
-                    })}
-                </div>
-            </div>
+    ResultCard(ResultCardProps::new(ui_children(move || {
+        view! {
+            {ResultCardHeader(
+                ResultCardHeaderProps::new(ui_children(move || {
+                    view! {
+                        {Text(
+                            TextProps::new(ui_children(move || {
+                                view! { {format!("#{ordinal}")} }.into_any()
+                            }))
+                            .with_weight(TextWeight::Bold)
+                        )}
+                        {(!ref_id.is_empty()).then(|| {
+                            MetaText(MetaTextProps::new(ui_children(move || {
+                                view! { {ref_id.clone()} }.into_any()
+                            })))
+                        })}
+                    }
+                    .into_any()
+                }))
+                .with_actions(ui_children(move || {
+                    view! {
+                        {fuzzy.then(|| {
+                            StatusBadge(
+                                StatusBadgeProps::new("fuzzy match").with_tone(Tone::Warning),
+                            )
+                        })}
+                        {agreement.map(|label| {
+                            StatusBadge(StatusBadgeProps::new(label).with_tone(Tone::Default))
+                        })}
+                    }
+                    .into_any()
+                }))
+            )}
 
-            <p style="color:#eff4ff;margin:0;">{claim}</p>
+            {Text(
+                TextProps::new(ui_children(move || view! { {claim.clone()} }.into_any()))
+                    .with_element(TextElement::Paragraph)
+            )}
 
-            {article_url.map(|href| view! {
-                <div class="article-reference-meta">
-                    <a
-                        href=href
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        style="color:#7cc4ff;font-weight:600;"
-                    >
-                        "↗ show citation in article"
-                    </a>
-                </div>
+            {article_url.map(|href| {
+                MetaText(MetaTextProps::new(ui_children(move || {
+                    view! {
+                        {Link(LinkProps::new("show citation in article", href).external())}
+                    }
+                    .into_any()
+                })))
             })}
 
-            {reason.map(|value| view! { <div class="article-reference-meta">{value}</div> })}
-
-            <div class="article-reference-meta">
-                <a
-                    href=url.clone()
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    style="color:#7cc4ff;word-break:break-all;"
-                >
-                    {url.clone()}
-                </a>
-            </div>
-            {archive.map(|value| view! {
-                <div class="article-reference-meta">
-                    "via archive of "
-                    <a
-                        href=value.clone()
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        style="color:#7cc4ff;word-break:break-all;"
-                    >
-                        {value.clone()}
-                    </a>
-                </div>
+            {reason.map(|value| {
+                MetaText(MetaTextProps::new(ui_children(move || view! { {value} }.into_any())))
             })}
 
-            // Citoid bibliographic context — always visible, since it helps identify
-            // a source even when the tool could not read it.
-            {source_meta.map(|line| view! {
-                <div class="article-reference-meta">{format!("source: {line}")}</div>
+            {MetaText(MetaTextProps::new(ui_children(move || {
+                view! {
+                    {Link(LinkProps::new(url.clone(), url.clone()).external())}
+                }
+                .into_any()
+            })))}
+            {archive.map(|value| {
+                MetaText(MetaTextProps::new(ui_children(move || {
+                    view! {
+                        "via archive of "
+                        {Link(LinkProps::new(value.clone(), value).external())}
+                    }
+                    .into_any()
+                })))
             })}
 
-            {has_evidence.then(|| view! {
-                <details>
-                    <summary style="cursor:pointer;font-size:10px;color:#8b9fc0;text-transform:uppercase;letter-spacing:.06em;">
-                        "Source evidence"
-                    </summary>
-                    {quote.map(|text| view! {
-                        <div style="margin:6px 0 0;">
-                            <span style="display:block;color:#8b9fc0;font-size:10px;text-transform:uppercase;letter-spacing:.06em;margin-bottom:2px;">
-                                "Located quote"
-                            </span>
-                            <blockquote style="margin:0;padding:6px 10px;border-inline-start:3px solid rgba(61,185,125,.5);background:rgba(15,23,42,.58);color:#eff4ff;font-size:12px;line-height:1.5;">
-                                {text}
-                            </blockquote>
-                        </div>
-                    })}
-                    {excerpt.map(|text| view! {
-                        <div style="margin:6px 0 0;">
-                            <span style="display:block;color:#8b9fc0;font-size:10px;text-transform:uppercase;letter-spacing:.06em;margin-bottom:2px;">
-                                "Source text (what the panel read)"
-                            </span>
-                            <blockquote style="margin:0;padding:6px 10px;border-inline-start:3px solid rgba(148,163,184,.3);background:rgba(15,23,42,.58);color:#cdd7ea;font-size:12px;line-height:1.5;white-space:pre-wrap;">
-                                {text}
-                            </blockquote>
-                        </div>
-                    })}
-                </details>
+            {source_meta.map(|line| {
+                MetaText(MetaTextProps::new(ui_children(move || {
+                    view! { {format!("source: {line}")} }.into_any()
+                })))
             })}
 
-        // Tier-2 (deferred): per-finding disposition for editors — "Looks right /
-        // Disagree (because …)" capturing verdict-quality feedback — slots in at the
-        // card footer here; persistence is a separate change.
-        </article>
-    }
+            {has_evidence.then(|| {
+                EvidenceDisclosure(
+                    EvidenceDisclosureProps::new(
+                        "Source evidence",
+                        ui_children(move || {
+                            view! {
+                                {quote.map(|text| {
+                                    EvidenceBlock(
+                                        EvidenceBlockProps::new("Located quote", text)
+                                            .with_tone(Tone::Success),
+                                    )
+                                })}
+                                {excerpt.map(|text| {
+                                    EvidenceBlock(EvidenceBlockProps::new(
+                                        "Source text (what the panel read)",
+                                        text,
+                                    ))
+                                })}
+                            }
+                            .into_any()
+                        }),
+                    ),
+                )
+            })}
+        }
+        .into_any()
+    })))
 }
 
 /// A one-line bibliographic summary from Citoid metadata (title · author ·
@@ -499,58 +531,62 @@ fn metadata_line(meta: &CitoidMetadata) -> Option<String> {
 }
 
 /// Section-header tone for a finding group.
-fn group_tone(group: FindingGroup) -> StatusTone {
+fn group_tone(group: FindingGroup) -> Tone {
     match group {
-        FindingGroup::NotSupported => StatusTone::Danger,
-        FindingGroup::Unverified | FindingGroup::Partial => StatusTone::Warning,
-        FindingGroup::DeadLink => StatusTone::Info,
-        FindingGroup::Unreadable => StatusTone::Neutral,
-        FindingGroup::VerifiedViaArchive => StatusTone::Accent,
-        FindingGroup::Supported => StatusTone::Success,
-    }
-}
-
-/// Left-border accent color for a group section (matches [`group_tone`]).
-fn group_border(group: FindingGroup) -> &'static str {
-    match group {
-        FindingGroup::NotSupported => "#ef4444",
-        FindingGroup::Unverified | FindingGroup::Partial => "#f59e0b",
-        FindingGroup::DeadLink => "#3b82f6",
-        FindingGroup::Unreadable => "#4f6280",
-        FindingGroup::VerifiedViaArchive => "#8fb7ff",
-        FindingGroup::Supported => "#22c55e",
+        FindingGroup::NotSupported => Tone::Danger,
+        FindingGroup::Unverified | FindingGroup::Partial => Tone::Warning,
+        FindingGroup::DeadLink => Tone::Info,
+        FindingGroup::Unreadable => Tone::Default,
+        FindingGroup::VerifiedViaArchive => Tone::Accent,
+        FindingGroup::Supported => Tone::Success,
     }
 }
 
 #[component]
 fn ReportSectionCard(section: ReportSection) -> impl IntoView {
     let tone = if section.available {
-        StatusTone::Success
+        Tone::Success
     } else {
-        StatusTone::Info
+        Tone::Info
+    };
+    let name = section.name;
+    let lines = section.summary_lines;
+    let count = lines.len();
+    let availability = if tone == Tone::Success {
+        "available"
+    } else {
+        "unavailable"
     };
 
-    view! {
-        <article class="article-panel">
-            <header
-                class="article-panel-header"
-                style="display:flex;align-items:center;justify-content:space-between;gap:7px;flex-wrap:wrap;"
-            >
-                <StatusBadge label=section.name.clone() tone=tone />
-                <StatusBadge
-                    label=format!("{} line(s)", section.summary_lines.len())
-                    tone=StatusTone::Info
-                />
-            </header>
-            <ul class="article-list">
-                {section
-                    .summary_lines
-                    .into_iter()
-                    .map(|line| view! { <li>{line}</li> })
-                    .collect_view()}
-            </ul>
-        </article>
-    }
+    DataPanel(
+        DataPanelProps::new(
+            name,
+            ui_children(move || {
+                view! {
+                    {ResultList(ResultListProps::new(ui_children(move || {
+                        view! {
+                            {lines
+                                .into_iter()
+                                .map(|line| {
+                                    ResultCard(ResultCardProps::new(ui_children(move || {
+                                        view! {
+                                            {Text(TextProps::new(ui_children(move || {
+                                                view! { {line} }.into_any()
+                                            })))}
+                                        }
+                                        .into_any()
+                                    })))
+                                })
+                                .collect_view()}
+                        }
+                        .into_any()
+                    })))}
+                }
+                .into_any()
+            }),
+        )
+        .with_count(format!("{count} line(s) · {availability}")),
+    )
 }
 
 #[cfg(target_arch = "wasm32")]

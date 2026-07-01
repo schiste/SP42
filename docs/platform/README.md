@@ -11,6 +11,7 @@ engine), and `xtask`.
 - [DESKTOP_DISTRIBUTION.md](DESKTOP_DISTRIBUTION.md) — desktop shell backends, build prerequisites, signing/notarization
 - [DEVELOPER_SURFACE.md](DEVELOPER_SURFACE.md) — localhost reporting, action/live boundaries, telemetry, milestone boundaries
 - [FRONTEND_DESIGN_CONTRACT.md](FRONTEND_DESIGN_CONTRACT.md) — binding frontend design spec
+- [CODEX_DESIGN_SYSTEM.md](CODEX_DESIGN_SYSTEM.md) — how SP42 aligns to Wikimedia Codex (tokens, not Vue components) and where it deliberately diverges
 
 ## Scoring
 

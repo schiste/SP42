@@ -50,6 +50,7 @@ pub mod public_documents;
 pub mod queue_builder;
 pub mod review_workbench;
 pub mod routes;
+pub mod score_tier;
 pub mod scoring_engine;
 pub mod scoring_policy;
 #[cfg(any(test, feature = "test-support"))]
@@ -129,6 +130,7 @@ pub use review_workbench::{
     PreparedRequestPreview, ReviewWorkbench, build_review_workbench,
     build_session_action_execution_requests,
 };
+pub use score_tier::{HIGH_SCORE_THRESHOLD, MEDIUM_SCORE_THRESHOLD, ScoreTier, score_tier};
 pub use scoring_engine::{score_edit, score_edit_with_context};
 pub use scoring_policy::{
     CombinationRulePolicy, CompiledScoringPolicy, EvaluationFairnessProfile,

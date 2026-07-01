@@ -1,6 +1,12 @@
 use leptos::prelude::*;
 use sp42_core::{DevAuthCapabilityReport, SessionActionKind};
 use sp42_live::{LiveOperatorActionPreflight, LiveOperatorActionRecommendation};
+use sp42_ui::{
+    Button, ButtonProps, ButtonState, ButtonSurface, ButtonType, Density, Size, Spacer, Text,
+    TextProps, Tone, Toolbar, ToolbarProps,
+};
+
+use super::ui_children;
 
 #[component]
 pub fn ActionBar(
@@ -38,74 +44,88 @@ pub fn ActionBar(
 
     let preflight_notes = preflight.notes.join(" ");
 
-    let rollback_class = if recommended == Some(SessionActionKind::Rollback) {
-        "btn btn-danger btn-recommended"
+    Toolbar(
+        ToolbarProps::new(
+            "Patrol actions",
+            ui_children(move || {
+                view! {
+                    {Button(recommend_when(
+                        ButtonProps::new("R Rollback")
+                            .with_tone(Tone::Danger)
+                            .with_type(ButtonType::Button)
+                            .with_title(rollback_title)
+                            .with_keyshortcuts("r")
+                            .with_disabled(Signal::derive(move || {
+                                !rollback_available || !has_selection.get() || action_pending.get()
+                            }))
+                            .on_click(move |_| on_action.set(Some(SessionActionKind::Rollback))),
+                        recommended == Some(SessionActionKind::Rollback),
+                    ))}
+
+                    {Button(recommend_when(
+                        ButtonProps::new("U Undo")
+                            .with_type(ButtonType::Button)
+                            .with_title(undo_title)
+                            .with_keyshortcuts("u")
+                            .with_disabled(Signal::derive(move || {
+                                !undo_available || !has_selection.get() || action_pending.get()
+                            }))
+                            .on_click(move |_| on_action.set(Some(SessionActionKind::Undo))),
+                        recommended == Some(SessionActionKind::Undo),
+                    ))}
+
+                    {Button(recommend_when(
+                        ButtonProps::new("P Patrol")
+                            .with_tone(Tone::Success)
+                            .with_type(ButtonType::Button)
+                            .with_title(patrol_title)
+                            .with_keyshortcuts("p")
+                            .with_disabled(Signal::derive(move || {
+                                !patrol_available || !has_selection.get() || action_pending.get()
+                            }))
+                            .on_click(move |_| on_action.set(Some(SessionActionKind::Patrol))),
+                        recommended == Some(SessionActionKind::Patrol),
+                    ))}
+
+                    {Button(
+                        ButtonProps::new("S Skip")
+                            .with_type(ButtonType::Button)
+                            .with_surface(ButtonSurface::Ghost)
+                            .with_keyshortcuts("s")
+                            .with_disabled(Signal::derive(move || !has_selection.get()))
+                            .on_click(move |_| on_skip.set(true)),
+                    )}
+
+                    {Spacer()}
+                    {Text(
+                        TextProps::new(ui_children(move || {
+                            view! {
+                                {move || {
+                                    if action_pending.get() {
+                                        "Executing...".to_string()
+                                    } else {
+                                        preflight_notes.clone()
+                                    }
+                                }}
+                            }
+                            .into_any()
+                        }))
+                        .with_tone(Tone::Muted)
+                        .with_size(Size::XSmall),
+                    )}
+                }
+                .into_any()
+            }),
+        )
+        .with_density(Density::Compact),
+    )
+}
+
+fn recommend_when(props: ButtonProps, recommended: bool) -> ButtonProps {
+    if recommended {
+        props.with_state(ButtonState::Recommended)
     } else {
-        "btn btn-danger"
-    };
-    let undo_class = if recommended == Some(SessionActionKind::Undo) {
-        "btn btn-recommended"
-    } else {
-        "btn"
-    };
-    let patrol_class = if recommended == Some(SessionActionKind::Patrol) {
-        "btn btn-success btn-recommended"
-    } else {
-        "btn btn-success"
-    };
-
-    view! {
-        <div role="toolbar" aria-label="Patrol actions" class="action-buttons">
-            <button
-                class=rollback_class
-                title=rollback_title
-                aria-keyshortcuts="r"
-                disabled=move || !rollback_available || !has_selection.get() || action_pending.get()
-                on:click=move |_| on_action.set(Some(SessionActionKind::Rollback))
-            >
-                "R Rollback"
-            </button>
-
-            <button
-                class=undo_class
-                title=undo_title
-                aria-keyshortcuts="u"
-                disabled=move || !undo_available || !has_selection.get() || action_pending.get()
-                on:click=move |_| on_action.set(Some(SessionActionKind::Undo))
-            >
-                "U Undo"
-            </button>
-
-            <button
-                class=patrol_class
-                title=patrol_title
-                aria-keyshortcuts="p"
-                disabled=move || !patrol_available || !has_selection.get() || action_pending.get()
-                on:click=move |_| on_action.set(Some(SessionActionKind::Patrol))
-            >
-                "P Patrol"
-            </button>
-
-            <button
-                class="btn btn-ghost"
-                aria-keyshortcuts="s"
-                disabled=move || !has_selection.get()
-                on:click=move |_| on_skip.set(true)
-            >
-                "S Skip"
-            </button>
-
-            <div class="flex-spacer"></div>
-            <div class="text-muted" style="font-size:11px;">
-                {move || {
-                    if action_pending.get() {
-                        "Executing...".to_string()
-                    } else {
-                        preflight_notes.clone()
-                    }
-                }}
-            </div>
-        </div>
+        props
     }
 }
 

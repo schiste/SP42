@@ -15,10 +15,10 @@ whole edge and folds in #60, because the chosen mechanism closes it for free
 rather than as separate work.
 
 The headline decision is deliberately *un*-ambitious about new code: keep all of
-reqwest's transport, redirect, TLS, and connection-pooling behavior; lean on
-maintained middleware for retry; and add only the one small policy layer
-(SSRF) that a general-purpose HTTP client cannot supply for us. The change is
-net code *removed*, not added.
+reqwest's transport, redirect, TLS, and connection-pooling behavior; add the
+small trust-context layers a general-purpose HTTP client cannot supply for us
+(SSRF policy and `Retry-After`-aware status retries); and consolidate duplicated
+fetch code. The change is net code *removed*, not added.
 
 ## Context
 
@@ -230,8 +230,10 @@ in our process.
 - **Closes #34's open items** (retry/backoff, codified timeouts, confirmed UA;
   `maxlag` ruled out with reason) **and #60** (resolved-IP / DNS-rebinding) as a
   side effect of the resolver.
-- **Future code avoided:** no hand-rolled backoff/jitter/`Retry-After` state
-  machine, no separate #60 fix, no perpetual two-client sync.
+- **Future drift avoided:** no separate #60 fix, no perpetual two-client sync,
+  and no retry dependency whose API cannot observe `Retry-After`. The accepted
+  retry code is deliberately narrow: status-only, idempotent GETs, three
+  attempts, capped `Retry-After`, and jittered fallback delay.
 - **Migration:** `sp42-cli` and `sp42-server` switch their source fetch to
   `sp42-fetch`. Bare-URL repair already uses a separate general client for
   Citoid; verify-page and CLI Citoid calls keep using the guarded injected
@@ -252,9 +254,10 @@ in our process.
 - **Keep the URL-string floor only; skip resolved-IP checks.** Trivially
   bypassed (`A evil.com → 169.254.169.254` needs no rebinding *timing*), so it is
   close to security theater on its own. Rejected.
-- **Hand-rolled retry/backoff.** ~100+ lines of security-adjacent state machine
-  vs. a maintained crate. Rejected; `backoff` specifically is unmaintained
-  (RUSTSEC-2025-0012).
+- **Generic retry middleware or a large retry framework.** `reqwest-retry` was
+  tried and dropped because its policy cannot observe response `Retry-After`;
+  `backoff` specifically is unmaintained (RUSTSEC-2025-0012). Rejected in favor
+  of the narrow in-`execute` loop in decision #5, not a reusable retry framework.
 - **Deploy-layer SSRF mitigation only (IMDSv2 + egress), no in-code guard.**
   Legitimate and arguably sufficient in a hardened modern deploy, but leaves #60
   open in code and depends on deploy discipline we cannot guarantee. Recorded as

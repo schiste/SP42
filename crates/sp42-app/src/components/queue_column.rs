@@ -1,7 +1,14 @@
 use leptos::prelude::*;
 use sp42_core::{EditorIdentity, QueuedEdit};
+use sp42_ui::{
+    Align, DeltaText, DeltaTextProps, EmptyState, EmptyStateProps, Gap, Inline, InlineProps,
+    InlineState, NavigationItem, NavigationItemProps, NavigationItemState, NavigationPane,
+    NavigationPaneProps, ScoreText, ScoreTextProps, ScoreTextState, Size, Stack, StackProps,
+    StatusBadgeProps, Text, TextOverflow, TextProps, Tone,
+};
 
-use super::style::score_tier;
+use super::style::score_tone_for_score;
+use super::ui_children;
 
 #[component]
 pub fn QueueColumn(
@@ -11,84 +18,137 @@ pub fn QueueColumn(
     group_counts: std::collections::HashMap<u64, usize>,
 ) -> impl IntoView {
     let count = queue.len();
-    view! {
-        <nav role="navigation" aria-label="Edit queue" class="queue-column">
-            <div class="queue-header">
-                {format!("Queue ({count})")}
-            </div>
-            <div class="queue-scroll">
-                {if queue.is_empty() {
-                    view! {
-                        <div class="grid-center text-muted" style="padding:17px;font-size:12px;">
-                            <p style="margin:0 0 4px;font-weight:700;">"No edits in queue"</p>
-                            <p style="margin:0;">"Adjust filters or load older."</p>
-                        </div>
-                    }.into_any()
-                } else {
-                    view! { <div>
-                {queue
-                    .into_iter()
-                    .enumerate()
-                    .map(|(_index, item)| {
+    NavigationPane(NavigationPaneProps::new(
+        "Edit queue",
+        format!("Queue ({count})"),
+        ui_children(move || {
+            if queue.is_empty() {
+                return view! {
+                    {EmptyState(EmptyStateProps::new(
+                        "No edits in queue",
+                        "Adjust filters or load older.",
+                    ))}
+                }
+                .into_any();
+            }
+
+            view! {
+                {Stack(
+                    StackProps::new(ui_children(move || {
+                        view! {
+                            {queue
+                                .into_iter()
+                                .map(|item| {
                         let score = item.score.total;
                         let title = item.event.title.clone();
                         let is_patrolled = item.event.is_patrolled.is_enabled();
-                        let (tier_color, _tier_icon) = score_tier(score);
                         let user = match &item.event.performer {
                             EditorIdentity::Registered { username } => username.clone(),
                             EditorIdentity::Anonymous { label } => label.clone(),
                             EditorIdentity::Temporary { label } => label.clone(),
                         };
                         let delta = item.event.byte_delta;
-                        let delta_str = if delta > 0 { format!("+{delta}") } else { delta.to_string() };
-                        let delta_color = if delta > 0 { "var(--success)" } else if delta < 0 { "var(--danger)" } else { "var(--muted)" };
 
                         let rev_id = item.event.rev_id;
                         let group_count = group_counts.get(&rev_id).copied().unwrap_or(1);
-                        view! {
-                            <button
-                                class="queue-item"
-                                style=move || {
-                                    if selected_rev_id.get() == Some(rev_id) {
-                                        format!("border-inline-start:3px solid {tier_color};background:var(--selected);{}", if is_patrolled { "opacity:0.5;" } else { "" })
-                                    } else {
-                                        format!("border-inline-start:3px solid transparent;{}", if is_patrolled { "opacity:0.5;" } else { "" })
-                                    }
+                        NavigationItem(navigation_item_props(
+                            score,
+                            is_patrolled,
+                            Signal::derive(move || selected_rev_id.get() == Some(rev_id)),
+                            move |_| set_selected_rev_id.set(Some(rev_id)),
+                            ui_children(move || {
+                                view! {
+                                    {Inline(
+                                        InlineProps::new(ui_children(move || {
+                                            view! {
+                                                {ScoreText(
+                                                    ScoreTextProps::new(score)
+                                                        .with_tone(score_tone_for_score(score))
+                                                        .with_state(ScoreTextState::TextOnly)
+                                                        .with_size(Size::Medium),
+                                                )}
+                                                {Text(
+                                                    TextProps::new(ui_children(move || {
+                                                        view! { {title} }.into_any()
+                                                    }))
+                                                    .with_size(Size::Small)
+                                                    .with_overflow(TextOverflow::ClampTwo),
+                                                )}
+                                            }
+                                            .into_any()
+                                        }))
+                                        .with_gap(Gap::Small)
+                                        .with_align(Align::Baseline)
+                                        .with_state(InlineState::NoWrap),
+                                    )}
+                                    {Inline(
+                                        InlineProps::new(ui_children(move || {
+                                            view! {
+                                                {Text(
+                                                    TextProps::new(ui_children(move || {
+                                                        view! { {user} }.into_any()
+                                                    }))
+                                                    .with_tone(Tone::Muted)
+                                                    .with_size(Size::XSmall),
+                                                )}
+                                                {DeltaText(
+                                                    DeltaTextProps::new(delta)
+                                                        .with_size(Size::XSmall),
+                                                )}
+                                                {if is_patrolled {
+                                                    sp42_ui::StatusBadge(
+                                                        StatusBadgeProps::new("P")
+                                                            .with_tone(Tone::Success)
+                                                            .with_size(Size::Small),
+                                                    ).into_any()
+                                                } else {
+                                                    ().into_any()
+                                                }}
+                                                {if group_count > 1 {
+                                                    sp42_ui::StatusBadge(
+                                                        StatusBadgeProps::new(format!("{group_count} edits"))
+                                                            .with_tone(Tone::Accent)
+                                                            .with_size(Size::Small),
+                                                    ).into_any()
+                                                } else {
+                                                    ().into_any()
+                                                }}
+                                            }
+                                            .into_any()
+                                        }))
+                                        .with_gap(Gap::Small),
+                                    )}
                                 }
-                                on:click=move |_| set_selected_rev_id.set(Some(rev_id))
-                                aria-pressed=move || (selected_rev_id.get() == Some(rev_id)).to_string()
-                            >
-                                <div class="queue-item-top">
-                                    <span class="queue-score" style=format!("color:{tier_color};")>
-                                        {score.to_string()}
-                                    </span>
-                                    <span class="queue-title">{title}</span>
-                                </div>
-                                <div class="queue-item-meta">
-                                    <span>{user}</span>
-                                    <span style=format!("color:{delta_color};")>{delta_str}</span>
-                                    {if is_patrolled {
-                                        view! { <span class="text-success">"P"</span> }.into_any()
-                                    } else {
-                                        view! { <span></span> }.into_any()
-                                    }}
-                                    {if group_count > 1 {
-                                        view! {
-                                            <span class="queue-group-count">
-                                                {format!("{group_count} edits")}
-                                            </span>
-                                        }.into_any()
-                                    } else {
-                                        view! { <span></span> }.into_any()
-                                    }}
-                                </div>
-                            </button>
-                        }
+                                .into_any()
+                            }),
+                        ))
                     })
                     .collect_view()}
-                    </div> }.into_any()
-                }}
-            </div>
-        </nav>
+                        }
+                        .into_any()
+                    }))
+                    .with_gap(Gap::None),
+                )}
+            }
+            .into_any()
+        }),
+    ))
+}
+
+fn navigation_item_props(
+    score: i32,
+    is_patrolled: bool,
+    selected: Signal<bool>,
+    on_click: impl Fn(leptos::ev::MouseEvent) + Send + Sync + 'static,
+    children: Children,
+) -> NavigationItemProps {
+    let props = NavigationItemProps::new(children)
+        .with_selected(selected)
+        .with_tone(score_tone_for_score(score))
+        .on_click(on_click);
+    if is_patrolled {
+        props.with_state(NavigationItemState::Subdued)
+    } else {
+        props
     }
 }

@@ -3,7 +3,7 @@
 > **Reconciliation (2026-06-23) — read first.**
 >
 > **Part C's recommendation (a hand-rolled thin OpenAI-compatible adapter) is
-> SUPERSEDED by [ADR-0006](../../adr/0006-using-llms.md) Decision 7, which adopts
+> SUPERSEDED by [ADR-0006](../../platform/adr/0006-using-llms.md) Decision 7, which adopts
 > `rust-genai` as the concrete `ModelClient` backend.** That decision is implemented:
 > `crates/sp42-cli` pins `genai = "=0.6.5"` and wires it behind the provider-agnostic
 > `ModelClient` trait (`crates/sp42-types/src/model.rs`), in a CLI-only shell that keeps
@@ -264,7 +264,7 @@ let mut config = ClientConfig::default()
 
 ## Recommendation
 
-> **⚠ SUPERSEDED by [ADR-0006](../../adr/0006-using-llms.md) Decision 7 (2026-06-23).**
+> **⚠ SUPERSEDED by [ADR-0006](../../platform/adr/0006-using-llms.md) Decision 7 (2026-06-23).**
 > SP42 adopted `rust-genai`, not a hand-rolled adapter. See the reconciliation banner at
 > the top of this note for the rationale. The verdict below is historical.
 

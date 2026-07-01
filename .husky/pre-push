@@ -27,6 +27,7 @@ all_docs() {
 
 docs_only=1
 saw_ref=0
+push_ranges=()
 zero="0000000000000000000000000000000000000000"
 while read -r _local_ref local_sha _remote_ref remote_sha; do
   [[ -z "${local_sha:-}" ]] && continue
@@ -34,28 +35,62 @@ while read -r _local_ref local_sha _remote_ref remote_sha; do
   saw_ref=1
   if [[ "$remote_sha" == "$zero" ]]; then
     base="$(git merge-base origin/main "$local_sha" 2>/dev/null || true)"
-    [[ -z "$base" ]] && { docs_only=0; break; }
+    [[ -z "$base" ]] && { docs_only=0; continue; }
     range="$base..$local_sha"
   else
     range="$remote_sha..$local_sha"
   fi
+  # Collect the exact pushed range so later gates scan the commits being pushed,
+  # not the current checkout. Keep scanning all refs (no early break).
+  push_ranges+=("$range")
   files="$(git diff --name-only "$range" 2>/dev/null || true)"
-  if ! all_docs "$files"; then docs_only=0; break; fi
+  all_docs "$files" || docs_only=0
 done
 [[ "$saw_ref" == "0" ]] && docs_only=0
 
 if [[ "$docs_only" == "1" ]]; then
   printf '\n== SP42 pre-push: docs consistency ==\n'
   bash scripts/check-doc-consistency.sh
+  printf '\n== SP42 pre-push: markdown link check ==\n'
+  ./scripts/check-links.sh
   printf '\nSP42 pre-push: docs-only push (.md/.log/.txt) — skipping release-tree audit and ci-all.\n'
   printf 'SP42 pre-push checks passed.\n'
   exit 0
 fi
 
+# Self-heal build artifacts when the heavy-checks path ends (incl. the
+# coverage run's llvm-cov tree), success or failure. Skip via SP42_KEEP_ARTIFACTS=1.
+trap './scripts/clean-house.sh --auto || true' EXIT
+
 printf '\n== SP42 pre-push: release tree audit ==\n'
 ./scripts/audit-release-tree.sh
 
+printf '\n== SP42 pre-push: markdown link check ==\n'
+./scripts/check-links.sh
+
+printf '\n== SP42 pre-push: layer check (ADR-0013) ==\n'
+./scripts/check-layering.sh
+
 printf '\n== SP42 pre-push: full CI-shaped checks ==\n'
 ./scripts/ci-all.sh
+
+printf '\n== SP42 pre-push: supply-chain (cargo-deny + cargo-audit) ==\n'
+./scripts/check-supply-chain.sh
+
+printf '\n== SP42 pre-push: coverage (sp42-core lines >= 90%%) ==\n'
+./scripts/check-coverage.sh
+
+# Wasm size is enforced in CI and the release flow, not here: it requires an
+# optimized (web-release) rebuild, which would be punishing on every push.
+printf '\n== SP42 pre-push: forbidden-pattern guard (added lines on the pushed refs) ==\n'
+if [[ ${#push_ranges[@]} -gt 0 ]]; then
+  for r in "${push_ranges[@]}"; do
+    printf '  scanning pushed range: %s\n' "$r"
+    ./scripts/check-forbidden-patterns.sh --range "$r"
+  done
+else
+  printf 'no resolvable pushed range — running staged-mode guard.\n'
+  ./scripts/check-forbidden-patterns.sh --staged
+fi
 
 printf '\nSP42 pre-push checks passed.\n'

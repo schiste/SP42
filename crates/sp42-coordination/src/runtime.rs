@@ -7,7 +7,7 @@ use crate::messages::{
     RaceResolution, ScoreDelta,
 };
 use crate::{CoordinationState, CoordinationStateSummary};
-use sp42_core::Action;
+use sp42_platform::Action;
 use sp42_types::WebSocket;
 use tracing::warn;
 
@@ -330,7 +330,7 @@ mod tests {
     use super::CoordinationRuntime;
     use crate::encode_message;
     use crate::messages::{CoordinationMessage, EditClaim};
-    use sp42_core::Action;
+    use sp42_platform::Action;
     use sp42_types::{LoopbackWebSocket, WebSocketFrame};
 
     #[test]

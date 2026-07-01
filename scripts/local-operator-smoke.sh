@@ -227,8 +227,8 @@ run_step "server debug summary" /usr/bin/curl -fsS "${base_url}/debug/summary"
 run_step "server runtime debug" /usr/bin/curl -fsS "${base_url}/debug/runtime"
 run_step "action history surface" /usr/bin/curl -fsS "${base_url}/dev/actions/history?limit=1"
 run_step "coordination inspections" /usr/bin/curl -fsS "${base_url}/coordination/inspections"
-run_step "cli parity report" "$CARGO_BIN" run -q -p sp42-cli -- --shell parity-report --format markdown
-run_step "cli session digest" "$CARGO_BIN" run -q -p sp42-cli -- --shell session-digest --workbench-token local-smoke-token --workbench-actor smoke-tester --format text
+run_step "cli parity report" "$CARGO_BIN" run -q -p sp42-cli -- preview parity-report --format markdown
+run_step "cli session digest" "$CARGO_BIN" run -q -p sp42-cli -- preview session-digest --workbench-token local-smoke-token --workbench-actor smoke-tester --format text
 run_step "desktop shell snapshot" "$CARGO_BIN" run -q -p sp42-desktop -- --format json
 run_step "tauri shell contract" "$CARGO_BIN" run -q --manifest-path crates/sp42-desktop/src-tauri/Cargo.toml -- --contract
 

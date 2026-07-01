@@ -4,13 +4,16 @@ use std::process::ExitCode;
 use std::time::Duration;
 
 use async_trait::async_trait;
+use clap::{Args, Parser, Subcommand, ValueEnum};
 use futures::executor::block_on;
 use reqwest::header::COOKIE;
 use serde_json::Value;
+use sp42_citation::{render_page_verification_markdown, render_page_verification_text};
 use sp42_core::routes as route_contracts;
 use sp42_core::{
-    CitationFinding, CitationVerificationRequest, ClaimContext, DevAuthBootstrapRequest,
-    DevAuthSessionStatus, GroundingStatus, QueuedEdit, SessionActionExecutionRequest,
+    CitationFinding, CitationVerificationRequest, CitoidMetadata, ClaimContext,
+    DevAuthBootstrapRequest, DevAuthSessionStatus, FetchedSource, GroundingStatus,
+    PageVerificationReport, PageVerificationRequest, QueuedEdit, SessionActionExecutionRequest,
     SessionActionExecutionResponse, SessionActionKind, SystemClock, VerificationOutcome,
     VerifyOptions as CoreVerifyOptions, build_dev_auth_bootstrap_request,
     check_fetchable_source_url, locate_quote, locate_quote_fuzzy, parse_dev_auth_status,
@@ -22,18 +25,19 @@ use sp42_devtools::{
     build_dev_context_preview, build_dev_coordination_preview, build_dev_queue,
     build_dev_stream_preview, build_dev_workbench, parse_default_dev_wiki_config,
 };
-use sp42_inference::{client_from_env, panel_from_env};
-use sp42_reporting::{
+use sp42_inference::{GenaiModelClient, client_from_env, panel_from_env, panel_from_models};
+use sp42_patrol::{
     PatrolScenarioReportInputs, ShellStateInputs, build_patrol_scenario_report,
     build_shell_state_model, render_patrol_scenario_markdown, render_patrol_scenario_text,
     render_shell_state_markdown, render_shell_state_text,
 };
-use sp42_types::{HttpClient, HttpClientError, HttpMethod, HttpRequest, HttpResponse};
-use std::collections::{BTreeMap, BTreeSet};
+use sp42_types::{HttpClient, HttpClientError, HttpMethod, HttpRequest, HttpResponse, ModelRef};
+use std::collections::BTreeMap;
 
 const LOCAL_SERVER_BASE_URL: &str = "http://127.0.0.1:8788";
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+#[value(rename_all = "lowercase")]
 enum OutputFormat {
     Text,
     Json,
@@ -58,22 +62,34 @@ struct BareUrlCliOptions {
 /// The MVP's only enabled wiki; overridable with --wiki.
 const BARE_URL_DEFAULT_WIKI: &str = "testwiki";
 
+/// The shared rendering context for the `preview` and `bare-url` views. Each `clap`
+/// subcommand handler builds one of these from its parsed arguments and hands it to the
+/// existing `render_*` functions, which read whichever fields their mode needs.
 #[derive(Debug, Clone, PartialEq)]
 struct CliOptions {
     format: OutputFormat,
     workbench: Option<WorkbenchOptions>,
     context_preview: Option<ContextPreviewOptions>,
-    preview_modes: BTreeSet<PreviewMode>,
     shell_mode: Option<ShellMode>,
     action_note: Option<String>,
     action_kind: SessionActionKind,
     bridge_base_url: String,
-    bare_url: Option<BareUrlCliOptions>,
-    verify: Option<VerifyCliOptions>,
-    verdict_only: bool,
-    /// `--locate-probe --quote <q>`: read a source body from STDIN and report whether the
-    /// quote locates (offline, no model) — the deterministic locate-replay tool (SP42#25).
-    locate_probe: Option<String>,
+}
+
+impl CliOptions {
+    /// A bare context: just a format and a bridge URL, everything else defaulted. Handlers
+    /// set the few extra fields their view consumes.
+    fn new(format: OutputFormat, bridge_base_url: String) -> Self {
+        CliOptions {
+            format,
+            workbench: None,
+            context_preview: None,
+            shell_mode: None,
+            action_note: None,
+            action_kind: SessionActionKind::Patrol,
+            bridge_base_url,
+        }
+    }
 }
 
 /// Read-only citation-verification request (PRD-0001). The first cut supports the ad-hoc
@@ -92,6 +108,31 @@ struct VerifyCliOptions {
     /// The SIDE co-reference context: preceding sentences (`--preceding-sentence`, repeatable),
     /// in the order given. Empty by default, which keeps the verifier on its no-context path.
     preceding_sentences: Vec<String>,
+    /// Offline source body source. `--source-file <path>` reads a file; `--source-body -`
+    /// reads STDIN; any other `--source-body` value is literal text. When a body is supplied
+    /// the verifier uses it instead of fetching `--source-url` — but the URL is still required
+    /// and supplies the provenance URL and prompt display, so a snapshot stays attributable.
+    source_file: Option<String>,
+    source_body: Option<String>,
+    /// Per-run model panel override (`--models a,b,c`). Falls back to the env panel
+    /// (`SP42_INFERENCE_MODELS`) when unset; the endpoint/token still come from the env.
+    models: Option<String>,
+    /// SIDE article-title context (`--article-title`); empty keeps the no-context path.
+    article_title: Option<String>,
+    /// Pre-fetched bibliographic metadata sidecar (`--metadata-json <path>`). When set, the
+    /// verifier uses it as prompt context instead of fetching Citoid — reproducible, no network.
+    metadata_json: Option<String>,
+}
+
+/// Article-level citation verification (`--verify-page`, PRD-0009 / ADR-0011): verify
+/// *every* URL-bearing citation on a revision and render the page report. Reuses the
+/// shared `--wiki`/`--title`/`--rev` flags. The route is session+CSRF gated, so the CLI
+/// bootstraps a bridge session (ADR-0002) before the call.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct VerifyPageCliOptions {
+    wiki_id: String,
+    title: String,
+    rev_id: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -107,8 +148,11 @@ struct ContextPreviewOptions {
     liftwing_probability: Option<f32>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-enum PreviewMode {
+/// The dev / operator queue views, selected as the positional argument to `preview`.
+/// `clap` renders the variants in kebab-case (`SessionDigest` → `session-digest`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+#[value(rename_all = "kebab-case")]
+enum ShellMode {
     Stream,
     Backlog,
     Coordination,
@@ -120,17 +164,274 @@ enum PreviewMode {
     ActionExecute,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum ShellMode {
-    Stream,
-    Backlog,
-    Coordination,
-    SessionDigest,
-    ScenarioReport,
-    ServerReport,
-    ParityReport,
-    ActionPreview,
-    ActionExecute,
+/// Session-action kind for the action views. Maps to [`SessionActionKind`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+#[value(rename_all = "lowercase")]
+enum ActionKind {
+    Patrol,
+    Rollback,
+    Undo,
+}
+
+impl From<ActionKind> for SessionActionKind {
+    fn from(kind: ActionKind) -> Self {
+        match kind {
+            ActionKind::Patrol => SessionActionKind::Patrol,
+            ActionKind::Rollback => SessionActionKind::Rollback,
+            ActionKind::Undo => SessionActionKind::Undo,
+        }
+    }
+}
+
+impl From<VerifyArgs> for VerifyCliOptions {
+    fn from(args: VerifyArgs) -> Self {
+        VerifyCliOptions {
+            claim: args.claim,
+            source_url: args.source_url,
+            include_metadata: args.output.with_metadata,
+            debug_votes: args.output.debug_votes,
+            // `--no-repair` turns the bounded repair turn off; on by default.
+            repair: !args.no_repair,
+            preceding_sentences: args.preceding_sentence,
+            source_file: args.source_file,
+            source_body: args.source_body,
+            models: args.models,
+            article_title: args.article_title,
+            metadata_json: args.metadata_json,
+        }
+    }
+}
+
+impl From<VerifyPageArgs> for VerifyPageCliOptions {
+    fn from(args: VerifyPageArgs) -> Self {
+        VerifyPageCliOptions {
+            wiki_id: args.wiki,
+            title: args.title,
+            // No --rev means the latest revision; the server resolves 0 to a concrete id.
+            rev_id: args.rev.unwrap_or(0),
+        }
+    }
+}
+
+/// `sp42-cli` — capabilities are subcommands. See `docs/platform/CLI.md` for the full
+/// reference; `--help` on any subcommand prints its options.
+#[derive(Debug, Parser)]
+#[command(
+    name = "sp42-cli",
+    version,
+    about = "SP42 citation-patrol command-line shell"
+)]
+struct Cli {
+    #[command(subcommand)]
+    command: Command,
+}
+
+#[derive(Debug, Subcommand)]
+enum Command {
+    /// Verify a single claim against a single source URL (PRD-0001).
+    Verify(VerifyArgs),
+    /// Verify every URL-bearing citation on a revision via the bridge (PRD-0001).
+    VerifyPage(VerifyPageArgs),
+    /// Report whether a quote locates in a source body read from STDIN (offline, SP42#25).
+    LocateProbe(LocateProbeArgs),
+    /// Verify a JSONL batch (one case per line, STDIN or --file), one result per line.
+    Batch(BatchArgs),
+    /// Preview or apply bare-URL citation repairs (PRD-0008).
+    BareUrl(BareUrlArgs),
+    /// Dev / operator queue views; reads the event payload from STDIN.
+    Preview(PreviewArgs),
+}
+
+#[derive(Debug, Args)]
+struct BatchArgs {
+    /// JSONL input file; omit to read cases from STDIN.
+    #[arg(long)]
+    file: Option<String>,
+    /// Per-batch model panel override (comma-separated ids); falls back to `SP42_INFERENCE_MODELS`.
+    #[arg(long)]
+    models: Option<String>,
+}
+
+/// Resolved `batch` inputs handed to [`render_batch`]: input path (`None` = STDIN) and the
+/// per-batch model panel override.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct BatchOptions {
+    file: Option<String>,
+    models: Option<String>,
+}
+
+/// Shared `--format` flag, flattened into each command that renders.
+#[derive(Debug, Args)]
+struct FormatArg {
+    /// Output format.
+    #[arg(long, value_enum, default_value = "text")]
+    format: OutputFormat,
+}
+
+/// What the `verify` command emits. Grouped so neither struct carries more than three
+/// bool flags (`clippy::struct_excessive_bools`).
+#[derive(Debug, Args)]
+struct VerifyOutputArgs {
+    /// Include source metadata in the finding.
+    #[arg(long)]
+    with_metadata: bool,
+    /// Emit the full `VerificationOutcome` (per-model votes) as JSON (SP42#25).
+    #[arg(long)]
+    debug_votes: bool,
+    /// Print only the verdict label.
+    #[arg(long)]
+    verdict_only: bool,
+}
+
+#[derive(Debug, Args)]
+struct VerifyArgs {
+    /// The claim to verify.
+    #[arg(long)]
+    claim: String,
+    /// Source URL to fetch and check the claim against.
+    #[arg(long)]
+    source_url: String,
+    /// Preceding-context sentence (repeatable, in order) — the SIDE co-reference context.
+    #[arg(long = "preceding-sentence")]
+    preceding_sentence: Vec<String>,
+    /// Disable the bounded repair turn (one fewer model call per unlocated support vote).
+    #[arg(long)]
+    no_repair: bool,
+    /// Read the source body from a file instead of fetching `--source-url` (offline).
+    #[arg(long, conflicts_with = "source_body")]
+    source_file: Option<String>,
+    /// Use this source body instead of fetching `--source-url`: `-` reads STDIN, any other
+    /// value is literal text (offline). `--source-url` is still required for provenance.
+    #[arg(long)]
+    source_body: Option<String>,
+    /// Per-run model panel override (comma-separated ids); falls back to `SP42_INFERENCE_MODELS`.
+    #[arg(long)]
+    models: Option<String>,
+    /// SIDE article-title context.
+    #[arg(long)]
+    article_title: Option<String>,
+    /// Bibliographic metadata sidecar (JSON file); used as prompt context instead of fetching
+    /// Citoid (offline).
+    #[arg(long)]
+    metadata_json: Option<String>,
+    #[command(flatten)]
+    output: VerifyOutputArgs,
+    #[command(flatten)]
+    fmt: FormatArg,
+}
+
+#[derive(Debug, Args)]
+struct VerifyPageArgs {
+    /// Article title.
+    #[arg(long)]
+    title: String,
+    /// Target wiki id.
+    #[arg(long, default_value = BARE_URL_DEFAULT_WIKI)]
+    wiki: String,
+    /// Revision id. Omit for the latest revision (the server resolves it).
+    #[arg(long)]
+    rev: Option<u64>,
+    /// Local server base URL.
+    #[arg(long, default_value = LOCAL_SERVER_BASE_URL)]
+    bridge_base_url: String,
+    #[command(flatten)]
+    fmt: FormatArg,
+}
+
+#[derive(Debug, Args)]
+struct LocateProbeArgs {
+    /// The quote to locate within the STDIN source body.
+    #[arg(long)]
+    quote: String,
+}
+
+#[derive(Debug, Args)]
+struct BareUrlArgs {
+    #[command(subcommand)]
+    action: BareUrlAction,
+}
+
+#[derive(Debug, Subcommand)]
+enum BareUrlAction {
+    /// Show bare-URL repair proposals for a revision.
+    Preview(BareUrlPreviewArgs),
+    /// Apply one bare-URL repair proposal.
+    Execute(BareUrlExecuteArgs),
+}
+
+#[derive(Debug, Args)]
+struct BareUrlPreviewArgs {
+    /// Article title.
+    #[arg(long)]
+    title: String,
+    /// Revision id.
+    #[arg(long)]
+    rev: u64,
+    /// Target wiki id.
+    #[arg(long, default_value = BARE_URL_DEFAULT_WIKI)]
+    wiki: String,
+    /// Local server base URL (the proposals request is posted to the bridge).
+    #[arg(long, default_value = LOCAL_SERVER_BASE_URL)]
+    bridge_base_url: String,
+    #[command(flatten)]
+    fmt: FormatArg,
+}
+
+#[derive(Debug, Args)]
+struct BareUrlExecuteArgs {
+    /// Article title.
+    #[arg(long)]
+    title: String,
+    /// Revision id.
+    #[arg(long)]
+    rev: u64,
+    /// Zero-based index of the proposal to apply.
+    #[arg(long)]
+    ordinal: usize,
+    /// Target wiki id.
+    #[arg(long, default_value = BARE_URL_DEFAULT_WIKI)]
+    wiki: String,
+    /// Edit summary attached to the applied repair.
+    #[arg(long)]
+    action_note: Option<String>,
+    /// Local server base URL.
+    #[arg(long, default_value = LOCAL_SERVER_BASE_URL)]
+    bridge_base_url: String,
+    #[command(flatten)]
+    fmt: FormatArg,
+}
+
+#[derive(Debug, Args)]
+struct PreviewArgs {
+    /// View to render. Omit for the default ranked-queue render.
+    #[arg(value_enum)]
+    mode: Option<ShellMode>,
+    /// Local server base URL for server-backed views (server-report, action-execute).
+    #[arg(long, default_value = LOCAL_SERVER_BASE_URL)]
+    bridge_base_url: String,
+    /// Enable workbench submission with this token.
+    #[arg(long)]
+    workbench_token: Option<String>,
+    /// Workbench actor name.
+    #[arg(long, default_value = "SP42-cli")]
+    workbench_actor: String,
+    /// Workbench submission note.
+    #[arg(long, default_value = "cli local workbench")]
+    workbench_note: String,
+    /// Talk-page wikitext for the context preview.
+    #[arg(long)]
+    context_talk: Option<String>,
+    /// `LiftWing` damaging probability (float).
+    #[arg(long)]
+    context_liftwing: Option<f32>,
+    /// Action kind for the action views.
+    #[arg(long, value_enum, default_value = "patrol")]
+    action_kind: ActionKind,
+    /// Note attached to the action.
+    #[arg(long)]
+    action_note: Option<String>,
+    #[command(flatten)]
+    fmt: FormatArg,
 }
 
 fn main() -> ExitCode {
@@ -147,22 +448,314 @@ fn main() -> ExitCode {
 }
 
 fn run() -> Result<String, String> {
-    let options = parse_options(std::env::args().skip(1))?;
-    if let Some(bare_url) = &options.bare_url {
-        return render_bare_url_mode(bare_url, &options, options.format);
+    let mut argv: Vec<String> = std::env::args().collect();
+    let program = if argv.is_empty() {
+        "sp42-cli".to_string()
+    } else {
+        argv.remove(0)
+    };
+    // Backward-compat: a pre-clap flag-form invocation is rewritten to the equivalent
+    // subcommand argv (with a deprecation warning) so existing scripts keep working during
+    // the transition. New-form argv is passed to clap unchanged.
+    let cli = match rewrite_legacy_argv(&argv) {
+        Some(Ok(translated)) => {
+            eprintln!(
+                "warning: this sp42-cli flag form is deprecated and will be removed; it now \
+                 maps to `sp42-cli {}`. See docs/platform/CLI.md.",
+                translated.join(" ")
+            );
+            Cli::parse_from(std::iter::once(program).chain(translated))
+        }
+        // A legacy invocation that was itself invalid (e.g. mutually-exclusive flags); surface
+        // the same usage error the old parser produced rather than silently picking one.
+        Some(Err(message)) => return Err(message),
+        None => Cli::parse_from(std::iter::once(program).chain(argv)),
+    };
+    dispatch(cli.command)
+}
+
+/// Map a pre-clap (flag-only) invocation onto the equivalent subcommand argv, so scripts
+/// written against the old surface keep working for a deprecation period.
+///
+/// Returns `None` when the argv is already in subcommand form — first token is a subcommand
+/// (no leading dash) or `--help`/`--version` — in which case clap parses it unchanged.
+/// Returns `Some(Err(..))` for a legacy invocation that the old parser itself rejected (e.g.
+/// mutually-exclusive flags), so the error is preserved rather than silently resolved.
+fn rewrite_legacy_argv(args: &[String]) -> Option<Result<Vec<String>, String>> {
+    match args.first().map(String::as_str) {
+        Some("-h" | "--help" | "-V" | "--version") => return None,
+        Some(token) if !token.starts_with('-') => return None,
+        _ => {} // empty, or a leading flag → legacy form
     }
 
-    // Offline locate probe: read a source body from STDIN, report whether the quote locates.
-    // No model, no fetch — the deterministic locate-replay tool (SP42#25).
-    if let Some(quote) = &options.locate_probe {
-        let source = read_stdin().map_err(|error| error.to_string())?;
-        return run_locate_probe(quote, &source);
+    let present = |flag: &str| args.iter().any(|a| a == flag);
+    let without = |drop: &[&str]| -> Vec<String> {
+        args.iter()
+            .filter(|a| !drop.contains(&a.as_str()))
+            .cloned()
+            .collect()
+    };
+    let prepend = |head: &[&str], tail: Vec<String>| -> Vec<String> {
+        head.iter().map(|s| (*s).to_string()).chain(tail).collect()
+    };
+
+    // Precedence mirrors the pre-clap dispatch order: bare-url, locate, verify, verify-page,
+    // then the preview family.
+    if present("--bare-url-preview") || present("--bare-url-execute") {
+        // The old parser rejected both flags together before dispatch; preserve that so a
+        // typo can't turn a usage error into an apply (`execute`).
+        if present("--bare-url-preview") && present("--bare-url-execute") {
+            return Some(Err(
+                "--bare-url-preview and --bare-url-execute are mutually exclusive".to_string(),
+            ));
+        }
+        let action = if present("--bare-url-execute") {
+            "execute"
+        } else {
+            "preview"
+        };
+        return Some(Ok(prepend(
+            &["bare-url", action],
+            without(&["--bare-url-preview", "--bare-url-execute"]),
+        )));
+    }
+    if present("--locate-probe") {
+        return Some(rewrite_legacy_locate_probe(args));
+    }
+    if present("--batch") || present("--batch-file") {
+        // `--batch` selected batch mode and read STDIN; `--batch-file <p>` set the input path.
+        // The subcommand spells the path `--file`; `--models` passes through unchanged. The old
+        // global `--format <v>` was accepted but ignored by batch (output is always JSONL), so
+        // it is consumed and dropped here rather than forwarded to a subcommand that lacks it.
+        let mut out = vec!["batch".to_string()];
+        let mut iter = args.iter();
+        while let Some(arg) = iter.next() {
+            match arg.as_str() {
+                "--batch" => {}
+                "--batch-file" => {
+                    out.push("--file".to_string());
+                    let Some(path) = iter.next() else {
+                        return Some(Err("--batch-file requires a value".to_string()));
+                    };
+                    out.push(path.clone());
+                }
+                "--format" => {
+                    let Some(value) = iter.next() else {
+                        return Some(Err("--format requires a value".to_string()));
+                    };
+                    if let Err(message) = validate_legacy_output_format(value) {
+                        return Some(Err(message));
+                    }
+                }
+                _ => out.push(arg.clone()),
+            }
+        }
+        return Some(Ok(out));
+    }
+    if present("--claim") || present("--source-url") {
+        return Some(Ok(prepend(&["verify"], args.to_vec())));
+    }
+    if present("--verify-page") {
+        return Some(Ok(prepend(&["verify-page"], without(&["--verify-page"]))));
+    }
+    Some(rewrite_legacy_preview(args))
+}
+
+fn rewrite_legacy_locate_probe(args: &[String]) -> Result<Vec<String>, String> {
+    let mut out = vec!["locate-probe".to_string()];
+    let mut iter = args.iter();
+    while let Some(arg) = iter.next() {
+        match arg.as_str() {
+            "--locate-probe" => {}
+            "--format" => {
+                let value = iter
+                    .next()
+                    .ok_or_else(|| "--format requires a value".to_string())?;
+                validate_legacy_output_format(value)?;
+            }
+            _ => out.push(arg.clone()),
+        }
+    }
+    Ok(out)
+}
+
+fn validate_legacy_output_format(value: &str) -> Result<(), String> {
+    match value {
+        "text" | "json" | "markdown" => Ok(()),
+        _ => Err(format!("unsupported output format: {value}")),
+    }
+}
+
+/// Translate a legacy preview invocation: `--shell <value>` and the shorthand mode flags
+/// (`--parity-report`, `--stream`, …) become the `preview` positional `mode`; all other
+/// flags pass through. Reproduces the old alias quirks and selection precedence, and the old
+/// usage errors for a missing or unrecognized `--shell` value (so a typo fails loudly rather
+/// than silently rendering the default view).
+fn rewrite_legacy_preview(args: &[String]) -> Result<Vec<String>, String> {
+    let mut shell_mode: Option<&'static str> = None;
+    let mut shorthand_mode: Option<&'static str> = None;
+    let mut rest: Vec<String> = Vec::new();
+    let mut iter = args.iter();
+    while let Some(arg) = iter.next() {
+        if arg == "--shell" {
+            let value = iter
+                .next()
+                .ok_or_else(|| "--shell requires a value".to_string())?;
+            shell_mode = Some(
+                legacy_shell_value(value)
+                    .ok_or_else(|| format!("unsupported shell mode: {value}"))?,
+            );
+            continue;
+        }
+        if let Some(canonical) = legacy_preview_flag(arg) {
+            shorthand_mode = Some(match shorthand_mode {
+                Some(existing) if preview_mode_rank(existing) <= preview_mode_rank(canonical) => {
+                    existing
+                }
+                _ => canonical,
+            });
+            continue;
+        }
+        rest.push(arg.clone());
     }
 
-    // Read-only citation verification is independent of the dev-queue payload.
-    if let Some(verify) = &options.verify {
-        return render_verify(verify, options.format, options.verdict_only);
+    let mut out = vec!["preview".to_string()];
+    // `--shell` wins over the shorthand flags (old `selected_shell_mode` behavior).
+    if let Some(mode) = shell_mode.or(shorthand_mode) {
+        out.push(mode.to_string());
     }
+    out.extend(rest);
+    Ok(out)
+}
+
+/// A legacy `--<mode>` shorthand flag mapped to its `preview` mode value (old
+/// `preview_mode_flag`). Note `--operator-report` mapped to the server report here.
+fn legacy_preview_flag(flag: &str) -> Option<&'static str> {
+    match flag {
+        "--stream-preview" | "--stream" => Some("stream"),
+        "--backlog-preview" | "--backlog" => Some("backlog"),
+        "--coordination-preview" | "--coordination" => Some("coordination"),
+        "--session-digest" => Some("session-digest"),
+        "--scenario-report" | "--patrol-report" => Some("scenario-report"),
+        "--server-report" | "--operator-report" => Some("server-report"),
+        "--parity-report" => Some("parity-report"),
+        "--action-preview" | "--action" => Some("action-preview"),
+        "--action-execute" => Some("action-execute"),
+        _ => None,
+    }
+}
+
+/// A legacy `--shell <value>` mapped to its `preview` mode value (old `parse_shell_mode`).
+/// Note `operator-report` mapped to the parity report here — the opposite of the shorthand.
+fn legacy_shell_value(value: &str) -> Option<&'static str> {
+    match value {
+        "parity-report" | "operator-report" => Some("parity-report"),
+        "stream-preview" | "stream" => Some("stream"),
+        "backlog-preview" | "backlog" => Some("backlog"),
+        "coordination-preview" | "coordination" => Some("coordination"),
+        "session-digest" => Some("session-digest"),
+        "scenario-report" | "patrol-report" => Some("scenario-report"),
+        "server-report" | "live-server-report" => Some("server-report"),
+        "action-preview" | "action" => Some("action-preview"),
+        "action-execute" => Some("action-execute"),
+        _ => None,
+    }
+}
+
+/// Selection precedence among multiple legacy shorthand mode flags (old `selected_shell_mode`).
+/// Lower rank wins.
+fn preview_mode_rank(mode: &str) -> usize {
+    [
+        "parity-report",
+        "stream",
+        "backlog",
+        "coordination",
+        "session-digest",
+        "scenario-report",
+        "server-report",
+        "action-execute",
+        "action-preview",
+    ]
+    .iter()
+    .position(|candidate| *candidate == mode)
+    .unwrap_or(usize::MAX)
+}
+
+/// Route a parsed subcommand to its handler. Each handler returns the text to print on
+/// stdout; errors propagate to `main`, which prints them to stderr and exits non-zero.
+fn dispatch(command: Command) -> Result<String, String> {
+    match command {
+        Command::Verify(args) => {
+            let format = args.fmt.format;
+            let verdict_only = args.output.verdict_only;
+            render_verify(&VerifyCliOptions::from(args), format, verdict_only)
+        }
+        Command::VerifyPage(args) => {
+            let format = args.fmt.format;
+            let bridge_base_url = args.bridge_base_url.clone();
+            render_verify_page(&VerifyPageCliOptions::from(args), &bridge_base_url, format)
+        }
+        Command::LocateProbe(args) => {
+            // Offline locate probe: read a source body from STDIN, report whether the quote
+            // locates. No model, no fetch — the deterministic locate-replay tool (SP42#25).
+            let source = read_stdin().map_err(|error| error.to_string())?;
+            run_locate_probe(&args.quote, &source)
+        }
+        Command::Batch(args) => render_batch(&BatchOptions {
+            file: args.file,
+            models: args.models,
+        }),
+        Command::BareUrl(args) => dispatch_bare_url(args.action),
+        Command::Preview(args) => dispatch_preview(args),
+    }
+}
+
+fn dispatch_bare_url(action: BareUrlAction) -> Result<String, String> {
+    let (bare_url, options) = match action {
+        BareUrlAction::Preview(args) => (
+            BareUrlCliOptions {
+                mode: BareUrlCliMode::Preview,
+                wiki_id: args.wiki,
+                title: args.title,
+                rev_id: args.rev,
+            },
+            CliOptions::new(args.fmt.format, args.bridge_base_url),
+        ),
+        BareUrlAction::Execute(args) => {
+            let mut options = CliOptions::new(args.fmt.format, args.bridge_base_url);
+            options.action_note = args.action_note;
+            (
+                BareUrlCliOptions {
+                    mode: BareUrlCliMode::Execute {
+                        ordinal: args.ordinal,
+                    },
+                    wiki_id: args.wiki,
+                    title: args.title,
+                    rev_id: args.rev,
+                },
+                options,
+            )
+        }
+    };
+    render_bare_url_mode(&bare_url, &options, options.format)
+}
+
+fn dispatch_preview(args: PreviewArgs) -> Result<String, String> {
+    let format = args.fmt.format;
+    let mut options = CliOptions::new(format, args.bridge_base_url);
+    options.shell_mode = args.mode;
+    options.action_kind = args.action_kind.into();
+    options.action_note = args.action_note;
+    options.workbench = args.workbench_token.map(|token| WorkbenchOptions {
+        token,
+        actor: args.workbench_actor,
+        note: args.workbench_note,
+    });
+    options.context_preview = (args.context_talk.is_some() || args.context_liftwing.is_some())
+        .then_some(ContextPreviewOptions {
+            talk_page: args.context_talk,
+            liftwing_probability: args.context_liftwing,
+        });
 
     let input = read_stdin().map_err(|error| error.to_string())?;
     let payload = if input.trim().is_empty() {
@@ -174,33 +767,27 @@ fn run() -> Result<String, String> {
     let config = parse_default_dev_wiki_config().map_err(|error| error.to_string())?;
     let ranked = load_ranked_queue(&config, payload)?;
 
-    match selected_shell_mode(&options) {
+    match options.shell_mode {
         Some(ShellMode::ParityReport) => {
-            return render_parity_report(&config, &ranked, payload, options.format);
+            return render_parity_report(&config, &ranked, payload, format);
         }
-        Some(ShellMode::Stream) => {
-            return render_stream_preview(&config, payload, options.format);
-        }
-        Some(ShellMode::Backlog) => {
-            return render_backlog_preview(&config, options.format);
-        }
-        Some(ShellMode::Coordination) => {
-            return render_coordination_preview(options.format);
-        }
+        Some(ShellMode::Stream) => return render_stream_preview(&config, payload, format),
+        Some(ShellMode::Backlog) => return render_backlog_preview(&config, format),
+        Some(ShellMode::Coordination) => return render_coordination_preview(format),
         Some(ShellMode::SessionDigest) => {
-            return render_session_digest(&config, &ranked, &options, options.format);
+            return render_session_digest(&config, &ranked, &options, format);
         }
         Some(ShellMode::ScenarioReport) => {
-            return render_scenario_report(&config, &ranked, &options, options.format);
+            return render_scenario_report(&config, &ranked, &options, format);
         }
         Some(ShellMode::ServerReport) => {
-            return render_server_report(&options.bridge_base_url, options.format);
+            return render_server_report(&options.bridge_base_url, format);
         }
         Some(ShellMode::ActionPreview) => {
-            return render_action_preview(&config, &ranked, &options, options.format);
+            return render_action_preview(&config, &ranked, &options, format);
         }
         Some(ShellMode::ActionExecute) => {
-            return render_action_execute(&config, &ranked, &options, options.format);
+            return render_action_execute(&config, &ranked, &options, format);
         }
         None => {}
     }
@@ -210,14 +797,14 @@ fn run() -> Result<String, String> {
     }
 
     if let Some(workbench) = &options.workbench {
-        return render_workbench(&config, &ranked, workbench, options.format);
+        return render_workbench(&config, &ranked, workbench, format);
     }
 
     if let Some(context_preview) = &options.context_preview {
-        return render_context_preview(&config, &ranked, context_preview, options.format);
+        return render_context_preview(&config, &ranked, context_preview, format);
     }
 
-    render_queue(&ranked, options.format)
+    render_queue(&ranked, format)
 }
 
 fn read_stdin() -> Result<String, io::Error> {
@@ -233,311 +820,7 @@ fn load_ranked_queue(
     build_dev_queue(config, payload).map_err(|error| error.to_string())
 }
 
-fn parse_options(args: impl IntoIterator<Item = String>) -> Result<CliOptions, String> {
-    let mut args = args.into_iter();
-    let mut format = OutputFormat::Text;
-    let mut workbench_token = None;
-    let mut workbench_actor = "SP42-cli".to_string();
-    let mut workbench_note = "cli local workbench".to_string();
-    let mut context_talk_page = None;
-    let mut context_liftwing = None;
-    let mut shell_mode = None;
-    let mut action_note = None;
-    let mut action_kind = SessionActionKind::Patrol;
-    let mut bridge_base_url = LOCAL_SERVER_BASE_URL.to_string();
-    let mut preview_modes = BTreeSet::new();
-    let mut bare_url_preview = false;
-    let mut bare_url_execute = false;
-    let mut bare_url_title = None;
-    let mut bare_url_rev = None;
-    let mut bare_url_ordinal = None;
-    let mut bare_url_wiki = BARE_URL_DEFAULT_WIKI.to_string();
-    let mut verify_claim = None;
-    let mut verify_source_url = None;
-    let mut verify_metadata = false;
-    let mut verify_debug_votes = false;
-    let mut verify_repair = true;
-    let mut verify_preceding: Vec<String> = Vec::new();
-    let mut verdict_only = false;
-    let mut probe_quote = None;
-    let mut locate_probe_flag = false;
-
-    while let Some(arg) = args.next() {
-        let mut state = CliParseState {
-            format: &mut format,
-            workbench_token: &mut workbench_token,
-            workbench_actor: &mut workbench_actor,
-            workbench_note: &mut workbench_note,
-            context_talk_page: &mut context_talk_page,
-            context_liftwing: &mut context_liftwing,
-            shell_mode: &mut shell_mode,
-            action_note: &mut action_note,
-            action_kind: &mut action_kind,
-            bridge_base_url: &mut bridge_base_url,
-            preview_modes: &mut preview_modes,
-            bare_url_preview: &mut bare_url_preview,
-            bare_url_execute: &mut bare_url_execute,
-            bare_url_title: &mut bare_url_title,
-            bare_url_rev: &mut bare_url_rev,
-            bare_url_ordinal: &mut bare_url_ordinal,
-            bare_url_wiki: &mut bare_url_wiki,
-            verify_claim: &mut verify_claim,
-            verify_source_url: &mut verify_source_url,
-            verify_metadata: &mut verify_metadata,
-            verify_debug_votes: &mut verify_debug_votes,
-            verify_repair: &mut verify_repair,
-            verify_preceding: &mut verify_preceding,
-            verdict_only: &mut verdict_only,
-            probe_quote: &mut probe_quote,
-            locate_probe_flag: &mut locate_probe_flag,
-        };
-        apply_cli_argument(&arg, &mut args, &mut state)?;
-    }
-
-    let bare_url = build_bare_url_options(
-        bare_url_preview,
-        bare_url_execute,
-        bare_url_wiki,
-        bare_url_title,
-        bare_url_rev,
-        bare_url_ordinal,
-    )?;
-    let verify = build_verify_options(
-        verify_claim,
-        verify_source_url,
-        verify_metadata,
-        verify_debug_votes,
-        verify_repair,
-        verify_preceding,
-    )?;
-    let locate_probe = if locate_probe_flag {
-        Some(probe_quote.ok_or_else(|| "--locate-probe requires --quote".to_string())?)
-    } else {
-        None
-    };
-
-    Ok(CliOptions {
-        format,
-        workbench: workbench_token.map(|token| WorkbenchOptions {
-            token,
-            actor: workbench_actor,
-            note: workbench_note,
-        }),
-        context_preview: build_context_preview(context_talk_page, context_liftwing),
-        preview_modes,
-        shell_mode,
-        action_note,
-        action_kind,
-        bridge_base_url,
-        bare_url,
-        verify,
-        verdict_only,
-        locate_probe,
-    })
-}
-
-/// Assemble the verify options, requiring both the claim and the source URL together.
-fn build_verify_options(
-    claim: Option<String>,
-    source_url: Option<String>,
-    include_metadata: bool,
-    debug_votes: bool,
-    repair: bool,
-    preceding_sentences: Vec<String>,
-) -> Result<Option<VerifyCliOptions>, String> {
-    match (claim, source_url) {
-        (Some(claim), Some(source_url)) => Ok(Some(VerifyCliOptions {
-            claim,
-            source_url,
-            include_metadata,
-            debug_votes,
-            repair,
-            preceding_sentences,
-        })),
-        (None, None) => Ok(None),
-        _ => Err("citation verification requires both --claim and --source-url".to_string()),
-    }
-}
-
-struct CliParseState<'a> {
-    format: &'a mut OutputFormat,
-    workbench_token: &'a mut Option<String>,
-    workbench_actor: &'a mut String,
-    workbench_note: &'a mut String,
-    context_talk_page: &'a mut Option<String>,
-    context_liftwing: &'a mut Option<f32>,
-    shell_mode: &'a mut Option<ShellMode>,
-    action_note: &'a mut Option<String>,
-    action_kind: &'a mut SessionActionKind,
-    bridge_base_url: &'a mut String,
-    preview_modes: &'a mut BTreeSet<PreviewMode>,
-    bare_url_preview: &'a mut bool,
-    bare_url_execute: &'a mut bool,
-    bare_url_title: &'a mut Option<String>,
-    bare_url_rev: &'a mut Option<u64>,
-    bare_url_ordinal: &'a mut Option<usize>,
-    bare_url_wiki: &'a mut String,
-    verify_claim: &'a mut Option<String>,
-    verify_source_url: &'a mut Option<String>,
-    verify_metadata: &'a mut bool,
-    verify_debug_votes: &'a mut bool,
-    verify_repair: &'a mut bool,
-    verify_preceding: &'a mut Vec<String>,
-    verdict_only: &'a mut bool,
-    probe_quote: &'a mut Option<String>,
-    locate_probe_flag: &'a mut bool,
-}
-
-fn apply_cli_argument<I>(
-    arg: &str,
-    args: &mut I,
-    state: &mut CliParseState<'_>,
-) -> Result<(), String>
-where
-    I: Iterator<Item = String>,
-{
-    if let Some(mode) = preview_mode_flag(arg) {
-        state.preview_modes.insert(mode);
-        return Ok(());
-    }
-
-    match arg {
-        "--format" => {
-            *state.format = parse_output_format(&next_option_value(args, "--format")?)?;
-        }
-        "--workbench-token" => {
-            *state.workbench_token = Some(next_option_value(args, "--workbench-token")?);
-        }
-        "--workbench-actor" => {
-            *state.workbench_actor = next_option_value(args, "--workbench-actor")?;
-        }
-        "--workbench-note" => {
-            *state.workbench_note = next_option_value(args, "--workbench-note")?;
-        }
-        "--context-talk" => {
-            *state.context_talk_page = Some(next_option_value(args, "--context-talk")?);
-        }
-        "--context-liftwing" => {
-            let value = next_option_value(args, "--context-liftwing")?;
-            *state.context_liftwing = Some(parse_liftwing_probability(&value)?);
-        }
-        "--shell" => {
-            *state.shell_mode = Some(parse_shell_mode(&next_option_value(args, "--shell")?)?);
-        }
-        "--action-note" => {
-            *state.action_note = Some(next_option_value(args, "--action-note")?);
-        }
-        "--action-kind" => {
-            *state.action_kind = parse_action_kind(&next_option_value(args, "--action-kind")?)?;
-        }
-        "--bridge-base-url" => {
-            *state.bridge_base_url = next_option_value(args, "--bridge-base-url")?;
-        }
-        "--bare-url-preview" => {
-            *state.bare_url_preview = true;
-        }
-        "--bare-url-execute" => {
-            *state.bare_url_execute = true;
-        }
-        "--title" => {
-            *state.bare_url_title = Some(next_option_value(args, "--title")?);
-        }
-        "--rev" => {
-            let value = next_option_value(args, "--rev")?;
-            *state.bare_url_rev = Some(
-                value
-                    .parse()
-                    .map_err(|_| format!("--rev expects a revision id, got: {value}"))?,
-            );
-        }
-        "--ordinal" => {
-            let value = next_option_value(args, "--ordinal")?;
-            *state.bare_url_ordinal = Some(
-                value
-                    .parse()
-                    .map_err(|_| format!("--ordinal expects a zero-based index, got: {value}"))?,
-            );
-        }
-        "--wiki" => {
-            *state.bare_url_wiki = next_option_value(args, "--wiki")?;
-        }
-        "--claim" => {
-            *state.verify_claim = Some(next_option_value(args, "--claim")?);
-        }
-        "--source-url" => {
-            *state.verify_source_url = Some(next_option_value(args, "--source-url")?);
-        }
-        "--preceding-sentence" => {
-            state
-                .verify_preceding
-                .push(next_option_value(args, "--preceding-sentence")?);
-        }
-        "--with-metadata" => {
-            *state.verify_metadata = true;
-        }
-        "--debug-votes" => {
-            *state.verify_debug_votes = true;
-        }
-        "--no-repair" => {
-            *state.verify_repair = false;
-        }
-        "--quote" => {
-            *state.probe_quote = Some(next_option_value(args, "--quote")?);
-        }
-        "--locate-probe" => {
-            *state.locate_probe_flag = true;
-        }
-        "--verdict-only" => {
-            *state.verdict_only = true;
-        }
-        _ => return Err(format!("unsupported argument: {arg}")),
-    }
-
-    Ok(())
-}
-
-/// Assemble the bare-URL flag-mode options. Both modes need --title and
-/// --rev; --bare-url-execute additionally needs --ordinal.
-fn build_bare_url_options(
-    preview: bool,
-    execute: bool,
-    wiki_id: String,
-    title: Option<String>,
-    rev_id: Option<u64>,
-    ordinal: Option<usize>,
-) -> Result<Option<BareUrlCliOptions>, String> {
-    if preview && execute {
-        return Err("--bare-url-preview and --bare-url-execute are mutually exclusive".to_string());
-    }
-    if !preview && !execute {
-        return Ok(None);
-    }
-    let title = title.ok_or_else(|| "bare-url modes require --title".to_string())?;
-    let rev_id = rev_id.ok_or_else(|| "bare-url modes require --rev".to_string())?;
-    let mode = if execute {
-        let ordinal = ordinal.ok_or_else(|| "--bare-url-execute requires --ordinal".to_string())?;
-        BareUrlCliMode::Execute { ordinal }
-    } else {
-        BareUrlCliMode::Preview
-    };
-    Ok(Some(BareUrlCliOptions {
-        mode,
-        wiki_id,
-        title,
-        rev_id,
-    }))
-}
-
-fn build_context_preview(
-    talk_page: Option<String>,
-    liftwing_probability: Option<f32>,
-) -> Option<ContextPreviewOptions> {
-    (talk_page.is_some() || liftwing_probability.is_some()).then_some(ContextPreviewOptions {
-        talk_page,
-        liftwing_probability,
-    })
-}
-
+#[allow(clippy::too_many_lines)] // flat arg-parser; refactor tracked in SP42#80
 fn dev_context_options(options: &ContextPreviewOptions) -> DevContextOptions {
     DevContextOptions {
         talk_page_wikitext: options.talk_page.clone(),
@@ -551,29 +834,6 @@ fn dev_workbench_options(options: &WorkbenchOptions) -> DevWorkbenchOptions {
         actor: options.actor.clone(),
         note: Some(options.note.clone()),
     }
-}
-
-fn next_option_value<I>(args: &mut I, flag: &str) -> Result<String, String>
-where
-    I: Iterator<Item = String>,
-{
-    args.next()
-        .ok_or_else(|| format!("{flag} requires a value"))
-}
-
-fn parse_output_format(value: &str) -> Result<OutputFormat, String> {
-    match value {
-        "text" => Ok(OutputFormat::Text),
-        "json" => Ok(OutputFormat::Json),
-        "markdown" => Ok(OutputFormat::Markdown),
-        _ => Err(format!("unsupported output format: {value}")),
-    }
-}
-
-fn parse_liftwing_probability(value: &str) -> Result<f32, String> {
-    value
-        .parse::<f32>()
-        .map_err(|_| "--context-liftwing must be a valid float".to_string())
 }
 
 // ----- Read-only citation verification (PRD-0001) -----
@@ -770,32 +1030,55 @@ fn render_verify(
     }
 }
 
-/// Execute one ad-hoc (claim, source URL) verification against the configured panel.
-///
-/// Reads the inference endpoint, model panel, and (optional) bearer token from the
-/// environment so no secret is hard-coded; performs only read-only GET/POST requests.
-async fn run_verify(options: &VerifyCliOptions) -> Result<VerificationOutcome, String> {
-    let panel = panel_from_env()?;
-    let model_client = client_from_env()?;
+/// Resolve the optional offline source body: `--source-file <path>` reads a file,
+/// `--source-body -` reads STDIN, and any other `--source-body` value is literal text.
+/// `None` (neither flag) keeps the verifier on its live-fetch path.
+fn resolve_source_body(
+    source_file: Option<&str>,
+    source_body: Option<&str>,
+) -> Result<Option<String>, String> {
+    match (source_file, source_body) {
+        (Some(path), _) => std::fs::read_to_string(path)
+            .map(Some)
+            .map_err(|error| format!("failed to read --source-file {path:?}: {error}")),
+        (None, Some("-")) => read_stdin().map(Some).map_err(|error| error.to_string()),
+        (None, Some(text)) => Ok(Some(text.to_string())),
+        (None, None) => Ok(None),
+    }
+}
 
-    let source_url = options
-        .source_url
-        .parse()
-        .map_err(|_| format!("invalid --source-url: {}", options.source_url))?;
-    let request = CitationVerificationRequest {
-        wiki_id: String::new(),
-        rev_id: 0,
-        title: String::new(),
-        claim: options.claim.clone(),
-        source_url,
-    };
+/// Wrap an offline body as a `FetchedSource` the verifier treats as a 200 `text/plain`
+/// response. The eval harness pre-extracts sources to text, so there is no HTML for the
+/// usability gate's structured paywall markers — `raw_html` is `None` by design.
+fn prefetched_from_body(text: String) -> FetchedSource {
+    FetchedSource {
+        text,
+        status: 200,
+        content_type: "text/plain".to_string(),
+        raw_html: None,
+    }
+}
 
-    // The source-fetch client carries no inference credential; the bearer is held only by
-    // the model adapter, so it can never reach a third-party source host. Redirects are not
-    // auto-followed; `CliHttpClient::execute` follows them manually and re-checks every hop
-    // against the SSRF floor before connecting (SP42#34/#43).
+/// Build the model panel: `--models` (comma-separated) overrides the env panel for this run;
+/// the endpoint/token always come from the env (`SP42_INFERENCE_*`).
+fn build_panel(models: Option<&str>) -> Result<Vec<ModelRef>, String> {
+    match models {
+        Some(models) => {
+            let provider = std::env::var("SP42_INFERENCE_PROVIDER")
+                .unwrap_or_else(|_| "configured".to_string());
+            panel_from_models(&provider, models)
+        }
+        None => panel_from_env(),
+    }
+}
+
+/// Build the read-only source-fetch HTTP client. It carries no inference credential — the
+/// bearer is held only by the model adapter, so it can never reach a third-party source host.
+/// Redirects are not auto-followed; `CliHttpClient::execute` follows them manually and
+/// re-checks every hop against the SSRF floor before connecting (SP42#34/#43).
+fn build_fetch_client() -> Result<CliHttpClient, String> {
     let allow_private = std::env::var("SP42_FETCH_ALLOW_PRIVATE").is_ok_and(|value| value == "1");
-    let fetch_client = CliHttpClient {
+    Ok(CliHttpClient {
         client: reqwest::Client::builder()
             .user_agent(sp42_core::branding::USER_AGENT)
             .connect_timeout(Duration::from_secs(10))
@@ -805,20 +1088,55 @@ async fn run_verify(options: &VerifyCliOptions) -> Result<VerificationOutcome, S
             .map_err(|error| format!("source http client failed to build: {error}"))?,
         allow_private,
         max_source_bytes: MAX_SOURCE_BYTES,
-    };
+    })
+}
 
+/// One verification's resolved inputs — shared by the single `verify` path and `batch`.
+struct VerifyCase {
+    claim: String,
+    source_url: String,
+    /// Resolved offline body; `None` means live-fetch `source_url`.
+    source_body: Option<String>,
+    /// Bibliographic sidecar; `None` means fetch-or-skip per `include_metadata`.
+    metadata: Option<CitoidMetadata>,
+    include_metadata: bool,
+    repair: bool,
+    preceding_sentences: Vec<String>,
+    article_title: Option<String>,
+}
+
+/// Verify one case against an already-built panel/clients. An offline body is handed to the
+/// verifier as a pre-fetched 200 `text/plain` source (no network for the body); `source_url`
+/// still supplies the provenance URL. An empty context stays on the no-context path.
+async fn verify_case(
+    fetch_client: &CliHttpClient,
+    model_client: &GenaiModelClient,
+    panel: &[ModelRef],
+    case: &VerifyCase,
+) -> Result<VerificationOutcome, String> {
+    let source_url = case
+        .source_url
+        .parse()
+        .map_err(|_| format!("invalid source url: {}", case.source_url))?;
+    let request = CitationVerificationRequest {
+        wiki_id: String::new(),
+        rev_id: 0,
+        title: String::new(),
+        claim: case.claim.clone(),
+        source_url,
+    };
     let verify_options = CoreVerifyOptions {
-        include_metadata: options.include_metadata,
+        include_metadata: case.include_metadata,
         concurrency: 3,
-        repair_turn: options.repair,
+        repair_turn: case.repair,
+        prefetched: case.source_body.clone().map(prefetched_from_body),
+        metadata_sidecar: case.metadata.clone(),
         ..Default::default()
     };
-    // SIDE-style co-reference context (article title unused on the claim+url CLI surface;
-    // the library API is the eval-corpus driver). Empty context stays on the no-context path.
     let claim_context = {
         let context = ClaimContext {
-            article_title: String::new(),
-            preceding_sentences: options.preceding_sentences.clone(),
+            article_title: case.article_title.clone().unwrap_or_default(),
+            preceding_sentences: case.preceding_sentences.clone(),
         };
         if context.is_empty() {
             None
@@ -826,20 +1144,207 @@ async fn run_verify(options: &VerifyCliOptions) -> Result<VerificationOutcome, S
             Some(context)
         }
     };
-
-    let outcome = verify_citation_use_site(
-        &fetch_client,
-        &model_client,
+    verify_citation_use_site(
+        fetch_client,
+        model_client,
         &SystemClock,
-        &panel,
+        panel,
         &request,
         claim_context.as_ref(),
         0,
         verify_options,
     )
     .await
-    .map_err(|error| error.to_string())?;
-    Ok(outcome)
+    .map_err(|error| error.to_string())
+}
+
+/// A metadata sidecar as supplied on disk / inline: all bibliographic fields optional, and
+/// `url` defaults to the case's `source_url` when absent (the harness keys metadata by case).
+#[derive(Debug, Clone, serde::Deserialize)]
+struct MetadataSidecarFile {
+    #[serde(default)]
+    publication: Option<String>,
+    #[serde(default)]
+    published: Option<String>,
+    #[serde(default)]
+    author: Option<String>,
+    #[serde(default)]
+    title: Option<String>,
+    #[serde(default)]
+    url: Option<String>,
+}
+
+impl MetadataSidecarFile {
+    fn into_citoid(self, fallback_url: &str) -> CitoidMetadata {
+        CitoidMetadata {
+            publication: self.publication,
+            published: self.published,
+            author: self.author,
+            title: self.title,
+            url: self.url.unwrap_or_else(|| fallback_url.to_string()),
+        }
+    }
+}
+
+/// Load a `--metadata-json` sidecar file, filling a missing `url` from the source URL.
+fn load_metadata_sidecar(path: &str, source_url: &str) -> Result<CitoidMetadata, String> {
+    let raw = std::fs::read_to_string(path)
+        .map_err(|error| format!("failed to read --metadata-json {path:?}: {error}"))?;
+    let file: MetadataSidecarFile =
+        serde_json::from_str(&raw).map_err(|error| format!("invalid --metadata-json: {error}"))?;
+    Ok(file.into_citoid(source_url))
+}
+
+fn default_repair() -> bool {
+    true
+}
+
+/// Best-effort recovery of a batch line's `id` when the line is valid JSON but fails typed
+/// `BatchCase` deserialization (e.g. missing `claim`, or a wrong-typed field). Keeps a
+/// schema-error result attributable to its input case, honoring the contract that ids echo.
+fn recover_case_id(raw: &str) -> Option<String> {
+    serde_json::from_str::<serde_json::Value>(raw)
+        .ok()
+        .and_then(|value| value.get("id")?.as_str().map(str::to_string))
+}
+
+/// One input line of a `batch` run. `claim` and `source_url` are required; everything else
+/// is optional. `source_body` (inline text) keeps the run offline; `repair` defaults on.
+#[derive(Debug, Clone, serde::Deserialize)]
+struct BatchCase {
+    #[serde(default)]
+    id: Option<String>,
+    claim: String,
+    source_url: String,
+    #[serde(default)]
+    source_body: Option<String>,
+    #[serde(default)]
+    metadata: Option<MetadataSidecarFile>,
+    #[serde(default)]
+    preceding: Vec<String>,
+    #[serde(default)]
+    article_title: Option<String>,
+    #[serde(default = "default_repair")]
+    repair: bool,
+    #[serde(default)]
+    with_metadata: bool,
+}
+
+impl BatchCase {
+    fn into_verify_case(self) -> VerifyCase {
+        let metadata = self.metadata.map(|m| m.into_citoid(&self.source_url));
+        VerifyCase {
+            claim: self.claim,
+            source_url: self.source_url,
+            source_body: self.source_body,
+            metadata,
+            include_metadata: self.with_metadata,
+            repair: self.repair,
+            preceding_sentences: self.preceding,
+            article_title: self.article_title,
+        }
+    }
+}
+
+/// One output line of a `batch` run: the case `id` (echoed when present) plus either the
+/// full `VerificationOutcome` or a per-case `error`. A bad case never aborts the batch.
+#[derive(Debug, serde::Serialize)]
+struct BatchResult {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    outcome: Option<VerificationOutcome>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    error: Option<String>,
+}
+
+/// Read the batch input (STDIN or `--file`) and verify every line on one Tokio runtime.
+fn render_batch(batch: &BatchOptions) -> Result<String, String> {
+    let input = match &batch.file {
+        Some(path) => std::fs::read_to_string(path)
+            .map_err(|error| format!("failed to read --file {path:?}: {error}"))?,
+        None => read_stdin().map_err(|error| error.to_string())?,
+    };
+    let runtime = tokio::runtime::Runtime::new()
+        .map_err(|error| format!("failed to start async runtime: {error}"))?;
+    runtime.block_on(run_batch(batch.models.as_deref(), &input))
+}
+
+/// Verify each non-empty JSONL line against one shared panel/client, emitting one result line.
+/// A line that fails to parse or verify becomes an `error` result; the batch continues.
+async fn run_batch(models: Option<&str>, input: &str) -> Result<String, String> {
+    let panel = build_panel(models)?;
+    let model_client = client_from_env()?;
+    let fetch_client = build_fetch_client()?;
+
+    let mut lines = Vec::new();
+    for (index, raw) in input.lines().enumerate() {
+        let raw = raw.trim();
+        if raw.is_empty() {
+            continue;
+        }
+        let result = match serde_json::from_str::<BatchCase>(raw) {
+            Ok(case) => {
+                let id = case.id.clone();
+                match verify_case(
+                    &fetch_client,
+                    &model_client,
+                    &panel,
+                    &case.into_verify_case(),
+                )
+                .await
+                {
+                    Ok(outcome) => BatchResult {
+                        id,
+                        outcome: Some(outcome),
+                        error: None,
+                    },
+                    Err(error) => BatchResult {
+                        id,
+                        outcome: None,
+                        error: Some(error),
+                    },
+                }
+            }
+            Err(error) => BatchResult {
+                id: recover_case_id(raw),
+                outcome: None,
+                error: Some(format!("line {}: could not parse case: {error}", index + 1)),
+            },
+        };
+        lines.push(serde_json::to_string(&result).map_err(|error| error.to_string())?);
+    }
+    Ok(lines.join("\n"))
+}
+
+/// Execute one ad-hoc (claim, source URL) verification against the configured panel.
+///
+/// Reads the inference endpoint, model panel, and (optional) bearer token from the
+/// environment so no secret is hard-coded; performs only read-only GET/POST requests.
+async fn run_verify(options: &VerifyCliOptions) -> Result<VerificationOutcome, String> {
+    let panel = build_panel(options.models.as_deref())?;
+    let model_client = client_from_env()?;
+    let fetch_client = build_fetch_client()?;
+
+    let source_body = resolve_source_body(
+        options.source_file.as_deref(),
+        options.source_body.as_deref(),
+    )?;
+    let metadata = match &options.metadata_json {
+        Some(path) => Some(load_metadata_sidecar(path, &options.source_url)?),
+        None => None,
+    };
+    let case = VerifyCase {
+        claim: options.claim.clone(),
+        source_url: options.source_url.clone(),
+        source_body,
+        metadata,
+        include_metadata: options.include_metadata,
+        repair: options.repair,
+        preceding_sentences: options.preceding_sentences.clone(),
+        article_title: options.article_title.clone(),
+    };
+    verify_case(&fetch_client, &model_client, &panel, &case).await
 }
 
 /// Human-readable verdict block.
@@ -886,23 +1391,36 @@ mod verify_tests {
         LocatedPassage, PanelAgreement, SourceProvenance, SupportLevel,
     };
 
-    use super::{VerifyCliOptions, parse_options, render_verify_text, run_locate_probe};
+    use super::{
+        BatchCase, Cli, Command, MetadataSidecarFile, VerifyCliOptions, load_metadata_sidecar,
+        prefetched_from_body, recover_case_id, render_verify_text, resolve_source_body,
+        run_locate_probe,
+    };
+    use clap::Parser;
 
-    fn args(items: &[&str]) -> Vec<String> {
-        items.iter().map(ToString::to_string).collect()
+    /// Parse a full argv (program name implied) into the top-level subcommand.
+    fn command_from(items: &[&str]) -> Result<Command, clap::Error> {
+        let argv = std::iter::once("sp42-cli").chain(items.iter().copied());
+        Cli::try_parse_from(argv).map(|cli| cli.command)
+    }
+
+    fn verify_options(items: &[&str]) -> VerifyCliOptions {
+        match command_from(items).expect("parses") {
+            Command::Verify(args) => VerifyCliOptions::from(args),
+            other => panic!("expected verify, got {other:?}"),
+        }
     }
 
     #[test]
     fn parses_ad_hoc_verify_flags() {
-        let options = parse_options(args(&[
+        let verify = verify_options(&[
+            "verify",
             "--claim",
             "the bridge opened in 1998",
             "--source-url",
             "https://example.com/bridge",
             "--with-metadata",
-        ]))
-        .expect("parses");
-        let verify = options.verify.expect("verify present");
+        ]);
         assert_eq!(
             verify,
             VerifyCliOptions {
@@ -912,14 +1430,174 @@ mod verify_tests {
                 debug_votes: false,
                 repair: true,
                 preceding_sentences: Vec::new(),
+                source_file: None,
+                source_body: None,
+                models: None,
+                article_title: None,
+                metadata_json: None,
             }
         );
-        assert!(!options.verdict_only);
+    }
+
+    #[test]
+    fn parses_offline_body_model_and_article_title_flags() {
+        let verify = verify_options(&[
+            "verify",
+            "--claim",
+            "c",
+            "--source-url",
+            "https://example.com",
+            "--source-file",
+            "/tmp/body.txt",
+            "--models",
+            "anthropic/claude-opus-4-8",
+            "--article-title",
+            "Morrison Bridge",
+        ]);
+        assert_eq!(verify.source_file.as_deref(), Some("/tmp/body.txt"));
+        assert_eq!(verify.models.as_deref(), Some("anthropic/claude-opus-4-8"));
+        assert_eq!(verify.article_title.as_deref(), Some("Morrison Bridge"));
+    }
+
+    #[test]
+    fn source_file_and_source_body_are_mutually_exclusive() {
+        assert!(
+            command_from(&[
+                "verify",
+                "--claim",
+                "c",
+                "--source-url",
+                "https://example.com",
+                "--source-file",
+                "/tmp/body.txt",
+                "--source-body",
+                "-",
+            ])
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn resolve_source_body_reads_a_file_and_passes_literal_text() {
+        let dir = std::env::temp_dir();
+        let path = dir.join("sp42_resolve_source_body_test.txt");
+        std::fs::write(&path, "the bridge opened in 2002").expect("write fixture");
+        let from_file =
+            resolve_source_body(Some(path.to_str().expect("utf8 path")), None).expect("reads file");
+        assert_eq!(from_file.as_deref(), Some("the bridge opened in 2002"));
+        std::fs::remove_file(&path).ok();
+
+        let literal = resolve_source_body(None, Some("inline body")).expect("literal");
+        assert_eq!(literal.as_deref(), Some("inline body"));
+
+        assert_eq!(resolve_source_body(None, None).expect("none"), None);
+    }
+
+    #[test]
+    fn prefetched_from_body_is_a_200_text_plain_source() {
+        let fetched = prefetched_from_body("body text".to_string());
+        assert_eq!(fetched.text, "body text");
+        assert_eq!(fetched.status, 200);
+        assert_eq!(fetched.content_type, "text/plain");
+        assert!(fetched.raw_html.is_none());
+    }
+
+    #[test]
+    fn parses_metadata_json_and_batch_flags() {
+        let verify = verify_options(&[
+            "verify",
+            "--claim",
+            "c",
+            "--source-url",
+            "https://example.com",
+            "--metadata-json",
+            "/tmp/meta.json",
+        ]);
+        assert_eq!(verify.metadata_json.as_deref(), Some("/tmp/meta.json"));
+
+        // `batch` with no --file reads STDIN.
+        match command_from(&["batch"]).expect("parses") {
+            Command::Batch(args) => assert_eq!(args.file, None),
+            other => panic!("expected batch, got {other:?}"),
+        }
+        // `batch --file <path>`.
+        match command_from(&["batch", "--file", "/tmp/cases.jsonl"]).expect("parses") {
+            Command::Batch(args) => assert_eq!(args.file.as_deref(), Some("/tmp/cases.jsonl")),
+            other => panic!("expected batch, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn metadata_sidecar_file_fills_missing_url_from_source() {
+        let file: MetadataSidecarFile =
+            serde_json::from_str(r#"{"publication":"The Daily Example","author":"A. Writer"}"#)
+                .expect("parses");
+        let meta = file.into_citoid("https://example.com/article");
+        assert_eq!(meta.publication.as_deref(), Some("The Daily Example"));
+        assert_eq!(meta.author.as_deref(), Some("A. Writer"));
+        assert_eq!(meta.url, "https://example.com/article");
+        assert!(meta.title.is_none());
+    }
+
+    #[test]
+    fn load_metadata_sidecar_reads_a_file_and_prefers_explicit_url() {
+        let path = std::env::temp_dir().join("sp42_metadata_sidecar_test.json");
+        std::fs::write(
+            &path,
+            r#"{"title":"A Title","url":"https://override.example/x"}"#,
+        )
+        .expect("write fixture");
+        let meta = load_metadata_sidecar(path.to_str().expect("utf8 path"), "https://fallback")
+            .expect("loads");
+        assert_eq!(meta.title.as_deref(), Some("A Title"));
+        assert_eq!(meta.url, "https://override.example/x");
+        std::fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn batch_case_parses_with_repair_defaulting_true() {
+        let case: BatchCase = serde_json::from_str(
+            r#"{"id":"c1","claim":"the bridge opened in 1998","source_url":"https://example.com/b","source_body":"text"}"#,
+        )
+        .expect("parses");
+        assert_eq!(case.id.as_deref(), Some("c1"));
+        assert!(case.repair, "repair defaults to true");
+        assert!(!case.with_metadata);
+        let vc = case.into_verify_case();
+        assert_eq!(vc.claim, "the bridge opened in 1998");
+        assert_eq!(vc.source_body.as_deref(), Some("text"));
+        assert!(vc.metadata.is_none());
+    }
+
+    #[test]
+    fn recover_case_id_keeps_schema_errors_attributable() {
+        // Valid JSON missing the required `claim` still fails BatchCase, but its id is recoverable.
+        let schema_error = r#"{"id":"c7","source_url":"https://example.com/b"}"#;
+        assert!(serde_json::from_str::<BatchCase>(schema_error).is_err());
+        assert_eq!(recover_case_id(schema_error).as_deref(), Some("c7"));
+
+        // No id, non-string id, and non-JSON all recover to None (not attributable).
+        assert_eq!(recover_case_id(r#"{"claim":"c"}"#), None);
+        assert_eq!(recover_case_id(r#"{"id":42}"#), None);
+        assert_eq!(recover_case_id("not json"), None);
+    }
+
+    #[test]
+    fn batch_case_metadata_inherits_source_url_when_url_absent() {
+        let case: BatchCase = serde_json::from_str(
+            r#"{"claim":"c","source_url":"https://example.com/b","metadata":{"publication":"P"}}"#,
+        )
+        .expect("parses");
+        let vc = case.into_verify_case();
+        let meta = vc.metadata.expect("metadata present");
+        assert_eq!(meta.publication.as_deref(), Some("P"));
+        assert_eq!(meta.url, "https://example.com/b");
     }
 
     #[test]
     fn verify_collects_preceding_context() {
-        let options = parse_options(args(&[
+        let verify = verify_options(&[
+            "verify",
             "--claim",
             "c",
             "--source-url",
@@ -928,9 +1606,7 @@ mod verify_tests {
             "She joined in 1985.",
             "--preceding-sentence",
             "She scored twice.",
-        ]))
-        .expect("parses");
-        let verify = options.verify.expect("verify present");
+        ]);
         assert_eq!(
             verify.preceding_sentences,
             vec![
@@ -942,59 +1618,64 @@ mod verify_tests {
 
     #[test]
     fn no_repair_flag_disables_the_repair_turn() {
-        let options = parse_options(args(&[
+        let verify = verify_options(&[
+            "verify",
             "--claim",
             "c",
             "--source-url",
             "https://example.com",
             "--no-repair",
-        ]))
-        .expect("parses");
-        assert!(!options.verify.expect("verify present").repair);
+        ]);
+        assert!(!verify.repair);
     }
 
     #[test]
     fn debug_votes_flag_is_recognized() {
-        let options = parse_options(args(&[
+        let verify = verify_options(&[
+            "verify",
             "--claim",
             "c",
             "--source-url",
             "https://example.com",
             "--debug-votes",
-        ]))
-        .expect("parses");
-        assert!(options.verify.expect("verify present").debug_votes);
+        ]);
+        assert!(verify.debug_votes);
     }
 
     #[test]
     fn verdict_only_flag_is_recognized() {
-        let options = parse_options(args(&[
+        match command_from(&[
+            "verify",
             "--claim",
             "c",
             "--source-url",
             "https://example.com",
             "--verdict-only",
-        ]))
-        .expect("parses");
-        assert!(options.verdict_only);
+        ])
+        .expect("parses")
+        {
+            Command::Verify(args) => assert!(args.output.verdict_only),
+            other => panic!("expected verify, got {other:?}"),
+        }
     }
 
     #[test]
     fn verify_requires_both_claim_and_source_url() {
-        assert!(parse_options(args(&["--claim", "only a claim"])).is_err());
-        assert!(parse_options(args(&["--source-url", "https://example.com"])).is_err());
+        assert!(command_from(&["verify", "--claim", "only a claim"]).is_err());
+        assert!(command_from(&["verify", "--source-url", "https://example.com"]).is_err());
     }
 
     #[test]
-    fn locate_probe_flags_parse_and_carry_the_quote() {
-        let options =
-            parse_options(args(&["--locate-probe", "--quote", "the Nobel Prize"])).expect("parses");
-        assert_eq!(options.locate_probe.as_deref(), Some("the Nobel Prize"));
+    fn locate_probe_carries_the_quote() {
+        match command_from(&["locate-probe", "--quote", "the Nobel Prize"]).expect("parses") {
+            Command::LocateProbe(args) => assert_eq!(args.quote, "the Nobel Prize"),
+            other => panic!("expected locate-probe, got {other:?}"),
+        }
     }
 
     #[test]
     fn locate_probe_requires_a_quote() {
-        assert!(parse_options(args(&["--locate-probe"])).is_err());
+        assert!(command_from(&["locate-probe"]).is_err());
     }
 
     #[test]
@@ -1044,6 +1725,8 @@ mod verify_tests {
                 fetched_at: 1,
                 http_status: Some(200),
             },
+            source_excerpt: None,
+            metadata: None,
             grounding: GroundingAssertion::LocatedQuote {
                 quote: "opened in 1998".to_string(),
                 source_hash: "abc123".to_string(),
@@ -1065,71 +1748,6 @@ mod verify_tests {
         assert!(text.contains("agreement: 2/3 models"));
         assert!(text.contains("opened in 1998"));
         assert!(text.contains("https://example.com/bridge"));
-    }
-}
-
-fn preview_mode_flag(flag: &str) -> Option<PreviewMode> {
-    match flag {
-        "--stream-preview" | "--stream" => Some(PreviewMode::Stream),
-        "--backlog-preview" | "--backlog" => Some(PreviewMode::Backlog),
-        "--coordination-preview" | "--coordination" => Some(PreviewMode::Coordination),
-        "--scenario-report" | "--patrol-report" => Some(PreviewMode::ScenarioReport),
-        "--session-digest" => Some(PreviewMode::SessionDigest),
-        "--server-report" | "--operator-report" => Some(PreviewMode::ServerReport),
-        "--parity-report" => Some(PreviewMode::ParityReport),
-        "--action-preview" | "--action" => Some(PreviewMode::ActionPreview),
-        "--action-execute" => Some(PreviewMode::ActionExecute),
-        _ => None,
-    }
-}
-
-fn selected_shell_mode(options: &CliOptions) -> Option<ShellMode> {
-    options.shell_mode.or_else(|| {
-        if options.preview_modes.contains(&PreviewMode::ParityReport) {
-            Some(ShellMode::ParityReport)
-        } else if options.preview_modes.contains(&PreviewMode::Stream) {
-            Some(ShellMode::Stream)
-        } else if options.preview_modes.contains(&PreviewMode::Backlog) {
-            Some(ShellMode::Backlog)
-        } else if options.preview_modes.contains(&PreviewMode::Coordination) {
-            Some(ShellMode::Coordination)
-        } else if options.preview_modes.contains(&PreviewMode::SessionDigest) {
-            Some(ShellMode::SessionDigest)
-        } else if options.preview_modes.contains(&PreviewMode::ScenarioReport) {
-            Some(ShellMode::ScenarioReport)
-        } else if options.preview_modes.contains(&PreviewMode::ServerReport) {
-            Some(ShellMode::ServerReport)
-        } else if options.preview_modes.contains(&PreviewMode::ActionExecute) {
-            Some(ShellMode::ActionExecute)
-        } else if options.preview_modes.contains(&PreviewMode::ActionPreview) {
-            Some(ShellMode::ActionPreview)
-        } else {
-            None
-        }
-    })
-}
-
-fn parse_shell_mode(value: &str) -> Result<ShellMode, String> {
-    match value {
-        "parity-report" | "operator-report" => Ok(ShellMode::ParityReport),
-        "stream-preview" | "stream" => Ok(ShellMode::Stream),
-        "backlog-preview" | "backlog" => Ok(ShellMode::Backlog),
-        "coordination-preview" | "coordination" => Ok(ShellMode::Coordination),
-        "session-digest" => Ok(ShellMode::SessionDigest),
-        "scenario-report" | "patrol-report" => Ok(ShellMode::ScenarioReport),
-        "server-report" | "live-server-report" => Ok(ShellMode::ServerReport),
-        "action-preview" | "action" => Ok(ShellMode::ActionPreview),
-        "action-execute" => Ok(ShellMode::ActionExecute),
-        _ => Err(format!("unsupported shell mode: {value}")),
-    }
-}
-
-fn parse_action_kind(value: &str) -> Result<SessionActionKind, String> {
-    match value {
-        "rollback" => Ok(SessionActionKind::Rollback),
-        "patrol" => Ok(SessionActionKind::Patrol),
-        "undo" => Ok(SessionActionKind::Undo),
-        _ => Err(format!("unsupported action kind: {value}")),
     }
 }
 
@@ -2073,8 +2691,8 @@ fn build_cli_session_workbench(
 
 #[derive(Debug, Clone, Copy)]
 struct SessionDigestArtifacts<'a> {
-    shell_state: &'a sp42_reporting::ShellStateModel,
-    scenario: &'a sp42_reporting::PatrolScenarioReport,
+    shell_state: &'a sp42_patrol::ShellStateModel,
+    scenario: &'a sp42_patrol::PatrolScenarioReport,
 }
 
 fn render_session_digest_json(
@@ -2486,6 +3104,80 @@ async fn fetch_bare_url_proposals(
         .json::<sp42_core::BareUrlProposalsResponse>()
         .await
         .map_err(|error| format!("bare-url proposals payload was invalid: {error}"))
+}
+
+fn render_verify_page(
+    options: &VerifyPageCliOptions,
+    bridge_base_url: &str,
+    format: OutputFormat,
+) -> Result<String, String> {
+    // `reqwest` needs a Tokio reactor; drive the bridge calls on a real runtime
+    // (mirrors `run_verify`), not `futures::executor::block_on`.
+    let runtime = tokio::runtime::Runtime::new()
+        .map_err(|error| format!("failed to start async runtime: {error}"))?;
+    let report = runtime.block_on(fetch_page_report_via_bridge(bridge_base_url, options))?;
+    match format {
+        OutputFormat::Json => {
+            serde_json::to_string_pretty(&report).map_err(|error| error.to_string())
+        }
+        // The shared renderer already emits a full markdown document (`# Page citation
+        // report`), so it is not wrapped in render_markdown_section.
+        OutputFormat::Markdown => Ok(render_page_verification_markdown(&report)),
+        OutputFormat::Text => Ok(render_page_verification_text(&report)),
+    }
+}
+
+/// Verify every citation on a page through the bridge and return the report. The
+/// route is session+CSRF gated (it spends the server's inference credentials on a
+/// caller-chosen page), so bootstrap a session and send the cookie + CSRF token
+/// (ADR-0002), mirroring the bare-url apply path.
+async fn fetch_page_report_via_bridge(
+    bridge_base_url: &str,
+    options: &VerifyPageCliOptions,
+) -> Result<PageVerificationReport, String> {
+    let client = reqwest::Client::builder()
+        .user_agent(sp42_core::branding::USER_AGENT)
+        .build()
+        .map_err(|error| format!("bridge client failed to build: {error}"))?;
+    let bootstrap_request =
+        build_dev_auth_bootstrap_request(bridge_base_url, &DevAuthBootstrapRequest::default())
+            .map_err(|error| error.to_string())?;
+    let bootstrap_response = execute_local_http_request(&client, bootstrap_request).await?;
+    let bootstrap =
+        parse_dev_auth_status(&bootstrap_response.body).map_err(|error| error.to_string())?;
+    if !bootstrap.authenticated {
+        return Err("bridge bootstrap did not produce an authenticated session".to_string());
+    }
+    let session_cookie = session_cookie_from_headers(&bootstrap_response.headers)
+        .ok_or_else(|| "bridge bootstrap did not set a session cookie".to_string())?;
+    let csrf_token = bootstrap
+        .csrf_token
+        .clone()
+        .ok_or_else(|| "bridge bootstrap did not return a CSRF token".to_string())?;
+
+    let request = PageVerificationRequest {
+        wiki_id: options.wiki_id.clone(),
+        title: options.title.clone(),
+        rev_id: options.rev_id,
+    };
+    let request_url = format!(
+        "{bridge_base_url}{}",
+        route_contracts::DEV_CITATION_VERIFY_PAGE_PATH
+    );
+    let response = client
+        .post(&request_url)
+        .header(COOKIE, session_cookie.as_str())
+        .header(route_contracts::CSRF_HEADER_NAME, csrf_token.as_str())
+        .json(&request)
+        .send()
+        .await
+        .map_err(|error| format!("verify-page request failed: {error}"))?
+        .error_for_status()
+        .map_err(|error| format!("verify-page request failed: {error}"))?;
+    response
+        .json::<PageVerificationReport>()
+        .await
+        .map_err(|error| format!("verify-page payload was invalid: {error}"))
 }
 
 /// Select a proposal from the response by ordinal. Returns the proposal if
@@ -2921,19 +3613,19 @@ fn render_markdown_code_block(language: &str, body: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::BTreeMap;
-    use std::collections::BTreeSet;
-
     use serde_json::Value;
+    use std::collections::BTreeMap;
 
     use super::{
-        BareUrlCliMode, BareUrlCliOptions, BareUrlExecuteReport, CliOptions, ContextPreviewOptions,
-        LOCAL_SERVER_BASE_URL, OutputFormat, PreviewMode, ShellMode, WorkbenchOptions,
-        parse_options, render_action_preview, render_backlog_preview, render_bare_url_execute,
-        render_bare_url_proposals, render_context_preview, render_coordination_preview,
-        render_parity_report, render_queue, render_scenario_report, render_session_digest,
-        render_stream_preview, render_workbench, select_bare_url_proposal, server_report_lines,
+        ActionKind, BareUrlAction, BareUrlCliMode, BareUrlCliOptions, BareUrlExecuteReport, Cli,
+        CliOptions, Command, ContextPreviewOptions, LOCAL_SERVER_BASE_URL, OutputFormat, ShellMode,
+        VerifyPageCliOptions, WorkbenchOptions, render_action_preview, render_backlog_preview,
+        render_bare_url_execute, render_bare_url_proposals, render_context_preview,
+        render_coordination_preview, render_parity_report, render_queue, render_scenario_report,
+        render_session_digest, render_stream_preview, render_workbench, select_bare_url_proposal,
+        server_report_lines,
     };
+    use clap::Parser;
     use serde_json::json;
     use sp42_devtools::{
         DEV_PREVIEW_SAMPLE_EVENTS, build_dev_queue, parse_default_dev_wiki_config,
@@ -2983,114 +3675,185 @@ mod tests {
         assert!(summary.contains("rev_id=123459"));
     }
 
+    /// Parse a full argv (program name implied) into the top-level subcommand.
+    fn command_from(items: &[&str]) -> Result<Command, clap::Error> {
+        let argv = std::iter::once("sp42-cli").chain(items.iter().copied());
+        Cli::try_parse_from(argv).map(|cli| cli.command)
+    }
+
+    fn preview_args(items: &[&str]) -> super::PreviewArgs {
+        match command_from(items).expect("parses") {
+            Command::Preview(args) => args,
+            other => panic!("expected preview, got {other:?}"),
+        }
+    }
+
     #[test]
     fn parses_requested_output_format() {
-        let options = parse_options(["--format".to_string(), "json".to_string()])
-            .expect("format should parse");
-
-        assert_eq!(options.format, OutputFormat::Json);
+        assert_eq!(
+            preview_args(&["preview", "--format", "json"]).fmt.format,
+            OutputFormat::Json
+        );
     }
 
     #[test]
     fn parses_markdown_output_format() {
-        let options = parse_options(["--format".to_string(), "markdown".to_string()])
-            .expect("markdown format should parse");
+        assert_eq!(
+            preview_args(&["preview", "--format", "markdown"])
+                .fmt
+                .format,
+            OutputFormat::Markdown
+        );
+    }
 
-        assert_eq!(options.format, OutputFormat::Markdown);
+    #[test]
+    fn defaults_to_text_output_format() {
+        assert_eq!(preview_args(&["preview"]).fmt.format, OutputFormat::Text);
     }
 
     #[test]
     fn parses_workbench_options() {
-        let options = parse_options([
-            "--workbench-token".to_string(),
-            "token-123".to_string(),
-            "--workbench-actor".to_string(),
-            "Reviewer".to_string(),
-            "--workbench-note".to_string(),
-            "local workbench".to_string(),
-        ])
-        .expect("workbench options should parse");
+        let args = preview_args(&[
+            "preview",
+            "--workbench-token",
+            "token-123",
+            "--workbench-actor",
+            "Reviewer",
+            "--workbench-note",
+            "local workbench",
+        ]);
+        assert_eq!(args.workbench_token.as_deref(), Some("token-123"));
+        assert_eq!(args.workbench_actor, "Reviewer");
+        assert_eq!(args.workbench_note, "local workbench");
+    }
 
+    #[test]
+    fn workbench_actor_and_note_have_defaults() {
+        let args = preview_args(&["preview"]);
+        assert_eq!(args.workbench_actor, "SP42-cli");
+        assert_eq!(args.workbench_note, "cli local workbench");
+    }
+
+    #[test]
+    fn parses_verify_page_options() {
+        let options = match command_from(&[
+            "verify-page",
+            "--wiki",
+            "enwiki",
+            "--title",
+            "Museum",
+            "--rev",
+            "12345",
+        ])
+        .expect("parses")
+        {
+            Command::VerifyPage(args) => VerifyPageCliOptions::from(args),
+            other => panic!("expected verify-page, got {other:?}"),
+        };
         assert_eq!(
-            options.workbench,
-            Some(WorkbenchOptions {
-                token: "token-123".to_string(),
-                actor: "Reviewer".to_string(),
-                note: "local workbench".to_string(),
-            })
+            options,
+            VerifyPageCliOptions {
+                wiki_id: "enwiki".to_string(),
+                title: "Museum".to_string(),
+                rev_id: 12345,
+            }
         );
+    }
+
+    #[test]
+    fn verify_page_without_rev_defaults_to_latest() {
+        let options = match command_from(&["verify-page", "--wiki", "enwiki", "--title", "Museum"])
+            .expect("parses")
+        {
+            Command::VerifyPage(args) => VerifyPageCliOptions::from(args),
+            other => panic!("expected verify-page, got {other:?}"),
+        };
+        assert_eq!(options.rev_id, 0);
+    }
+
+    #[test]
+    fn verify_page_requires_title() {
+        assert!(command_from(&["verify-page", "--wiki", "enwiki"]).is_err());
     }
 
     #[test]
     fn parses_context_preview_options() {
-        let options = parse_options([
-            "--context-talk".to_string(),
-            "{{Avertissement niveau 1}}".to_string(),
-            "--context-liftwing".to_string(),
-            "0.42".to_string(),
-        ])
-        .expect("context options should parse");
-
+        let args = preview_args(&[
+            "preview",
+            "--context-talk",
+            "{{Avertissement niveau 1}}",
+            "--context-liftwing",
+            "0.42",
+        ]);
+        // Compare through the struct's derived PartialEq (avoids a bare float `==`).
         assert_eq!(
-            options.context_preview,
-            Some(ContextPreviewOptions {
+            ContextPreviewOptions {
+                talk_page: args.context_talk.clone(),
+                liftwing_probability: args.context_liftwing,
+            },
+            ContextPreviewOptions {
                 talk_page: Some("{{Avertissement niveau 1}}".to_string()),
                 liftwing_probability: Some(0.42),
-            })
+            }
         );
     }
 
     #[test]
-    fn parses_stream_preview_flag() {
-        let options =
-            parse_options(["--stream-preview".to_string()]).expect("stream mode flag should parse");
-
-        assert!(options.preview_modes.contains(&PreviewMode::Stream));
+    fn parses_preview_mode_positional() {
+        assert_eq!(
+            preview_args(&["preview", "stream"]).mode,
+            Some(ShellMode::Stream)
+        );
+        assert_eq!(preview_args(&["preview"]).mode, None);
     }
 
     #[test]
-    fn parses_backlog_and_coordination_flags() {
-        let options = parse_options([
-            "--backlog-preview".to_string(),
-            "--coordination-preview".to_string(),
-            "--session-digest".to_string(),
-            "--action-preview".to_string(),
-            "--action-execute".to_string(),
-            "--scenario-report".to_string(),
-            "--patrol-report".to_string(),
-            "--server-report".to_string(),
-            "--parity-report".to_string(),
-        ])
-        .expect("new preview flags should parse");
+    fn every_preview_mode_value_parses() {
+        let cases = [
+            ("stream", ShellMode::Stream),
+            ("backlog", ShellMode::Backlog),
+            ("coordination", ShellMode::Coordination),
+            ("session-digest", ShellMode::SessionDigest),
+            ("scenario-report", ShellMode::ScenarioReport),
+            ("server-report", ShellMode::ServerReport),
+            ("parity-report", ShellMode::ParityReport),
+            ("action-preview", ShellMode::ActionPreview),
+            ("action-execute", ShellMode::ActionExecute),
+        ];
+        for (value, expected) in cases {
+            assert_eq!(
+                preview_args(&["preview", value]).mode,
+                Some(expected),
+                "mode {value}"
+            );
+        }
+    }
 
-        assert!(options.preview_modes.contains(&PreviewMode::Backlog));
-        assert!(options.preview_modes.contains(&PreviewMode::Coordination));
-        assert!(options.preview_modes.contains(&PreviewMode::SessionDigest));
-        assert!(options.preview_modes.contains(&PreviewMode::ActionPreview));
-        assert!(options.preview_modes.contains(&PreviewMode::ActionExecute));
-        assert!(options.preview_modes.contains(&PreviewMode::ScenarioReport));
-        assert!(options.preview_modes.contains(&PreviewMode::ServerReport));
-        assert!(options.preview_modes.contains(&PreviewMode::ParityReport));
+    #[test]
+    fn rejects_unknown_preview_mode() {
+        assert!(command_from(&["preview", "bogus-mode"]).is_err());
     }
 
     #[test]
     fn parses_shell_and_action_options() {
-        let options = parse_options([
-            "--shell".to_string(),
-            "action-preview".to_string(),
-            "--action-kind".to_string(),
-            "undo".to_string(),
-            "--action-note".to_string(),
-            "inspect".to_string(),
-            "--bridge-base-url".to_string(),
-            "http://127.0.0.1:9000".to_string(),
-        ])
-        .expect("shell options should parse");
-
-        assert_eq!(options.shell_mode, Some(ShellMode::ActionPreview));
-        assert_eq!(options.action_kind, sp42_core::SessionActionKind::Undo);
-        assert_eq!(options.action_note.as_deref(), Some("inspect"));
-        assert_eq!(options.bridge_base_url, "http://127.0.0.1:9000");
+        let args = preview_args(&[
+            "preview",
+            "action-preview",
+            "--action-kind",
+            "undo",
+            "--action-note",
+            "inspect",
+            "--bridge-base-url",
+            "http://127.0.0.1:9000",
+        ]);
+        assert_eq!(args.mode, Some(ShellMode::ActionPreview));
+        assert_eq!(args.action_kind, ActionKind::Undo);
+        assert_eq!(
+            sp42_core::SessionActionKind::from(args.action_kind),
+            sp42_core::SessionActionKind::Undo
+        );
+        assert_eq!(args.action_note.as_deref(), Some("inspect"));
+        assert_eq!(args.bridge_base_url, "http://127.0.0.1:9000");
     }
 
     #[test]
@@ -3112,15 +3875,10 @@ mod tests {
                     talk_page: Some("{{Avertissement niveau 2 pour vandalisme}}".to_string()),
                     liftwing_probability: Some(0.42),
                 }),
-                preview_modes: BTreeSet::new(),
                 shell_mode: None,
                 action_note: None,
                 action_kind: sp42_core::SessionActionKind::Patrol,
                 bridge_base_url: LOCAL_SERVER_BASE_URL.to_string(),
-                bare_url: None,
-                verify: None,
-                verdict_only: false,
-                locate_probe: None,
             },
             OutputFormat::Text,
         )
@@ -3146,15 +3904,10 @@ mod tests {
                 format: OutputFormat::Markdown,
                 workbench: None,
                 context_preview: None,
-                preview_modes: BTreeSet::new(),
                 shell_mode: None,
                 action_note: None,
                 action_kind: sp42_core::SessionActionKind::Patrol,
                 bridge_base_url: LOCAL_SERVER_BASE_URL.to_string(),
-                bare_url: None,
-                verify: None,
-                verdict_only: false,
-                locate_probe: None,
             },
             OutputFormat::Markdown,
         )
@@ -3178,15 +3931,10 @@ mod tests {
                 format: OutputFormat::Json,
                 workbench: None,
                 context_preview: None,
-                preview_modes: BTreeSet::new(),
                 shell_mode: None,
                 action_note: None,
                 action_kind: sp42_core::SessionActionKind::Patrol,
                 bridge_base_url: LOCAL_SERVER_BASE_URL.to_string(),
-                bare_url: None,
-                verify: None,
-                verdict_only: false,
-                locate_probe: None,
             },
             OutputFormat::Json,
         )
@@ -3217,15 +3965,10 @@ mod tests {
                 talk_page: Some("{{Avertissement niveau 2 pour vandalisme}}".to_string()),
                 liftwing_probability: Some(0.42),
             }),
-            preview_modes: BTreeSet::new(),
             shell_mode: None,
             action_note: None,
             action_kind: sp42_core::SessionActionKind::Patrol,
             bridge_base_url: LOCAL_SERVER_BASE_URL.to_string(),
-            bare_url: None,
-            verify: None,
-            verdict_only: false,
-            locate_probe: None,
         };
 
         let text = render_session_digest(&config, &ranked, &options, OutputFormat::Text)
@@ -3259,15 +4002,10 @@ mod tests {
             format: OutputFormat::Text,
             workbench: None,
             context_preview: None,
-            preview_modes: BTreeSet::new(),
             shell_mode: Some(ShellMode::ActionPreview),
             action_note: Some("inspect".to_string()),
             action_kind: sp42_core::SessionActionKind::Patrol,
             bridge_base_url: "http://127.0.0.1:8788".to_string(),
-            bare_url: None,
-            verify: None,
-            verdict_only: false,
-            locate_probe: None,
         };
 
         let text = render_action_preview(&config, &ranked, &options, OutputFormat::Text)
@@ -3626,25 +4364,54 @@ mod tests {
         assert!(markdown.contains("- operator report ready_for_local_testing=true"));
     }
 
-    fn parse(arguments: &[&str]) -> Result<CliOptions, String> {
-        parse_options(arguments.iter().map(ToString::to_string))
+    #[test]
+    fn parses_bare_url_preview_flags() {
+        match command_from(&["bare-url", "preview", "--title", "Sandbox", "--rev", "123"])
+            .expect("parses")
+        {
+            Command::BareUrl(args) => match args.action {
+                BareUrlAction::Preview(preview) => {
+                    assert_eq!(preview.wiki, "testwiki");
+                    assert_eq!(preview.title, "Sandbox");
+                    assert_eq!(preview.rev, 123);
+                    // bridge URL defaults to the local server.
+                    assert_eq!(preview.bridge_base_url, LOCAL_SERVER_BASE_URL);
+                }
+                other @ BareUrlAction::Execute(_) => panic!("expected preview, got {other:?}"),
+            },
+            other => panic!("expected bare-url, got {other:?}"),
+        }
     }
 
     #[test]
-    fn parses_bare_url_preview_flags() {
-        let options = parse(&["--bare-url-preview", "--title", "Sandbox", "--rev", "123"])
-            .expect("preview flags should parse");
-        let bare_url = options.bare_url.expect("bare-url mode should be selected");
-        assert_eq!(bare_url.mode, BareUrlCliMode::Preview);
-        assert_eq!(bare_url.wiki_id, "testwiki");
-        assert_eq!(bare_url.title, "Sandbox");
-        assert_eq!(bare_url.rev_id, 123);
+    fn bare_url_preview_accepts_a_custom_bridge_url() {
+        match command_from(&[
+            "bare-url",
+            "preview",
+            "--title",
+            "Sandbox",
+            "--rev",
+            "1",
+            "--bridge-base-url",
+            "http://127.0.0.1:9999",
+        ])
+        .expect("parses")
+        {
+            Command::BareUrl(args) => match args.action {
+                BareUrlAction::Preview(preview) => {
+                    assert_eq!(preview.bridge_base_url, "http://127.0.0.1:9999");
+                }
+                other @ BareUrlAction::Execute(_) => panic!("expected preview, got {other:?}"),
+            },
+            other => panic!("expected bare-url, got {other:?}"),
+        }
     }
 
     #[test]
     fn parses_bare_url_execute_flags_with_wiki_override() {
-        let options = parse(&[
-            "--bare-url-execute",
+        match command_from(&[
+            "bare-url",
+            "execute",
             "--title",
             "Sandbox",
             "--rev",
@@ -3654,39 +4421,32 @@ mod tests {
             "--wiki",
             "frwiki",
         ])
-        .expect("execute flags should parse");
-        let bare_url = options.bare_url.expect("bare-url mode should be selected");
-        assert_eq!(bare_url.mode, BareUrlCliMode::Execute { ordinal: 2 });
-        assert_eq!(bare_url.wiki_id, "frwiki");
+        .expect("parses")
+        {
+            Command::BareUrl(args) => match args.action {
+                BareUrlAction::Execute(execute) => {
+                    assert_eq!(execute.ordinal, 2);
+                    assert_eq!(execute.wiki, "frwiki");
+                    assert_eq!(execute.title, "Sandbox");
+                    assert_eq!(execute.rev, 123);
+                }
+                other @ BareUrlAction::Preview(_) => panic!("expected execute, got {other:?}"),
+            },
+            other => panic!("expected bare-url, got {other:?}"),
+        }
     }
 
     #[test]
-    fn bare_url_modes_are_mutually_exclusive_and_validated() {
-        assert!(
-            parse(&[
-                "--bare-url-preview",
-                "--bare-url-execute",
-                "--title",
-                "T",
-                "--rev",
-                "1"
-            ])
-            .is_err()
-        );
-        assert!(
-            parse(&["--bare-url-preview", "--rev", "1"]).is_err(),
-            "missing --title"
-        );
-        assert!(
-            parse(&["--bare-url-preview", "--title", "T"]).is_err(),
-            "missing --rev"
-        );
-        assert!(
-            parse(&["--bare-url-execute", "--title", "T", "--rev", "1"]).is_err(),
-            "execute requires --ordinal"
-        );
-        assert!(parse(&["--bare-url-preview", "--title", "T", "--rev", "abc"]).is_err());
-        assert!(parse(&[]).expect("no flags is fine").bare_url.is_none());
+    fn bare_url_modes_validate_required_flags() {
+        // preview requires --title and --rev
+        assert!(command_from(&["bare-url", "preview", "--rev", "1"]).is_err());
+        assert!(command_from(&["bare-url", "preview", "--title", "T"]).is_err());
+        // --rev must be a number
+        assert!(command_from(&["bare-url", "preview", "--title", "T", "--rev", "abc"]).is_err());
+        // execute additionally requires --ordinal
+        assert!(command_from(&["bare-url", "execute", "--title", "T", "--rev", "1"]).is_err());
+        // bare-url requires a preview|execute subcommand
+        assert!(command_from(&["bare-url"]).is_err());
     }
 
     fn fixture_bare_url_options() -> BareUrlCliOptions {
@@ -3967,5 +4727,270 @@ mod fetch_tests {
             .expect("allowed redirect should be followed");
         assert_eq!(response.status, 200);
         assert_eq!(response.body, b"hello");
+    }
+
+    #[test]
+    fn clap_command_is_valid() {
+        // clap's own invariant check: catches conflicting args, bad defaults, duplicate
+        // names, etc. The idiomatic drift guard for a derive-based command tree.
+        use clap::CommandFactory;
+        super::Cli::command().debug_assert();
+    }
+
+    #[test]
+    fn help_and_version_flags_are_recognized() {
+        use clap::Parser;
+        let help = super::Cli::try_parse_from(["sp42-cli", "--help"]).unwrap_err();
+        assert_eq!(help.kind(), clap::error::ErrorKind::DisplayHelp);
+        let version = super::Cli::try_parse_from(["sp42-cli", "--version"]).unwrap_err();
+        assert_eq!(version.kind(), clap::error::ErrorKind::DisplayVersion);
+    }
+}
+
+#[cfg(test)]
+mod legacy_shim_tests {
+    use super::{Cli, Command, rewrite_legacy_argv};
+    use clap::Parser;
+
+    fn argv(items: &[&str]) -> Vec<String> {
+        items.iter().map(ToString::to_string).collect()
+    }
+
+    /// The translated argv for a legacy form (panics if the form was itself a usage error —
+    /// the error path is covered separately by `rejects_conflicting_bare_url_flags`).
+    fn rewrite(items: &[&str]) -> Option<Vec<String>> {
+        rewrite_legacy_argv(&argv(items)).map(|result| result.expect("legacy form translates"))
+    }
+
+    #[test]
+    fn new_form_and_help_pass_through_unchanged() {
+        assert_eq!(rewrite(&["verify", "--claim", "c"]), None);
+        assert_eq!(rewrite(&["preview", "stream"]), None);
+        assert_eq!(rewrite(&["bare-url", "preview"]), None);
+        assert_eq!(rewrite(&["--help"]), None);
+        assert_eq!(rewrite(&["-h"]), None);
+        assert_eq!(rewrite(&["--version"]), None);
+        assert_eq!(rewrite(&["-V"]), None);
+    }
+
+    #[test]
+    fn empty_argv_maps_to_preview() {
+        assert_eq!(rewrite(&[]), Some(argv(&["preview"])));
+    }
+
+    #[test]
+    fn legacy_batch_flags_map_to_batch_subcommand() {
+        assert_eq!(rewrite(&["--batch"]), Some(argv(&["batch"])));
+        assert_eq!(
+            rewrite(&["--batch-file", "/tmp/cases.jsonl"]),
+            Some(argv(&["batch", "--file", "/tmp/cases.jsonl"]))
+        );
+        // --models passes through unchanged.
+        assert_eq!(
+            rewrite(&["--batch", "--models", "a,b"]),
+            Some(argv(&["batch", "--models", "a,b"]))
+        );
+        // The old global --format was ignored by batch (JSONL only); drop it rather than
+        // forward it to a subcommand that has no --format.
+        assert_eq!(
+            rewrite(&["--batch", "--format", "json"]),
+            Some(argv(&["batch"]))
+        );
+        assert_eq!(
+            rewrite(&[
+                "--batch-file",
+                "/tmp/c.jsonl",
+                "--format",
+                "json",
+                "--models",
+                "a"
+            ]),
+            Some(argv(&["batch", "--file", "/tmp/c.jsonl", "--models", "a"]))
+        );
+    }
+
+    #[test]
+    fn rejects_missing_legacy_batch_file_value() {
+        match rewrite_legacy_argv(&argv(&["--batch-file"])) {
+            Some(Err(message)) => assert!(message.contains("--batch-file requires a value")),
+            other => panic!("expected missing batch-file value error, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn validates_ignored_legacy_format_values() {
+        match rewrite_legacy_argv(&argv(&["--batch", "--format"])) {
+            Some(Err(message)) => assert!(message.contains("--format requires a value")),
+            other => panic!("expected missing format value error, got {other:?}"),
+        }
+        match rewrite_legacy_argv(&argv(&["--batch", "--format", "xml"])) {
+            Some(Err(message)) => assert!(message.contains("unsupported output format")),
+            other => panic!("expected unsupported format error, got {other:?}"),
+        }
+        match rewrite_legacy_argv(&argv(&["--locate-probe", "--quote", "q", "--format"])) {
+            Some(Err(message)) => assert!(message.contains("--format requires a value")),
+            other => panic!("expected missing locate-probe format value error, got {other:?}"),
+        }
+        match rewrite_legacy_argv(&argv(&[
+            "--locate-probe",
+            "--quote",
+            "q",
+            "--format",
+            "xml",
+        ])) {
+            Some(Err(message)) => assert!(message.contains("unsupported output format")),
+            other => panic!("expected unsupported locate-probe format error, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn rejects_invalid_or_missing_legacy_shell_value() {
+        // An unrecognized --shell value was a usage error in the old parser; it must not
+        // silently translate to the default `preview` view.
+        match rewrite_legacy_argv(&argv(&["--shell", "action-excute"])) {
+            Some(Err(message)) => assert!(message.contains("unsupported shell mode"), "{message}"),
+            other => panic!("expected unsupported-mode error, got {other:?}"),
+        }
+        // A bare --shell with no value was likewise an error.
+        match rewrite_legacy_argv(&argv(&["--shell"])) {
+            Some(Err(message)) => assert!(message.contains("requires a value"), "{message}"),
+            other => panic!("expected missing-value error, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn rejects_conflicting_bare_url_flags() {
+        // Both flags together was a usage error in the old parser; the shim must preserve it
+        // rather than silently running `execute` (which would apply with --ordinal present).
+        let result = rewrite_legacy_argv(&argv(&[
+            "--bare-url-preview",
+            "--bare-url-execute",
+            "--title",
+            "T",
+            "--rev",
+            "1",
+            "--ordinal",
+            "0",
+        ]));
+        match result {
+            Some(Err(message)) => assert!(message.contains("mutually exclusive"), "{message}"),
+            other => panic!("expected a mutual-exclusion error, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn legacy_verify_flags_map_to_verify() {
+        assert_eq!(
+            rewrite(&["--claim", "c", "--source-url", "u", "--with-metadata"]),
+            Some(argv(&[
+                "verify",
+                "--claim",
+                "c",
+                "--source-url",
+                "u",
+                "--with-metadata"
+            ]))
+        );
+        // --source-url alone (no --claim) still routes to verify; clap then reports the
+        // missing required --claim.
+        assert_eq!(
+            rewrite(&["--source-url", "u"]),
+            Some(argv(&["verify", "--source-url", "u"]))
+        );
+    }
+
+    #[test]
+    fn legacy_verify_page_locate_and_bare_url_map_to_subcommands() {
+        assert_eq!(
+            rewrite(&["--verify-page", "--title", "T", "--rev", "9"]),
+            Some(argv(&["verify-page", "--title", "T", "--rev", "9"]))
+        );
+        assert_eq!(
+            rewrite(&["--locate-probe", "--quote", "q"]),
+            Some(argv(&["locate-probe", "--quote", "q"]))
+        );
+        // The old global --format was accepted but ignored here because locate-probe always
+        // emits JSON. Consume it in legacy form instead of forwarding it to the subcommand.
+        assert_eq!(
+            rewrite(&["--locate-probe", "--quote", "q", "--format", "json"]),
+            Some(argv(&["locate-probe", "--quote", "q"]))
+        );
+        assert_eq!(
+            rewrite(&["--bare-url-preview", "--title", "T", "--rev", "1"]),
+            Some(argv(&["bare-url", "preview", "--title", "T", "--rev", "1"]))
+        );
+        assert_eq!(
+            rewrite(&[
+                "--bare-url-execute",
+                "--title",
+                "T",
+                "--rev",
+                "1",
+                "--ordinal",
+                "0"
+            ]),
+            Some(argv(&[
+                "bare-url",
+                "execute",
+                "--title",
+                "T",
+                "--rev",
+                "1",
+                "--ordinal",
+                "0"
+            ]))
+        );
+    }
+
+    #[test]
+    fn legacy_shell_and_shorthand_modes_map_to_preview_positional() {
+        assert_eq!(
+            rewrite(&["--shell", "session-digest", "--format", "markdown"]),
+            Some(argv(&["preview", "session-digest", "--format", "markdown"]))
+        );
+        assert_eq!(
+            rewrite(&["--parity-report"]),
+            Some(argv(&["preview", "parity-report"]))
+        );
+        assert_eq!(
+            rewrite(&["--stream-preview"]),
+            Some(argv(&["preview", "stream"]))
+        );
+        // Preview-family flags with no mode pass through under `preview`.
+        assert_eq!(
+            rewrite(&["--workbench-token", "tok"]),
+            Some(argv(&["preview", "--workbench-token", "tok"]))
+        );
+    }
+
+    #[test]
+    fn preserves_the_operator_report_alias_quirk() {
+        // Shorthand --operator-report meant the server report...
+        assert_eq!(
+            rewrite(&["--operator-report"]),
+            Some(argv(&["preview", "server-report"]))
+        );
+        // ...but --shell operator-report meant the parity report.
+        assert_eq!(
+            rewrite(&["--shell", "operator-report"]),
+            Some(argv(&["preview", "parity-report"]))
+        );
+    }
+
+    #[test]
+    fn rewritten_argv_parses_back_into_the_expected_command() {
+        for (legacy, want_verify) in [
+            (vec!["--claim", "c", "--source-url", "u"], true),
+            (vec!["--shell", "parity-report"], false),
+        ] {
+            let translated = rewrite(&legacy).expect("legacy form");
+            let cli =
+                Cli::try_parse_from(std::iter::once("sp42-cli".to_string()).chain(translated))
+                    .expect("translated argv parses");
+            match (cli.command, want_verify) {
+                (Command::Verify(_), true) | (Command::Preview(_), false) => {}
+                (other, _) => panic!("unexpected command for {legacy:?}: {other:?}"),
+            }
+        }
     }
 }

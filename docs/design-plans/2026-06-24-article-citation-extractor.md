@@ -8,7 +8,7 @@
 > ADR-0011 Decision 4). The verifier context is now article title + preceding
 > sentences only, and the report echoes `claim` + `preceding_context` per finding.
 >
-> [ADR-0011]: ../adr/0011-article-citation-verification.md
+> [ADR-0011]: ../domains/references/adr/0011-article-citation-verification.md
 
 ## Summary
 

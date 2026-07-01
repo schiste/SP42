@@ -9,11 +9,11 @@ use std::time::Duration;
 
 use sp42_core::{
     ActionError, ActionResponseSummary, BareUrlApplyRequest, BareUrlApplyResponse, BareUrlDeclined,
-    BareUrlOutcome, BareUrlProposal, BareUrlProposalsRequest, BareUrlProposalsResponse, FlagState,
-    PageVerificationReport, PageVerificationRequest, TokenKind, VerifyOptions, WikiPageSaveRequest,
-    WikitextEditor, WikitextNodeKind, WikitextNodeLocator, WikitextPageRef, bare_url_references,
-    build_citoid_header, build_citoid_request, citoid_language, execute_fetch_token,
-    execute_wiki_page_save, extract_use_sites, parse_action_response_summary,
+    BareUrlOutcome, BareUrlProposal, BareUrlProposalsRequest, BareUrlProposalsResponse,
+    CitoidMetadata, FlagState, PageVerificationRequest, TokenKind, VerifyOptions,
+    WikiPageSaveRequest, WikitextEditor, WikitextNodeKind, WikitextNodeLocator, WikitextPageRef,
+    bare_url_references, build_citoid_header, build_citoid_request, citoid_language,
+    execute_fetch_token, execute_wiki_page_save, extract_use_sites, parse_action_response_summary,
     render_bare_url_citation, verify_page,
 };
 
@@ -24,7 +24,7 @@ use axum::{
     response::IntoResponse,
 };
 
-use sp42_types::HttpResponse;
+use sp42_types::{HttpClient, HttpMethod, HttpRequest, HttpResponse};
 
 use crate::action_routes::{
     action_error_from_editor, action_error_response, patrol_original_edit_if_possible,
@@ -39,6 +39,11 @@ use crate::state::AppState;
 
 /// Citoid etiquette: at most one request per second on the live service.
 const CITOID_PACE: Duration = Duration::from_secs(1);
+
+/// Upper bound on how long verify-page waits for the paced, best-effort Citoid
+/// metadata sidecar before returning the (already complete) report without the
+/// stragglers — keeps a many-source page from blocking behind ~1 req/s pacing.
+const METADATA_BUDGET: Duration = Duration::from_secs(20);
 
 /// Page-level verify fan-out: how many use-sites verify concurrently on the
 /// verify-page route. Each runs its own `options.concurrency`-wide model panel,
@@ -89,6 +94,28 @@ async fn fetch_citoid_object(
     }
     let body = response.bytes().await.ok()?;
     sp42_core::parse_citoid_response(&body)
+}
+
+/// Fetch Citoid metadata for each distinct source URL, deduped (caller passes
+/// distinct URLs) and paced at [`CITOID_PACE`] (Wikimedia API etiquette — the
+/// shared service expects ~1 req/s). Best-effort: a URL Citoid cannot resolve is
+/// simply absent from the map, never an error.
+async fn fetch_page_metadata(
+    client: &reqwest::Client,
+    urls: Vec<String>,
+) -> std::collections::HashMap<String, CitoidMetadata> {
+    let mut metadata = std::collections::HashMap::new();
+    for (index, url) in urls.iter().enumerate() {
+        if index > 0 {
+            tokio::time::sleep(CITOID_PACE).await;
+        }
+        if let Some(object) = fetch_citoid_object(client, None, url).await
+            && let Some(header) = build_citoid_header(&object, url)
+        {
+            metadata.insert(url.clone(), header);
+        }
+    }
+    metadata
 }
 
 /// Enumerate the revision's references, classify the bare ones, and build
@@ -184,6 +211,66 @@ pub(crate) async fn post_bare_url_proposals(
     Ok(Json(response))
 }
 
+/// Resolve a page's current revision id via the wiki action API (a public read).
+/// Used when a verify-page request leaves `rev_id` at `0` ("latest").
+async fn fetch_latest_revid(
+    client: &(impl HttpClient + ?Sized),
+    config: &sp42_core::WikiConfig,
+    title: &str,
+) -> Result<u64, ActionError> {
+    let mut url = config.api_url.clone();
+    url.query_pairs_mut()
+        .append_pair("action", "query")
+        .append_pair("prop", "revisions")
+        .append_pair("titles", title)
+        .append_pair("rvprop", "ids")
+        .append_pair("rvlimit", "1")
+        .append_pair("format", "json")
+        .append_pair("formatversion", "2");
+
+    let response = client
+        .execute(HttpRequest {
+            method: HttpMethod::Get,
+            url,
+            headers: std::collections::BTreeMap::new(),
+            body: Vec::new(),
+        })
+        .await
+        .map_err(|error| ActionError::Execution {
+            message: format!("latest-revision lookup failed: {error}"),
+            code: None,
+            http_status: None,
+            retryable: true,
+        })?;
+
+    if !(200..300).contains(&response.status) {
+        return Err(ActionError::Execution {
+            message: format!("latest-revision lookup HTTP {}", response.status),
+            code: None,
+            http_status: Some(response.status),
+            retryable: response.status >= 500,
+        });
+    }
+
+    let value: serde_json::Value =
+        serde_json::from_slice(&response.body).map_err(|error| ActionError::Execution {
+            message: format!("latest-revision JSON failed: {error}"),
+            code: None,
+            http_status: None,
+            retryable: false,
+        })?;
+
+    value
+        .pointer("/query/pages/0/revisions/0/revid")
+        .and_then(serde_json::Value::as_u64)
+        .ok_or_else(|| ActionError::Execution {
+            message: format!("no current revision found for: {title}"),
+            code: Some("missing-revision".to_string()),
+            http_status: None,
+            retryable: false,
+        })
+}
+
 /// `POST /dev/citation/verify-page` — read-only page-level citation verification.
 ///
 /// Session + CSRF gated (like `post_bare_url_apply`). The route only reads from the
@@ -199,7 +286,7 @@ pub(crate) async fn post_bare_url_proposals(
 pub(crate) async fn post_verify_page(
     State(state): State<AppState>,
     headers: HeaderMap,
-    Json(payload): Json<PageVerificationRequest>,
+    Json(mut payload): Json<PageVerificationRequest>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
     let Some(session) = current_session_snapshot(&state, &headers, true).await else {
         return Err(unauthorized_error(
@@ -208,6 +295,16 @@ pub(crate) async fn post_verify_page(
     };
     validate_csrf_header(&headers, &session)?;
     let config = config_for_state_wiki(&state, &payload.wiki_id)?;
+
+    // Accept a pasted wiki URL in `title`, not just a bare page title — the action
+    // API treats a URL as a literal (missing) title. A bare title parses to itself
+    // (idempotent with any client-side parse); an oldid URL also yields a revision,
+    // honored only when the request did not already pin one.
+    let target = sp42_core::parse_page_target(&payload.title);
+    payload.title = target.title;
+    if payload.rev_id == 0 {
+        payload.rev_id = target.rev_id;
+    }
 
     // Per-request inference edge from env (dev route).
     let panel = sp42_inference::panel_from_env().map_err(|error| {
@@ -223,6 +320,25 @@ pub(crate) async fn post_verify_page(
         )
     })?;
 
+    let http_client = PlainHttpClient::new().map_err(|error| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": error })),
+        )
+    })?;
+
+    // `rev_id == 0` means "latest": resolve it to a concrete revision before
+    // verifying, so the report records the exact revision that was checked. Use the
+    // trusted wiki-API client (not the SSRF-guarded source client) so this works
+    // for loopback/private wiki configs the same way a pinned --rev does.
+    if payload.rev_id == 0 {
+        let wiki_client =
+            BearerHttpClient::new(state.http_client.clone(), session.access_token.clone());
+        payload.rev_id = fetch_latest_revid(&wiki_client, &config, &payload.title)
+            .await
+            .map_err(|error| action_error_response(&error))?;
+    }
+
     // Extract blocks via the editor (Parsoid), then use-sites, then verify.
     let page_ref = WikitextPageRef {
         title: payload.title.clone(),
@@ -235,14 +351,25 @@ pub(crate) async fn post_verify_page(
         .map_err(|error| action_error_response(&action_error_from_editor(&error)))?;
     let extract = extract_use_sites(&blocks, &payload);
 
-    let http_client = PlainHttpClient::new().map_err(|error| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(serde_json::json!({ "error": error })),
-        )
-    })?;
+    // Distinct live source URLs for deduped Citoid metadata lookups.
+    let metadata_urls: Vec<String> = {
+        let mut seen = std::collections::HashSet::new();
+        extract
+            .use_sites
+            .iter()
+            .map(|use_site| use_site.request.source_url.to_string())
+            .filter(|url| seen.insert(url.clone()))
+            .collect()
+    };
+
+    // Verify the page and fetch source metadata concurrently. Metadata is a display
+    // sidecar (never grounded); it is fetched deduped + paced (CITOID_PACE) so a
+    // citation-heavy page does not burst the shared Citoid service. The fetch is
+    // time-boxed (METADATA_BUDGET) so the completed report is never held behind the
+    // ~1 req/s pacing on a many-source page — whatever resolved by the deadline is
+    // attached, the rest is simply omitted.
     let options = VerifyOptions::default();
-    let report: PageVerificationReport = verify_page(
+    let verify = verify_page(
         &http_client,
         &model_client,
         state.clock.as_ref(),
@@ -251,8 +378,19 @@ pub(crate) async fn post_verify_page(
         extract,
         options,
         PAGE_VERIFY_CONCURRENCY,
-    )
-    .await;
+    );
+    let metadata = tokio::time::timeout(
+        METADATA_BUDGET,
+        fetch_page_metadata(&state.http_client, metadata_urls),
+    );
+    let (mut report, metadata_result) = tokio::join!(verify, metadata);
+    let metadata_by_url = metadata_result.unwrap_or_default();
+
+    for finding in &mut report.findings {
+        if let Some(meta) = metadata_by_url.get(&finding.provenance.url.to_string()) {
+            finding.metadata = Some(meta.clone());
+        }
+    }
 
     Ok(Json(report))
 }

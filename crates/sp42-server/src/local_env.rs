@@ -118,6 +118,105 @@ impl LocalOAuthConfig {
     }
 }
 
+/// The credential keys the local-setup window may write.
+pub const WRITABLE_CREDENTIAL_KEYS: [&str; 3] = [
+    "WIKIMEDIA_ACCESS_TOKEN",
+    "WIKIMEDIA_CLIENT_APPLICATION_KEY",
+    "WIKIMEDIA_CLIENT_APPLICATION_SECRET",
+];
+
+/// Write/update credential `(key, value)` pairs in `.env.wikimedia.local`
+/// (local-dev onboarding, ADR-0014). Existing lines and comments are preserved;
+/// only [`WRITABLE_CREDENTIAL_KEYS`] are accepted. Returns the file name written.
+///
+/// # Errors
+///
+/// Returns an error if a key is not writable or the file cannot be written.
+pub fn write_local_credentials(updates: &[(String, String)]) -> std::io::Result<String> {
+    for (key, _) in updates {
+        if !WRITABLE_CREDENTIAL_KEYS.contains(&key.as_str()) {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                format!("refusing to write unknown credential key `{key}`"),
+            ));
+        }
+    }
+
+    let target = target_env_path();
+    let existing = fs::read_to_string(&target).unwrap_or_default();
+    let merged = merge_env(&existing, updates);
+    fs::write(&target, merged)?;
+    restrict_permissions(&target);
+
+    Ok(target.file_name().map_or_else(
+        || LOCAL_ENV_FILE_NAME.to_string(),
+        |name| name.to_string_lossy().to_string(),
+    ))
+}
+
+/// Update an existing `.env.wikimedia.local` in place, otherwise create one in
+/// the current working directory (the repo root under `dev-local.sh`).
+fn target_env_path() -> PathBuf {
+    for candidate in candidate_paths() {
+        if candidate.file_name().and_then(|name| name.to_str()) == Some(LOCAL_ENV_FILE_NAME)
+            && candidate.is_file()
+        {
+            return candidate;
+        }
+    }
+    std::env::current_dir()
+        .unwrap_or_else(|_| PathBuf::from("."))
+        .join(LOCAL_ENV_FILE_NAME)
+}
+
+fn merge_env(existing: &str, updates: &[(String, String)]) -> String {
+    let mut applied = vec![false; updates.len()];
+    let mut out = String::new();
+
+    for line in existing.lines() {
+        let mut replaced = false;
+        if let Some((raw_key, _)) = line.split_once('=') {
+            let key = raw_key.trim();
+            for (index, (update_key, update_value)) in updates.iter().enumerate() {
+                if key == update_key {
+                    push_env_line(&mut out, update_key, update_value);
+                    applied[index] = true;
+                    replaced = true;
+                    break;
+                }
+            }
+        }
+        if !replaced {
+            out.push_str(line);
+            out.push('\n');
+        }
+    }
+
+    for (index, (update_key, update_value)) in updates.iter().enumerate() {
+        if !applied[index] {
+            push_env_line(&mut out, update_key, update_value);
+        }
+    }
+
+    out
+}
+
+fn push_env_line(out: &mut String, key: &str, value: &str) {
+    out.push_str(key);
+    out.push('=');
+    out.push_str(value);
+    out.push('\n');
+}
+
+#[cfg(unix)]
+fn restrict_permissions(path: &Path) {
+    use std::os::unix::fs::PermissionsExt;
+    let _ = fs::set_permissions(path, fs::Permissions::from_mode(0o600));
+}
+
+#[cfg(not(unix))]
+fn restrict_permissions(_path: &Path) {}
+
 fn parse_local_env(contents: &str, source_path: Option<PathBuf>) -> LocalOAuthConfig {
     let mut config = LocalOAuthConfig {
         source_path,
@@ -331,6 +430,43 @@ mod tests {
         assert_eq!(report.file_name, "environment");
         assert!(report.source_path.is_none());
         assert!(!report.loaded_from_source);
+    }
+
+    #[test]
+    fn merge_env_updates_existing_preserves_others_and_appends_new() {
+        let existing = "# local only\n\
+            WIKIMEDIA_ACCESS_TOKEN=old-token\n\
+            UNRELATED=keepme\n";
+        let merged = super::merge_env(
+            existing,
+            &[
+                (
+                    "WIKIMEDIA_ACCESS_TOKEN".to_string(),
+                    "new-token".to_string(),
+                ),
+                (
+                    "WIKIMEDIA_CLIENT_APPLICATION_KEY".to_string(),
+                    "ck".to_string(),
+                ),
+            ],
+        );
+
+        assert!(merged.contains("# local only"));
+        assert!(merged.contains("UNRELATED=keepme"));
+        assert!(merged.contains("WIKIMEDIA_ACCESS_TOKEN=new-token"));
+        assert!(!merged.contains("old-token"));
+        assert!(merged.contains("WIKIMEDIA_CLIENT_APPLICATION_KEY=ck"));
+        // round-trips back through the parser
+        let parsed = super::parse_local_env(&merged, None);
+        assert_eq!(parsed.access_token(), Some("new-token"));
+        assert_eq!(parsed.client_id(), Some("ck"));
+    }
+
+    #[test]
+    fn write_local_credentials_rejects_unknown_keys() {
+        let error = super::write_local_credentials(&[("EVIL_KEY".to_string(), "x".to_string())])
+            .expect_err("unknown key should be rejected");
+        assert_eq!(error.kind(), std::io::ErrorKind::InvalidInput);
     }
 
     #[test]

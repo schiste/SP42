@@ -11,10 +11,11 @@ workspace = true
 [dependencies]
 serde.workspace = true
 sp42-coordination = { path = "../sp42-coordination" }
-sp42-core = { path = "../sp42-core" }
+sp42-platform = { path = "../sp42-platform" }
 sp42-live = { path = "../sp42-live" }
 
 [dev-dependencies]
 proptest = "1.9.0"
 serde_json.workspace = true
 sp42-wiki = { path = "../sp42-wiki", features = ["test-fixtures"] }
+url.workspace = true

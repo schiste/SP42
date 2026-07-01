@@ -211,7 +211,7 @@ mod tests {
         ActionBroadcast, CoordinationMessage, EditClaim, FlaggedEdit, PresenceHeartbeat,
         RaceResolution, ScoreDelta,
     };
-    use sp42_core::Action;
+    use sp42_platform::Action;
 
     use super::CoordinationState;
 

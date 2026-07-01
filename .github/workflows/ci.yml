@@ -1,0 +1,164 @@
+name: CI
+
+# CI-shaped checks on non-draft PRs.
+#   - `checks` (always): the core gate, incl. a wasm32 compile-check so a wasm-only
+#     break is caught regardless of which crate changed.
+#   - `frontend` (always): optimized build + wasm size ceiling. NOT path-filtered —
+#     the bundle's inputs can't be enumerated (any crate dep, any include_str!
+#     asset like fixtures/ or configs/), so the size gate must run every PR.
+#   - `desktop` (path-filtered): the heavy, rarely-relevant Tauri build. Safe to
+#     filter because it is a compile-check whose risk is bounded (embedded *data*
+#     doesn't affect compilation, code changes are covered by the crate globs), and
+#     it fails closed if the detector errors.
+# Make all three (`build · test · lint · gates`, `frontend …`, `desktop build-check`)
+# required status checks; the path-filtered desktop job reports success when skipped.
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  pull-requests: read # dorny/paths-filter reads changed files via the PR API
+
+jobs:
+  changes:
+    name: detect changed areas
+    if: github.event.pull_request.draft == false
+    runs-on: ubuntu-latest
+    outputs:
+      desktop: ${{ steps.filter.outputs.desktop }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            desktop:
+              - 'crates/sp42-desktop/**'
+              - 'crates/sp42-core/**'
+              - 'crates/sp42-server/**'
+              - 'crates/sp42-app/**'
+              - 'crates/sp42-ui/**'
+              - 'Cargo.toml'
+              - 'Cargo.lock'
+              - 'rust-toolchain.toml'
+              - 'Trunk.toml'
+              - 'scripts/build-desktop.sh'
+              - 'scripts/build-web-release.sh'
+              - 'scripts/build-frontend.sh'
+              - 'scripts/lib/build-common.sh'
+              - 'xtask/**'
+              - '.github/workflows/ci.yml'
+
+  checks:
+    name: build · test · lint · gates
+    if: github.event.pull_request.draft == false
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout (full history for diff-scoped gates)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Install pinned toolchain (rust-toolchain.toml)
+        run: rustup show
+      - name: Cache cargo + target
+        uses: Swatinem/rust-cache@v2
+      - name: Install gate tools
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-deny,cargo-audit,cargo-llvm-cov
+      - name: Formatting
+        run: cargo fmt --all -- --check
+      - name: Build (workspace, all targets)
+        run: cargo ci-build
+      - name: Wasm compile-check (sp42-app)
+        run: cargo build -p sp42-app --target wasm32-unknown-unknown --profile ci --locked
+      - name: Wasm test compile-check (sp42-app)
+        # sp42-app's modules are #[cfg(target_arch = "wasm32")], so the host `cargo
+        # ci-test` step never compiles its tests; without --tests here, stale wasm-only
+        # #[cfg(test)] code rots unnoticed. Compile-only (running needs wasm-bindgen-test).
+        run: cargo check -p sp42-app --target wasm32-unknown-unknown --profile ci --locked --tests
+      - name: Tests
+        run: cargo ci-test
+      - name: Clippy (pedantic = deny)
+        run: cargo ci-clippy
+      - name: Docs
+        run: cargo ci-doc
+      - name: Layer check (ADR-0013 dependency direction)
+        run: ./scripts/check-layering.sh
+      - name: Design-system gate
+        run: ./scripts/check-design-system.sh
+      - name: Forbidden-pattern guard (added lines)
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: ./scripts/check-forbidden-patterns.sh --range "${BASE_SHA}..HEAD"
+      - name: Markdown link check
+        run: ./scripts/check-links.sh
+      - name: Supply chain (cargo-deny + cargo-audit)
+        run: ./scripts/check-supply-chain.sh
+      - name: Coverage (sp42-core >= 90%, workspace floor)
+        run: ./scripts/check-coverage.sh
+
+  frontend:
+    name: frontend (optimized wasm + size ceiling)
+    # Always run on non-draft PRs — the bundle's inputs can't be path-enumerated.
+    if: github.event.pull_request.draft == false
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install pinned toolchain (rust-toolchain.toml)
+        run: rustup show
+      - name: Cache cargo + target
+        uses: Swatinem/rust-cache@v2
+      - name: Install trunk
+        uses: taiki-e/install-action@v2
+        with:
+          tool: trunk
+      - name: Build optimized web bundle
+        run: ./scripts/build-web-release.sh
+      - name: Wasm size ceiling
+        run: ./scripts/check-wasm-size.sh
+
+  desktop:
+    name: desktop build-check
+    needs: changes
+    # Fail CLOSED: always() so a failed detector can't silently skip this gate;
+    # run when the detector errored (guard step fails the job) or desktop changed.
+    if: >-
+      always() && github.event.pull_request.draft == false &&
+      (needs.changes.result != 'success' || needs.changes.outputs.desktop == 'true')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Fail closed if change detection did not succeed
+        if: needs.changes.result != 'success'
+        env:
+          DETECT_RESULT: ${{ needs.changes.result }}
+        run: |
+          echo "::error::change-detection job result='${DETECT_RESULT}'; failing closed so the desktop gate is not silently skipped."
+          exit 1
+      - uses: actions/checkout@v4
+      - name: Install pinned toolchain (rust-toolchain.toml)
+        run: rustup show
+      - name: Cache cargo + target
+        uses: Swatinem/rust-cache@v2
+      - name: Install Tauri Linux system deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev
+      - name: Install trunk
+        uses: taiki-e/install-action@v2
+        with:
+          tool: trunk
+      # tauri::generate_context! requires the frontend dist to exist, so build the
+      # bundle before the contract compile-check (mirrors ci-all's ordering).
+      - name: Build frontend bundle (for tauri generate_context!)
+        run: trunk build --config Trunk.toml --cargo-profile ci --locked
+      # Compile-check (contract) only; the full `cargo tauri build` bundle stays
+      # in desktop-release.yml on tags — see reply to review on this PR.
+      - name: Build desktop (Tauri contract)
+        run: cargo build --manifest-path crates/sp42-desktop/src-tauri/Cargo.toml --profile ci --locked

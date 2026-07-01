@@ -17,11 +17,11 @@ use sp42_live::{
     StreamRuntimeStatus, build_live_operator_action_preflight, execute_recent_changes,
     filter_live_operator_queue,
 };
-use sp42_reporting::{
-    DebugSnapshot, DebugSnapshotInputs, LiveOperatorView, PatrolScenarioReportInputs,
-    PatrolSessionDigestInputs, ShellStateInputs, build_debug_snapshot,
+use sp42_patrol::{
+    LiveOperatorView, PatrolScenarioReportInputs, PatrolSessionDigestInputs, ShellStateInputs,
     build_patrol_scenario_report, build_patrol_session_digest, build_shell_state_model,
 };
+use sp42_reporting::{DebugSnapshot, DebugSnapshotInputs, build_debug_snapshot};
 
 use crate::action_routes::{action_history_report, action_status_report};
 use crate::ingestion_supervisor;
@@ -108,9 +108,9 @@ pub(crate) struct SelectedReviewState {
 }
 
 pub(crate) struct LiveOperatorProducts {
-    pub(crate) scenario_report: sp42_reporting::PatrolScenarioReport,
-    pub(crate) session_digest: sp42_reporting::PatrolSessionDigest,
-    pub(crate) shell_state: sp42_reporting::ShellStateModel,
+    pub(crate) scenario_report: sp42_patrol::PatrolScenarioReport,
+    pub(crate) session_digest: sp42_patrol::PatrolSessionDigest,
+    pub(crate) shell_state: sp42_patrol::ShellStateModel,
     pub(crate) backend: LiveOperatorBackendStatus,
     pub(crate) debug_snapshot: DebugSnapshot,
     pub(crate) action_preflight: LiveOperatorActionPreflight,

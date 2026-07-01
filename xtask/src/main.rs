@@ -402,6 +402,24 @@ fn ci_all(root: &Path, options: BuildOptions) -> Result<(), String> {
     append_repro_flags(&mut wasm_args, &options);
     run_command(&cargo, &wasm_args, root, &env)?;
 
+    // Compile-check the app's wasm test target. The host `cargo test` above skips
+    // sp42-app's tests (its modules are `#[cfg(target_arch = "wasm32")]`) and the
+    // wasm build above omits `--tests`, so without this step the app's test code
+    // is never compiled by CI and silently rots (stale imports, type drift). This
+    // only checks compilation — running the tests needs a wasm-bindgen-test runner.
+    let mut wasm_test_args = vec![
+        "check".to_string(),
+        "-p".to_string(),
+        "sp42-app".to_string(),
+        "--target".to_string(),
+        "wasm32-unknown-unknown".to_string(),
+        "--tests".to_string(),
+        "--profile".to_string(),
+        "ci".to_string(),
+    ];
+    append_repro_flags(&mut wasm_test_args, &options);
+    run_command(&cargo, &wasm_test_args, root, &env)?;
+
     trunk_build(root, options, &env)?;
 
     let mut tauri_contract_args = vec![

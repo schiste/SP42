@@ -33,8 +33,8 @@ with open(path, "r", encoding="utf-8") as handle:
 PY
 }
 
-require_file "docs/scoring/SCORING_CONSTITUTION.md"
-require_file "docs/scoring/POLICY_LAYOUT.md"
+require_file "docs/platform/scoring/SCORING_CONSTITUTION.md"
+require_file "docs/platform/scoring/POLICY_LAYOUT.md"
 require_file "schemas/scoring-policy.schema.json"
 require_file "schemas/scoring-evaluation-profile.schema.json"
 require_file "configs/scoring/active/frwiki-vandalism.yaml"
@@ -57,7 +57,7 @@ require_line "configs/scoring/active/frwiki-vandalism.yaml" "contribution_cap:"
 require_line "configs/scoring/candidate/frwiki-vandalism-tighten-identity-cap.yaml" "lifecycle: candidate"
 require_line "evals/scoring/profiles/vandalism_patrol_default.yaml" "name: vandalism_patrol_default"
 require_line "evals/scoring/profiles/vandalism_patrol_default.yaml" "- fairness_checks"
-require_line "docs/scoring/SCORING_CONSTITUTION.md" "## 14. Technical Constitution"
-require_line "docs/scoring/POLICY_LAYOUT.md" "configs/scoring/"
+require_line "docs/platform/scoring/SCORING_CONSTITUTION.md" "## 14. Technical Constitution"
+require_line "docs/platform/scoring/POLICY_LAYOUT.md" "configs/scoring/"
 
 printf 'SP42 scoring governance checks passed.\n'

@@ -1,6 +1,7 @@
 use std::path::PathBuf;
 
 use axum::{
+    Json,
     extract::{Path, State},
     http::{
         HeaderValue, StatusCode,
@@ -49,6 +50,13 @@ fn app_static_dir() -> PathBuf {
         .join("static")
 }
 
+fn ui_static_dir() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .join("sp42-ui")
+        .join("static")
+}
+
 pub(crate) async fn browser_shell_unavailable() -> impl IntoResponse {
     (
         StatusCode::SERVICE_UNAVAILABLE,
@@ -62,27 +70,6 @@ pub(crate) async fn browser_shell_unavailable() -> impl IntoResponse {
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>SP42 frontend unavailable</title>
-    <style>
-      body {
-        margin: 0;
-        min-height: 100vh;
-        display: grid;
-        place-items: center;
-        background: #091321;
-        color: #e3edf9;
-        font-family: "IBM Plex Sans", "Avenir Next", sans-serif;
-      }
-      main {
-        width: min(42rem, calc(100vw - 3rem));
-        padding: 1.5rem;
-        border: 1px solid rgba(227, 237, 249, 0.16);
-        border-radius: 1rem;
-        background: rgba(15, 28, 46, 0.92);
-      }
-      code {
-        color: #52c7b8;
-      }
-    </style>
   </head>
   <body>
     <main>
@@ -100,8 +87,10 @@ fn static_asset_path(file_name: &str) -> PathBuf {
     let dist_candidate = browser_app_dist_dir().join(file_name);
     if dist_candidate.is_file() {
         dist_candidate
-    } else {
+    } else if file_name == "sw.js" {
         app_static_dir().join(file_name)
+    } else {
+        ui_static_dir().join(file_name)
     }
 }
 
@@ -130,6 +119,27 @@ pub(crate) async fn get_runtime_config_js(State(state): State<AppState>) -> impl
     )
 }
 
+/// The full list of resolvable Wikimedia `wiki_id`s (the embedded `SiteMatrix`
+/// snapshot, ADR-0014), for the workspace wiki picker's filterable dropdown.
+pub(crate) async fn get_wikis() -> Json<serde_json::Value> {
+    Json(serde_json::json!({ "wiki_ids": sp42_wiki::known_wiki_ids() }))
+}
+
+/// The resolved default namespace allowlist for one wiki, so the patrol filter UI
+/// shows the same namespaces the server uses for an unfiltered query — configured
+/// wikis (e.g. enwiki `[0,1]`) differ from the universal default. Falls back to
+/// the shared patrol default for an unknown id. Codex review #90.
+pub(crate) async fn get_wiki_defaults(
+    State(state): State<AppState>,
+    Path(wiki_id): Path<String>,
+) -> Json<serde_json::Value> {
+    let namespace_allowlist = state.wiki_registry.resolve(&wiki_id).map_or_else(
+        |_| sp42_core::DEFAULT_PATROL_NAMESPACES.to_vec(),
+        |config| config.namespace_allowlist,
+    );
+    Json(serde_json::json!({ "namespace_allowlist": namespace_allowlist }))
+}
+
 pub(crate) async fn get_service_worker() -> impl IntoResponse {
     serve_static_file(static_asset_path("sw.js"), "application/javascript").await
 }
@@ -143,7 +153,7 @@ pub(crate) async fn get_offline_html() -> impl IntoResponse {
 }
 
 pub(crate) async fn get_static_icon(Path(icon_name): Path<String>) -> impl IntoResponse {
-    let candidate = app_static_dir().join("icons").join(&icon_name);
+    let candidate = ui_static_dir().join("icons").join(&icon_name);
     if candidate.is_file() {
         serve_static_file(candidate, "image/svg+xml").await
     } else {

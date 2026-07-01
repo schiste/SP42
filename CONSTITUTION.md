@@ -12,7 +12,7 @@
 
 | Tier | Tool | Requirement |
 |------|------|-------------|
-| Unit tests | `cargo test` | Every public function tested. Every scoring/filtering branch tested. Coverage ≥90% on sp42-core. |
+| Unit tests | `cargo test` | Every public function tested. Every scoring/filtering branch tested. Coverage ≥90% on the platform-independent logic (`sp42-platform` + `sp42-core`; see ADR-0013). |
 | Integration tests | `cargo test --features integration` | Every API action has a mock-server test. |
 | End-to-end tests | Playwright or cargo-based browser tests | Core workflows against test wiki (MediaWiki Docker in CI). |
 | Property-based tests | `proptest` | Scoring monotonic in all signal directions. Queue dequeues highest. Codec round-trip is identity. |
@@ -30,7 +30,7 @@
 
 **2.2** State is explicit. All mutable state in well-defined containers: priority queue, user score map, whitelist, session history, configuration. No hidden global mutable state. No module-level `static mut`.
 
-**2.3** Side effects at the edges. Business logic (scoring, filtering, diffing, queue management) is pure. Side effects (API calls, IndexedDB writes, WebSocket sends, DOM manipulation) happen only at the boundary layer. `sp42-core` has no dependency on `web-sys`, `js-sys`, or any I/O crate.
+**2.3** Side effects at the edges. Business logic (scoring, filtering, diffing, queue management) is pure. Side effects (API calls, IndexedDB writes, WebSocket sends, DOM manipulation) happen only at the boundary layer. The platform-independent crates (`sp42-platform`, `sp42-core`) have no dependency on `web-sys`, `js-sys`, or any I/O crate.
 
 **2.4** Error boundaries. Every Leptos panel is wrapped in `<ErrorBoundary>`. A panic in the scoring engine shows an error in the queue panel but the diff viewer and action panel keep working.
 
@@ -52,7 +52,7 @@
 
 ## Article 4 — Decisions live with the code
 
-**4.1** Architecture Decision Records (ADRs) in `docs/adr/NNNN-title.md`. Records: context, decision, alternatives, consequences. Immutable once merged — reversals get a new ADR that supersedes.
+**4.1** Architecture Decision Records (ADRs) live under `docs/platform/adr/NNNN-title.md` or `docs/domains/<domain>/adr/NNNN-title.md`, filed by the platform layer or domain they govern. ADR numbers (`NNNN`) are globally unique across folders. Records: context, decision, alternatives, consequences. Immutable once merged — reversals get a new ADR that supersedes.
 
 **4.2** No decisions in chat, email, or meetings only. "We decided in the meeting to use X" → "Link to the ADR or it didn't happen."
 
@@ -74,7 +74,7 @@
 | Linting | `clippy` | Zero warnings. `clippy::pedantic` enabled. `#[allow]` prohibited except with approved issue link + comment. |
 | Formatting | `rustfmt` | Exact match. No custom overrides. |
 | Tests | `cargo test` + `wasm-pack test` | All pass. No `#[ignore]` without issue link. |
-| Coverage | `cargo-tarpaulin` or `llvm-cov` | sp42-core: ≥90%. No merge that decreases coverage without exemption. |
+| Coverage | `cargo-tarpaulin` or `llvm-cov` | platform-independent logic (`sp42-platform` + `sp42-core`): ≥90%. No merge that decreases coverage without exemption. |
 | Dependency audit | `cargo audit` | Zero known vulnerabilities. Blocks pipeline. |
 | License check | `cargo-deny` | All deps compatible with GPL-3.0-only. |
 | Doc tests | `cargo test` (doc-tests) | All examples compile and run. |
@@ -94,9 +94,9 @@
 
 ## Article 6 — Abstraction and no duplication
 
-**6.1** Single source of truth. Every type, constant, and rule exists in one place. `EditEvent` lives in `sp42-core/src/types.rs` and is used directly by all crates. No copies. No conversion layers.
+**6.1** Single source of truth. Every type, constant, and rule exists in one place. `EditEvent` lives in `sp42-platform/src/types.rs` (re-exported via `sp42-core` during the ADR-0013 migration) and is used directly by all crates. No copies. No conversion layers.
 
-**6.2** Trait-based abstraction. All external dependencies via traits defined in `sp42-core/src/traits.rs`. Core never names a concrete implementation. Enables: testing with mocks, compiling to different targets.
+**6.2** Trait-based abstraction. All external dependencies via traits defined in `sp42-platform/src/traits.rs` (re-exported via `sp42-core`). The platform never names a concrete implementation. Enables: testing with mocks, compiling to different targets.
 
 **6.3** Domain-specific error types. Each module has its own error enum (`ScoringError`, `DiffError`, `ActionError`). No `anyhow::Error` in public interfaces.
 

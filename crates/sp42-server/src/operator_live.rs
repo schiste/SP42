@@ -6,8 +6,9 @@ use axum::{
     http::{HeaderMap, StatusCode},
 };
 use sp42_live::{LiveOperatorPhaseTiming, LiveOperatorTelemetry};
-use sp42_reporting::LiveOperatorView;
+use sp42_patrol::LiveOperatorView;
 
+use crate::http_errors::unauthorized_error;
 use crate::live_queue::{
     LiveOperatorAssembly, LiveOperatorFinalization, LiveOperatorProductContext,
     LiveViewFilterParams, build_live_operator_notes, build_live_operator_products,
@@ -31,6 +32,14 @@ pub(crate) async fn get_live_operator_view(
     State(state): State<AppState>,
     headers: HeaderMap,
 ) -> Result<Json<LiveOperatorView>, (StatusCode, Json<serde_json::Value>)> {
+    // No session token → 401 (token-gated like the action/citation routes) so the
+    // wasm auth refresh re-gates to login, instead of the generic 502 the assembly
+    // would otherwise return and leave the user stranded on. Codex review #90.
+    if access_token_for_request(&state, &headers).await.is_none() {
+        return Err(unauthorized_error(
+            "No authenticated Wikimedia session is active.",
+        ));
+    }
     live_operator_view(&state, &headers, &wiki_id, &filters)
         .await
         .map(Json)

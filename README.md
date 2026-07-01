@@ -30,20 +30,40 @@ Detailed status lives in [docs/STATUS.md](docs/STATUS.md).
 
 ## Repository Layout
 
-- `crates/sp42-core`: shared contracts, scoring, runtime primitives, and action helpers
+SP42 is a platform that owns shared abstraction layers, with domains that consume
+them. The crates group along that seam.
+
+Platform layers (shared, domain-agnostic):
+
+- `crates/sp42-types`: transport contracts and storage/HTTP/clock abstractions
+- `crates/sp42-coordination`: multi-operator collaboration protocol and room state
 - `crates/sp42-wiki`: wiki config parsing, registry/default selection, and capability profiles
-- `crates/sp42-app`: browser and PWA shell
+- `crates/sp42-server`: localhost HTTP/WebSocket server, auth bridge, and routing
+- `crates/sp42-devtools`: deterministic fixtures and demo-surface builders
+- `crates/sp42-core`: shared contracts, runtime primitives, and the scoring engine (also hosts patrolling action/queue logic pending a future split)
+- `xtask`: workspace build tasks
+
+Patrolling domain (the shipped review workflow):
+
+- `crates/sp42-live`: EventStreams ingestion, recentchanges/backlog polling, and live queue filtering
+- `crates/sp42-reporting`: patrol scenario, session-digest, and operator-summary reporting
 - `crates/sp42-cli`: CLI shell
+- `crates/sp42-app`: browser and PWA shell
 - `crates/sp42-desktop`: desktop shell
-- `crates/sp42-server`: localhost coordination and auth bridge server
-- `configs/`: per-wiki configuration
+
+References / citation domain is incoming (no crate yet); see the PRD and ADRs in
+`docs/domains/references/`.
+
+Supporting trees:
+
+- `configs/`: per-wiki and scoring configuration
 - `schemas/`: config schemas
 - `fixtures/`: test fixtures
-- `docs/`: status, ADRs, and design documents
+- `docs/`: platform, domain, and project documentation (see [docs/README.md](docs/README.md))
 
 ## Requirements
 
-- Rust `1.92` or newer
+- Rust `1.96` or newer
 - The `wasm32-unknown-unknown` target for browser builds
 
 Optional:
@@ -96,8 +116,13 @@ Useful local endpoints:
 ### 3. Run the CLI
 
 ```sh
-cargo run -p sp42-cli
+cargo run -p sp42-cli -- --help            # list subcommands
+cargo run -p sp42-cli -- preview           # ranked queue from STDIN (built-in sample if empty)
 ```
+
+Capabilities are subcommands (`verify`, `verify-page`, `locate-probe`,
+`bare-url`, `preview`). For the full command-line reference — including
+environment variables — see [docs/platform/CLI.md](docs/platform/CLI.md).
 
 ### 4. Build the browser app
 
@@ -123,8 +148,9 @@ The dev command runs `sp42-server` on `127.0.0.1:8788` and Trunk on
 `127.0.0.1:4173`.
 
 For runtime settings, local credentials, and API base URL behavior, see
-[docs/RUNTIME_CONFIGURATION.md](docs/RUNTIME_CONFIGURATION.md). For desktop app
-packaging, see [docs/DESKTOP_DISTRIBUTION.md](docs/DESKTOP_DISTRIBUTION.md).
+[docs/platform/RUNTIME_CONFIGURATION.md](docs/platform/RUNTIME_CONFIGURATION.md).
+For desktop app packaging, see
+[docs/platform/DESKTOP_DISTRIBUTION.md](docs/platform/DESKTOP_DISTRIBUTION.md).
 For a Wikimedia Cloud VPS artifact, run `./scripts/package-vps.sh`; the
 generated package includes its own deployment README.
 
@@ -155,22 +181,21 @@ Optional shared compiler cache:
 
 ## Documentation
 
+Documentation is organized to mirror the platform/domain architecture. Start with
+the docs map, then drill into a layer or domain:
+
+- [docs/README.md](docs/README.md): documentation map — platform, domains, and project docs
+- [docs/platform/README.md](docs/platform/README.md): platform layers — runtime, desktop, developer surface, design contract, scoring, and ADR-0001–0006
+- [docs/domains/README.md](docs/domains/README.md): domains — patrolling (shipped) and references/citation (incoming)
+
+Project and process docs:
+
 - [docs/STATUS.md](docs/STATUS.md): phase-by-phase project status
-- [docs/DEVELOPER_SURFACE.md](docs/DEVELOPER_SURFACE.md): developer-oriented surface summary
-- [docs/RUNTIME_CONFIGURATION.md](docs/RUNTIME_CONFIGURATION.md): runtime modes, API base URL config, and local auth
-- [docs/DESKTOP_DISTRIBUTION.md](docs/DESKTOP_DISTRIBUTION.md): macOS, Windows, and Linux desktop packaging
 - [CONTRIBUTING.md](CONTRIBUTING.md): contributor workflow and local checks
 - [GOVERNANCE.md](GOVERNANCE.md): maintainer model, protected areas, and release authority
+- [CONSTITUTION.md](CONSTITUTION.md): binding engineering laws
 - [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md): participation expectations
-- [docs/scoring/SCORING_CONSTITUTION.md](docs/scoring/SCORING_CONSTITUTION.md): scoring system principles and technical rules
-- [docs/scoring/POLICY_LAYOUT.md](docs/scoring/POLICY_LAYOUT.md): scoring policy and evaluation directory layout
-- [docs/FRONTEND_DESIGN_CONTRACT.md](docs/FRONTEND_DESIGN_CONTRACT.md): frontend contract
-- [docs/prd/README.md](docs/prd/README.md): PRD protocol for user-facing changes
-- [docs/adr/0001-foundational-decisions.md](docs/adr/0001-foundational-decisions.md): foundational architecture decisions
-- [docs/adr/0002-local-dev-auth-bridge.md](docs/adr/0002-local-dev-auth-bridge.md): local auth bridge decision
-- [docs/adr/0003-node-anchored-wikitext-editing.md](docs/adr/0003-node-anchored-wikitext-editing.md): node-anchored wikitext editing proposal
-- [docs/adr/0004-crate-boundary-collaboration-model.md](docs/adr/0004-crate-boundary-collaboration-model.md): crate-boundary collaboration model
-- [docs/adr/0005-design-system-shared-component-layer.md](docs/adr/0005-design-system-shared-component-layer.md): design system and shared component layer (sp42-ui)
+- [docs/process/prd-protocol.md](docs/process/prd-protocol.md): PRD protocol for user-facing changes
 
 ## License
 

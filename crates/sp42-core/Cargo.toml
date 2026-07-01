@@ -12,12 +12,16 @@ workspace = true
 async-trait.workspace = true
 base64.workspace = true
 futures.workspace = true
+percent-encoding.workspace = true
 regex = "1.12"
 serde.workspace = true
 serde_json.workspace = true
 serde_yaml.workspace = true
 sha2.workspace = true
 similar.workspace = true
+sp42-citation = { path = "../sp42-citation" }
+sp42-patrol = { path = "../sp42-patrol" }
+sp42-platform = { path = "../sp42-platform" }
 sp42-types = { path = "../sp42-types" }
 thiserror.workspace = true
 tracing.workspace = true
@@ -26,3 +30,5 @@ url.workspace = true
 
 [dev-dependencies]
 proptest = "1.9.0"
+# test-support exposes sp42_platform::test_fixtures to this crate's domain tests.
+sp42-platform = { path = "../sp42-platform", features = ["test-support"] }

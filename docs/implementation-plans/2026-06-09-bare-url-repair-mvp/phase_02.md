@@ -167,11 +167,11 @@ git commit -m "feat: add bare_url_citation per-wiki template gate"
 ### Task 2: Document the knob
 
 **Files:**
-- Modify: `docs/RUNTIME_CONFIGURATION.md`
+- Modify: `docs/platform/RUNTIME_CONFIGURATION.md`
 
 **Step 1: Add the documentation bullet**
 
-In `docs/RUNTIME_CONFIGURATION.md`, under the `SP42_WIKI_CONFIG_DIR` bullet, the existing sub-bullet reads:
+In `docs/platform/RUNTIME_CONFIGURATION.md`, under the `SP42_WIKI_CONFIG_DIR` bullet, the existing sub-bullet reads:
 
 ```markdown
   - Per-wiki YAML configs may set `parsoid_url` (the wiki's core REST endpoint,
@@ -200,6 +200,6 @@ Expected: exits 0 (the script checks for required existing lines; additions are 
 **Step 3: Commit**
 
 ```bash
-git add docs/RUNTIME_CONFIGURATION.md
+git add docs/platform/RUNTIME_CONFIGURATION.md
 git commit -m "docs: document the bare_url_citation config knob"
 ```

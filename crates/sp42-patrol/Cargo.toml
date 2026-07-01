@@ -1,0 +1,23 @@
+[package]
+name = "sp42-patrol"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+serde.workspace = true
+serde_yaml.workspace = true
+sp42-coordination = { path = "../sp42-coordination" }
+sp42-live = { path = "../sp42-live" }
+sp42-platform = { path = "../sp42-platform" }
+sp42-reporting = { path = "../sp42-reporting" }
+sp42-types = { path = "../sp42-types" }
+
+[dev-dependencies]
+proptest = "1.9.0"
+serde_json.workspace = true
+sp42-wiki = { path = "../sp42-wiki", features = ["test-fixtures"] }

@@ -1,8 +1,9 @@
 //! PWA registration, manifest injection, install prompt handling, and status
 //! reporting for the browser target.
 //!
-//! The service worker file (`sw.js`) and manifest (`manifest.json`) live in
-//! `crates/sp42-app/static/` and must be served from the web root.
+//! The service worker file (`sw.js`) lives in `crates/sp42-app/static/`.
+//! Visual PWA assets (manifest, offline shell, icons) live in
+//! `crates/sp42-ui/static/`. All are served from the web root.
 
 #[cfg(target_arch = "wasm32")]
 use std::cell::{Cell, RefCell};
@@ -1017,10 +1018,10 @@ mod tests {
     use futures::executor::block_on;
 
     use super::{
-        PwaBrowserContext, PwaEnvironmentStatus, PwaShellMode, classify_shell_mode, icon_192_path,
-        icon_512_path, is_install_ready, is_ios_user_agent, is_probably_secure_origin,
-        is_update_ready, manifest_path, normalize_manifest_href, offline_fallback_path,
-        pwa_guidance_lines, pwa_status_lines, service_worker_path, shell_asset_paths,
+        PwaBrowserContext, PwaEnvironmentStatus, PwaShellMode, icon_192_path, icon_512_path,
+        is_install_ready, is_ios_user_agent, is_probably_secure_origin, is_update_ready,
+        manifest_path, normalize_manifest_href, offline_fallback_path, pwa_guidance_lines,
+        pwa_status_lines, service_worker_path, shell_asset_paths,
     };
 
     #[test]

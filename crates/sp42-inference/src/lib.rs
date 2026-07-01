@@ -185,14 +185,24 @@ pub fn panel_from_env() -> Result<Vec<ModelRef>, String> {
     let models = std::env::var("SP42_INFERENCE_MODELS").map_err(|_| {
         "set SP42_INFERENCE_MODELS to a comma-separated list of model ids".to_string()
     })?;
+    panel_from_models(&provider, &models)
+}
+
+/// Build a model panel from an explicit comma-separated id list (the `--models` override),
+/// using `provider` for every `ModelRef`. Blank entries are skipped; an all-blank list errors.
+///
+/// # Errors
+///
+/// Returns an error if `models` contains no non-empty model id.
+pub fn panel_from_models(provider: &str, models: &str) -> Result<Vec<ModelRef>, String> {
     let panel: Vec<ModelRef> = models
         .split(',')
         .map(str::trim)
         .filter(|m| !m.is_empty())
-        .map(|m| ModelRef::new(provider.clone(), m, m))
+        .map(|m| ModelRef::new(provider.to_string(), m, m))
         .collect();
     if panel.is_empty() {
-        return Err("SP42_INFERENCE_MODELS is empty".to_string());
+        return Err("model panel is empty (no model ids given)".to_string());
     }
     Ok(panel)
 }
@@ -305,6 +315,22 @@ mod tests {
             normalize_base_url("https://openrouter.ai/api/v1/chat/completions/"),
             "https://openrouter.ai/api/v1/"
         );
+    }
+
+    #[test]
+    fn panel_from_models_builds_one_ref_per_trimmed_id() {
+        let panel = panel_from_models("configured", "alpha, beta ,, gamma").expect("panel");
+        assert_eq!(panel.len(), 3);
+        assert_eq!(panel[0].provider, "configured");
+        assert_eq!(panel[0].model, "alpha");
+        assert_eq!(panel[0].version, "alpha");
+        assert_eq!(panel[1].model, "beta");
+        assert_eq!(panel[2].model, "gamma");
+    }
+
+    #[test]
+    fn panel_from_models_rejects_an_all_blank_list() {
+        assert!(panel_from_models("configured", "  , ,").is_err());
     }
 
     #[test]

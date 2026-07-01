@@ -228,7 +228,7 @@ Formatting (pre-commit checks it): `cargo fmt --all -- --check`.
   non-docs push.
 - Bypass for emergencies only: `SP42_SKIP_GIT_HOOKS=1`.
 - `scripts/check-doc-consistency.sh` greps `README.md`, `docs/STATUS.md`,
-  `docs/DEVELOPER_SURFACE.md` for required marker lines — citation work shouldn't
+  `docs/platform/DEVELOPER_SURFACE.md` for required marker lines — citation work shouldn't
   disturb those, but **don't delete/rephrase those marker lines**.
 
 ### 3e. The only GitHub Actions workflow is `desktop-release.yml`

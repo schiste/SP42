@@ -11,21 +11,28 @@ constraints.
 - Read [CONSTITUTION.md](CONSTITUTION.md)
 - Read [GOVERNANCE.md](GOVERNANCE.md)
 - Read [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md)
-- Review relevant ADRs in [docs/adr](docs/adr)
+- Review relevant ADRs — see the [docs map](docs/README.md) for their platform vs. domain locations
 
 ## Development Expectations
 
 - Keep secrets and personal Wikimedia credentials out of the repository
 - Prefer small, focused pull requests
 - Do not introduce new warnings
-- Keep shared logic in `sp42-core` when it is genuinely cross-target
+- Respect the layered architecture: **platform** owns reusable
+  mechanisms/primitives/frameworks/contracts; **domains** consume them; **shells**
+  compose. Reusable-by-design code goes to the platform, not domain→domain — see
+  [ADR-0013](docs/platform/adr/0013-layered-platform-domain-architecture.md). The
+  layer check (`./scripts/check-layering.sh`) enforces the dependency direction.
 - Avoid architecture drift unless the change is explicitly justified
 - Open an ADR for changes that affect crate boundaries, auth/session behavior,
   runtime deployment behavior, scoring policy, desktop packaging, or public
   contracts
 - Open a PRD for changes that alter operator- or editor-facing behavior
 - For crate extraction and ownership boundaries, follow
-  [ADR-0004](docs/adr/0004-crate-boundary-collaboration-model.md)
+  [ADR-0004](docs/platform/adr/0004-crate-boundary-collaboration-model.md) and
+  [ADR-0013](docs/platform/adr/0013-layered-platform-domain-architecture.md); to
+  stand up a new domain, follow
+  [docs/process/adding-a-domain.md](docs/process/adding-a-domain.md)
 
 ## Local Checks
 
@@ -39,8 +46,39 @@ The repo uses a Husky-compatible local hook layout in `.husky/`. The installer
 sets `core.hooksPath=.husky`, so the hooks run automatically:
 
 - `pre-commit`: staged/working-tree whitespace checks, `cargo fmt --all -- --check`,
-  docs consistency, release-tree audit, and `./scripts/check-focused.sh`.
-- `pre-push`: release-tree audit and `./scripts/ci-all.sh`.
+  the forbidden-pattern guard on added lines (§5.3), pedantic `clippy` on the
+  changed crates, docs consistency, the markdown link check, release-tree audit,
+  and `./scripts/check-focused.sh`.
+- `commit-msg`: enforces Conventional Commits (§8.1).
+- `pre-push`: release-tree audit, the markdown link check, the layer check
+  (ADR-0013 dependency direction), `./scripts/ci-all.sh`, the supply-chain gate
+  (`cargo deny` + `cargo audit`), the coverage gate (`sp42-core` ≥90% lines and a
+  workspace floor, excl. `xtask`), and the forbidden-pattern guard over the pushed
+  range.
+
+These gates need a few extra tools installed once (all Rust):
+
+```sh
+cargo install --locked cargo-deny cargo-audit cargo-llvm-cov
+```
+
+The markdown link check is a deterministic, internal-links-only scan (Python 3,
+no extra install; external URL liveness is intentionally out of scope). CI also
+runs the optimized wasm bundle + size ceiling on every PR (its inputs can't be
+path-enumerated), a path-filtered desktop (Tauri) build-check, and a weekly
+`cargo-mutants` mutation-testing report.
+
+The same gates run in CI on every non-draft pull request (see
+`.github/workflows/ci.yml`), which additionally enforces the wasm bundle-size
+ceiling against the optimized build. The wasm-size gate is CI/release-only — it
+is not in `pre-push`, which would otherwise force an optimized rebuild on every
+push.
+
+> The supply-chain gate is currently red on `main` due to transitive advisories
+> with no available fix (`paste`/`proc-macro-error2` are Leptos build-time
+> proc-macros; `rand` RUSTSEC-2026-0097 has no patched 0.9.x). Until those clear
+> upstream, pushing requires `SP42_SKIP_GIT_HOOKS=1` and PR CI will show the
+> supply-chain step red. New advisories are still caught — this is deliberate.
 
 Documentation-only changes (every modified file is `.md`, `.log`, or `.txt`)
 skip the compile-heavy steps: `pre-commit` still runs the whitespace and docs
@@ -90,6 +128,30 @@ Maintainers may run the full CI-shaped check before merge:
 ./scripts/ci-all.sh
 ```
 
+### Build artifacts self-heal
+
+A Rust workspace with several profiles (and a per-worktree `build-dir`) grows a
+large `target/` fast, and Cargo's cache GC only prunes the global `~/.cargo`
+cache — never your project `target/`. So the heavy local builds self-heal: both
+`./scripts/ci-all.sh` and the `pre-push` hook end by running
+`./scripts/clean-house.sh --auto`, which bounds `target/` (drops the disposable
+`doc`/`llvm-cov` trees, prunes stale per-worktree build dirs, and sheds the
+duplicate `debug` profile once over budget) while keeping the active profile's
+cache warm. Run it by hand any time, too.
+
+Tuning (env):
+
+- `SP42_KEEP_ARTIFACTS=1` — skip the self-heal entirely (keep everything).
+- `SP42_TARGET_CAP_GB=N` — target-size budget (default 8).
+- `SP42_BUILD_STALE_DAYS=N` — age before a per-worktree build tree is pruned (default 3).
+
+Prefer the `cargo ci-*` aliases over plain `cargo build`/`test` — a stray `dev`
+(debug) build creates a whole second copy of `target/`. Optionally install
+[`cargo-sweep`](https://github.com/holmgr/cargo-sweep) (`cargo install
+cargo-sweep`); the self-heal uses it as a size-capped last resort when present.
+`./scripts/clean-house.sh --purge-target` wipes `target/` entirely (cold rebuild
+next).
+
 ## Credentials and Local Auth
 
 If you use the local Wikimedia development bridge:
@@ -98,6 +160,39 @@ If you use the local Wikimedia development bridge:
 - never commit that file
 - never paste raw access tokens into code, docs, issues, or PRs
 - redact cookies, CSRF tokens, and authorization headers from logs
+
+### Wikimedia OAuth login (ADR-0014)
+
+SP42 requires logging in with a Wikimedia account. To run the real login locally:
+
+1. Register an OAuth 2.0 consumer at
+   [`Special:OAuthConsumerRegistration`](https://meta.wikimedia.org/wiki/Special:OAuthConsumerRegistration/propose/oauth2)
+   — owner-only is enough for your own account; a non-owner-only (general)
+   consumer is needed for other people to log in (and requires Wikimedia
+   approval). Set the callback to `{public_base_url}/auth/callback` (locally,
+   `http://localhost:4173/auth/callback`) and request `basic` plus the action
+   grants you need (patrol/rollback/edit).
+2. Put the credentials in `.env.wikimedia.local`:
+   ```
+   WIKIMEDIA_CLIENT_APPLICATION_KEY=<consumer key>
+   WIKIMEDIA_CLIENT_APPLICATION_SECRET=<consumer secret>
+   ```
+3. Run `./scripts/dev-local.sh` and click "Log in with your Wikimedia account".
+   In `local` deployment mode a `WIKIMEDIA_ACCESS_TOKEN` still enables the
+   secondary dev-token bootstrap button.
+
+### Working with any Wikimedia project
+
+SP42 resolves **any** Wikimedia project from an embedded authoritative SiteMatrix
+snapshot (`crates/sp42-wiki/data/wikimedia-sites.json`) — use the wiki picker in
+the header (e.g. `dewiki`, `commonswiki`, `eswiktionary`) or a `?wiki=<dbname>`
+URL. Hand-tuned `configs/*.yaml` wikis still win; everything else uses the
+universal default scoring policy. Refresh the embedded list when Wikimedia adds
+or renames projects:
+
+```sh
+./scripts/sync-wikis.sh
+```
 
 ## Pull Requests
 

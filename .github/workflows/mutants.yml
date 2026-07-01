@@ -1,0 +1,37 @@
+name: Mutation testing
+
+# Weekly, informational. Coverage % proves lines run; mutation testing proves the
+# tests actually *catch* changes. Scoped to sp42-core and time-boxed to keep it
+# bounded; surviving mutants are reported as an artifact, not a hard failure.
+on:
+  schedule:
+    - cron: '37 4 * * 1' # Mondays ~04:37 UTC (off-peak, off the :00 mark)
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  mutants:
+    name: cargo-mutants (sp42-core)
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install pinned toolchain (rust-toolchain.toml)
+        run: rustup show
+      - name: Cache cargo + target
+        uses: Swatinem/rust-cache@v2
+      - name: Install cargo-mutants
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-mutants
+      - name: Run mutation testing (informational)
+        run: cargo mutants -p sp42-core --timeout 120 --in-place || true
+      - name: Upload mutants report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mutants-report
+          path: mutants.out/
+          if-no-files-found: ignore

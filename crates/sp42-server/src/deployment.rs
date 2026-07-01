@@ -36,6 +36,20 @@ impl DeploymentMode {
     pub(crate) const fn uses_secure_cookies(self) -> bool {
         matches!(self, Self::Vps)
     }
+
+    /// The session cookie `SameSite` policy. Cross-site deployments (a different
+    /// site frontend/API pair under `vps`, or the desktop `tauri://localhost` →
+    /// loopback sidecar) need `None` so the browser sends the cookie on
+    /// credentialed cross-site fetches; `Lax` is dropped on those. `local` is
+    /// same-site (`localhost` across ports), so `Lax` is kept there. `None` is
+    /// only honored by browsers alongside `Secure` (see `session_cookie_header`).
+    /// Codex review #90.
+    pub(crate) const fn session_cookie_same_site(self) -> &'static str {
+        match self {
+            Self::Local => "Lax",
+            Self::Vps | Self::Desktop => "None",
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -90,7 +104,7 @@ fn allowed_origins_from_env(
             .map(str::trim)
             .filter(|value| !value.is_empty())
         {
-            origins.push(origin_header_value("SP42_ALLOWED_ORIGINS", origin)?);
+            origins.push(allowed_origin_header_value("SP42_ALLOWED_ORIGINS", origin)?);
         }
     }
 
@@ -130,6 +144,21 @@ fn origin_header_value(label: &str, value: &str) -> Result<HeaderValue, String> 
     header_value(&url.origin().ascii_serialization())
 }
 
+/// Canonicalize a configured allowed origin to `scheme://host[:port]`. Unlike
+/// `origin_header_value` (for the public base URL, which must be HTTP(S)), this
+/// accepts custom app schemes such as `tauri://localhost` so the desktop
+/// sidecar's `SP42_ALLOWED_ORIGINS` loads instead of failing startup — the
+/// default desktop allow list already trusts that origin, and it mirrors the
+/// non-HTTP support in the redirect sanitizer. Codex review #90.
+fn allowed_origin_header_value(label: &str, value: &str) -> Result<HeaderValue, String> {
+    // Shared origin primitive: canonical scheme://host[:port], accepting custom
+    // app schemes (e.g. tauri://localhost) so the desktop sidecar loads. ADR-0013.
+    let origin = sp42_core::origin_of(value).ok_or_else(|| {
+        format!("{label} origin `{value}` is not a valid scheme://host[:port] origin")
+    })?;
+    header_value(&origin)
+}
+
 const LOCAL_ALLOWED_ORIGINS: &[&str] = &[
     "http://127.0.0.1:4173",
     "http://localhost:4173",
@@ -147,7 +176,23 @@ const DESKTOP_ALLOWED_ORIGINS: &[&str] = &[
 
 #[cfg(test)]
 mod tests {
-    use super::{DeploymentMode, allowed_origins_from_env};
+    use super::{DeploymentMode, allowed_origin_header_value, allowed_origins_from_env};
+
+    #[test]
+    fn allowed_origin_accepts_custom_app_scheme() {
+        // desktop sidecar sets SP42_ALLOWED_ORIGINS=tauri://localhost,...; the
+        // env parser must accept that scheme or the desktop app fails to boot.
+        // Codex review #90.
+        let origin = allowed_origin_header_value("SP42_ALLOWED_ORIGINS", "tauri://localhost")
+            .expect("custom app scheme should parse");
+        assert_eq!(origin, "tauri://localhost");
+        // http(s) still canonicalizes as before
+        let http = allowed_origin_header_value("SP42_ALLOWED_ORIGINS", "http://tauri.localhost")
+            .expect("http origin should parse");
+        assert_eq!(http, "http://tauri.localhost");
+        // authority-less values are still rejected
+        assert!(allowed_origin_header_value("SP42_ALLOWED_ORIGINS", "not-a-url").is_err());
+    }
 
     #[test]
     fn deployment_mode_labels_are_stable() {

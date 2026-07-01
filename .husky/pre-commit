@@ -40,6 +40,9 @@ git diff --check
 printf '\n== SP42 pre-commit: docs consistency ==\n'
 bash scripts/check-doc-consistency.sh
 
+printf '\n== SP42 pre-commit: markdown link check ==\n'
+./scripts/check-links.sh
+
 if [[ "$docs_only" == "1" ]]; then
   printf '\nSP42 pre-commit: docs-only change (.md/.log/.txt) — skipping rustfmt, release-tree audit, and focused build.\n'
   printf 'SP42 pre-commit checks passed.\n'
@@ -48,6 +51,20 @@ fi
 
 printf '\n== SP42 pre-commit: rustfmt ==\n'
 cargo fmt --all -- --check
+
+printf '\n== SP42 pre-commit: forbidden-pattern guard (added lines, §5.3) ==\n'
+./scripts/check-forbidden-patterns.sh --staged
+
+printf '\n== SP42 pre-commit: clippy (changed crates, pedantic = deny) ==\n'
+changed_crates="$(git diff --cached --name-only \
+  | sed -nE 's#^crates/([^/]+)/.*#\1#p; s#^(xtask)/.*#\1#p' | sort -u)"
+if [[ -n "$changed_crates" ]]; then
+  clippy_pkgs=()
+  while IFS= read -r c; do [[ -n "$c" ]] && clippy_pkgs+=(-p "$c"); done <<< "$changed_crates"
+  cargo clippy "${clippy_pkgs[@]}" --all-targets --all-features -- -D warnings
+else
+  printf 'no crate sources changed — skipping scoped clippy.\n'
+fi
 
 printf '\n== SP42 pre-commit: release tree audit ==\n'
 ./scripts/audit-release-tree.sh

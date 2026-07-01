@@ -1,67 +1,73 @@
 use leptos::prelude::*;
-use sp42_reporting::{PatrolScenarioReadiness, PatrolScenarioReport, ReportSeverity};
+use sp42_patrol::{PatrolScenarioReadiness, PatrolScenarioReport, ReportSeverity};
+use sp42_ui::{
+    BadgeHeader, BadgeHeaderProps, Card, CardHeader, CardHeaderProps, CardProps, Grid, GridColumns,
+    GridProps, Panel, PanelProps, TextList, TextListItem, TextListItemProps, TextListProps,
+};
 
-use super::{InspectorFeed, StatusBadge, StatusTone, inspector_entries_from_lines};
+use super::{InspectorFeed, StatusBadge, Tone, inspector_entries_from_lines, ui_children};
 
 #[component]
 pub fn PatrolSessionDigestPanel(report: PatrolScenarioReport) -> impl IntoView {
     let badges = session_digest_badges(&report);
     let digest_lines = session_digest_lines(&report);
     let recommendation = recommended_next_step(&report);
+    let recommendation_tone = recommendation_tone(&report);
     let findings = report.findings.clone();
+    let finding_count = findings.len();
+    let finding_tone = finding_summary_tone(&findings);
 
-    view! {
-        <section
-            class="panel"
-        >
-            <header style="display:grid;gap:7px;">
-                <div style="display:flex;align-items:center;gap:7px;flex-wrap:wrap;">
-                    <StatusBadge label="Session Digest".to_string() tone=StatusTone::Accent />
+    Panel(PanelProps::new(ui_children(move || {
+        view! {
+            {BadgeHeader(BadgeHeaderProps::new(
+                "A patrol-first summary that turns the live queue into a quick review decision before the action rail and diff.",
+                ui_children(move || view! {
+                    <StatusBadge label="Session Digest".to_string() tone=Tone::Accent />
                     {badges
                         .into_iter()
                         .map(|(label, tone)| view! { <StatusBadge label=label tone=tone /> })
                         .collect_view()}
-                </div>
-                <p style="margin:0;color:#8b9fc0;">
-                    "A patrol-first summary that turns the live queue into a quick review decision before the action rail and diff."
-                </p>
-            </header>
+                }.into_any()),
+            ))}
 
-            <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:10px;">
-                <article
-                    class="card"
-                >
-                    <div style="display:flex;align-items:center;justify-content:space-between;gap:7px;flex-wrap:wrap;">
-                        <h3 style="margin:0;font-size:1rem;">"Session Flow"</h3>
-                        <StatusBadge label=recommendation tone=recommendation_tone(&report) />
-                    </div>
-                    <InspectorFeed entries=inspector_entries_from_lines(&digest_lines) />
-                </article>
+            {Grid(
+                GridProps::new(ui_children(move || view! {
+                    {Card(CardProps::new(ui_children(move || view! {
+                        {CardHeader(CardHeaderProps::new("Session Flow").with_actions(ui_children(move || view! {
+                            <StatusBadge label=recommendation tone=recommendation_tone />
+                        }.into_any())))}
+                        <InspectorFeed entries=inspector_entries_from_lines(&digest_lines) />
+                    }.into_any())))}
 
-                <article
-                    class="card"
-                >
-                    <div style="display:flex;align-items:center;justify-content:space-between;gap:7px;flex-wrap:wrap;">
-                        <h3 style="margin:0;font-size:1rem;">"Decision Signals"</h3>
+                    {Card(CardProps::new(ui_children(move || view! {
+                        {CardHeader(CardHeaderProps::new("Decision Signals").with_actions(ui_children(move || view! {
                         <StatusBadge
-                            label=format!("{} finding(s)", findings.len())
-                            tone={finding_summary_tone(&findings)}
+                            label=format!("{finding_count} finding(s)")
+                            tone=finding_tone
                         />
-                    </div>
-                    <ul style="margin:0;padding-inline-start:17px;color:#eff4ff;display:grid;gap:4px;">
+                        }.into_any())))}
+                        {TextList(TextListProps::new(ui_children(move || view! {
                         {findings
                             .into_iter()
-                            .map(|finding| view! { <li>{finding_summary_line(&finding)}</li> })
+                            .map(|finding| {
+                                let line = finding_summary_line(&finding);
+                                TextListItem(TextListItemProps::new(ui_children(move || {
+                                    view! { {line} }.into_any()
+                                })))
+                            })
                             .collect_view()}
-                    </ul>
-                </article>
-            </div>
-        </section>
-    }
+                        }.into_any())))}
+                    }.into_any())))}
+                }.into_any()))
+                .with_columns(GridColumns::AutoFit)
+            )}
+        }
+        .into_any()
+    })))
 }
 
 #[must_use]
-pub fn session_digest_badges(report: &PatrolScenarioReport) -> Vec<(String, StatusTone)> {
+pub fn session_digest_badges(report: &PatrolScenarioReport) -> Vec<(String, Tone)> {
     let selected_badge = report
         .selected
         .as_ref()
@@ -69,21 +75,21 @@ pub fn session_digest_badges(report: &PatrolScenarioReport) -> Vec<(String, Stat
             (
                 format!("rev {}", selected.rev_id),
                 if selected.score >= 80 {
-                    StatusTone::Warning
+                    Tone::Warning
                 } else {
-                    StatusTone::Success
+                    Tone::Success
                 },
             )
         })
-        .unwrap_or_else(|| ("no selection".to_string(), StatusTone::Warning));
+        .unwrap_or_else(|| ("no selection".to_string(), Tone::Warning));
 
     vec![
         (
             format!("{} queue", report.queue_depth),
             if report.queue_depth == 0 {
-                StatusTone::Warning
+                Tone::Warning
             } else {
-                StatusTone::Success
+                Tone::Success
             },
         ),
         (
@@ -141,39 +147,39 @@ pub fn recommended_next_step(report: &PatrolScenarioReport) -> String {
 }
 
 #[must_use]
-pub fn recommendation_tone(report: &PatrolScenarioReport) -> StatusTone {
+pub fn recommendation_tone(report: &PatrolScenarioReport) -> Tone {
     if report.queue_depth == 0 || report.readiness == PatrolScenarioReadiness::Blocked {
-        StatusTone::Warning
+        Tone::Warning
     } else if report
         .findings
         .iter()
         .any(|finding| finding.severity != ReportSeverity::Info)
     {
-        StatusTone::Accent
+        Tone::Accent
     } else {
-        StatusTone::Success
+        Tone::Success
     }
 }
 
 #[must_use]
-pub fn finding_summary_tone(findings: &[sp42_reporting::PatrolScenarioFinding]) -> StatusTone {
+pub fn finding_summary_tone(findings: &[sp42_patrol::PatrolScenarioFinding]) -> Tone {
     if findings
         .iter()
         .any(|finding| finding.severity == ReportSeverity::Blocker)
     {
-        StatusTone::Warning
+        Tone::Warning
     } else if findings
         .iter()
         .any(|finding| finding.severity == ReportSeverity::Warning)
     {
-        StatusTone::Accent
+        Tone::Accent
     } else {
-        StatusTone::Success
+        Tone::Success
     }
 }
 
 #[must_use]
-pub fn finding_summary_line(finding: &sp42_reporting::PatrolScenarioFinding) -> String {
+pub fn finding_summary_line(finding: &sp42_patrol::PatrolScenarioFinding) -> String {
     format!("{} {}: {}", finding.severity, finding.code, finding.message)
 }
 
@@ -185,11 +191,11 @@ fn readiness_label(readiness: PatrolScenarioReadiness) -> &'static str {
     }
 }
 
-fn readiness_tone(readiness: PatrolScenarioReadiness) -> StatusTone {
+fn readiness_tone(readiness: PatrolScenarioReadiness) -> Tone {
     match readiness {
-        PatrolScenarioReadiness::Blocked => StatusTone::Warning,
-        PatrolScenarioReadiness::Limited => StatusTone::Info,
-        PatrolScenarioReadiness::Ready => StatusTone::Success,
+        PatrolScenarioReadiness::Blocked => Tone::Warning,
+        PatrolScenarioReadiness::Limited => Tone::Info,
+        PatrolScenarioReadiness::Ready => Tone::Success,
     }
 }
 
@@ -214,12 +220,12 @@ fn section_summary(report: &PatrolScenarioReport, name: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::StatusTone;
+    use super::Tone;
     use super::{
         finding_summary_line, finding_summary_tone, recommended_next_step, session_digest_badges,
         session_digest_lines,
     };
-    use sp42_core::{
+    use sp42_patrol::{
         PatrolScenarioFinding, PatrolScenarioReadiness, PatrolScenarioReport,
         PatrolScenarioSection, ReportSeverity,
     };
@@ -229,7 +235,7 @@ mod tests {
             wiki_id: "frwiki".to_string(),
             queue_depth: 2,
             readiness,
-            selected: Some(sp42_reporting::PatrolScenarioSelectedEdit {
+            selected: Some(sp42_patrol::PatrolScenarioSelectedEdit {
                 wiki_id: "frwiki".to_string(),
                 rev_id: 123_456,
                 title: "Example".to_string(),
@@ -303,7 +309,7 @@ mod tests {
             message: "selected edit is high risk".to_string(),
         };
 
-        assert_eq!(finding_summary_tone(&[finding.clone()]), StatusTone::Accent);
+        assert_eq!(finding_summary_tone(&[finding.clone()]), Tone::Accent);
         assert!(finding_summary_line(&finding).contains("high_score"));
     }
 }

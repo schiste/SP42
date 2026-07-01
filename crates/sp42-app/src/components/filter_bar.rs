@@ -1,6 +1,13 @@
 use leptos::prelude::*;
 use sp42_core::FlagState;
 use sp42_live::LiveOperatorQuery;
+use sp42_ui::{
+    Button, ButtonProps, ButtonSurface, Checkbox, CheckboxProps, Density, Field, FieldProps,
+    FilterDisclosure, FilterDisclosureProps, Gap, Inline, InlineProps, Select, SelectOption,
+    SelectProps, Separator, Size, Spacer, Text, TextInput, TextInputProps, TextProps, Tone, Width,
+};
+
+use super::ui_children;
 
 /// Filter parameters sent as query string to `/operator/live/{wiki_id}`.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -47,13 +54,15 @@ const NAMESPACE_OPTIONS: &[(i32, &str)] = &[
     (14, "Category"),
 ];
 
-const DEFAULT_NAMESPACES: &[i32] = &[0, 2, 4, 6, 10, 14];
-
 #[component]
 pub fn FilterBar(
     filters: ReadSignal<PatrolFilterParams>,
     set_filters: WriteSignal<PatrolFilterParams>,
     next_continue: ReadSignal<Option<String>>,
+    /// The active wiki's resolved default namespaces — what the server uses for an
+    /// unfiltered query. Shown as "checked when no explicit selection" so the
+    /// checkboxes match server behavior for configured wikis. Codex review #90.
+    default_namespaces: ReadSignal<Vec<i32>>,
 ) -> impl IntoView {
     macro_rules! update_filter {
         ($body:expr) => {{
@@ -64,18 +73,6 @@ pub fn FilterBar(
             set_filters.set(current);
         }};
     }
-
-    let load_older = move |_| {
-        if let Some(token) = next_continue.get() {
-            let mut current = filters.get();
-            current.query.rccontinue = Some(token);
-            set_filters.set(current);
-        }
-    };
-
-    let checkbox_class = "filter-checkbox";
-    let label_class = "filter-label";
-    let select_class = "filter-select";
 
     let summary_text = move || {
         let f = filters.get();
@@ -95,230 +92,247 @@ pub fn FilterBar(
         parts.join(", ")
     };
 
-    view! {
-        <details class="filter-bar-details">
-            <summary class="filter-summary">
-                "Filters: " {summary_text}
-            </summary>
-            <div class="filter-bar">
+    FilterDisclosure(FilterDisclosureProps::new(
+        Signal::derive(move || format!("Filters: {}", summary_text())),
+        ui_children(move || {
+            view! {
+                {filter_select(
+                    "Limit:",
+                    SelectProps::new("patrol-limit", numeric_options(&["15", "25", "50"]))
+                        .with_value(Signal::derive(move || filters.get().query.limit.to_string()))
+                        .with_density(Density::Compact)
+                        .on_change(move |ev| {
+                            let value: u16 = event_target_value(&ev).parse().unwrap_or(15);
+                            update_filter!(move |f| f.query.limit = value);
+                        }),
+                )}
 
-            <label class=label_class>
-                "Limit:"
-                <select
-                    class=select_class
-                    on:change=move |ev| {
-                        let value: u16 = event_target_value(&ev).parse().unwrap_or(15);
-                        update_filter!(move |f| f.query.limit = value);
-                    }
-                >
-                    <option value="15" selected=move || filters.get().query.limit == 15>"15"</option>
-                    <option value="25" selected=move || filters.get().query.limit == 25>"25"</option>
-                    <option value="50" selected=move || filters.get().query.limit == 50>"50"</option>
-                </select>
-            </label>
+                {Separator()}
 
-            <span class="filter-separator">"|"</span>
-
-            <label class=label_class>
-                <input
-                    type="checkbox"
-                    class=checkbox_class
-                    prop:checked=move || filters.get().query.unpatrolled_only.is_enabled()
-                    on:change=move |ev| {
+                {filter_checkbox(
+                    "filter-unpatrolled",
+                    "Unpatrolled only",
+                    Signal::derive(move || filters.get().query.unpatrolled_only.is_enabled()),
+                    move |ev| {
                         let checked = event_target_checked(&ev);
                         update_filter!(move |f| f.query.unpatrolled_only = FlagState::from(checked));
-                    }
-                />
-                "Unpatrolled only"
-            </label>
-
-            <label class=label_class>
-                <input
-                    type="checkbox"
-                    class=checkbox_class
-                    prop:checked=move || !filters.get().query.include_minor.is_enabled()
-                    on:change=move |ev| {
+                    },
+                )}
+                {filter_checkbox(
+                    "filter-hide-minor",
+                    "Hide minor",
+                    Signal::derive(move || !filters.get().query.include_minor.is_enabled()),
+                    move |ev| {
                         let checked = event_target_checked(&ev);
                         update_filter!(move |f| f.query.include_minor = FlagState::from(!checked));
-                    }
-                />
-                "Hide minor"
-            </label>
-
-            <label class=label_class>
-                <input
-                    type="checkbox"
-                    class=checkbox_class
-                    prop:checked=move || filters.get().query.include_bots.is_enabled()
-                    on:change=move |ev| {
+                    },
+                )}
+                {filter_checkbox(
+                    "filter-bots",
+                    "Bots",
+                    Signal::derive(move || filters.get().query.include_bots.is_enabled()),
+                    move |ev| {
                         let checked = event_target_checked(&ev);
                         update_filter!(move |f| f.query.include_bots = FlagState::from(checked));
-                    }
-                />
-                "Bots"
-            </label>
+                    },
+                )}
 
-            <span class="filter-separator">"|"</span>
+                {Separator()}
 
-            <label class=label_class>
-                <input
-                    type="checkbox"
-                    class=checkbox_class
-                    prop:checked=move || filters.get().query.include_registered.is_enabled()
-                    on:change=move |ev| {
+                {filter_checkbox(
+                    "filter-registered",
+                    "Registered",
+                    Signal::derive(move || filters.get().query.include_registered.is_enabled()),
+                    move |ev| {
                         let checked = event_target_checked(&ev);
                         update_filter!(move |f| f.query.include_registered = FlagState::from(checked));
-                    }
-                />
-                "Registered"
-            </label>
-
-            <label class=label_class>
-                <input
-                    type="checkbox"
-                    class=checkbox_class
-                    prop:checked=move || filters.get().query.include_anonymous.is_enabled()
-                    on:change=move |ev| {
+                    },
+                )}
+                {filter_checkbox(
+                    "filter-anonymous",
+                    "Anonymous",
+                    Signal::derive(move || filters.get().query.include_anonymous.is_enabled()),
+                    move |ev| {
                         let checked = event_target_checked(&ev);
                         update_filter!(move |f| f.query.include_anonymous = FlagState::from(checked));
-                    }
-                />
-                "Anonymous"
-            </label>
-
-            <label class=label_class>
-                <input
-                    type="checkbox"
-                    class=checkbox_class
-                    prop:checked=move || filters.get().query.include_temporary.is_enabled()
-                    on:change=move |ev| {
+                    },
+                )}
+                {filter_checkbox(
+                    "filter-temporary",
+                    "Temporary",
+                    Signal::derive(move || filters.get().query.include_temporary.is_enabled()),
+                    move |ev| {
                         let checked = event_target_checked(&ev);
                         update_filter!(move |f| f.query.include_temporary = FlagState::from(checked));
-                    }
-                />
-                "Temporary"
-            </label>
-
-            <label class=label_class>
-                <input
-                    type="checkbox"
-                    class=checkbox_class
-                    prop:checked=move || !filters.get().query.include_new_pages.is_enabled()
-                    on:change=move |ev| {
+                    },
+                )}
+                {filter_checkbox(
+                    "filter-hide-new-pages",
+                    "Hide new pages",
+                    Signal::derive(move || !filters.get().query.include_new_pages.is_enabled()),
+                    move |ev| {
                         let checked = event_target_checked(&ev);
                         update_filter!(move |f| f.query.include_new_pages = FlagState::from(!checked));
-                    }
-                />
-                "Hide new pages"
-            </label>
-
-            <label class=label_class>
-                <input
-                    type="checkbox"
-                    class=checkbox_class
-                    prop:checked=move || filters.get().group_edits
-                    on:change=move |ev| {
+                    },
+                )}
+                {filter_checkbox(
+                    "filter-group-edits",
+                    "Group edits",
+                    Signal::derive(move || filters.get().group_edits),
+                    move |ev| {
                         let checked = event_target_checked(&ev);
                         update_filter!(move |f| f.group_edits = checked);
-                    }
-                />
-                "Group edits"
-            </label>
+                    },
+                )}
 
-            <span class="filter-separator">"|"</span>
+                {Separator()}
 
-            <label class=label_class>
-                "Min score:"
-                <select
-                    class=select_class
-                    on:change=move |ev| {
-                        let value: i32 = event_target_value(&ev).parse().unwrap_or(0);
-                        update_filter!(move |f| f.query.min_score = if value == 0 { None } else { Some(value) });
-                    }
-                >
-                    <option value="0" selected=move || filters.get().query.min_score.is_none()>"0"</option>
-                    <option value="10" selected=move || filters.get().query.min_score == Some(10)>"10"</option>
-                    <option value="20" selected=move || filters.get().query.min_score == Some(20)>"20"</option>
-                    <option value="30" selected=move || filters.get().query.min_score == Some(30)>"30"</option>
-                    <option value="50" selected=move || filters.get().query.min_score == Some(50)>"50"</option>
-                    <option value="70" selected=move || filters.get().query.min_score == Some(70)>"70"</option>
-                </select>
-            </label>
+                {filter_select(
+                    "Min score:",
+                    SelectProps::new("filter-min-score", numeric_options(&["0", "10", "20", "30", "50", "70"]))
+                        .with_value(Signal::derive(move || {
+                            filters
+                                .get()
+                                .query
+                                .min_score
+                                .map_or_else(|| "0".to_string(), |score| score.to_string())
+                        }))
+                        .with_density(Density::Compact)
+                        .on_change(move |ev| {
+                            let value: i32 = event_target_value(&ev).parse().unwrap_or(0);
+                            update_filter!(move |f| f.query.min_score = if value == 0 { None } else { Some(value) });
+                        }),
+                )}
 
-            <label class=label_class>
-                "Tag:"
-                <input
-                    type="text"
-                    class=select_class
-                    style="width:100px;"
-                    placeholder="e.g. mw-reverted"
-                    prop:value=move || filters.get().query.tag_filter.unwrap_or_default()
-                    on:change=move |ev| {
-                        let value = event_target_input_value(&ev);
-                        update_filter!(move |f| {
-                            f.query.tag_filter = if value.trim().is_empty() {
-                                None
-                            } else {
-                                Some(value.trim().to_string())
-                            };
-                        });
-                    }
-                />
-            </label>
-
-            <span class="filter-separator">"|"</span>
-
-            {NAMESPACE_OPTIONS
-                .iter()
-                .map(|&(ns, name)| {
-                    let is_active = move || {
-                        let namespaces = filters.get().query.namespaces;
-                        if namespaces.is_empty() {
-                            DEFAULT_NAMESPACES.contains(&ns)
-                        } else {
-                            namespaces.contains(&ns)
+                {Inline(
+                    InlineProps::new(ui_children(move || {
+                        view! {
+                            {filter_label("Tag:")}
+                            {TextInput(
+                                TextInputProps::new("filter-tag")
+                                    .with_value(Signal::derive(move || {
+                                        filters.get().query.tag_filter.unwrap_or_default()
+                                    }))
+                                    .with_placeholder("e.g. mw-reverted")
+                                    .with_density(Density::Compact)
+                                    .with_width(Width::Short)
+                                    .on_change(move |ev| {
+                                        let value = event_target_input_value(&ev);
+                                        update_filter!(move |f| {
+                                            f.query.tag_filter = if value.trim().is_empty() {
+                                                None
+                                            } else {
+                                                Some(value.trim().to_string())
+                                            };
+                                        });
+                                    }),
+                            )}
                         }
-                    };
-                    view! {
-                        <label class=label_class style="font-size:11px;">
-                            <input
-                                type="checkbox"
-                                class=checkbox_class
-                                prop:checked=is_active
-                                on:change=move |ev| {
-                                    let checked = event_target_checked(&ev);
-                                    update_filter!(move |f| {
-                                        if f.query.namespaces.is_empty() {
-                                            f.query.namespaces = DEFAULT_NAMESPACES.to_vec();
-                                        }
-                                        let list = &mut f.query.namespaces;
-                                        if checked && !list.contains(&ns) {
-                                            list.push(ns);
-                                            list.sort_unstable();
-                                        } else if !checked {
-                                            list.retain(|&n| n != ns);
-                                        }
-                                    });
+                        .into_any()
+                    }))
+                    .with_gap(Gap::XSmall),
+                )}
+
+                {Separator()}
+
+                {NAMESPACE_OPTIONS
+                    .iter()
+                    .map(|&(ns, name)| {
+                        filter_checkbox(
+                            format!("filter-namespace-{ns}"),
+                            name,
+                            Signal::derive(move || {
+                                let namespaces = filters.get().query.namespaces;
+                                if namespaces.is_empty() {
+                                    default_namespaces.get().contains(&ns)
+                                } else {
+                                    namespaces.contains(&ns)
                                 }
-                            />
-                            {name}
-                        </label>
-                    }
-                })
-                .collect_view()}
+                            }),
+                            move |ev| {
+                                let checked = event_target_checked(&ev);
+                                update_filter!(move |f| {
+                                    if f.query.namespaces.is_empty() {
+                                        f.query.namespaces = default_namespaces.get_untracked();
+                                    }
+                                    let list = &mut f.query.namespaces;
+                                    if checked && !list.contains(&ns) {
+                                        list.push(ns);
+                                        list.sort_unstable();
+                                    } else if !checked {
+                                        list.retain(|&n| n != ns);
+                                    }
+                                });
+                            },
+                        )
+                    })
+                    .collect_view()}
 
-            <div class="flex-spacer"></div>
+                {Spacer()}
 
-            <button
-                class="btn btn-ghost btn-compact"
-                disabled=move || next_continue.get().is_none()
-                on:click=load_older
-            >
-                "Load older \u{25b8}"
-            </button>
-            </div>
-        </details>
-    }
+                {Button(
+                    ButtonProps::new("Load older \u{25b8}")
+                        .with_surface(ButtonSurface::Ghost)
+                        .with_density(Density::Compact)
+                        .with_disabled(Signal::derive(move || next_continue.get().is_none()))
+                        .on_click(move |_| {
+                            if let Some(token) = next_continue.get() {
+                                let mut current = filters.get();
+                                current.query.rccontinue = Some(token);
+                                set_filters.set(current);
+                            }
+                        }),
+                )}
+            }
+            .into_any()
+        }),
+    ))
+}
+
+fn filter_label(label: &'static str) -> AnyView {
+    Text(
+        TextProps::new(ui_children(move || view! { {label} }.into_any()))
+            .with_tone(Tone::Muted)
+            .with_size(Size::Small),
+    )
+}
+
+fn filter_select(label: &'static str, select: SelectProps) -> impl IntoView {
+    let field_id = select.id().to_string();
+    Field(
+        FieldProps::new(
+            label,
+            ui_children(move || {
+                view! {
+                    {Select(select)}
+                }
+                .into_any()
+            }),
+        )
+        .with_id(field_id)
+        .with_density(Density::Compact),
+    )
+}
+
+fn filter_checkbox(
+    id: impl Into<String>,
+    label: impl Into<String>,
+    checked: Signal<bool>,
+    on_change: impl Fn(leptos::ev::Event) + Send + Sync + 'static,
+) -> impl IntoView {
+    Checkbox(
+        CheckboxProps::new(id, label)
+            .with_checked(checked)
+            .with_density(Density::Compact)
+            .on_change(on_change),
+    )
+}
+
+fn numeric_options(values: &[&str]) -> Vec<SelectOption> {
+    values
+        .iter()
+        .map(|value| SelectOption::new(*value, *value))
+        .collect()
 }
 
 #[cfg(target_arch = "wasm32")]

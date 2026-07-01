@@ -1,4 +1,4 @@
-use std::{collections::HashMap, sync::atomic::Ordering};
+use std::collections::HashMap;
 
 use axum::{
     Json,
@@ -10,7 +10,6 @@ use sp42_core::{
 };
 
 use crate::http_errors::{forbidden_error, unauthorized_error};
-use crate::local_env::LocalOAuthConfig;
 use crate::runtime_status::DevAuthBootstrapStatus;
 use crate::state::{AppState, PendingOAuthLogin, SessionSnapshot, StoredSession};
 
@@ -18,7 +17,13 @@ pub(crate) const SESSION_COOKIE_NAME: &str = "sp42_dev_session";
 pub(crate) use sp42_core::routes::CSRF_HEADER_NAME;
 pub(crate) const SESSION_IDLE_TIMEOUT_MS: i64 = 30 * 60 * 1000;
 const SESSION_ABSOLUTE_TIMEOUT_MS: i64 = 8 * 60 * 60 * 1000;
-const SESSION_COOKIE_MAX_AGE_SECONDS: i64 = SESSION_IDLE_TIMEOUT_MS / 1000;
+// The cookie must live as long as the session possibly can — the absolute
+// timeout, not the (sliding) idle timeout. Pinning it to the idle window expired
+// the browser cookie 30 min after login even for an active user whose session
+// the server keeps alive via touches, bouncing them to login. The server still
+// enforces the finer sliding-idle policy; an idle-expired session just yields a
+// cookie the server rejects. Codex review #90.
+const SESSION_COOKIE_MAX_AGE_SECONDS: i64 = SESSION_ABSOLUTE_TIMEOUT_MS / 1000;
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub(crate) struct OAuthSessionView {
@@ -95,7 +100,7 @@ pub(crate) fn auth_session_view_without_session(state: &AppState) -> OAuthSessio
         refresh_available: FlagState::Disabled,
         bridge_mode: "inactive".to_string(),
         csrf_token: None,
-        local_token_available: FlagState::from(state.local_oauth.access_token().is_some()),
+        local_token_available: FlagState::from(state.shared_local_access_token().is_some()),
         oauth_client_ready: FlagState::from(state.local_oauth.has_confidential_oauth_client()),
         login_path: AUTH_LOGIN_PATH.to_string(),
         logout_path: AUTH_LOGOUT_PATH.to_string(),
@@ -117,7 +122,7 @@ pub(crate) async fn auth_session_view(
             refresh_available: FlagState::from(sessions_refresh_available(state, headers).await),
             bridge_mode: session.bridge_mode,
             csrf_token: Some(session.csrf_token),
-            local_token_available: FlagState::from(state.local_oauth.access_token().is_some()),
+            local_token_available: FlagState::from(state.shared_local_access_token().is_some()),
             oauth_client_ready: FlagState::from(state.local_oauth.has_confidential_oauth_client()),
             login_path: AUTH_LOGIN_PATH.to_string(),
             logout_path: AUTH_LOGOUT_PATH.to_string(),
@@ -154,7 +159,7 @@ pub(crate) async fn install_session(
     stored: StoredSession,
     current_ms: i64,
 ) -> String {
-    let session_id = next_session_id(state, current_ms);
+    let session_id = next_session_id();
     let mut sessions = state.sessions.write().await;
     prune_expired_sessions(&mut sessions, current_ms);
     if let Some(prior_session_id) = prior_session_id {
@@ -166,7 +171,7 @@ pub(crate) async fn install_session(
 
 pub(crate) fn to_status(
     session: Option<&StoredSession>,
-    local_oauth: &LocalOAuthConfig,
+    local_token_available: bool,
     now_ms: i64,
 ) -> DevAuthSessionStatus {
     DevAuthSessionStatus {
@@ -178,7 +183,9 @@ pub(crate) fn to_status(
         bridge_mode: session
             .map_or_else(|| "inactive".to_string(), |entry| entry.bridge_mode.clone()),
         csrf_token: session.map(|entry| entry.csrf_token.clone()),
-        local_token_available: local_oauth.access_token().is_some(),
+        // Callers pass `state.shared_local_access_token().is_some()` so this is
+        // false outside local mode (the env token can't act as identity there).
+        local_token_available,
     }
 }
 
@@ -189,7 +196,7 @@ pub(crate) fn bootstrap_status(
     let source_report = state.local_oauth.source_report();
 
     DevAuthBootstrapStatus {
-        bootstrap_ready: state.local_oauth.access_token().is_some(),
+        bootstrap_ready: state.shared_local_access_token().is_some(),
         oauth: state.local_oauth.status(),
         session: auth.clone(),
         source_path: source_report
@@ -213,13 +220,21 @@ pub(crate) fn session_cookie_value(headers: &HeaderMap) -> Option<String> {
         })
 }
 
-pub(crate) fn next_session_id(state: &AppState, current_ms: i64) -> String {
-    let counter = state.next_session_id.fetch_add(1, Ordering::Relaxed);
+pub(crate) fn next_session_id() -> String {
+    // CSPRNG session identifier (256 bits). It gates the stored Wikimedia bearer
+    // token, so it must be unguessable — never derive it from time/pid/counter,
+    // which an attacker who can approximate the login time could reconstruct.
+    // Codex review #90 (P1).
+    use crate::runtime_adapters::ServerRng;
+    use sp42_types::Rng as _;
+
+    let mut rng = ServerRng;
     format!(
-        "{:016x}{:016x}{:08x}",
-        u64::try_from(current_ms).unwrap_or(u64::MAX),
-        counter,
-        std::process::id()
+        "{:016x}{:016x}{:016x}{:016x}",
+        rng.next_u64(),
+        rng.next_u64(),
+        rng.next_u64(),
+        rng.next_u64()
     )
 }
 
@@ -240,13 +255,17 @@ fn session_cookie_header_value(
     session_id: &str,
     max_age_seconds: i64,
 ) -> Option<HeaderValue> {
-    let secure = if state.deployment.mode.uses_secure_cookies() {
+    let same_site = state.deployment.mode.session_cookie_same_site();
+    // Browsers only honor `SameSite=None` when it is paired with `Secure`, so
+    // force `Secure` for the cross-site modes regardless of `uses_secure_cookies`
+    // (loopback/localhost is a secure context in the webview). Codex review #90.
+    let secure = if same_site == "None" || state.deployment.mode.uses_secure_cookies() {
         "; Secure"
     } else {
         ""
     };
     HeaderValue::from_str(&format!(
-        "{SESSION_COOKIE_NAME}={session_id}; HttpOnly; SameSite=Lax; Path=/; Max-Age={max_age_seconds}{secure}"
+        "{SESSION_COOKIE_NAME}={session_id}; HttpOnly; SameSite={same_site}; Path=/; Max-Age={max_age_seconds}{secure}"
     ))
     .ok()
 }
@@ -258,7 +277,14 @@ pub(crate) fn session_expires_at_ms(session: &StoredSession, current_time_ms: i6
     let absolute_deadline = session
         .created_at_ms
         .saturating_add(SESSION_ABSOLUTE_TIMEOUT_MS);
-    let deadline = idle_deadline.min(absolute_deadline);
+    let mut deadline = idle_deadline.min(absolute_deadline);
+    // The session cannot outlive the upstream OAuth access token: once it
+    // expires, every wiki API call fails with an expired bearer while the user
+    // still looks authenticated. Cap the session at that deadline so it re-gates
+    // instead (token refresh is out of scope, ADR-0014). Codex review #90.
+    if let Some(upstream) = session.upstream_access_expires_at_ms {
+        deadline = deadline.min(upstream);
+    }
     deadline.max(current_time_ms)
 }
 
@@ -335,8 +361,12 @@ pub(crate) async fn current_status(
             token_present: true,
             bridge_mode: session.bridge_mode,
             csrf_token: Some(session.csrf_token),
-            local_token_available: state.local_oauth.access_token().is_some(),
+            local_token_available: state.shared_local_access_token().is_some(),
         },
-        None => to_status(None, &state.local_oauth, state.clock.now_ms()),
+        None => to_status(
+            None,
+            state.shared_local_access_token().is_some(),
+            state.clock.now_ms(),
+        ),
     }
 }

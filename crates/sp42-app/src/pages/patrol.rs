@@ -1,7 +1,9 @@
 use leptos::prelude::*;
+use sp42_ui::{WorkspaceGrid, WorkspaceGridProps};
 
 use crate::components::filter_bar::FilterBar;
-use crate::platform::config::configured_default_wiki_id;
+use crate::components::ui_children;
+use crate::platform::config::selected_wiki_id;
 
 mod action_controller;
 mod eventstream_controller;
@@ -26,7 +28,7 @@ use view_components::{
 
 #[component]
 pub fn PatrolSurface() -> impl IntoView {
-    let active_wiki_id = configured_default_wiki_id();
+    let active_wiki_id = selected_wiki_id();
     let (selected_rev_id, set_selected_rev_id) = signal(None::<u64>);
     let (review_note, set_review_note) = signal(String::new());
     let (show_help, set_show_help) = signal(false);
@@ -41,6 +43,34 @@ pub fn PatrolSurface() -> impl IntoView {
     let queue_controller = create_patrol_queue_controller(selected_rev_id);
     let filters = queue_controller.filters;
     let set_filters = queue_controller.set_filters;
+
+    // The active wiki's resolved default namespaces, so the filter checkboxes show
+    // what the server uses for an unfiltered query (configured wikis like enwiki
+    // differ from the universal default). Seeded with the shared default, then
+    // refined by a one-shot fetch on mount. Codex review #90.
+    let (default_namespaces, set_default_namespaces) =
+        signal(sp42_core::DEFAULT_PATROL_NAMESPACES.to_vec());
+    {
+        let wiki = active_wiki_id.clone();
+        let fetch = Action::new_local(move |(): &()| {
+            let wiki = wiki.clone();
+            async move {
+                if let Ok(namespaces) =
+                    crate::platform::live::fetch_wiki_namespace_defaults(&wiki).await
+                {
+                    if !namespaces.is_empty() {
+                        set_default_namespaces.set(namespaces);
+                    }
+                }
+            }
+        });
+        Effect::new(move |ran: Option<bool>| {
+            if ran.is_none() {
+                fetch.dispatch_local(());
+            }
+            true
+        });
+    }
     let all_edits = queue_controller.all_edits;
     let set_all_edits = queue_controller.set_all_edits;
     let group_rev_ids = queue_controller.group_rev_ids;
@@ -125,23 +155,8 @@ pub fn PatrolSurface() -> impl IntoView {
                 }
             }
 
-            view! {
-                <div
-                    tabindex="0"
-                    on:keydown=move |event| {
-                        handle_patrol_keydown(
-                            event,
-                            set_action_trigger,
-                            set_skip_trigger,
-                            selected_index,
-                            queue_signal,
-                            set_selected_rev_id,
-                            set_show_backoffice,
-                            set_show_help,
-                        );
-                    }
-                    class="patrol-grid"
-                >
+            WorkspaceGrid(
+                WorkspaceGridProps::new(ui_children(move || view! {
 
                     <HelpModal show_help=show_help set_show_help=set_show_help />
 
@@ -162,6 +177,7 @@ pub fn PatrolSurface() -> impl IntoView {
                         filters=filters
                         set_filters=set_filters
                         next_continue=next_continue
+                        default_namespaces=default_namespaces
                     />
 
                     <QueuePane
@@ -193,8 +209,21 @@ pub fn PatrolSurface() -> impl IntoView {
                         set_action_trigger=set_action_trigger
                         set_skip_trigger=set_skip_trigger
                     />
-                </div>
-            }.into_any()
+                }.into_any()))
+                .on_keydown(move |event| {
+                        handle_patrol_keydown(
+                            event,
+                            set_action_trigger,
+                            set_skip_trigger,
+                            selected_index,
+                            queue_signal,
+                            set_selected_rev_id,
+                            set_show_backoffice,
+                            set_show_help,
+                        );
+                })
+            )
+            .into_any()
         }}
     }
 }

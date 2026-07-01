@@ -1,10 +1,14 @@
 use leptos::prelude::*;
+use sp42_ui::{
+    BadgeHeader, BadgeHeaderProps, Gap, Inline, InlineProps, Panel, PanelProps, Surface,
+};
 
 use super::{
     inspector_feed::{
         InspectorFeed, classify_inspector_line, inspector_entries_from_lines, kind_meta,
     },
-    status_badge::{StatusBadge, StatusTone},
+    status_badge::{StatusBadge, Tone},
+    ui_children,
 };
 
 #[component]
@@ -20,20 +24,18 @@ pub fn DebugPanel(lines: Vec<String>) -> impl IntoView {
         .unwrap_or(entries.len());
     let active_kinds = summarize_kinds(&lines);
 
-    view! {
-        <section
-            class="panel"
-        >
-            <header style="display:grid;gap:4px;">
-                <div style="display:flex;align-items:center;gap:7px;flex-wrap:wrap;">
-                    <StatusBadge label="Debug Panel".to_string() tone=StatusTone::Accent />
-                    <StatusBadge label=format!("{} lines", queue_depth) tone=StatusTone::Info />
-                </div>
-                <p style="margin:0;color:#8b9fc0;">
-                    "Structured state snapshot for the current dashboard view."
-                </p>
-            </header>
-            <div style="display:flex;gap:7px;flex-wrap:wrap;">
+    Panel(PanelProps::new(ui_children(move || {
+        view! {
+            {BadgeHeader(
+                BadgeHeaderProps::new(
+                    "Structured state snapshot for the current dashboard view.",
+                    ui_children(move || view! {
+                        <StatusBadge label="Debug Panel".to_string() tone=Tone::Accent />
+                        <StatusBadge label=format!("{} lines", queue_depth) tone=Tone::Info />
+                    }.into_any()),
+                )
+            )}
+            {Inline(InlineProps::new(ui_children(move || view! {
                 {active_kinds
                     .into_iter()
                     .map(|(label, count, tone)| {
@@ -42,16 +44,18 @@ pub fn DebugPanel(lines: Vec<String>) -> impl IntoView {
                         }
                     })
                     .collect_view()}
-            </div>
+            }.into_any())).with_gap(Gap::Small))}
             <InspectorFeed entries=entries />
-        </section>
-    }
+        }
+        .into_any()
+    }))
+    .with_surface(Surface::Default))
 }
 
-fn summarize_kinds(lines: &[String]) -> Vec<(String, usize, StatusTone)> {
+fn summarize_kinds(lines: &[String]) -> Vec<(String, usize, Tone)> {
     use std::collections::BTreeMap;
 
-    let mut counts = BTreeMap::<String, (usize, StatusTone)>::new();
+    let mut counts = BTreeMap::<String, (usize, Tone)>::new();
     for line in lines {
         let kind = classify_inspector_line(line);
         let (tone, label) = kind_meta(kind);

@@ -1201,6 +1201,8 @@ body {
 
 .sp42-input,
 .sp42-select {
+  box-sizing: border-box;
+  max-width: 100%;
   min-height: var(--control-height-normal);
   padding: var(--space-xs) var(--space-md);
   background: var(--input);
@@ -1637,6 +1639,10 @@ body {
   padding: 10px;
   background: var(--panel);
   border-block-end: 1px solid var(--border);
+}
+
+.sp42-command-bar > * {
+  min-width: 0;
 }
 
 .sp42-command-title {

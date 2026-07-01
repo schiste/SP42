@@ -197,13 +197,16 @@ in our process.
     and #60 is a logged P1 the maintainers want closed in code.
 
 12. **Testability without a new heavy dependency.** Unit-test the guarded
-    resolver with injected resolutions (no network). Integration-test SSRF the
-    way #51 already does — raw loopback servers + reqwest `.resolve()` so a
-    floor-passing hostname can reach the test server while the guard stays
-    active — asserting redirect-to-private and literal-to-private are both
-    blocked. Retry / `Retry-After` are tested against a local stub server. A
-    record/replay (`ReplayHttpClient`) cassette is **not** adopted now; revisit
-    only if hermetic full-fetch replay becomes necessary.
+    resolver with injected resolutions (no network), including public,
+    private/link-local, and IPv4-mapped IPv6 answers. Integration tests split the
+    concerns instead of trying to reach loopback while the guard is active:
+    SSRF tests inject private/loopback resolutions and assert the guarded source
+    face rejects them before connect; redirect-to-private and literal-to-private
+    tests assert the literal gates reject the hop. Redirect success, response-size
+    cap, retry, and `Retry-After` behavior run against local stub servers through
+    an explicitly scoped test resolver / allow-private fixture. A record/replay
+    (`ReplayHttpClient`) cassette is **not** adopted now; revisit only if
+    hermetic full-fetch replay becomes necessary.
 
 ## Consequences
 

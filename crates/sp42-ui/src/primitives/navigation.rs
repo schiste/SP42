@@ -277,7 +277,7 @@ pub fn workspace_tabs(props: WorkspaceTabsProps) -> impl IntoView {
     let children = props.children;
 
     view! {
-        <div class="sp42-workspace-tabs" role="tablist" aria-label=props.aria_label>
+        <div class="sp42-workspace-tabs" role="group" aria-label=props.aria_label>
             {children()}
         </div>
     }
@@ -329,7 +329,7 @@ pub fn workspace_tab(props: WorkspaceTabProps) -> impl IntoView {
                 "sp42-workspace-tab",
                 if selected.get() { "sp42-workspace-tab-active" } else { "" }
             ])
-            aria-selected=move || selected.get().to_string()
+            aria-pressed=move || selected.get().to_string()
             on:click=move |ev| {
                 if let Some(callback) = on_click {
                     callback.run(ev);

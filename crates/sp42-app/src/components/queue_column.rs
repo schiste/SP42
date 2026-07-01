@@ -3,10 +3,11 @@ use sp42_core::{EditorIdentity, QueuedEdit};
 use sp42_ui::{
     Align, DeltaText, DeltaTextProps, EmptyState, EmptyStateProps, Gap, Inline, InlineProps,
     InlineState, NavigationItem, NavigationItemProps, NavigationItemState, NavigationPane,
-    NavigationPaneProps, ScoreText, ScoreTextProps, ScoreTextState, ScoreTone, Size, Stack,
-    StackProps, StatusBadgeProps, Text, TextOverflow, TextProps, Tone,
+    NavigationPaneProps, ScoreText, ScoreTextProps, ScoreTextState, Size, Stack, StackProps,
+    StatusBadgeProps, Text, TextOverflow, TextProps, Tone,
 };
 
+use super::style::score_tone_for_score;
 use super::ui_children;
 
 #[component]
@@ -62,6 +63,7 @@ pub fn QueueColumn(
                                             view! {
                                                 {ScoreText(
                                                     ScoreTextProps::new(score)
+                                                        .with_tone(score_tone_for_score(score))
                                                         .with_state(ScoreTextState::TextOnly)
                                                         .with_size(Size::Medium),
                                                 )}
@@ -142,7 +144,7 @@ fn navigation_item_props(
 ) -> NavigationItemProps {
     let props = NavigationItemProps::new(children)
         .with_selected(selected)
-        .with_tone(ScoreTone::for_score(score))
+        .with_tone(score_tone_for_score(score))
         .on_click(on_click);
     if is_patrolled {
         props.with_state(NavigationItemState::Subdued)

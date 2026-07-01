@@ -326,7 +326,7 @@ pub fn link(props: LinkProps) -> AnyView {
 
     if props.external {
         view! {
-            <a href=props.href target="_blank" rel="noopener" class=class_name>
+            <a href=props.href target="_blank" rel="noopener noreferrer" class=class_name>
                 {props.label}
             </a>
         }

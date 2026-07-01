@@ -259,8 +259,10 @@ impl FieldProps {
 }
 
 #[must_use]
-pub fn field(props: FieldProps) -> impl IntoView {
+pub fn field(props: FieldProps) -> AnyView {
     let control = props.control;
+    let id = props.id;
+    let class_name = class_names(&["sp42-field", props.density.class_name()]);
     let required = props
         .required
         .then(|| view! { <span class="sp42-field-required">"*"</span> }.into_any());
@@ -269,13 +271,26 @@ pub fn field(props: FieldProps) -> impl IntoView {
     let error = (!props.error.is_empty())
         .then(|| view! { <p class="sp42-field-error">{props.error}</p> }.into_any());
 
-    view! {
-        <label for=props.id class=class_names(&["sp42-field", props.density.class_name()])>
-            <span class="sp42-field-label">{props.label}{required}</span>
-            {control()}
-            {hint}
-            {error}
-        </label>
+    if id.is_empty() {
+        view! {
+            <label class=class_name>
+                <span class="sp42-field-label">{props.label}{required}</span>
+                {control()}
+                {hint}
+                {error}
+            </label>
+        }
+        .into_any()
+    } else {
+        view! {
+            <label for=id class=class_name>
+                <span class="sp42-field-label">{props.label}{required}</span>
+                {control()}
+                {hint}
+                {error}
+            </label>
+        }
+        .into_any()
     }
 }
 
@@ -512,6 +527,11 @@ impl SelectProps {
             width: Width::default(),
             on_change: None,
         }
+    }
+
+    #[must_use]
+    pub fn id(&self) -> &str {
+        &self.id
     }
 
     #[must_use]

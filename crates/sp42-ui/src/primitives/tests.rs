@@ -179,9 +179,6 @@ fn text_and_score_variant_classes_are_semantic() {
     assert_eq!(Size::Small.heading_class_name(), "sp42-heading-sm");
     assert_eq!(Size::Medium.heading_class_name(), "sp42-heading-md");
     assert_eq!(Size::Large.heading_class_name(), "sp42-heading-lg");
-    assert_eq!(ScoreTone::for_score(12), ScoreTone::Low);
-    assert_eq!(ScoreTone::for_score(42), ScoreTone::Medium);
-    assert_eq!(ScoreTone::for_score(90), ScoreTone::High);
     assert_eq!(ScoreTone::Low.icon(), "\u{2713}");
     assert_eq!(ScoreTone::Medium.icon(), "?");
     assert_eq!(ScoreTone::High.icon(), "!!");
@@ -443,7 +440,9 @@ fn state_and_navigation_components_construct_from_typed_props() {
         LinkProps::new("External", "https://example.test").external(),
     ));
     view_is_constructible(score_text(
-        ScoreTextProps::new(72).with_state(ScoreTextState::TextOnly),
+        ScoreTextProps::new(72)
+            .with_tone(ScoreTone::High)
+            .with_state(ScoreTextState::TextOnly),
     ));
     view_is_constructible(delta_text(
         DeltaTextProps::new(5)
@@ -466,6 +465,7 @@ fn state_and_navigation_components_construct_from_typed_props() {
     view_is_constructible(context_bar(ContextBarProps::new(child())));
     view_is_constructible(score_button(
         ScoreButtonProps::new(84)
+            .with_tone(ScoreTone::High)
             .with_state(true)
             .with_title("Score")
             .on_click(|_| {}),

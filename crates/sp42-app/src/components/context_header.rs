@@ -7,7 +7,10 @@ use sp42_ui::{
     TextProps, Tone,
 };
 
-use super::{style::wiki_base_url, ui_children};
+use super::{
+    style::{score_tone_for_score, wiki_base_url},
+    ui_children,
+};
 
 /// Compact horizontal bar above the diff showing the selected edit's key info.
 #[component]
@@ -77,6 +80,7 @@ pub fn ContextHeader(edit: Option<QueuedEdit>) -> impl IntoView {
                 view! {
                     {ScoreButton(
                         ScoreButtonProps::new(score)
+                            .with_tone(score_tone_for_score(score))
                             .with_state(Signal::derive(move || show_score_details.get()))
                             .with_title("Show score details")
                             .on_click(move |_| {

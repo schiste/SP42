@@ -2,9 +2,9 @@ use leptos::prelude::*;
 use sp42_core::FlagState;
 use sp42_live::LiveOperatorQuery;
 use sp42_ui::{
-    Button, ButtonProps, ButtonSurface, Checkbox, CheckboxProps, Density, FilterDisclosure,
-    FilterDisclosureProps, Gap, Inline, InlineProps, Select, SelectOption, SelectProps, Separator,
-    Size, Spacer, Text, TextInput, TextInputProps, TextProps, Tone, Width,
+    Button, ButtonProps, ButtonSurface, Checkbox, CheckboxProps, Density, Field, FieldProps,
+    FilterDisclosure, FilterDisclosureProps, Gap, Inline, InlineProps, Select, SelectOption,
+    SelectProps, Separator, Size, Spacer, Text, TextInput, TextInputProps, TextProps, Tone, Width,
 };
 
 use super::ui_children;
@@ -298,15 +298,19 @@ fn filter_label(label: &'static str) -> AnyView {
 }
 
 fn filter_select(label: &'static str, select: SelectProps) -> impl IntoView {
-    Inline(
-        InlineProps::new(ui_children(move || {
-            view! {
-                {filter_label(label)}
-                {Select(select)}
-            }
-            .into_any()
-        }))
-        .with_gap(Gap::XSmall),
+    let field_id = select.id().to_string();
+    Field(
+        FieldProps::new(
+            label,
+            ui_children(move || {
+                view! {
+                    {Select(select)}
+                }
+                .into_any()
+            }),
+        )
+        .with_id(field_id)
+        .with_density(Density::Compact),
     )
 }
 

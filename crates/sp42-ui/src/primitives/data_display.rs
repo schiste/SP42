@@ -15,17 +15,6 @@ pub enum ScoreTone {
 
 impl ScoreTone {
     #[must_use]
-    pub const fn for_score(score: i32) -> Self {
-        if score >= 70 {
-            Self::High
-        } else if score >= 30 {
-            Self::Medium
-        } else {
-            Self::Low
-        }
-    }
-
-    #[must_use]
     pub const fn icon(self) -> &'static str {
         match self {
             Self::High => "!!",
@@ -64,10 +53,16 @@ impl ScoreTextProps {
     pub const fn new(score: i32) -> Self {
         Self {
             score,
-            tone: ScoreTone::for_score(score),
+            tone: ScoreTone::Low,
             size: Size::Medium,
             state: ScoreTextState::WithIcon,
         }
+    }
+
+    #[must_use]
+    pub const fn with_tone(mut self, tone: ScoreTone) -> Self {
+        self.tone = tone;
+        self
     }
 
     #[must_use]
@@ -200,6 +195,7 @@ pub fn delta_text(props: DeltaTextProps) -> impl IntoView {
 pub use delta_text as DeltaText;
 pub struct ScoreButtonProps {
     score: i32,
+    tone: ScoreTone,
     expanded: State,
     title: String,
     on_click: Option<Callback<leptos::ev::MouseEvent>>,
@@ -210,10 +206,17 @@ impl ScoreButtonProps {
     pub fn new(score: i32) -> Self {
         Self {
             score,
+            tone: ScoreTone::Low,
             expanded: State::default(),
             title: String::new(),
             on_click: None,
         }
+    }
+
+    #[must_use]
+    pub const fn with_tone(mut self, tone: ScoreTone) -> Self {
+        self.tone = tone;
+        self
     }
 
     #[must_use]
@@ -255,7 +258,7 @@ pub fn score_button(props: ScoreButtonProps) -> impl IntoView {
                 }
             }
         >
-            {ScoreText(ScoreTextProps::new(props.score))}
+            {ScoreText(ScoreTextProps::new(props.score).with_tone(props.tone))}
         </button>
     }
 }

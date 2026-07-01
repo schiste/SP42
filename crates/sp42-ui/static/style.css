@@ -25,7 +25,8 @@
   /* Text */
   --text: #eaecf0; /* color-base */
   --muted: #a2a9b1; /* color-subtle */
-  --subtle: #72777d;
+  --subtle: #a2a9b1;
+  --text-muted: var(--muted);
   --accent: #88a3e8; /* color-progressive */
   --link: #88a3e8;
 
@@ -64,8 +65,8 @@
   /* Borders — Codex dark */
   --border: #54595d; /* border-color-subtle */
   --border-light: #2e3136; /* border-color-muted */
-  --border-emphasis: #72777d; /* border-color-base */
-  --separator-color: #72777d;
+  --border-emphasis: #a2a9b1; /* border-color-base */
+  --separator-color: #a2a9b1;
 
   /* Radii — Codex uses a tight 2px corner */
   --radius-sm: 2px;
@@ -124,7 +125,8 @@
   /* Text */
   --text: #202122; /* color-base */
   --muted: #54595d; /* color-subtle */
-  --subtle: #72777d;
+  --subtle: #54595d;
+  --text-muted: var(--muted);
   --accent: #36c; /* color-progressive */
   --link: #36c;
 
@@ -523,19 +525,28 @@ body {
   color: var(--accent);
 }
 
-.sp42-button.sp42-size-small,
+.sp42-button.sp42-size-small {
+  min-height: var(--control-height-compact);
+  padding: var(--space-xxs) var(--space-md);
+  font-size: var(--font-size-sm);
+}
+
+.sp42-button.sp42-size-medium {
+  min-height: var(--control-height-normal);
+}
+
+.sp42-button.sp42-size-large {
+  min-height: var(--control-height-comfortable);
+  padding: var(--space-sm) var(--space-xl);
+  font-size: var(--font-size-lg);
+}
+
 .sp42-button.sp42-density-compact {
   min-height: var(--control-height-compact);
   padding: var(--space-xxs) var(--space-md);
   font-size: var(--font-size-sm);
 }
 
-.sp42-button.sp42-size-medium,
-.sp42-button.sp42-density-normal {
-  min-height: var(--control-height-normal);
-}
-
-.sp42-button.sp42-size-large,
 .sp42-button.sp42-density-comfortable {
   min-height: var(--control-height-comfortable);
   padding: var(--space-sm) var(--space-xl);
@@ -544,12 +555,6 @@ body {
 
 .sp42-button-recommended {
   box-shadow: var(--ring);
-  animation: sp42-pulse 2s ease-in-out infinite;
-}
-
-@keyframes sp42-pulse {
-  0%, 100% { box-shadow: var(--ring); }
-  50% { box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 35%, transparent); }
 }
 
 /* ─── Filters ─── */

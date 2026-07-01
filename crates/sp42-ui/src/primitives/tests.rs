@@ -156,12 +156,12 @@ fn control_variant_classes_are_semantic() {
 #[test]
 fn text_and_score_variant_classes_are_semantic() {
     assert_eq!(Tone::Default.text_class_name(), "sp42-text-default");
-    assert_eq!(Tone::Muted.text_class_name(), "text-muted");
+    assert_eq!(Tone::Muted.text_class_name(), "sp42-text-muted");
     assert_eq!(Tone::Subtle.text_class_name(), "sp42-text-subtle");
-    assert_eq!(Tone::Accent.text_class_name(), "text-accent");
-    assert_eq!(Tone::Success.text_class_name(), "text-success");
-    assert_eq!(Tone::Warning.text_class_name(), "text-warning");
-    assert_eq!(Tone::Danger.text_class_name(), "text-danger");
+    assert_eq!(Tone::Accent.text_class_name(), "sp42-text-accent");
+    assert_eq!(Tone::Success.text_class_name(), "sp42-text-success");
+    assert_eq!(Tone::Warning.text_class_name(), "sp42-text-warning");
+    assert_eq!(Tone::Danger.text_class_name(), "sp42-text-danger");
     assert_eq!(Size::XSmall.text_class_name(), "sp42-text-xs");
     assert_eq!(Size::Small.text_class_name(), "sp42-text-sm");
     assert_eq!(Size::Medium.text_class_name(), "sp42-text-md");
@@ -170,7 +170,7 @@ fn text_and_score_variant_classes_are_semantic() {
     assert_eq!(TextWeight::Medium.class_name(), "sp42-weight-medium");
     assert_eq!(TextWeight::Bold.class_name(), "sp42-weight-bold");
     assert_eq!(TextOverflow::Normal.class_name(), "");
-    assert_eq!(TextOverflow::Truncate.class_name(), "truncate");
+    assert_eq!(TextOverflow::Truncate.class_name(), "sp42-truncate");
     assert_eq!(TextOverflow::ClampTwo.class_name(), "sp42-text-clamp-two");
     assert_eq!(
         TextOverflow::PreserveLines.class_name(),
@@ -192,9 +192,9 @@ fn text_and_score_variant_classes_are_semantic() {
 
 #[test]
 fn complex_view_variant_classes_are_semantic() {
-    assert_eq!(DiffTone::Insert.class_name(), "diff-insert");
-    assert_eq!(DiffTone::Delete.class_name(), "diff-delete");
-    assert_eq!(DiffTone::Equal.class_name(), "diff-equal");
+    assert_eq!(DiffTone::Insert.class_name(), "sp42-diff-insert");
+    assert_eq!(DiffTone::Delete.class_name(), "sp42-diff-delete");
+    assert_eq!(DiffTone::Equal.class_name(), "sp42-diff-equal");
     assert_eq!(
         DiffTone::Insert.inline_class_name(),
         "sp42-diff-inline-insert"
@@ -214,11 +214,11 @@ fn complex_view_variant_classes_are_semantic() {
     );
     assert_eq!(
         RenderedHighlightTone::Add.class_name(),
-        "rendered-hunk-highlight-add"
+        "sp42-rendered-hunk-highlight-add"
     );
     assert_eq!(
         RenderedHighlightTone::Remove.class_name(),
-        "rendered-hunk-highlight-remove"
+        "sp42-rendered-hunk-highlight-remove"
     );
 }
 
@@ -262,7 +262,7 @@ fn prop_builders_compose_expected_class_names() {
             .with_overflow(TextOverflow::PreserveLines)
             .with_family(TextFamily::Mono)
             .class_name()
-            .contains("mono")
+            .contains("sp42-mono")
     );
     assert!(
         HeadingProps::new(child())

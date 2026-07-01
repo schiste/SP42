@@ -36,7 +36,7 @@ impl TextFamily {
     pub const fn class_name(self) -> &'static str {
         match self {
             Self::Default => "",
-            Self::Mono => "mono",
+            Self::Mono => "sp42-mono",
         }
     }
 }
@@ -64,7 +64,7 @@ impl TextOverflow {
     pub const fn class_name(self) -> &'static str {
         match self {
             Self::Normal => "",
-            Self::Truncate => "truncate",
+            Self::Truncate => "sp42-truncate",
             Self::ClampTwo => "sp42-text-clamp-two",
             Self::PreserveLines => "sp42-text-preserve-lines",
         }
@@ -281,8 +281,8 @@ pub fn section_header(props: SectionHeaderProps) -> impl IntoView {
         .map(|actions| view! { <div class="sp42-section-actions">{actions()}</div> }.into_any());
 
     view! {
-        <header class=class_names(&["sp42-section-header", props.density.class_name()])>
-            <span class="section-header">{props.title}</span>
+        <header class=class_names(&["sp42-section-label", props.density.class_name()])>
+            <span class="sp42-section-label">{props.title}</span>
             {actions}
         </header>
     }

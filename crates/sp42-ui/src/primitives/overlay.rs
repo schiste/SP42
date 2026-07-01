@@ -134,11 +134,11 @@ pub fn filter_disclosure(props: FilterDisclosureProps) -> impl IntoView {
     let summary = props.summary;
 
     view! {
-        <details class="filter-bar-details">
-            <summary class="filter-summary">
+        <details class="sp42-filter-bar-details">
+            <summary class="sp42-filter-summary">
                 {move || summary.get()}
             </summary>
-            <div class="filter-bar">{children()}</div>
+            <div class="sp42-filter-bar">{children()}</div>
         </details>
     }
 }

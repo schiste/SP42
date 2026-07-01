@@ -17,9 +17,9 @@ impl DiffTone {
     #[must_use]
     pub const fn class_name(self) -> &'static str {
         match self {
-            Self::Insert => "diff-insert",
-            Self::Delete => "diff-delete",
-            Self::Equal => "diff-equal",
+            Self::Insert => "sp42-diff-insert",
+            Self::Delete => "sp42-diff-delete",
+            Self::Equal => "sp42-diff-equal",
         }
     }
 
@@ -53,7 +53,7 @@ pub fn diff_viewer_shell(props: DiffViewerShellProps) -> impl IntoView {
     let children = props.children;
 
     view! {
-        <div role="main" aria-label=props.aria_label class="diff-viewer">
+        <div role="main" aria-label=props.aria_label class="sp42-diff-viewer">
             {children()}
         </div>
     }
@@ -102,7 +102,7 @@ impl DiffStatsBarProps {
 pub fn diff_stats_bar(props: DiffStatsBarProps) -> impl IntoView {
     let children = props.children;
 
-    view! { <div class="diff-stats">{children()}</div> }
+    view! { <div class="sp42-diff-stats">{children()}</div> }
 }
 
 pub use diff_stats_bar as DiffStatsBar;
@@ -272,7 +272,7 @@ impl DiffSeparatorProps {
 
 #[must_use]
 pub fn diff_separator(props: DiffSeparatorProps) -> impl IntoView {
-    view! { <div class="diff-separator">{props.label}</div> }
+    view! { <div class="sp42-diff-separator">{props.label}</div> }
 }
 
 pub use diff_separator as DiffSeparator;
@@ -430,26 +430,26 @@ pub fn diff_line(props: DiffLineProps) -> impl IntoView {
     let children = props.children;
     let on_context_menu = props.on_context_menu;
     let on_double_click = props.on_double_click;
-    let mut class_name = String::from("diff-line");
+    let mut class_name = String::from("sp42-diff-line");
     if props.state.is_framed() {
         push_class(&mut class_name, "sp42-diff-line-framed");
     }
 
     let line_label = props.line_label.map(|label| {
         view! {
-            <span class="diff-line-num" aria-hidden="true">{label}</span>
+            <span class="sp42-diff-line-num" aria-hidden="true">{label}</span>
         }
         .into_any()
     });
     let before_label = props.before_label.map(|label| {
         view! {
-            <span class="diff-line-num" aria-hidden="true">{label}</span>
+            <span class="sp42-diff-line-num" aria-hidden="true">{label}</span>
         }
         .into_any()
     });
     let after_label = props.after_label.map(|label| {
         view! {
-            <span class="diff-line-num" aria-hidden="true">{label}</span>
+            <span class="sp42-diff-line-num" aria-hidden="true">{label}</span>
         }
         .into_any()
     });
@@ -546,10 +546,10 @@ pub fn diff_edit_panel(props: DiffEditPanelProps) -> impl IntoView {
     let on_keydown = props.on_keydown;
 
     view! {
-        <div class="diff-edit-container">
+        <div class="sp42-diff-edit-container">
             <textarea
                 id=props.textarea_id
-                class="diff-edit-textarea"
+                class="sp42-diff-edit-textarea"
                 rows="4"
                 prop:value=props.value
                 on:keydown=move |ev| {
@@ -558,7 +558,7 @@ pub fn diff_edit_panel(props: DiffEditPanelProps) -> impl IntoView {
                     }
                 }
             />
-            <div class="diff-edit-actions">{actions()}</div>
+            <div class="sp42-diff-edit-actions">{actions()}</div>
         </div>
     }
 }
@@ -600,7 +600,7 @@ pub fn diff_context_menu(props: DiffContextMenuProps) -> impl IntoView {
 
     view! {
         <div
-            class="context-menu-backdrop"
+            class="sp42-context-menu-backdrop"
             on:click=move |ev| {
                 if let Some(callback) = on_backdrop_click {
                     callback.run(ev);
@@ -608,7 +608,7 @@ pub fn diff_context_menu(props: DiffContextMenuProps) -> impl IntoView {
             }
         >
             <div
-                class="context-menu"
+                class="sp42-context-menu"
                 style=format!("left:{}px;top:{}px;", props.x, props.y)
                 on:click=move |ev| ev.stop_propagation()
             >
@@ -651,7 +651,7 @@ pub fn diff_context_menu_item(props: DiffContextMenuItemProps) -> impl IntoView 
     view! {
         <button
             type="button"
-            class="context-menu-item"
+            class="sp42-context-menu-item"
             on:click=move |ev| {
                 if let Some(callback) = on_click {
                     callback.run(ev);
@@ -679,7 +679,7 @@ impl RenderedHtmlHostProps {
 
 #[must_use]
 pub fn rendered_html_host(props: RenderedHtmlHostProps) -> impl IntoView {
-    view! { <div class="rendered-hunk-html" node_ref=props.node_ref></div> }
+    view! { <div class="sp42-rendered-hunk-html" node_ref=props.node_ref></div> }
 }
 
 pub use rendered_html_host as RenderedHtmlHost;
@@ -694,8 +694,8 @@ impl RenderedHighlightTone {
     #[must_use]
     pub const fn class_name(self) -> &'static str {
         match self {
-            Self::Add => "rendered-hunk-highlight-add",
-            Self::Remove => "rendered-hunk-highlight-remove",
+            Self::Add => "sp42-rendered-hunk-highlight-add",
+            Self::Remove => "sp42-rendered-hunk-highlight-remove",
         }
     }
 }

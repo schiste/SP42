@@ -1,8 +1,9 @@
 //! PWA registration, manifest injection, install prompt handling, and status
 //! reporting for the browser target.
 //!
-//! The service worker file (`sw.js`) and manifest (`manifest.json`) live in
-//! `crates/sp42-app/static/` and must be served from the web root.
+//! The service worker file (`sw.js`) lives in `crates/sp42-app/static/`.
+//! Visual PWA assets (manifest, offline shell, icons) live in
+//! `crates/sp42-ui/static/`. All are served from the web root.
 
 #[cfg(target_arch = "wasm32")]
 use std::cell::{Cell, RefCell};

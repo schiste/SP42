@@ -46,9 +46,9 @@ pub fn navigation_pane(props: NavigationPaneProps) -> impl IntoView {
     let children = props.children;
 
     view! {
-        <nav role="navigation" aria-label=props.aria_label class="queue-column">
-            <div class="queue-header">{props.heading}</div>
-            <div class="queue-scroll">{children()}</div>
+        <nav role="navigation" aria-label=props.aria_label class="sp42-navigation-pane">
+            <div class="sp42-navigation-header">{props.heading}</div>
+            <div class="sp42-navigation-scroll">{children()}</div>
         </nav>
     }
 }
@@ -142,7 +142,7 @@ fn navigation_item_class_name(
     state: NavigationItemState,
     tone: ScoreTone,
 ) -> String {
-    let mut class_name = String::from("queue-item");
+    let mut class_name = String::from("sp42-navigation-item");
     if selected {
         push_class(&mut class_name, "sp42-nav-item-selected");
         push_class(&mut class_name, tone.class_name());
@@ -168,7 +168,7 @@ impl ContextShellProps {
 pub fn context_shell(props: ContextShellProps) -> impl IntoView {
     let children = props.children;
 
-    view! { <div class="context-header-shell">{children()}</div> }
+    view! { <div class="sp42-context-header-shell">{children()}</div> }
 }
 
 pub use context_shell as ContextShell;
@@ -188,7 +188,7 @@ impl ContextBarProps {
 pub fn context_bar(props: ContextBarProps) -> impl IntoView {
     let children = props.children;
 
-    view! { <div class="context-header">{children()}</div> }
+    view! { <div class="sp42-context-header">{children()}</div> }
 }
 
 pub use context_bar as ContextBar;

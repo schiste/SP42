@@ -217,12 +217,12 @@ impl Tone {
     pub const fn text_class_name(self) -> &'static str {
         match self {
             Self::Default | Self::Info => "sp42-text-default",
-            Self::Muted => "text-muted",
+            Self::Muted => "sp42-text-muted",
             Self::Subtle => "sp42-text-subtle",
-            Self::Accent => "text-accent",
-            Self::Success => "text-success",
-            Self::Warning => "text-warning",
-            Self::Danger => "text-danger",
+            Self::Accent => "sp42-text-accent",
+            Self::Success => "sp42-text-success",
+            Self::Warning => "sp42-text-warning",
+            Self::Danger => "sp42-text-danger",
         }
     }
 
@@ -734,7 +734,7 @@ impl CommandTitleProps {
 pub fn command_title(props: CommandTitleProps) -> impl IntoView {
     view! {
         <div class="sp42-command-title">
-            <span class="section-header">{props.eyebrow}</span>
+            <span class="sp42-section-label">{props.eyebrow}</span>
             <strong>{props.title}</strong>
         </div>
     }
@@ -792,7 +792,7 @@ pub fn inventory_header(props: InventoryHeaderProps) -> impl IntoView {
     view! {
         <header class="sp42-inventory-header">
             <div>
-                <span class="section-header">{props.eyebrow}</span>
+                <span class="sp42-section-label">{props.eyebrow}</span>
                 <h1>{props.title}</h1>
             </div>
             {actions}
@@ -1147,7 +1147,7 @@ pub use gate_card as GateCard;
 
 #[must_use]
 pub fn spacer() -> impl IntoView {
-    view! { <div class="flex-spacer"></div> }
+    view! { <div class="sp42-flex-spacer"></div> }
 }
 
 pub use spacer as Spacer;

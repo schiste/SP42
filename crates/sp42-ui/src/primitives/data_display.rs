@@ -246,7 +246,7 @@ pub fn score_button(props: ScoreButtonProps) -> impl IntoView {
     view! {
         <button
             type="button"
-            class="context-score-button"
+            class="sp42-context-score-button"
             aria-expanded=move || expanded.get().to_string()
             title=props.title
             on:click=move |ev| {
@@ -278,11 +278,11 @@ pub fn score_details_panel(props: ScoreDetailsPanelProps) -> impl IntoView {
     let children = props.children;
 
     view! {
-        <div class="score-details-panel">
-            <div class="score-details-summary">
+        <div class="sp42-score-details-panel">
+            <div class="sp42-score-details-summary">
                 <span>"Score details"</span>
             </div>
-            <ul class="score-details-list">{children()}</ul>
+            <ul class="sp42-score-details-list">{children()}</ul>
         </div>
     }
 }
@@ -320,18 +320,18 @@ pub fn score_detail_item(props: ScoreDetailItemProps) -> impl IntoView {
         props.weight.to_string()
     };
     let weight_class = if props.weight > 0 {
-        "score-details-weight sp42-score-high"
+        "sp42-score-details-weight sp42-score-high"
     } else {
-        "score-details-weight sp42-score-low"
+        "sp42-score-details-weight sp42-score-low"
     };
     let note = props
         .note
-        .map(|note| view! { <div class="score-details-note">{note}</div> }.into_any());
+        .map(|note| view! { <div class="sp42-score-details-note">{note}</div> }.into_any());
 
     view! {
-        <li class="score-details-item">
-            <div class="score-details-line">
-                <span class="score-details-signal">{props.signal}</span>
+        <li class="sp42-score-details-item">
+            <div class="sp42-score-details-line">
+                <span class="sp42-score-details-signal">{props.signal}</span>
                 <span class=weight_class>{weight}</span>
             </div>
             {note}
@@ -756,7 +756,7 @@ pub fn notes_panel(props: NotesPanelProps) -> impl IntoView {
 
     view! {
         <section class="sp42-notes-panel">
-            <span class="section-header">{props.title}</span>
+            <span class="sp42-section-label">{props.title}</span>
             {children()}
         </section>
     }

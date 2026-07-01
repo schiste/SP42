@@ -186,4 +186,4 @@ git commit -m "chore(citation): Piece 1 acceptance — core tests, clippy, wasm 
 
 ## Piece 1 Complete
 
-With Phases 1–4 merged: #42's confabulated `partial` is fixed (paywall stubs short-circuit), PDFs and Google-Books shells classify deterministically with precise reasons, and every unusable finding carries a specific `unusable_reason` for the reviewer. Piece 2 (Wayback fallback #46, PDF→text #52, per-host adapters #53/arXiv) follows in a separate plan gated on **ADR-0012** (the fetch-edge policy, #34).
+With Phases 1–4 merged: #42's confabulated `partial` is fixed (paywall stubs short-circuit), PDFs and Google-Books shells classify deterministically with precise reasons, and every unusable finding carries a specific `unusable_reason` for the reviewer. Piece 2 (Wayback fallback #46, PDF→text #52, per-host adapters #53/arXiv) follows in a separate plan gated on **ADR-0015** (the fetch-edge policy, #34).

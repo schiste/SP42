@@ -80,22 +80,30 @@ it is platform; the workflows are thin domain policy.
 ### MVP — Wikidata patrol (the read experience)
 
 - Picking Wikidata in the **existing** picker gives a real, readable patrol
-  experience. **Reads point at production `wikidatawiki`** (resolved Q2) — public
-  data, zero write risk, and the only source of enough real change volume to validate
-  the entity diff — while live **writes gate to `testwikidatawiki`**, matching the
-  established posture of reading production enwiki/frwiki but gating edits to testwiki
-  (PRD-0008). The queue ingests Wikidata recentchanges (already generic) and each
-  change renders as a **human-readable entity diff** — "added statement *educated at*
-  → *University of X*, referenced to …", "changed the English label", "removed a
-  sitelink" — not raw JSON.
+  experience. **Production `wikidatawiki` is read-only in the MVP** (resolved Q2):
+  SP42 ingests its recentchanges and renders each change as a **human-readable entity
+  diff** — "added statement *educated at* → *University of X*, referenced to …",
+  "changed the English label", "removed a sitelink" — not raw JSON. Production is
+  reviewed, not acted on. An action binds to the `(wiki, rev_id)` of the change — the
+  workbench copies the event's own `wiki_id` into the action request
+  (`review_workbench.rs`) and the server acts on exactly that wiki
+  (`action_routes.rs`) — so patrol/rollback **cannot be redirected** to a different
+  wiki: a production revision does not exist on the test wiki. This mirrors the shipped
+  Wikipedia posture precisely — production enwiki/frwiki queues are *reviewed*, and the
+  live *edit/action* gate (PRD-0008) is the test wiki. Production gives the entity diff
+  real change volume to validate against at zero write risk; the action loop is proven
+  separately on test (next bullet).
 - **The queue filters out bot edits** (resolved Q3) via the recentchanges query
   (`rcshow=!bot`) — a query flag, not a model, so it does not reopen the scoring
   decision — and orders the remaining human/tool edits chronologically. Wikidata's
   edit stream is overwhelmingly bots; without this filter a chronological queue is
   unusable. Richer *ranking* rides the scoring follow-on.
-- Reviewer **actions** (patrol / rollback) already route through the generic Action
-  API and work as-is; the MVP's write acceptance gate is on `testwikidatawiki`, and
-  undo's entity-restore semantics are a flagged follow-on.
+- Reviewer **actions** (patrol / rollback) route through the generic Action API, which
+  works on Wikidata unchanged — but because an action binds to the change's own wiki
+  (above), the MVP exercises the action loop **on `testwikidatawiki` in place**: a
+  change made on the test wiki, reviewed there, and patrolled/rolled back there. That
+  is the live write-acceptance gate. Actions on production `wikidatawiki` stay disabled
+  until the loop is proven; undo's entity-restore semantics are a flagged follow-on.
 - **Scoring is gated off** for Wikidata in the MVP: the Wikipedia-trained revertrisk
   model does not describe entity edits, so the queue is ordered chronologically
   (over the bot-filtered stream), without a damage score, until a
@@ -160,9 +168,12 @@ The write-lane use cases carry their own DoD in their follow-on PRDs.*
       capability-gating test.
 - [ ] No revertrisk score is computed for Wikidata changes (no LiftWing request
       built, no fabricated score), verified by an adapter test.
-- [ ] A patrol/rollback action targets `testwikidatawiki` through the generic Action
-      API under the operator's session, verified by a mock-write-path test; the live
-      acceptance gate on `test.wikidata.org` is recorded in the closing PR.
+- [ ] A patrol/rollback action on a change **that lives on `testwikidatawiki`** goes
+      through the generic Action API under the operator's session (the action's
+      `wiki_id` is the change's own wiki, never cross-wiki), verified by a
+      mock-write-path test; the live acceptance gate on `test.wikidata.org` is recorded
+      in the closing PR. Production `wikidatawiki` changes are review-only (no action
+      wired), verified by asserting the action affordance is absent/disabled for them.
 
 ## Alternatives
 
@@ -233,10 +244,17 @@ they remain open to reviewer reaction until acceptance.
    (citation→facts, Wikidata→sources) get their own domain or extend references is
    **deferred** until those workflows are specified. (This doc area remains their
    home meanwhile; PRDs refile by ID, not path.)
-2. **MVP live target.** Resolved: **read production `wikidatawiki`, gate live writes
-   to `testwikidatawiki`** — matching the existing read-production / write-test
-   posture for Wikipedias (PRD-0008), and giving the entity diff real change volume
-   to validate against. Not test-only.
+2. **MVP live target.** Resolved: **production `wikidatawiki` is review-only; the
+   patrol/rollback action loop runs on `testwikidatawiki` in place.** An action binds
+   to the `(wiki, rev_id)` of the change it reviews and cannot be redirected to another
+   wiki, so "read production, act on test" is only coherent as "review production,
+   enable actions on test changes" — not as redirecting a production action to the test
+   wiki (a production revision does not exist there). This mirrors the shipped Wikipedia
+   posture (production queues reviewed; the edit/action gate is testwiki, PRD-0008) and
+   still gives the entity diff real production change volume to validate against. Not
+   test-only for reads; not cross-wiki for actions. *(Corrects the original
+   "read prod / write test" wording after PR #105 review surfaced that actions carry
+   the change's own `wiki_id`.)*
 3. **Queue ranking without scoring.** Resolved: **chronological over a bot-filtered
    stream** (`rcshow=!bot`). Filtering bots is a query flag, not a model, so it does
    not reopen the no-scoring decision; it is necessary because Wikidata's bot volume

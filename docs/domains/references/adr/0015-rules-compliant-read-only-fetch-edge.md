@@ -214,6 +214,37 @@ in our process.
     (`ReplayHttpClient`) cassette is **not** adopted now; revisit only if
     hermetic full-fetch replay becomes necessary.
 
+13. **Recovery-fetch policy (settles Piece 2's gate; issue #34).** The
+    fetched-but-unusable recovery work (`fetched-but-unusable-source-recovery`
+    design plan, Phases 6–8: Wayback fallback #46, in-crate PDF text #52, per-host
+    adapters #53) is **gated on this ADR**, so the policy is fixed here rather
+    than discovered while building it:
+    - **Ordering: prefer live → recover → none.** Recovery is attempted only
+      after a live fetch yields an *unusable* (2xx-but-unreadable) or *unreachable*
+      body; a usable live body is never second-guessed, and if recovery also fails
+      the outcome is the existing `SourceUnavailable` (never a fabricated verdict).
+    - **Recoverable vs terminal reasons.** Recoverable: a dead link
+      (`Unreachable`) → Wayback Availability API (#46); `PdfBody` → in-crate PDF
+      text extraction (#52); `ViewerShell` → a per-host source adapter (Google
+      Books snippet, arXiv HTML-twin, …). Terminal (no recovery — abstain):
+      `NavChromePaywall` (a paywall/registration wall must not be bypassed) and a
+      generic unusable body. Recovery dispatch keys off
+      `CitationFinding.unusable_reason`.
+    - **Recovery fetches reuse this edge — no new fetch stack.** Every recovery
+      request (Wayback Availability API, archive snapshots, PDF URLs, per-host
+      adapters) is issued through the guarded `sp42-fetch` source client: same
+      SSRF resolver + IP-literal pre-flight, redirect/size caps, timeouts, retry,
+      GET/HEAD-only, UA, and proxy bypass (decisions #1–#12). Archive/adapter
+      hosts are attacker-*reachable* via the citation URL, so they are treated as
+      untrusted (guarded face), not trusted like the hardcoded Citoid host.
+    - **`HttpResponse` exposes the final (post-redirect) URL.** `ViewerShell`
+      host-rules must match the host actually served, which can differ from the
+      citation `url=` after redirects; `HttpResponse` today carries no final URL.
+      The edge therefore adds a `final_url` field to `HttpResponse`, set to the
+      last hop the guarded client actually fetched. Recovery host-matching (and
+      any future redirect-aware classification) keys off `final_url`; existing
+      consumers ignore it (`#[serde(default)]`, back-compatible).
+
 ## Consequences
 
 - **Code consolidated (measured — see Implementation notes).** Deletes the two

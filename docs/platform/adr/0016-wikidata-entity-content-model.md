@@ -120,7 +120,9 @@ patrolling domain consumes it now, and the citation↔Wikidata workflows will to
   a *change*) are different consumers of the same read; both stay abstention-biased and
   grounded (ADR-0007). Coordination point: if #103 merges first, the promotion is a
   refactor-in-place of `sp42-mcp/src/wikidata.rs`; if this lands first, #103's verb
-  consumes the platform parser from the start.
+  consumes the platform parser from the start. The shared model's type shape and the
+  line-by-line mapping from #103's current code are sketched in
+  `docs/design-plans/2026-07-01-wikidata-read-model.md`.
 - **ADR-0014 (resolve any project):** this makes the resolved-but-unusable Wikidata
   target *usable*; resolution is unchanged.
 - **ADR-0004 / ADR-0013 (crate boundaries / layered architecture):** `EntityDiff` is a

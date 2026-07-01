@@ -133,7 +133,11 @@ pub fn build_source_client(
     user_agent: &str,
     allow_private: bool,
 ) -> Result<GuardedHttpClient, String> {
-    let mut builder = base_builder(user_agent);
+    // Disable system proxy discovery on the source face (ADR-0015): a deployment
+    // `HTTP_PROXY`/`HTTPS_PROXY` would move target-host resolution into the proxy
+    // and bypass the resolver guard. This stays on even under the escape hatch —
+    // the hatch relaxes only the address guard, not the other safety limits.
+    let mut builder = base_builder(user_agent).no_proxy();
     if !allow_private {
         builder = builder.dns_resolver(Arc::new(GuardedResolver::new(Arc::new(SystemResolver))));
     }
@@ -177,6 +181,9 @@ pub fn build_wikimedia_client(user_agent: &str) -> Result<GuardedHttpClient, Str
 #[async_trait]
 impl HttpClient for GuardedHttpClient {
     async fn execute(&self, request: HttpRequest) -> Result<HttpResponse, HttpClientError> {
+        // GET-only: the `HttpMethod` contract models no HEAD variant, so this is
+        // stricter than the ADR's "GET/HEAD accepted" and still rejects every
+        // body-bearing / state-changing method.
         let HttpMethod::Get = request.method else {
             return Err(HttpClientError::Transport {
                 message: format!("read-only fetch only allows GET, got {:?}", request.method),

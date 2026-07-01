@@ -1,4 +1,4 @@
-# ADR-0012: Rules-compliant read-only fetch edge
+# ADR-0015: Rules-compliant read-only fetch edge
 
 **Status:** Proposed
 **Date:** 2026-06-29

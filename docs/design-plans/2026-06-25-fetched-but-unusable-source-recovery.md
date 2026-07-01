@@ -4,21 +4,21 @@
 
 SP42 verifies Wikipedia citations by fetching the cited source, extracting body text, and running that text through a body-usability gate before passing anything to a language-model panel. The gate's current design sees only extracted text, so several real-world source shapes pass as "usable" even though no model can evaluate them. They fall into three categories: pages behind paywalls or registration walls (which cause the model to confabulate a `partial` verdict); raw PDF bytes; and **host-specific "special-case" sources** whose generic extraction returns a viewer shell or chrome rather than content — Google Books is the canonical example, but it is one of a large class (other JavaScript book/document readers, embedded viewers, and database front-ends commonly cited on Wikipedia). The fix is to widen the gate's view — a new unified entry point accepts URL, content-type, and body text together, so it can detect PDFs by magic bytes or MIME type and match known special-case hosts against a small, **extensible host-rule table** (seeded with Google Books) before any text-shape analysis is attempted.
 
-The design is split into two sequential pieces. Piece 1 (Phases 1–4, the immediate deliverable) adds these detectors and extends the reason enum to name the specific unusable kind (`PdfBody`, `ViewerShell`, `NavChromePaywall`). That specific reason is threaded onto the per-citation finding record so the reviewer report can distinguish a tool limitation from a generic unreadable body — without touching the existing verdict taxonomy, because a 2xx-but-unusable body already routes through the `SourceUnavailable` path. Piece 2 (Phases 5–8, future work) adds recovery: Wayback Availability API fallback for dead links, in-crate PDF text extraction, and **per-host source adapters** — a Google Books snippet lookup and an arXiv HTML-twin fetch are the first two instances of an extensible recovery class, not one-offs. Piece 2 is gated on ADR-0012, which must codify the recovery-fetch policy before any recovery code is written.
+The design is split into two sequential pieces. Piece 1 (Phases 1–4, the immediate deliverable) adds these detectors and extends the reason enum to name the specific unusable kind (`PdfBody`, `ViewerShell`, `NavChromePaywall`). That specific reason is threaded onto the per-citation finding record so the reviewer report can distinguish a tool limitation from a generic unreadable body — without touching the existing verdict taxonomy, because a 2xx-but-unusable body already routes through the `SourceUnavailable` path. Piece 2 (Phases 5–8, future work) adds recovery: Wayback Availability API fallback for dead links, in-crate PDF text extraction, and **per-host source adapters** — a Google Books snippet lookup and an arXiv HTML-twin fetch are the first two instances of an extensible recovery class, not one-offs. Piece 2 is gated on ADR-0015, which must codify the recovery-fetch policy before any recovery code is written.
 
 ## Definition of Done
 
-This design covers two sequential pieces. **Piece 1 (detection + reason precision)** is the immediate deliverable; **Piece 2 (recovery)** is future work gated by a new fetch-edge ADR (ADR-0012) and a separate implementation plan.
+This design covers two sequential pieces. **Piece 1 (detection + reason precision)** is the immediate deliverable; **Piece 2 (recovery)** is future work gated by a new fetch-edge ADR (ADR-0015) and a separate implementation plan.
 
 **Piece 1 is done when:**
 - A paywall / nav-chrome stub that currently passes the body-usability gate (issue #42) is classified `Unusable` and short-circuits to `SourceUnavailable` **before** any model-panel call — verified by a regression test over a Law360-shaped fixture that asserts zero model-client invocations.
 - A PDF source (by `application/pdf` content-type **or** `%PDF-` magic bytes) classifies `Unusable` with a `PdfBody` reason and makes **zero model-panel calls**, deterministically — verified by unit tests, including a PDF mislabeled `text/html`. (Deterministic format detection: a PDF is genuinely unreadable by generic extraction, so short-circuiting it costs no coverage.)
-- A known special-case host (Google Books as the seed entry in an extensible host-rule table), matched on the citation's `source_url`, classifies `Unusable` with a `ViewerShell` reason and makes zero model-panel calls — verified by a unit test. (Redirect-target matching is deferred to Piece 2 / ADR-0012: `HttpResponse` exposes no final URL today, and `{{cite}}` `url=` points directly at the host in the overwhelming majority of cases.)
+- A known special-case host (Google Books as the seed entry in an extensible host-rule table), matched on the citation's `source_url`, classifies `Unusable` with a `ViewerShell` reason and makes zero model-panel calls — verified by a unit test. (Redirect-target matching is deferred to Piece 2 / ADR-0015: `HttpResponse` exposes no final URL today, and `{{cite}}` `url=` points directly at the host in the overwhelming majority of cases.)
 - The specific unusable kind is carried on the finding (`CitationFinding.unusable_reason: Option<BodyUsabilityReason>`), so a tool-limitation (`PdfBody`/`ViewerShell`/`NavChromePaywall`) is distinguishable from a generic unreadable body — verified by serde round-trip tests including back-compat (legacy findings deserialize to `None`). The reviewer report surfaces this kind (Phase 4); the finding-field/serde behavior is the hard, independently-tested requirement, report formatting follows it.
 - The nav-chrome/paywall detector is judged on **net usefulness, measured** — not on never being wrong. Success = a net reduction in confabulated verdicts (catches the #42 class, incl. the Law360 case) **without material loss of coverage** on readable sources, with *both* rates measured on a representative fixture sample (real registration walls + real articles) and reported — neither driven to a corner. Some false positives are explicitly acceptable: a wrongly-flagged readable source costs one abstention (the reviewer still sees the citation), and grounding remains the backstop for misses (in #42 grounding held; only the label was wrong).
 - No change to the `SourceUnavailableReason` enum or `PageVerificationStats` fields; `cargo test -p sp42-core` and the wasm build of `sp42-app` both pass.
 
-**Piece 2 is done when** (tracked here for direction, specified in a later plan): dead-link citations recover via a Wayback Availability-API lookup when no citation `archive-url` exists (#46); PDF citations recover readable text (#52); and recovery provenance is transparent. Piece 2 requires ADR-0012 (fetch-edge policy) first.
+**Piece 2 is done when** (tracked here for direction, specified in a later plan): dead-link citations recover via a Wayback Availability-API lookup when no citation `archive-url` exists (#46); PDF citations recover readable text (#52); and recovery provenance is transparent. Piece 2 requires ADR-0015 (fetch-edge policy) first.
 
 ## Glossary
 
@@ -56,7 +56,7 @@ The classifier sees the **raw HTML** as well as the extracted text, because the 
 
 Dispatch order: (1) PDF — `content_type` contains `application/pdf` or the body starts with `%PDF-` → `PdfBody`; (2) special-case host — `source_url` matches an entry in an **extensible host-rule table** of known unreadable-by-generic-extraction sources, seeded with `books.google.*` → `ViewerShell`; (3) the layered `NavChromePaywall` detector (markers from `raw_html` + prose from `text` + consent guard); (4) otherwise the existing text-shape detectors. `ViewerShell` names the failure mode — a JavaScript/embed viewer shell or chrome returned instead of readable content — and is a *class* (book viewers, embedded readers, database front-ends), not a single site; the host-rule table is the extension point for adding more. Because a detected-unusable 2xx body already routes to `SourceUnavailableReason::Unusable` via the existing http_status logic, **no verdict-enum surgery is required** — the specific kind rides alongside on `CitationFinding.unusable_reason` (option C from brainstorming), where the report renders it and Piece 2's recovery dispatch keys off it.
 
-**Piece 2** (future) adds recovery for the recoverable reasons: extend `try_archive_fallback` (`page.rs`) to query the Wayback Availability API when no citation `archive-url` exists (#46), and recover PDF text in-crate (#52). The "prefer live → recover → none" policy and the requirement that recovery fetches honor the same SSRF/size/redirect guards as live fetches become **ADR-0012**, satisfying issue #34.
+**Piece 2** (future) adds recovery for the recoverable reasons: extend `try_archive_fallback` (`page.rs`) to query the Wayback Availability API when no citation `archive-url` exists (#46), and recover PDF text in-crate (#52). The "prefer live → recover → none" policy and the requirement that recovery fetches honor the same SSRF/size/redirect guards as live fetches become **ADR-0015**, satisfying issue #34.
 
 ## Existing Patterns
 
@@ -124,15 +124,15 @@ This design extends, rather than replaces, the established citation-verification
 
 **Done when:** Serde round-trips with and without `unusable_reason` (legacy → `None`); the reviewer report distinguishes PDF / viewer-shell / paywall from a generic unreadable body; `cargo test -p sp42-core` and the `sp42-app` wasm build pass.
 
-### Phase 5: ADR-0012 — fetch-edge recovery policy (#34) [Piece 2]
+### Phase 5: ADR-0015 — fetch-edge recovery policy (#34) [Piece 2]
 **Goal:** Document the "prefer live → recover → none" policy and the guard-reuse requirement before building recovery.
 
 **Components:**
-- `docs/adr/0012-*.md` — recovery trigger conditions (which `BodyUsabilityReason`s are recoverable vs terminal), the live→recover→none ordering, and the rule that archive/recovery fetches honor the same SSRF/size/redirect/UA-maxlag guards as live fetches.
+- `docs/domains/references/adr/0015-*.md` — recovery trigger conditions (which `BodyUsabilityReason`s are recoverable vs terminal), the live→recover→none ordering, and the rule that archive/recovery fetches honor the same SSRF/size/redirect/UA-maxlag guards as live fetches.
 
 **Dependencies:** Phase 4 (reason taxonomy stable).
 
-**Done when:** ADR-0012 accepted; issue #34 closed by it.
+**Done when:** ADR-0015 accepted; issue #34 closed by it.
 
 ### Phase 6: Wayback Availability-API fallback (#46) [Piece 2]
 **Goal:** Recover dead links that have no citation `archive-url`.
@@ -169,7 +169,7 @@ This design extends, rather than replaces, the established citation-verification
 
 ## Additional Considerations
 
-**Implementation scoping.** Piece 1 (Phases 1–4) is the immediate implementation plan. Piece 2 (Phases 5–8) is future work that requires ADR-0012 first and should be its own implementation plan(s); it is included here for direction and contract continuity, not for immediate execution.
+**Implementation scoping.** Piece 1 (Phases 1–4) is the immediate implementation plan. Piece 2 (Phases 5–8) is future work that requires ADR-0015 first and should be its own implementation plan(s); it is included here for direction and contract continuity, not for immediate execution.
 
 **#42 risk framing.** In #42 grounding already held (`grounding_status: unlocated`), so autonomous use was already safe — the only harm was the human-facing `partial` label. Both error costs for the paywall detector are bounded: a false positive costs one abstention on a citation the reviewer can still inspect; a false negative degrades to today's behavior with grounding as the backstop. Because neither error is catastrophic, the detector is tuned for **balance**, not for never being wrong.
 

@@ -7,10 +7,16 @@
 **Discussion:** design conversation 2026-07-01; PR to follow. Continues
 [ADR-0014](../../../platform/adr/0014-wikimedia-oauth-and-any-project.md)
 (resolve any Wikimedia project).
-**Spawned ADRs:** ADR-0015 (platform) — Wikidata entity content-model: revision
-read + `EntityDiff` mechanism, content-model routing, and capability gating. To be
-drafted alongside the read-module implementation (this PRD owns the user-facing
-intent; ADR-0015 owns the structural contract).
+**Spawned ADRs:**
+- ADR-0015 (platform) — Wikidata entity content-model: revision read + `EntityDiff`
+  mechanism, content-model routing, and capability gating. Drafted alongside the
+  read-module implementation.
+- ADR-0016 — Wikidata statement-proposal write contract (propose/confirm for entity
+  statements: drift detection against the entity revision, reference attachment),
+  reusing ADR-0010's discipline and ADR-0007's grounding gate. Drafted with the
+  citation→facts follow-on PRD (resolved Q5/Q6).
+
+This PRD owns the user-facing intent; the ADRs own the structural contracts.
 
 ## Problem
 
@@ -55,8 +61,11 @@ it is platform; the workflows are thin domain policy.
 - **Content-model-aware read path.** Fetch an entity revision and its parent via the
   Action API (`prop=revisions`, entity JSON) and parse into a structured
   **`EntityDiff`**: statements, labels, descriptions, aliases, and sitelinks, each
-  classified added / removed / changed, carrying the property/value and any
-  reference. A reusable platform mechanism paralleling the wikitext
+  classified added / removed / changed. Statements are diffed at **full depth**
+  (resolved Q4) — main property/value **plus qualifiers, rank, and references** —
+  so an edit that touches only a qualifier, flips a rank, or strips a reference is
+  never rendered as a no-op (the SP42 honesty invariant: a real change is never shown
+  as unchanged). A reusable platform mechanism paralleling the wikitext
   `diff_engine`/`media_diff`, but for entities.
 - **Content-model routing + capability gating.** Keyed on the revision's
   `content_model` (`wikibase-item` vs `wikitext`), the platform routes to the entity
@@ -67,37 +76,47 @@ it is platform; the workflows are thin domain policy.
 
 ### MVP — Wikidata patrol (the read experience)
 
-- Picking `wikidatawiki`/`testwikidatawiki` in the **existing** picker gives a real,
-  readable patrol experience: the queue ingests Wikidata recentchanges (already
-  generic), and each change renders as a **human-readable entity diff** — "added
-  statement *educated at* → *University of X*, referenced to …", "changed the English
-  label", "removed a sitelink" — not raw JSON.
+- Picking Wikidata in the **existing** picker gives a real, readable patrol
+  experience. **Reads point at production `wikidatawiki`** (resolved Q2) — public
+  data, zero write risk, and the only source of enough real change volume to validate
+  the entity diff — while live **writes gate to `testwikidatawiki`**, matching the
+  established posture of reading production enwiki/frwiki but gating edits to testwiki
+  (PRD-0008). The queue ingests Wikidata recentchanges (already generic) and each
+  change renders as a **human-readable entity diff** — "added statement *educated at*
+  → *University of X*, referenced to …", "changed the English label", "removed a
+  sitelink" — not raw JSON.
+- **The queue filters out bot edits** (resolved Q3) via the recentchanges query
+  (`rcshow=!bot`) — a query flag, not a model, so it does not reopen the scoring
+  decision — and orders the remaining human/tool edits chronologically. Wikidata's
+  edit stream is overwhelmingly bots; without this filter a chronological queue is
+  unusable. Richer *ranking* rides the scoring follow-on.
 - Reviewer **actions** (patrol / rollback) already route through the generic Action
-  API and work as-is; the MVP exercises them on `testwikidatawiki` — the safe target,
-  paralleling how `testwiki` gates live edits — and leaves undo's entity-restore
-  semantics as a flagged follow-on.
+  API and work as-is; the MVP's write acceptance gate is on `testwikidatawiki`, and
+  undo's entity-restore semantics are a flagged follow-on.
 - **Scoring is gated off** for Wikidata in the MVP: the Wikipedia-trained revertrisk
-  model does not describe entity edits, so the queue orders Wikidata changes
-  chronologically, without a damage score, until a Wikidata-appropriate signal
-  exists. An honest unranked queue beats a fabricated score.
+  model does not describe entity edits, so the queue is ordered chronologically
+  (over the bot-filtered stream), without a damage score, until a
+  Wikidata-appropriate signal exists. An honest unranked queue beats a fabricated
+  score.
 
 ### Use-case family (roadmap — each a follow-on PRD reusing the read module + the ADR-0010 confirm discipline)
 
 - **Book / entity metadata enrichment — PRD-0009 (already specified).** Wikidata as
   sourced context for enriching Open Library records.
-- **Citation → Wikidata facts.** When a citation is added to article X, scan the
-  cited source for facts about X and propose them as **referenced Wikidata
-  statements** on X's item — each a property/value pair carrying the citation as its
-  reference. This is the anti-fabrication gate (ADR-0007) in its most constrained
+- **Citation → Wikidata facts — the immediate follow-on to the read MVP (resolved
+  Q5).** When a citation is added to article X, scan the cited source for facts about
+  X and propose them as **referenced Wikidata statements** on X's item — each a
+  property/value pair carrying the citation as its reference. This is the anti-fabrication gate (ADR-0007) in its most constrained
   form: a statement is offered only when the fact is verbatim-locatable in the
   source, and it lands only on operator confirmation (ADR-0010), attributed to the
   operator's own account. Structured triples are *safer* than the free-text
   description crossing in PRD-0009 — there is no prose to synthesize, only a sourced
   triple.
-- **Wikidata → sources.** Mine the references already attached to Wikidata's
-  statements about X to surface additional candidate sources for a claim under
-  review, feeding the existing citation-verification and bare-URL-repair flows.
-  Read-only.
+- **Wikidata → sources (follows citation→facts).** Mine the references already
+  attached to Wikidata's statements about X to surface additional candidate sources
+  for a claim under review, feeding the existing citation-verification and
+  bare-URL-repair flows. Read-only — a smaller delta on the read module, sequenced
+  second only because Q5 prioritized the write capability.
 
 Everything reuses the same substrate: the platform read module reads entities; the
 workflows are thin domain policy; every write is operator-confirmed, sourced, and
@@ -109,13 +128,17 @@ reversible.
 observable; tests replay recorded responses (ADR-0009 discipline), no live network.
 The write-lane use cases carry their own DoD in their follow-on PRDs.*
 
-- [ ] Selecting `wikidatawiki`/`testwikidatawiki` in the picker loads a patrol queue
-      from Wikidata recentchanges, verified by a replayed recentchanges fixture test.
+- [ ] Selecting Wikidata loads a patrol queue from **production `wikidatawiki`**
+      recentchanges with **bot edits excluded** (`rcshow=!bot`), ordered
+      chronologically, verified by a replayed recentchanges fixture test that asserts
+      bot edits are filtered out.
 - [ ] An entity revision + its parent parse into a structured `EntityDiff`
       (statements / labels / descriptions / aliases / sitelinks, each
-      added·removed·changed with property, value, and reference), verified over
-      replayed entity-revision fixtures; a missing parent (first revision) degrades
-      gracefully rather than erroring.
+      added·removed·changed) at **full statement depth — property, value, qualifiers,
+      rank, and references** — verified over replayed entity-revision fixtures; an
+      edit touching **only** a qualifier, rank, or reference renders as a change and
+      **never as a no-op**, and a missing parent (first revision) degrades gracefully
+      rather than erroring.
 - [ ] The patrol/diff view renders a Wikidata change as a **human-readable entity
       diff, not raw JSON**, verified by a renderer test.
 - [ ] Content-model routing selects the entity path for `wikibase-item` and the
@@ -173,27 +196,36 @@ The write-lane use cases carry their own DoD in their follow-on PRDs.*
   Mitigation: it is additive and routing-gated (the wikitext path is untouched for
   wikitext), pinned by ADR-0015 and enforced by the layer check.
 
-## Open questions
+## Resolved questions
 
-1. **Domain placement.** Do the Wikidata-native workflows (patrol Wikidata;
-   citation→facts; Wikidata→sources) warrant their own `sp42-wikidata` domain crate,
-   or does patrol-Wikidata extend the patrolling domain while the citation-linked
-   workflows extend references? *Proposed:* a thin `sp42-wikidata` domain owns the
-   Wikidata-native workflows; the entity **read mechanism lives in platform**
-   (ADR-0015); patrol consumes both. React before ADR-0015 is filed.
-2. **MVP live target.** `testwikidatawiki` only for the first cut (paralleling
-   testwiki), with `wikidatawiki` enabled once the read/render/action loop is proven?
-   *Proposed:* yes.
-3. **Queue ranking without scoring.** Chronological for the MVP, or a cheap non-model
-   heuristic (anonymous edits, statement removals, large value changes)? *Proposed:*
-   chronological MVP; a heuristic rides the scoring follow-on.
-4. **Entity-diff depth.** Does the MVP render full statement qualifiers/ranks/
-   references, or start with property + value + reference and defer qualifiers/ranks?
-   *Proposed:* property + value + reference for the MVP; qualifiers/ranks follow.
-5. **Which write use case comes first after the read MVP** — citation→facts or
-   Wikidata→sources? *Proposed:* Wikidata→sources first (read-only, feeds existing
-   citation flows), then citation→facts (write).
-6. **ADR split.** One platform ADR-0015 for the read mechanism, with the write-lane
-   contract riding ADR-0010, or a second ADR for the statement-proposal contract?
-   *Proposed:* ADR-0015 for read now; revisit a write ADR when citation→facts is
-   specified.
+All six carry the Editor's decided answers (2026-07-01), folded into the body above;
+they remain open to reviewer reaction until acceptance.
+
+1. **Domain placement.** Resolved: **hybrid / defer.** The entity **read mechanism
+   lives in platform** (ADR-0015); **patrol-Wikidata extends the patrolling domain**
+   (it is patrol policy on a new content model, reusing the shipped workflow). No new
+   `sp42-wikidata` crate is stood up for the MVP; whether the *write-lane* workflows
+   (citation→facts, Wikidata→sources) get their own domain or extend references is
+   **deferred** until those workflows are specified. (This doc area remains their
+   home meanwhile; PRDs refile by ID, not path.)
+2. **MVP live target.** Resolved: **read production `wikidatawiki`, gate live writes
+   to `testwikidatawiki`** — matching the existing read-production / write-test
+   posture for Wikipedias (PRD-0008), and giving the entity diff real change volume
+   to validate against. Not test-only.
+3. **Queue ranking without scoring.** Resolved: **chronological over a bot-filtered
+   stream** (`rcshow=!bot`). Filtering bots is a query flag, not a model, so it does
+   not reopen the no-scoring decision; it is necessary because Wikidata's bot volume
+   would otherwise make a chronological queue unusable. A richer ranking heuristic
+   rides the scoring follow-on.
+4. **Entity-diff depth.** Resolved: **full depth now** — statements diffed on
+   property, value, qualifiers, rank, and references. This also secures the invariant
+   that an edit touching only a qualifier/rank/reference is never rendered as a no-op.
+5. **Which write use case comes first after the read MVP.** Resolved: **citation→
+   facts first** (the write capability), then Wikidata→sources. This makes the
+   statement-proposal write lane the immediate follow-on design work.
+6. **ADR split.** Resolved: **ADR-0015 (platform) for the read mechanism now; a
+   separate thin ADR-0016 for the statement-proposal write contract**, drafted with
+   the citation→facts follow-on PRD. ADR-0010's wikitext node-anchor/`baserevid`
+   mechanism does not map to entity statements (drift is detected against the entity
+   revision), so its principle is reused but its mechanism is not — the same reason
+   ADR-0010 itself was a thin ADR over ADR-0003.

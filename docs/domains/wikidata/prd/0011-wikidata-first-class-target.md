@@ -203,6 +203,20 @@ The write-lane use cases carry their own DoD in their follow-on PRDs.*
   statement is worse than wrong prose. Mitigation (for that follow-on PRD): sourced
   only, verbatim-grounded (ADR-0007), each statement carries its reference,
   operator-confirmed (ADR-0010), reversible.
+- **Duplicating or fighting existing Open Library ↔ Wikidata sync.** OL and Wikidata
+  already exchange data (P648 links them; OL's official Wikidata Integration pulls
+  author bios/photos/awards from Wikidata and pushes OL IDs to it; `cdrini/openlibrary-wikidata-bot`
+  syncs identifiers). Mitigation: SP42 does **not** rebuild identifier sync — its value
+  is the grounded-verification layer none of that provides (ADR-0017). The
+  book-enrichment lane (PRD-0009) should likewise target edition-level, source-derived
+  fields rather than re-doing the author sync OL already runs. **Follow-up: fold this
+  de-duplication note into PRD-0009 on its branch (PR #104).**
+- **Wrong-item writes (work vs. edition).** Wikidata models books per FRBR: ISBN,
+  publisher, and pagination belong on the **edition** item and are sourced there, not
+  on the abstract **work**. A bulk import once mis-placed ~40k edition IDs on non-edition
+  items. Mitigation: citation→facts targets the edition the citation identifies (by
+  ISBN) and declines when no edition item exists rather than guessing or creating one
+  (ADR-0017 Decision 8); operator confirmation is the backstop.
 - **Platform surface growth.** A new content model widens the platform contract.
   Mitigation: it is additive and routing-gated (the wikitext path is untouched for
   wikitext), pinned by ADR-0016 and enforced by the layer check.

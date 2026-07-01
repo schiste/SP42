@@ -75,6 +75,21 @@ it relays a sourced triple.
    the server and every shell speak one contract and render a faithful before/after
    without server round-trips.
 
+8. **Respect the FRBR work/edition split — propose onto the right item.** Wikidata
+   models books per FRBR: a **work** item (the abstract creative work) versus **edition**
+   items (`instance of` Q3331189, "version, edition or translation"). Edition-specific
+   facts — publisher (P123), ISBN (P212/P957), publication date, place, pagination —
+   belong on the **edition** item, and WikiProject Books guidance is to **source
+   statements on the edition**, not the work. A fact drawn from a *specific* cited book
+   is therefore proposed onto the edition that citation identifies (resolved by ISBN,
+   the same key PRD-0009/ADR-0016 use); a genuinely work-level fact goes on the work.
+   When the citation resolves to an edition that has no Wikidata item yet, the MVP
+   **declines** (a structured decline, Decision 3) rather than creating an edition item —
+   edition creation is deferred, mirroring PRD-0009 Q2 (enrich existing, don't import).
+   This keeps SP42 out of the failure mode that a past bulk import hit — ~40k Open
+   Library edition (`…M`) identifiers landed on non-edition Wikidata items — which the
+   operator-confirmed, one-statement-at-a-time posture already guards against.
+
 ## Relation to prior ADRs
 
 - **ADR-0010 (operator-confirmed proposals):** same propose/confirm discipline and
@@ -93,6 +108,17 @@ it relays a sourced triple.
   they share the statement/reference model (ADR-0016) and the ADR-0007 grounding gate,
   so the "fact → referenced statement" and "statement → verified reference" directions
   never diverge in how a statement or its P854 reference is represented.
+- **Existing Open Library ↔ Wikidata data flows (do not duplicate):** OL and Wikidata
+  already sync — the P648 "Open Library ID" property links the two, OL runs an official
+  Wikidata Integration (pulling author bios/photos/awards *from* Wikidata and pushing OL
+  IDs *to* it) and publishes a Wikidata dump, and `cdrini/openlibrary-wikidata-bot` does
+  identifier sync/cleanup. SP42 must **not** rebuild identifier sync. Its distinct value
+  is the layer none of that provides: a *grounded, referenced* statement (P854 +
+  ADR-0007 verbatim passage) proposed from a source SP42 actually fetched and verified.
+  That directly answers the standing WikiProject complaint that *most bots add
+  statements without reliable sources* — every statement this lane proposes carries
+  one. Same positioning as PRD-0010 vs. the official Wikidata MCP: we are the
+  verification layer, not another sync bot.
 - **ADR-0014 (resolve any project):** the write lands under the operator's project
   session.
 

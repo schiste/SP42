@@ -100,19 +100,24 @@ fn backoff_delay(attempt: u32) -> Duration {
     Duration::from_millis(rand::rng().random_range(0..=ceiling_ms))
 }
 
-fn base_builder(user_agent: &str) -> reqwest::ClientBuilder {
+/// `guard_literals` mirrors the pre-flight gate: when `false` (the
+/// `SP42_FETCH_ALLOW_PRIVATE` escape hatch), the per-hop literal rejection is
+/// skipped so the loopback benchmark harness can be redirected to a private
+/// literal — but the redirect **cap** always applies.
+fn base_builder(user_agent: &str, guard_literals: bool) -> reqwest::ClientBuilder {
     reqwest::Client::builder()
         .user_agent(user_agent)
         .connect_timeout(CONNECT_TIMEOUT)
         .timeout(REQUEST_TIMEOUT)
-        // A custom redirect policy: cap the hops AND reject any hop whose target
-        // is a non-public IP literal (the resolver guard does not run for
-        // literals). DNS-name hops are validated by the resolver at connect.
-        .redirect(reqwest::redirect::Policy::custom(|attempt| {
+        // A custom redirect policy: cap the hops AND (unless the escape hatch is
+        // set) reject any hop whose target is a non-public IP literal (the
+        // resolver guard does not run for literals). DNS-name hops are validated
+        // by the resolver at connect.
+        .redirect(reqwest::redirect::Policy::custom(move |attempt| {
             if attempt.previous().len() >= MAX_REDIRECTS {
                 return attempt.error(format!("exceeded {MAX_REDIRECTS} redirects"));
             }
-            if host_is_blocked_literal(attempt.url()) {
+            if guard_literals && host_is_blocked_literal(attempt.url()) {
                 return attempt.error(format!(
                     "{SSRF_MARKER}: redirect target is a non-public IP literal"
                 ));
@@ -137,7 +142,7 @@ pub fn build_source_client(
     // `HTTP_PROXY`/`HTTPS_PROXY` would move target-host resolution into the proxy
     // and bypass the resolver guard. This stays on even under the escape hatch —
     // the hatch relaxes only the address guard, not the other safety limits.
-    let mut builder = base_builder(user_agent).no_proxy();
+    let mut builder = base_builder(user_agent, !allow_private).no_proxy();
     if !allow_private {
         builder = builder.dns_resolver(Arc::new(GuardedResolver::new(Arc::new(SystemResolver))));
     }
@@ -168,7 +173,7 @@ pub fn source_client_from_env(user_agent: &str) -> Result<GuardedHttpClient, Str
 /// # Errors
 /// Returns an error string if the underlying `reqwest` client fails to build.
 pub fn build_wikimedia_client(user_agent: &str) -> Result<GuardedHttpClient, String> {
-    let client = base_builder(user_agent)
+    let client = base_builder(user_agent, true)
         .build()
         .map_err(|error| format!("failed to build wikimedia fetch client: {error}"))?;
     Ok(GuardedHttpClient {
@@ -333,6 +338,9 @@ mod tests {
         let client = reqwest::Client::builder()
             .redirect(reqwest::redirect::Policy::limited(5))
             .resolve(host, addr)
+            // Match the production source builder: ignore any ambient HTTP(S)_PROXY
+            // so the test reaches the `.resolve()`d loopback stub, not a CI proxy.
+            .no_proxy()
             .build()
             .expect("build client");
         GuardedHttpClient {
@@ -375,6 +383,32 @@ mod tests {
             format!("{error:?}").contains("SSRF"),
             "rejection must carry the SSRF reason, got: {error:?}"
         );
+    }
+
+    #[tokio::test]
+    async fn allow_private_follows_a_redirect_to_a_private_literal() {
+        // Under the SP42_FETCH_ALLOW_PRIVATE escape hatch the source client must
+        // follow a redirect to a private IP literal (loopback benchmark harness),
+        // not reject it — the per-hop literal guard is skipped in that mode while
+        // the redirect cap still applies.
+        let dest = spawn_sequenced_server(vec![
+            b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok".to_vec(),
+        ]);
+        let redirect = spawn_sequenced_server(vec![
+            format!(
+                "HTTP/1.1 302 Found\r\nLocation: http://127.0.0.1:{}/\r\nContent-Length: 0\r\n\r\n",
+                dest.port()
+            )
+            .into_bytes(),
+        ]);
+        // allow_private = true: real (non-guarded) client, no_proxy, hatch on.
+        let client = super::build_source_client("test-agent", true).expect("build");
+        let response = client
+            .execute(get(&format!("http://127.0.0.1:{}/", redirect.port())))
+            .await
+            .expect("escape hatch must follow a redirect to a private literal");
+        assert_eq!(response.status, 200);
+        assert_eq!(response.body, b"ok");
     }
 
     #[tokio::test]

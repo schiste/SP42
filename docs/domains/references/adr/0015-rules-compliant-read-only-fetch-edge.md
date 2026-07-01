@@ -183,8 +183,12 @@ in our process.
 
 10. **Dev/test escape hatch preserved, single source of truth.**
     `SP42_FETCH_ALLOW_PRIVATE=1` (for the loopback-serving benchmark harness)
-    swaps the guarded resolver for a pass-through one, read once in the factory
-    rather than at three independent call sites.
+    is the single private-address policy switch, read once in the factory rather
+    than at three independent call sites. It swaps the guarded resolver for a
+    pass-through one **and** makes the initial IP-literal pre-flight and
+    redirect-literal checks accept private / loopback literals. It does not
+    disable the non-address safety limits: timeouts, redirect cap, response-size
+    cap, retry policy, or shared User-Agent.
 
 11. **Deploy-layer controls are the primary modern mitigation; the in-code guard
     is defense-in-depth.** The ADR records IMDSv2 + egress filtering as the

@@ -22,4 +22,13 @@ PRD plus ADR-0007–0009, building on the platform LLM interface (ADR-0006).
 
 → [references/](references/README.md)
 
+## Wikidata — incoming
+
+Making Wikidata a first-class target: reviewable in the patrol workflow via a shared
+platform entity read/diff mechanism (entity JSON, not wikitext), and a structured,
+referenced source/sink of facts for the citation work. No crate yet; specified as
+PRD-0011, spawning platform ADR-0015 and continuing ADR-0014.
+
+→ [wikidata/](wikidata/README.md)
+
 More domains are anticipated; each will follow the same platform-consumes pattern.

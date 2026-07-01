@@ -32,6 +32,10 @@ domains may consume it as the system expands toward sourcing and quality signals
 - [ADR-0006 — Using LLMs: model panel, measured agreement, inference endpoint](adr/0006-using-llms.md)
 - [ADR-0010 — Operator-confirmed content proposals (propose/confirm)](adr/0010-operator-confirmed-content-proposals.md)
 - [ADR-0012 — Frontend end-to-end testing approach](adr/0012-frontend-e2e-testing-approach.md) (Proposed)
+- [ADR-0013 — Layered platform/domain architecture with mechanical enforcement](adr/0013-layered-platform-domain-architecture.md)
+- [ADR-0014 — Required Wikimedia OAuth login + any-Wikimedia-project resolution](adr/0014-wikimedia-oauth-and-any-project.md)
+- [ADR-0015 — Wikidata entity content-model: revision read, `EntityDiff`, and content-model routing](adr/0015-wikidata-entity-content-model.md) (Proposed)
+- [ADR-0016 — Wikidata statement-proposal write contract](adr/0016-wikidata-statement-proposal-write-contract.md) (Proposed)
 
 ADR-0006 defines the provider-agnostic LLM interface every capability reaches a
 model through, and ADR-0010 defines the propose/confirm editing pattern domains

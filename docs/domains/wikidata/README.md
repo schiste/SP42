@@ -26,13 +26,14 @@ path.
 
 ## Architecture Decision Records
 
-- ADR-0015 (platform, forthcoming) — Wikidata entity content-model: revision read +
-  `EntityDiff` mechanism, content-model routing, and capability gating. Spawned by
-  PRD-0011; drafted with the read-module implementation.
-- ADR-0016 (forthcoming) — Wikidata statement-proposal write contract
-  (propose/confirm for entity statements; drift vs. the entity revision; reference
-  attachment), reusing ADR-0010 discipline + ADR-0007 grounding. Drafted with the
-  citation→facts follow-on PRD.
+- [ADR-0015](../../platform/adr/0015-wikidata-entity-content-model.md) (platform,
+  Proposed) — Wikidata entity content-model: revision read + `EntityDiff` mechanism,
+  per-revision content-model routing, and capability gating. Spawned by PRD-0011.
+- [ADR-0016](../../platform/adr/0016-wikidata-statement-proposal-write-contract.md)
+  (platform, Proposed) — Wikidata statement-proposal write contract (propose/confirm
+  for entity statements; drift vs. the entity revision; reference attachment),
+  reusing ADR-0010 discipline + ADR-0007 grounding. Its fact-extraction workflow is
+  the citation→facts follow-on PRD.
 
 ## Relation to other domains
 

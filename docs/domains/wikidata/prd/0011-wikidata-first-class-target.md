@@ -8,15 +8,18 @@
 [ADR-0014](../../../platform/adr/0014-wikimedia-oauth-and-any-project.md)
 (resolve any Wikimedia project).
 **Spawned ADRs:**
-- ADR-0015 (platform) — Wikidata entity content-model: revision read + `EntityDiff`
-  mechanism, content-model routing, and capability gating. Drafted alongside the
-  read-module implementation.
-- ADR-0016 — Wikidata statement-proposal write contract (propose/confirm for entity
-  statements: drift detection against the entity revision, reference attachment),
-  reusing ADR-0010's discipline and ADR-0007's grounding gate. Drafted with the
-  citation→facts follow-on PRD (resolved Q5/Q6).
+- [ADR-0015](../../../platform/adr/0015-wikidata-entity-content-model.md) (platform,
+  Proposed) — Wikidata entity content-model: revision read + `EntityDiff` mechanism,
+  per-revision content-model routing, and capability gating.
+- [ADR-0016](../../../platform/adr/0016-wikidata-statement-proposal-write-contract.md)
+  (platform, Proposed) — Wikidata statement-proposal write contract (propose/confirm
+  for entity statements: drift against the entity revision, reference attachment),
+  reusing ADR-0010's discipline and ADR-0007's grounding gate. Its concrete
+  fact-extraction workflow is the citation→facts follow-on PRD (resolved Q5/Q6).
 
-This PRD owns the user-facing intent; the ADRs own the structural contracts.
+Both ADRs are drafted up front (Proposed) so this PRD's forward references are
+concrete before review. This PRD owns the user-facing intent; the ADRs own the
+structural contracts.
 
 ## Problem
 

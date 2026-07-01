@@ -520,7 +520,7 @@ fn rewrite_legacy_argv(args: &[String]) -> Option<Result<Vec<String>, String>> {
         )));
     }
     if present("--locate-probe") {
-        return Some(Ok(prepend(&["locate-probe"], without(&["--locate-probe"]))));
+        return Some(rewrite_legacy_locate_probe(args));
     }
     if present("--batch") || present("--batch-file") {
         // `--batch` selected batch mode and read STDIN; `--batch-file <p>` set the input path.
@@ -534,12 +534,20 @@ fn rewrite_legacy_argv(args: &[String]) -> Option<Result<Vec<String>, String>> {
                 "--batch" => {}
                 "--batch-file" => {
                     out.push("--file".to_string());
-                    if let Some(path) = iter.next() {
-                        out.push(path.clone());
-                    }
+                    let path = match iter.next() {
+                        Some(path) => path,
+                        None => return Some(Err("--batch-file requires a value".to_string())),
+                    };
+                    out.push(path.clone());
                 }
                 "--format" => {
-                    let _ = iter.next(); // drop the ignored format value
+                    let value = match iter.next() {
+                        Some(value) => value,
+                        None => return Some(Err("--format requires a value".to_string())),
+                    };
+                    if let Err(message) = validate_legacy_output_format(value) {
+                        return Some(Err(message));
+                    }
                 }
                 _ => out.push(arg.clone()),
             }
@@ -553,6 +561,31 @@ fn rewrite_legacy_argv(args: &[String]) -> Option<Result<Vec<String>, String>> {
         return Some(Ok(prepend(&["verify-page"], without(&["--verify-page"]))));
     }
     Some(rewrite_legacy_preview(args))
+}
+
+fn rewrite_legacy_locate_probe(args: &[String]) -> Result<Vec<String>, String> {
+    let mut out = vec!["locate-probe".to_string()];
+    let mut iter = args.iter();
+    while let Some(arg) = iter.next() {
+        match arg.as_str() {
+            "--locate-probe" => {}
+            "--format" => {
+                let value = iter
+                    .next()
+                    .ok_or_else(|| "--format requires a value".to_string())?;
+                validate_legacy_output_format(value)?;
+            }
+            _ => out.push(arg.clone()),
+        }
+    }
+    Ok(out)
+}
+
+fn validate_legacy_output_format(value: &str) -> Result<(), String> {
+    match value {
+        "text" | "json" | "markdown" => Ok(()),
+        _ => Err(format!("unsupported output format: {value}")),
+    }
 }
 
 /// Translate a legacy preview invocation: `--shell <value>` and the shorthand mode flags
@@ -4779,6 +4812,40 @@ mod legacy_shim_tests {
     }
 
     #[test]
+    fn rejects_missing_legacy_batch_file_value() {
+        match rewrite_legacy_argv(&argv(&["--batch-file"])) {
+            Some(Err(message)) => assert!(message.contains("--batch-file requires a value")),
+            other => panic!("expected missing batch-file value error, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn validates_ignored_legacy_format_values() {
+        match rewrite_legacy_argv(&argv(&["--batch", "--format"])) {
+            Some(Err(message)) => assert!(message.contains("--format requires a value")),
+            other => panic!("expected missing format value error, got {other:?}"),
+        }
+        match rewrite_legacy_argv(&argv(&["--batch", "--format", "xml"])) {
+            Some(Err(message)) => assert!(message.contains("unsupported output format")),
+            other => panic!("expected unsupported format error, got {other:?}"),
+        }
+        match rewrite_legacy_argv(&argv(&["--locate-probe", "--quote", "q", "--format"])) {
+            Some(Err(message)) => assert!(message.contains("--format requires a value")),
+            other => panic!("expected missing locate-probe format value error, got {other:?}"),
+        }
+        match rewrite_legacy_argv(&argv(&[
+            "--locate-probe",
+            "--quote",
+            "q",
+            "--format",
+            "xml",
+        ])) {
+            Some(Err(message)) => assert!(message.contains("unsupported output format")),
+            other => panic!("expected unsupported locate-probe format error, got {other:?}"),
+        }
+    }
+
+    #[test]
     fn rejects_invalid_or_missing_legacy_shell_value() {
         // An unrecognized --shell value was a usage error in the old parser; it must not
         // silently translate to the default `preview` view.
@@ -4842,6 +4909,12 @@ mod legacy_shim_tests {
         );
         assert_eq!(
             rewrite(&["--locate-probe", "--quote", "q"]),
+            Some(argv(&["locate-probe", "--quote", "q"]))
+        );
+        // The old global --format was accepted but ignored here because locate-probe always
+        // emits JSON. Consume it in legacy form instead of forwarding it to the subcommand.
+        assert_eq!(
+            rewrite(&["--locate-probe", "--quote", "q", "--format", "json"]),
             Some(argv(&["locate-probe", "--quote", "q"]))
         );
         assert_eq!(

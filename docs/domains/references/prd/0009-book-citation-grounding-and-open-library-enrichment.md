@@ -379,18 +379,29 @@ they remain open to reviewer reaction until acceptance.
    context is absent, no description is proposed. This adds Wikidata as a secondary
    structured authority (Layer 1) and is the one deliberate crossing of PRD-0008's
    author-nothing line.
-4. **Full-text availability signal.** Resolved (by API check): a book is treated as
-   groundable when the Open Library edition has an `ocaid` **and** the archive.org
-   item is a text item whose **search-inside** endpoint returns a result set.
-   Search-inside returns a **verbatim snippet + page** and typically works even for
-   lending-restricted / in-copyright scans, so SP42 grounds on the snippet without
-   borrowing; no index / empty result set → `SourceUnavailable` (`unusable`).
+4. **Full-text availability signal.** Resolved (by API check): a book is groundable
+   when the Open Library edition has an `ocaid` **and** the archive.org item is a text
+   item whose **search-inside** endpoint can run. Search-inside returns a **verbatim
+   snippet + page** and typically works even for lending-restricted / in-copyright
+   scans, so SP42 grounds on the snippet without borrowing. Two empty results differ
+   (ADR-0007, per Layer 2): **no usable body** (no `ocaid` / not a text item / no
+   full-text index) → `SourceUnavailable` (`unreachable`/`unusable`); but an
+   **indexed** scan whose search-inside returns **zero matching snippets** →
+   `not_supported`, **not** `SourceUnavailable` — the source was searched and yielded
+   no supporting passage.
 5. **Grounding a *page-specific* citation.** Resolved: **cited page first, then fall
    back to a whole-book search**, and report the **scanned** page the passage was
    actually found on (so a pagination mismatch surfaces instead of causing a false
    `not_supported`).
-6. **Does this need its own ADR now, or ride ADR-0010/0011?** Resolved: **one thin
-   new read-contract ADR** (Internet Archive search-inside as a new grounding source
-   type feeding the existing verifier, plus Wikidata as an enrichment context source)
-   and **reuse ADR-0010 as-is** for the operator-confirmed write. Numbers assigned
-   when drafted.
+6. **Does this need its own ADR now, or ride ADR-0010/0011?** Resolved: **two thin
+   ADRs.** (a) A **read-contract ADR** — Internet Archive search-inside as a new
+   grounding source type feeding the existing verifier, plus Wikidata as an enrichment
+   context source. (b) If the enrichment lane ships, a **separate apply-contract ADR**
+   for the Open Library write: ADR-0010's propose/confirm/refuse-on-drift **discipline**
+   transfers, but its **mechanism** is MediaWiki-specific (`WikitextNodeLocator` +
+   `replacement_wikitext` + `baserevid` + wiki session/CSRF) and does **not** map to a
+   field-level Open Library JSON change guarded by the OL record's own revision under an
+   OL session — so the OL payload, auth, and drift check get their own thin ADR, exactly
+   as the Wikidata statement write does (ADR-0017 over ADR-0010). **Not "reuse ADR-0010
+   as-is."** This matches the header's "a second ADR … against a non-wiki target."
+   Numbers assigned when drafted.

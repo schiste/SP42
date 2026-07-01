@@ -36,6 +36,7 @@ them. The crates group along that seam.
 Platform layers (shared, domain-agnostic):
 
 - `crates/sp42-types`: transport contracts and storage/HTTP/clock abstractions
+- `crates/sp42-fetch`: guarded read-only HTTP fetch edge (SSRF-guarded DNS resolver, redirect/size caps, Retry-After retry loop, Wikimedia UA) shared by the CLI and server source fetches
 - `crates/sp42-coordination`: multi-operator collaboration protocol and room state
 - `crates/sp42-wiki`: wiki config parsing, registry/default selection, and capability profiles
 - `crates/sp42-server`: localhost HTTP/WebSocket server, auth bridge, and routing

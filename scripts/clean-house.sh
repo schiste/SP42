@@ -28,13 +28,17 @@ set -euo pipefail
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$repo_root"
 
+print_help() {
+  /usr/bin/awk 'NR == 1 { next } /^# ?/ { sub(/^# ?/, ""); print; next } { exit }' "$0"
+}
+
 mode="light"
 for arg in "$@"; do
   case "$arg" in
     --auto | --keep-last) mode="auto" ;;
     --purge-target) mode="purge" ;;
     --help | -h)
-      sed -n '2,32p' "$0" | sed 's/^# \{0,1\}//'
+      print_help
       exit 0
       ;;
     *)
@@ -110,14 +114,17 @@ grace_s=$((grace_min * 60))
 # 2a. Disposable final-artifact trees — regenerated on demand by their gate.
 /bin/rm -rf target/doc target/llvm-cov-target 2>/dev/null || true
 
-# 2b. Keep only the last build session's trees. Cargo's split build-dir keys a
-#     per-profile intermediate tree at target/.build/<hash>/<leaf>/<profile> (the
-#     bulk of the disk), with matching final artifacts at target/<profile>. We key
-#     recency on each tree's newest *file* mtime — directory mtimes are unreliable
-#     (cargo writes into deep subdirs, and stat/clean passes touch the parents).
-#     Any profile whose newest file predates the global newest by more than the
+# 2b. Keep only the last build session's trees. Cargo shards this workspace's
+#     configured build-dir under target/.build/<prefix>/<hash>/, then stores host
+#     profile intermediates at .../<profile> and target-specific intermediates at
+#     .../<target-triple>/<profile>. Matching final artifacts live at
+#     target/<profile> or target/<target-triple>/<profile>. We key recency on each
+#     profile tree's newest *file* mtime — directory mtimes are unreliable (cargo
+#     writes into deep subdirs, and stat/clean passes touch the parents). Any
+#     profile tree whose newest file predates the global newest by more than the
 #     grace window — older profiles, stale CI runs, orphaned worktree hashes — is
-#     dropped, along with its matching top-level finals.
+#     dropped, along with its matching final artifacts unless another kept tree
+#     still maps to the same final directory.
 # Epoch mtime of a file, portably: GNU coreutils uses `stat -c %Y`, BSD/macOS
 # uses `stat -f %m`. Probe once and reuse — getting this wrong returns no mtime,
 # which silently disables the whole keep-last pass (every tree looks un-aged).
@@ -131,32 +138,64 @@ newest_file_mtime() {
   # would otherwise abort the script under `set -e`. The stdout is still captured.
   /usr/bin/find "$1" -type f -exec "${stat_mtime[@]}" {} + 2>/dev/null | sort -rn | head -1 || true
 }
+cargo_profile_tree() {
+  [[ -d "$1/.fingerprint" || -d "$1/deps" || -d "$1/build" || -d "$1/incremental" || -d "$1/examples" ]]
+}
+final_artifact_tree_for_profile() {
+  local rel parts_count
+  rel="${1#target/.build/}"
+  IFS=/ read -r -a parts <<< "$rel"
+  parts_count="${#parts[@]}"
+  case "$parts_count" in
+    3) printf 'target/%s\n' "${parts[2]}" ;;
+    4) printf 'target/%s/%s\n' "${parts[2]}" "${parts[3]}" ;;
+    *) return 1 ;;
+  esac
+}
+array_contains() {
+  local needle item
+  needle="$1"
+  shift
+  for item in "$@"; do
+    [[ "$item" == "$needle" ]] && return 0
+  done
+  return 1
+}
 
 if [[ -d target/.build ]]; then
   profile_trees=()
   profile_mtimes=()
+  profile_finals=()
   newest=0
   while IFS= read -r profile_tree; do
     [[ -d "$profile_tree" ]] || continue
+    cargo_profile_tree "$profile_tree" || continue
     modified="$(newest_file_mtime "$profile_tree")"
     [[ -n "$modified" ]] || continue
+    final_tree="$(final_artifact_tree_for_profile "$profile_tree")" || continue
     profile_trees+=("$profile_tree")
     profile_mtimes+=("$modified")
+    profile_finals+=("$final_tree")
     # if-guard, not `(( … )) && …`: a false arithmetic command returns exit 1,
     # which would trip `set -e`.
     if (( modified > newest )); then
       newest="$modified"
     fi
-  done < <(/usr/bin/find target/.build -mindepth 3 -maxdepth 3 -type d)
+  done < <(/usr/bin/find target/.build -mindepth 3 -maxdepth 4 -type d)
 
   if (( newest > 0 )); then
+    stale_finals=()
+    kept_finals=()
     for i in "${!profile_trees[@]}"; do
       if (( newest - profile_mtimes[i] > grace_s )); then
-        profile="$(basename "${profile_trees[i]}")"
         /bin/rm -rf "${profile_trees[i]}"     # intermediates for this profile/target
-        # matching final-artifact dir: ci / debug / release / <target-triple>
-        [[ -n "$profile" ]] && /bin/rm -rf "target/$profile"
+        stale_finals+=("${profile_finals[i]}")
+      else
+        kept_finals+=("${profile_finals[i]}")
       fi
+    done
+    for final_tree in "${stale_finals[@]}"; do
+      array_contains "$final_tree" "${kept_finals[@]}" || /bin/rm -rf "$final_tree"
     done
   fi
   # drop now-empty leaf / hash dirs left behind

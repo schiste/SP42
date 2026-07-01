@@ -119,9 +119,13 @@ in our process.
    types.** A single `build_fetch_client(...)` factory builds the reqwest client;
    the **untrusted source face** attaches the guarded resolver, the **trusted
    Wikimedia face** attaches the default resolver. No host allowlist to
-   misconfigure, no second implementation to drift. Citoid moves to the trusted
-   face (its host is hardcoded, so the SSRF guard would add only the risk of a
-   self-inflicted outage on a first-party dependency, with no threat reduction).
+   misconfigure, no second implementation to drift. The target shape is that
+   Citoid uses the trusted Wikimedia face (its host is hardcoded, so the SSRF
+   guard would add only the risk of a self-inflicted outage on a first-party
+   dependency, with no threat reduction). The current migration keeps the
+   verify-page and CLI Citoid calls on the guarded source injection rather than
+   widening those signatures in this PR; that is an explicit temporary exception,
+   not a second policy.
 
 3. **SSRF via a custom `Resolve` (resolved-IP guard), closing #60.** The guarded
    resolver resolves the host (using the normal system resolver — we do not
@@ -222,10 +226,11 @@ in our process.
 - **Future code avoided:** no hand-rolled backoff/jitter/`Retry-After` state
   machine, no separate #60 fix, no perpetual two-client sync.
 - **Migration:** `sp42-cli` and `sp42-server` switch their source fetch to
-  `sp42-fetch`. (The server's Citoid call already uses a *separate* general
-  client, and the CLI's single injected client is the guarded one — which works
-  for Citoid because `en.wikipedia.org` is public; see Implementation notes on
-  the two-face decision.) Behavior is preserved or strengthened; the escape
+  `sp42-fetch`. Bare-URL repair already uses a separate general client for
+  Citoid; verify-page and CLI Citoid calls keep using the guarded injected
+  client for now, which works because `en.wikipedia.org` is public. A strict
+  trusted-face Citoid injection remains follow-up work; see Implementation notes
+  on the two-face decision. Behavior is preserved or strengthened; the escape
   hatch and the report contract are unchanged.
 
 ## Alternatives considered
@@ -312,18 +317,18 @@ corrected or surfaced — recorded so the design is honest:
    default backoff). (`genai` still pulls a second `reqwest` 0.13 transitively —
    unrelated and harmless.)
 
-5. **The two-face split is only partly realized — and decision #2 overstated
-   it.** Citoid is reached from two server paths, and they differ: the *bare-URL
-   repair* path already uses the separate general `reqwest::Client`
+5. **The two-face split is only partly realized in this migration.** Citoid is
+   reached from two server paths, and they differ: the *bare-URL repair* path
+   already uses the separate general `reqwest::Client`
    (`citation_routes::fetch_citoid_object`), but the *verify-page* path passes
    the single injected source client into `verify_page`, and
    `citation/verify.rs` uses that same client for the Citoid metadata request.
    So in verify-page (and in the CLI) Citoid currently rides the **guarded**
    face, not a trusted one. This works because `en.wikipedia.org` is public (the
    guard is a no-op there) and was preferred over threading a second client
-   through the `verify_page`/`verify.rs` signature. A strict typed trusted face
-   for Citoid remains a follow-up; decision #2 should be read as the intent, not
-   as fully implemented here.
+   through the `verify_page`/`verify.rs` signature in this PR. A strict typed
+   trusted face for all Citoid calls remains the follow-up to decision #2's
+   target architecture.
 
 6. **IPv4-mapped IPv6 must be unwrapped (Codex P1).** `Ipv6Network::is_global()`
    treats the whole `::ffff/96` block as global, so `http://[::ffff:127.0.0.1]/`

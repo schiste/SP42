@@ -116,46 +116,80 @@ records **only from identifiers it already trusts**:
   refined so the report distinguishes "no identifier to resolve" from "resolved but
   nothing found." No fabricated matches, consistent with how the URL path treats
   unresolvable sources.
+- **Wikidata is a secondary structured authority.** When the Open Library record (or
+  its work/author) carries a Wikidata link — or one is reachable via a shared
+  identifier — SP42 may pull the linked Wikidata item as *additional sourced
+  context*. It is not used for matching (identifier gating above still governs
+  resolution); it feeds the enrichment lane (Layer 3), where a richer structured
+  context is what unlocks a synthesized description.
 
 ### Layer 2 — Ground (read-only, no auth)
 
 When resolution yields an Internet Archive scan with searchable full text:
 
-- SP42 searches the scan's OCR (Internet Archive full-text / "search inside") for
-  the claim's supporting passage and runs it through the **existing** per-use-site
-  verifier and panel (ADR-0006/0007) — the scan's OCR text is the source body, no
-  new verdict semantics.
+- SP42 queries the scan's **"search inside" API**, which returns matched pages with a
+  **verbatim OCR snippet**, the page number, and match coordinates. That snippet is
+  the source body handed to the **existing** per-use-site verifier and panel
+  (ADR-0006/0007) — no new verdict semantics.
+- **Cited page first, then fall back.** When the cite template names a `|page=`, SP42
+  scopes the first search pass to that page (higher precision); if it finds nothing
+  there — scan pagination often differs from the cited edition (front-matter offset,
+  reprints) — it falls back to a whole-book search. The finding records which
+  **scanned** page the passage was actually found on, so a page mismatch surfaces to
+  the operator rather than causing a false `not_supported`.
 - The **anti-fabrication grounding gate is unchanged** (ADR-0007): a `supported`
-  verdict must carry a passage **verbatim-located in the fetched OCR bytes**. A scan
-  is just another byte source under the ADR-0009 snapshot/replay discipline (the
-  OCR text is content-hashed and stored, so verdicts replay deterministically).
+  verdict must carry a passage **verbatim-located in the fetched bytes** — here, the
+  returned snippet. The snippet is content-hashed and stored under the ADR-0009
+  snapshot/replay discipline, so verdicts replay deterministically. Grounding on the
+  snippet (rather than a full-book OCR download) is deliberate: **snippet search
+  typically works even for lending-restricted / in-copyright scans**, so SP42 can
+  ground a passage without needing to borrow the book.
 - The finding records a **deep link to the scanned page** (Internet Archive book
   URLs support page anchors + search highlighting) so the operator can jump to the
   page that supports — or contradicts — the claim.
-- A book that resolves but whose scan is **not full-text-searchable** (in-copyright
-  / lending-only / no scan) degrades to `SourceUnavailable`, reusing the existing
-  reason split (`unreachable` vs `unusable`, ADR-0011 Decision 7) rather than adding
-  a book-specific verdict.
+- **Availability signal (resolved Q4):** SP42 treats a book as groundable when the
+  Open Library edition has an `ocaid` **and** the archive.org item is a text item
+  with a full-text index (search-inside returns a result set). A book that resolves
+  but is not indexed / returns no searchable text (no scan, or an image-only item)
+  degrades to `SourceUnavailable`, reusing the existing reason split (`unreachable`
+  vs `unusable`, ADR-0011 Decision 7) rather than adding a book-specific verdict.
 
 ### Layer 3 — Enrich (operator-confirmed write; ADR-0010 discipline)
 
-When Layer 1 resolved an Open Library record and SP42 holds **sourced** fields that
-record is missing:
+The write lane **enriches records that already exist** (resolved Q2). Creating a
+wholly-missing edition via `/api/import` is out of scope for this PRD (dedup risk +
+elevated import privileges; see Alternatives). When Layer 1 resolved an existing
+Open Library record and SP42 holds **sourced** values that record is missing:
 
 - SP42 computes a **field-level gap proposal** against the live Open Library
-  record: e.g. missing `subjects`, missing `description`, missing cover, absent
-  `publish_date`/`number_of_pages`, an ISBN-13 to sit alongside a bare ISBN-10, a
-  link back to the source. **Every proposed field traces to a source** — the Citoid
-  metadata, the resolved scan's own title-page/OCR, or another authority — and the
-  proposal shows that provenance. **SP42 authors nothing** (the PRD-0008 rule,
-  extended to a new target); there is no generative "write me a book blurb" step.
+  record. Two classes of field, with different provenance rules:
+  - **Structured fields — relayed verbatim, never authored.** Missing `subjects`,
+    cover, `publish_date`/`number_of_pages`, publisher, an ISBN-13 to sit alongside a
+    bare ISBN-10, a link back to the source. **Every such field traces verbatim to a
+    source** — Citoid, the resolved scan's title-page/OCR, or Wikidata — and the
+    proposal shows that provenance. This is the PRD-0008 "SP42 authors nothing" rule,
+    extended to a new target.
+  - **Description — synthesized, but only from rich sourced context (resolved Q3).**
+    SP42 *may* propose a model-**synthesized** `description`, but **only when it has
+    assembled a substantial structured context** for the book — in practice, a linked
+    Wikidata item plus the Open Library / Citoid facts. The synthesis is constrained
+    to facts present in that assembled context (grounded synthesis, not open-ended
+    generation), and the proposal shows the sources it drew from. Where that rich
+    context is absent, **no description is proposed.** This is the deliberate
+    "judgment in the loop" crossing PRD-0008 foreshadowed (its closing note that
+    later features in this family cross the author-nothing boundary "under the spawned
+    ADR, when they put judgment in the loop"); it is the one generative affordance in
+    the lane and it carries its own DoD and risk treatment below.
 - The operator sees the record's current value and the proposed value **field by
-  field** and confirms or dismisses. It is a **proposal, not a write**: nothing
-  reaches Open Library without the operator confirming that exact change (ADR-0010).
+  field** — including, for a synthesized description, the sources it was built from —
+  and confirms or dismisses. It is a **proposal, not a write**: nothing reaches
+  Open Library without the operator confirming that exact change (ADR-0010).
 - On confirm, SP42 applies the change through Open Library's write API **under the
-  operator's own Open Library account**, with a descriptive edit comment
-  (`SP42: sourced metadata enrichment`), respecting Open Library's rate limits and
-  import/bot etiquette. The edit is attributed and reversible (wiki history) — an
+  operator's own per-operator Open Library session** (resolved Q1) — connected and
+  stored like the existing MediaWiki OAuth session, never a shared/baked-in service
+  key — with a descriptive edit comment (`SP42: sourced metadata enrichment`),
+  respecting Open Library's rate limits and import/bot etiquette. The edit is
+  attributed to the human who confirmed it and is reversible (wiki history) — an
   assisted edit, not a bot run.
 - If the Open Library record changed under the proposal, SP42 **refuses rather than
   overwrites** and offers to re-propose against the current record (ADR-0010's
@@ -182,21 +216,31 @@ Open Library / Internet Archive responses — no live network in tests (ADR-0009
       (when present) its Internet Archive scan, verified over a replayed
       `/isbn/{isbn}.json` fixture; a citation with **no** resolvable identifier stays
       `skipped` with the refined reason, verified by a fixture test.
-- [ ] A resolved book with a full-text-searchable scan produces a `supported` /
-      `partial` / `not_supported` verdict whose supporting passage is
-      **verbatim-located in the scan OCR**, verified by a replayed full-text-search
-      fixture; the ADR-0007 grounding gate rejects a passage not present in the OCR.
+- [ ] A resolved book with a searchable scan produces a `supported` / `partial` /
+      `not_supported` verdict whose supporting passage is **verbatim-located in the
+      returned search-inside snippet**, verified by a replayed search-inside fixture;
+      the ADR-0007 grounding gate rejects a passage not present in the snippet.
+- [ ] A citation with `|page=` searches that page first and **falls back to a
+      whole-book search** when it misses; the finding reports the **scanned** page the
+      passage was found on, verified by fixtures for both the page-hit and the
+      fallback path.
 - [ ] The verdict carries a page-anchored deep link into the scan, verified by a
       renderer test.
-- [ ] A resolved book whose scan is not full-text-searchable degrades to
-      `SourceUnavailable` (correct `unreachable`/`unusable` split), not a fabricated
-      verdict, verified by a fixture test.
-- [ ] A thin Open Library record yields a field-level enrichment proposal populated
-      **only** from sourced fields, verified by a renderer test over replayed record
-      + Citoid fixtures; a record already complete yields **no** proposal.
+- [ ] A resolved book whose scan is not full-text-searchable (no `ocaid` / no index /
+      empty result set) degrades to `SourceUnavailable` (correct `unreachable`/
+      `unusable` split), not a fabricated verdict, verified by a fixture test.
+- [ ] A thin Open Library record yields a field-level enrichment proposal whose
+      **structured** fields are each populated **verbatim** from a named source
+      (Open Library / Citoid / Wikidata), verified by a renderer test over replayed
+      fixtures; a record already complete yields **no** proposal.
+- [ ] A **synthesized description** is proposed **only** when a rich structured
+      context (a linked Wikidata item + Open Library/Citoid facts) is present, shows
+      the sources it drew from, and is withheld when that context is absent, verified
+      by fixtures for both the rich-context and sparse-context cases.
 - [ ] Confirming applies **exactly the proposed field change** to Open Library under
-      the operator's account with the edit comment, verified by a mock-write-path
-      test; **no** write occurs without a confirmation bound to that exact proposal.
+      the operator's **own per-operator session** with the edit comment, verified by a
+      mock-write-path test; **no** write occurs without a confirmation bound to that
+      exact proposal.
 - [ ] A proposal whose target record drifted (edited since proposal) **refuses** and
       offers re-proposal, with **zero** writes reaching Open Library, verified by a
       write-path refusal test.
@@ -211,10 +255,18 @@ Open Library / Internet Archive responses — no live network in tests (ADR-0009
   verdict and an enrichment write; the citation staying `skipped` is the honest
   outcome. Revisit with a confidence threshold if identifier coverage proves too
   thin in practice.
-- *Let the model write missing descriptions/subjects from its own knowledge.*
-  Rejected: violates the anti-fabrication posture (ADR-0007) and PRD-0008's
-  "SP42 authors nothing." Enrichment relays sourced fields only; an unsourced field
-  is simply not proposed.
+- *Let the model write a description from its own open-ended knowledge.* Rejected:
+  open-ended generation violates the anti-fabrication posture (ADR-0007). The
+  admitted form (resolved Q3) is narrower — a description **synthesized only from an
+  assembled, sourced structured context** (a linked Wikidata item + Open Library/
+  Citoid facts), constrained to those facts and shown with its provenance, and only
+  when that context is rich enough. Subjects and other structured fields are always
+  relayed verbatim, never authored.
+- *Never propose a description at all (structured fields only).* Considered and not
+  taken: it is the strictest reading of PRD-0008, but it leaves the single most
+  useful reader-facing field permanently empty even when SP42 holds ample sourced
+  facts to ground one. The grounded-synthesis rule above is the deliberate,
+  bounded crossing instead — with the operator's confirmation as the gate.
 - *Auto-apply high-confidence enrichments.* Rejected: violates
   operator-confirms-every-edit (PRD-0004, ADR-0010), and a public catalog is exactly
   where an unattended wrong edit is most costly.
@@ -247,37 +299,65 @@ Open Library / Internet Archive responses — no live network in tests (ADR-0009
   behind it — an assisted edit, not a bot. Respect Open Library rate limits and
   import/bot policy; if community practice requires more for assisted enrichment, the
   write lane stays disabled until resolved (same posture as PRD-0008's frwiki gate).
+- **Synthesized description drifts from its sources (the one fabrication surface).**
+  The description is the only generative field, so it is the only place a claim can
+  appear that no source backs. Mitigations: it is proposed only when a rich sourced
+  context is present; it is constrained to that context (grounded synthesis, not
+  open-ended); the proposal shows the sources it drew from; and the operator confirms
+  it field-by-field. A candidate mechanical floor — check each salient sentence of the
+  synthesized description against the assembled context before offering it (the same
+  spirit as ADR-0007's located-passage gate) — is worth carrying into the ADR. This is
+  the crossing of PRD-0008's author-nothing line and is recorded here, not buried.
 - **Operator habituation (rubber-stamping).** Mitigation: field-level diffs are
   small and sourced; a complete record yields no proposal at all, so proposals stay
-  rare and worth reading.
+  rare and worth reading. The synthesized description is the field most at risk of a
+  rubber-stamp, which is the reason its provenance is shown inline.
 - **Credential handling for Open Library.** The write lane needs the operator's
-  Open Library session. Mitigation: treat it like the existing per-operator
-  MediaWiki session — never a shared/baked-in key (see Open questions).
-- **Two more external services (Open Library, IA full-text).** Mitigation: both sit
-  behind the `HttpClient` trait boundary with pure builders/parsers and replayed
-  fixtures (ADR-0004/0008 pattern, as Citoid does); unavailability degrades to
-  "no resolution / no proposal," never blocks the review flow. Server-side fetches
-  honor the SSRF floor (SP42#34) like ADR-0011 Decision 5.
+  Open Library session (resolved Q1: per-operator, never a shared/baked-in key).
+  Mitigation: store and refresh it exactly like the existing per-operator MediaWiki
+  session; an operator without a connected Open Library account simply does not see
+  the write lane (the read-only Resolve/Ground lanes still work).
+- **Three more external services (Open Library, IA search-inside, Wikidata).**
+  Mitigation: each sits behind the `HttpClient` trait boundary with pure builders/
+  parsers and replayed fixtures (ADR-0004/0008 pattern, as Citoid does); any one
+  being unavailable degrades gracefully — a missing Wikidata item just means no
+  synthesized description, a missing scan just means no grounding — and never blocks
+  the review flow. Server-side fetches honor the SSRF floor (SP42#34) like ADR-0011
+  Decision 5.
 
-## Open questions
+## Resolved questions
 
-1. **Open Library credential model.** Per-operator login session stored like the
-   MediaWiki session, or an access/secret pair? Leaning per-operator session so
-   every enrichment is attributed to the human who confirmed it.
-2. **Enrich-only, or also import missing editions?** MVP leans enrich-only
-   (Alternatives); is importing a missing edition (`/api/import`) in scope later, and
-   under what privilege check?
-3. **Where do enrichment fields come from, in priority order?** Citoid vs the scan's
-   own title-page/OCR vs other authorities — and which fields are safe to relay
-   (identifiers, publish date, page count, subjects) vs never auto-proposed
-   (free-text description?).
-4. **Full-text availability signal.** How reliably can SP42 tell "scan exists and is
-   searchable" from "scan exists but is lending-restricted/not indexed" before
-   spending a search? Determines how often Layer 2 can promise a verdict.
-5. **Grounding a *page-specific* citation.** A cite `|page=42` names a location; do we
-   scope the OCR search to that page (higher precision, brittle to scan pagination)
-   or search the whole book and report the page we found (more robust)? Leaning the
-   latter.
-6. **Does this need its own ADR now, or ride ADR-0010/0011?** Likely a thin read
-   contract ADR (resolve + full-text grounding as a new source type) plus reuse of
-   ADR-0010 for the write; assign numbers when drafted.
+All six carry the Editor's decided answers (2026-07-01), folded into the body above;
+they remain open to reviewer reaction until acceptance.
+
+1. **Open Library credential model.** Resolved: **per-operator session**, connected
+   and stored like the existing MediaWiki OAuth session, so every enrichment is
+   attributed to the human who confirmed it. No shared/baked-in service key.
+2. **Enrich-only, or also import missing editions?** Resolved: **enrich existing
+   records only** for this PRD. Importing a missing edition (`/api/import`) is
+   deferred to its own PRD/DoD (dedup risk + import-privilege requirements).
+3. **Where do enrichment fields come from, and is a description ever authored?**
+   Resolved in two parts. **Structured fields** (identifiers, publish date, page
+   count, publisher, subjects, cover, source link) are **relayed verbatim** from a
+   named source (Open Library / Citoid / the scan / Wikidata) and never authored. A
+   **description** *may* be **model-synthesized, but only from a rich assembled
+   sourced context** — in practice a linked **Wikidata** item plus Open Library/
+   Citoid facts — constrained to those facts and shown with provenance; where that
+   context is absent, no description is proposed. This adds Wikidata as a secondary
+   structured authority (Layer 1) and is the one deliberate crossing of PRD-0008's
+   author-nothing line.
+4. **Full-text availability signal.** Resolved (by API check): a book is treated as
+   groundable when the Open Library edition has an `ocaid` **and** the archive.org
+   item is a text item whose **search-inside** endpoint returns a result set.
+   Search-inside returns a **verbatim snippet + page** and typically works even for
+   lending-restricted / in-copyright scans, so SP42 grounds on the snippet without
+   borrowing; no index / empty result set → `SourceUnavailable` (`unusable`).
+5. **Grounding a *page-specific* citation.** Resolved: **cited page first, then fall
+   back to a whole-book search**, and report the **scanned** page the passage was
+   actually found on (so a pagination mismatch surfaces instead of causing a false
+   `not_supported`).
+6. **Does this need its own ADR now, or ride ADR-0010/0011?** Resolved: **one thin
+   new read-contract ADR** (Internet Archive search-inside as a new grounding source
+   type feeding the existing verifier, plus Wikidata as an enrichment context source)
+   and **reuse ADR-0010 as-is** for the operator-confirmed write. Numbers assigned
+   when drafted.

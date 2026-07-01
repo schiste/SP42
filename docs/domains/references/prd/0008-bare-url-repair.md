@@ -120,19 +120,20 @@ question 5).
 
 ## Proposed CLI surface
 
-The MVP's operator surface is two mutually-exclusive CLI flag-modes over the
-dev bridge (ADR-0002), following the house flag-mode pattern (decided by the
-Editor mid-design, 2026-06-09):
+The MVP's operator surface is the `bare-url` CLI subcommand with two actions
+over the dev bridge (ADR-0002). (It was originally shipped as two
+mutually-exclusive `--bare-url-preview` / `--bare-url-execute` flag-modes,
+2026-06-09; the CLI later moved to `clap` subcommands.)
 
 ```text
---bare-url-preview --title <T> --rev <N> [--wiki <ID>] [--bridge-base-url <URL>] [--format text|json|markdown]
---bare-url-execute --title <T> --rev <N> --ordinal <K> [--wiki <ID>] [--action-note <summary>] [--bridge-base-url <URL>] [--format text|json|markdown]
+bare-url preview --title <T> --rev <N> [--wiki <ID>] [--format text|json|markdown]
+bare-url execute --title <T> --rev <N> --ordinal <K> [--wiki <ID>] [--action-note <summary>] [--bridge-base-url <URL>] [--format text|json|markdown]
 ```
 
-- `--bare-url-preview` calls `POST /dev/citation/bare-url-proposals` and
+- `bare-url preview` calls `POST /dev/citation/bare-url-proposals` and
   renders the revision's `{proposals, declined}`; it is read-only and needs
   no session.
-- `--bare-url-execute` re-fetches the proposals, selects ordinal `<K>`, and
+- `bare-url execute` re-fetches the proposals, selects ordinal `<K>`, and
   replays exactly that proposal against `POST /dev/citation/bare-url-apply`
   under the operator's bridge session (bootstrap + CSRF token). The fresh
   fetch re-anchors the locator; the server's anti-drift re-check and

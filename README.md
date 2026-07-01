@@ -116,8 +116,13 @@ Useful local endpoints:
 ### 3. Run the CLI
 
 ```sh
-cargo run -p sp42-cli
+cargo run -p sp42-cli -- --help            # list subcommands
+cargo run -p sp42-cli -- preview           # ranked queue from STDIN (built-in sample if empty)
 ```
+
+Capabilities are subcommands (`verify`, `verify-page`, `locate-probe`,
+`bare-url`, `preview`). For the full command-line reference — including
+environment variables — see [docs/platform/CLI.md](docs/platform/CLI.md).
 
 ### 4. Build the browser app
 

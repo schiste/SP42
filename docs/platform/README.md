@@ -10,6 +10,7 @@ engine), and `xtask`.
 - [RUNTIME_CONFIGURATION.md](RUNTIME_CONFIGURATION.md) — server environment, API base URL, and local dev auth
 - [DESKTOP_DISTRIBUTION.md](DESKTOP_DISTRIBUTION.md) — desktop shell backends, build prerequisites, signing/notarization
 - [DEVELOPER_SURFACE.md](DEVELOPER_SURFACE.md) — localhost reporting, action/live boundaries, telemetry, milestone boundaries
+- [CLI.md](CLI.md) — `sp42-cli` command-line reference: flags, modes, environment, exit codes
 - [FRONTEND_DESIGN_CONTRACT.md](FRONTEND_DESIGN_CONTRACT.md) — binding frontend design spec
 - [CODEX_DESIGN_SYSTEM.md](CODEX_DESIGN_SYSTEM.md) — how SP42 aligns to Wikimedia Codex (tokens, not Vue components) and where it deliberately diverges
 

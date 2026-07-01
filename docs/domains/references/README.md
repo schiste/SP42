@@ -13,6 +13,7 @@ builds on the platform LLM interface ([ADR-0006](../../platform/adr/0006-using-l
 - [PRD-0001 — Citation verification](prd/0001-citation-verification.md) — operator-facing capability, CLI-first surface, panel voting and agreement signal
 - [PRD-0007 — LLM output-quality benchmarking](prd/0007-llm-output-benchmarking.md) — eval corpus, deterministic hard gates, and baseline/compare framework for LLM outputs
 - [PRD-0008 — Bare-URL repair](prd/0008-bare-url-repair.md) — fill a bare URL into a complete cite template via propose/confirm
+- [PRD-0009 — Book-citation grounding and Open Library enrichment](prd/0009-book-citation-grounding-and-open-library-enrichment.md) — verify book citations against Internet Archive full-text and offer sourced, operator-confirmed Open Library metadata improvements
 
 ## Architecture Decision Records
 

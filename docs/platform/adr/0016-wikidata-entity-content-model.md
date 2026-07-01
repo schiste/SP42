@@ -1,11 +1,11 @@
-# ADR-0015: Wikidata entity content-model — revision read, `EntityDiff`, and content-model routing
+# ADR-0016: Wikidata entity content-model — revision read, `EntityDiff`, and content-model routing
 
 **Status:** Proposed
 **Date:** 2026-07-01
 **Author:** Luis Villa (drafted by Claude Code)
 
 Spawned by PRD-0011 (Wikidata as a first-class SP42 target). This ADR owns the
-**read** mechanism; the entity **write** contract is ADR-0016.
+**read** mechanism; the entity **write** contract is ADR-0017.
 
 ## Context
 
@@ -111,7 +111,7 @@ patrolling domain consumes it now, and the citation↔Wikidata workflows will to
 - **ADR-0006 / scoring:** unchanged — scoring is gated *off* for entity content, not
   modified.
 - **ADR-0003 / ADR-0010 (wikitext editing / propose-confirm):** untouched by the read
-  path; the entity **write** contract is ADR-0016.
+  path; the entity **write** contract is ADR-0017.
 
 ## Consequences
 
@@ -129,7 +129,7 @@ patrolling domain consumes it now, and the citation↔Wikidata workflows will to
 
 ## Non-Goals
 
-- **No entity write / statement editing** — ADR-0016.
+- **No entity write / statement editing** — ADR-0017.
 - **No Wikidata-specific scoring model** — follow-on.
 - **No qualifier/rank rendering polish** beyond correct classification (a renderer
   detail, not a contract decision).

@@ -8,10 +8,10 @@
 [ADR-0014](../../../platform/adr/0014-wikimedia-oauth-and-any-project.md)
 (resolve any Wikimedia project).
 **Spawned ADRs:**
-- [ADR-0015](../../../platform/adr/0015-wikidata-entity-content-model.md) (platform,
+- [ADR-0016](../../../platform/adr/0016-wikidata-entity-content-model.md) (platform,
   Proposed) — Wikidata entity content-model: revision read + `EntityDiff` mechanism,
   per-revision content-model routing, and capability gating.
-- [ADR-0016](../../../platform/adr/0016-wikidata-statement-proposal-write-contract.md)
+- [ADR-0017](../../../platform/adr/0017-wikidata-statement-proposal-write-contract.md)
   (platform, Proposed) — Wikidata statement-proposal write contract (propose/confirm
   for entity statements: drift against the entity revision, reference attachment),
   reusing ADR-0010's discipline and ADR-0007's grounding gate. Its concrete
@@ -59,7 +59,7 @@ read-only-first. The split follows the "reuse-by-design ⇒ platform" rule
 (`adding-a-domain.md`): the read mechanism is reused by every Wikidata workflow, so
 it is platform; the workflows are thin domain policy.
 
-### Platform foundation — the read module (→ ADR-0015)
+### Platform foundation — the read module (→ ADR-0016)
 
 - **Content-model-aware read path.** Fetch an entity revision and its parent via the
   Action API (`prop=revisions`, entity JSON) and parse into a structured
@@ -163,7 +163,7 @@ The write-lane use cases carry their own DoD in their follow-on PRDs.*
   point of the change.
 - *Put the entity read/diff in a Wikidata domain crate.* Rejected by
   "reuse-by-design ⇒ platform": the read mechanism is reused by patrol, citation→
-  facts, and enrichment alike, so it is a platform mechanism (ADR-0015); only the
+  facts, and enrichment alike, so it is a platform mechanism (ADR-0016); only the
   workflows are domain policy.
 - *Use the Wikibase REST API instead of the Action API for reads.* Rejected for the
   read/diff path: the REST API is convenient for the current entity but weaker for
@@ -197,7 +197,7 @@ The write-lane use cases carry their own DoD in their follow-on PRDs.*
   operator-confirmed (ADR-0010), reversible.
 - **Platform surface growth.** A new content model widens the platform contract.
   Mitigation: it is additive and routing-gated (the wikitext path is untouched for
-  wikitext), pinned by ADR-0015 and enforced by the layer check.
+  wikitext), pinned by ADR-0016 and enforced by the layer check.
 
 ## Resolved questions
 
@@ -205,7 +205,7 @@ All six carry the Editor's decided answers (2026-07-01), folded into the body ab
 they remain open to reviewer reaction until acceptance.
 
 1. **Domain placement.** Resolved: **hybrid / defer.** The entity **read mechanism
-   lives in platform** (ADR-0015); **patrol-Wikidata extends the patrolling domain**
+   lives in platform** (ADR-0016); **patrol-Wikidata extends the patrolling domain**
    (it is patrol policy on a new content model, reusing the shipped workflow). No new
    `sp42-wikidata` crate is stood up for the MVP; whether the *write-lane* workflows
    (citation→facts, Wikidata→sources) get their own domain or extend references is
@@ -226,8 +226,8 @@ they remain open to reviewer reaction until acceptance.
 5. **Which write use case comes first after the read MVP.** Resolved: **citation→
    facts first** (the write capability), then Wikidata→sources. This makes the
    statement-proposal write lane the immediate follow-on design work.
-6. **ADR split.** Resolved: **ADR-0015 (platform) for the read mechanism now; a
-   separate thin ADR-0016 for the statement-proposal write contract**, drafted with
+6. **ADR split.** Resolved: **ADR-0016 (platform) for the read mechanism now; a
+   separate thin ADR-0017 for the statement-proposal write contract**, drafted with
    the citation→facts follow-on PRD. ADR-0010's wikitext node-anchor/`baserevid`
    mechanism does not map to entity statements (drift is detected against the entity
    revision), so its principle is reused but its mechanism is not — the same reason

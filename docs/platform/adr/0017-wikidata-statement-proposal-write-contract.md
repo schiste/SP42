@@ -1,4 +1,4 @@
-# ADR-0016: Wikidata statement-proposal write contract
+# ADR-0017: Wikidata statement-proposal write contract
 
 **Status:** Proposed
 **Date:** 2026-07-01
@@ -83,7 +83,7 @@ it relays a sourced triple.
   relationship carried one level further.
 - **ADR-0007 (anti-fabrication grounding):** governs *which* facts may be proposed — a
   statement without a verbatim-located source passage is declined.
-- **ADR-0015 (entity read):** consumed to observe `lastrevid` and current statements
+- **ADR-0016 (entity read):** consumed to observe `lastrevid` and current statements
   for the drift baseline and the before/after render.
 - **ADR-0014 (resolve any project):** the write lands under the operator's project
   session.

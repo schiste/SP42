@@ -4,7 +4,7 @@ Making **Wikidata** a first-class target — reviewable in the patrol workflow, 
 structured, referenced source/sink of facts for the citation work. Wikidata
 revisions are entity JSON (labels, descriptions, aliases, statements, sitelinks),
 not wikitext, so the work builds on a shared **platform** read mechanism (entity
-revision read + `EntityDiff` + content-model routing/gating, ADR-0015) rather than
+revision read + `EntityDiff` + content-model routing/gating, ADR-0016) rather than
 reimplementing it. Continues
 [ADR-0014](../../platform/adr/0014-wikimedia-oauth-and-any-project.md)
 (resolve any Wikimedia project) — Wikidata is already resolvable; this makes it
@@ -26,10 +26,10 @@ path.
 
 ## Architecture Decision Records
 
-- [ADR-0015](../../platform/adr/0015-wikidata-entity-content-model.md) (platform,
+- [ADR-0016](../../platform/adr/0016-wikidata-entity-content-model.md) (platform,
   Proposed) — Wikidata entity content-model: revision read + `EntityDiff` mechanism,
   per-revision content-model routing, and capability gating. Spawned by PRD-0011.
-- [ADR-0016](../../platform/adr/0016-wikidata-statement-proposal-write-contract.md)
+- [ADR-0017](../../platform/adr/0017-wikidata-statement-proposal-write-contract.md)
   (platform, Proposed) — Wikidata statement-proposal write contract (propose/confirm
   for entity statements; drift vs. the entity revision; reference attachment),
   reusing ADR-0010 discipline + ADR-0007 grounding. Its fact-extraction workflow is

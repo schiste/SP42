@@ -16,6 +16,14 @@ rather than redefining either.
 
 ## Changelog
 
+- 2026-07-02: First implementation pass (this branch): the `CitationConcernKind`
+  flag-citation mechanism, the Re-verify route, and the browser action row all
+  land, with unit tests on the routing/gating logic. Not done: the
+  `FailedVerification` insert-after-`<ref>` primitive (refuses informatively,
+  as scoped), the live-edit acceptance gate (needs an authenticated
+  `test.wikipedia.org` session), and the side-by-side evidence layout (shipped
+  as stacked-but-expanded instead). See Definition of Done for the full
+  per-item status.
 - 2026-07-01: State `Draft` → `Accepted`. All five open questions resolved:
   repair-first sequencing for "Fix citation" (tracked in
   [#108](https://github.com/schiste/SP42/issues/108)); explicit
@@ -209,32 +217,32 @@ actually is, independent of whether any edit was made at all.
 
 ## Definition of Done
 
-- [ ] An action row renders only for `Partial`/`NotSupported` findings;
+- [x] An action row renders only for `Partial`/`NotSupported` findings;
       `Supported`/`SourceUnavailable` findings remain read-only, verified by a
       component test over all four verdict fixtures.
 - [ ] The source's located passage and the article's claim text render side by
       side above the action row whenever it's shown, verified by a rendering
       test.
-- [ ] "Edit article text" opens `InlineEdit` pre-filled with `finding.claim` as
+- [x] "Edit article text" opens `InlineEdit` pre-filled with `finding.claim` as
       `selected_text` and an empty operator-authored `replacement_text`,
       verified end-to-end against the stub editor.
-- [ ] "Fix citation" routes to the replace action when `finding.ref_id` is
+- [x] "Fix citation" routes to the replace action when `finding.ref_id` is
       non-empty and to the insert action when it is empty, verified by tests
       over both finding shapes.
-- [ ] A claim sentence occurring more than once in the article refuses any
+- [x] A claim sentence occurring more than once in the article refuses any
       literal-fallback action anchored on it — `InlineEdit`'s text-edit path
       and Flag citation's `Partial` (span-wrap) path both — rather than
       guessing, verified by fixture tests over both call sites. Same guard,
       exercised from two new call sites.
-- [ ] "Flag citation" suggests `{{Failed verification span}}` for `Partial`
+- [x] "Flag citation" suggests `{{Failed verification span}}` for `Partial`
       findings and `{{Failed verification}}` for `NotSupported` findings in
       the propose/preview step, before any write, verified by tests over both
       verdict shapes.
-- [ ] The operator can override the suggested `CitationConcernKind` for any
+- [x] The operator can override the suggested `CitationConcernKind` for any
       other wiki-configured one before confirming, verified by a test
       asserting the apply payload reflects the operator's choice, not just
       the suggestion.
-- [ ] An optional reason field, when filled, lands in the applied template's
+- [x] An optional reason field, when filled, lands in the applied template's
       `reason=` parameter; left blank, the template renders without one,
       verified by fixture tests over both cases.
 - [ ] A `CitationConcernKind` with no configured template for the wiki
@@ -249,11 +257,11 @@ actually is, independent of whether any edit was made at all.
       asserting decline is a first-class outcome, not an error. Distinct from
       the no-configured-template case above: this is a proposal the operator
       saw and chose not to apply, not a refusal before one was ever shown.
-- [ ] All three actions terminate in the existing ADR-0010
+- [x] All three actions terminate in the existing ADR-0010
       propose/preview/confirm component with no new confirm UI added,
       verified by review (no new confirm-dialog component introduced in the
       diff).
-- [ ] None of the three actions is pre-selected, defaulted, or rendered with
+- [x] None of the three actions is pre-selected, defaulted, or rendered with
       more visual weight than the others, and no confidence score is shown
       alongside them, verified by a snapshot/parity test asserting all three
       buttons share the same component and styling. Within Flag citation, the
@@ -262,14 +270,14 @@ actually is, independent of whether any edit was made at all.
 - [ ] The action row is offered **only on enabled wikis**; the MVP enables
       only `test.wikipedia.org`, verified by the same config-gating tests
       PRD-0008/0012 use.
-- [ ] Every finding with an action row also offers **Re-verify**, which calls
+- [x] Every finding with an action row also offers **Re-verify**, which calls
       the new route, re-runs `verify_citation_use_site` against the
       finding's current state, and replaces the card with the fresh result,
       verified by an end-to-end test against the stub verifier.
-- [ ] Re-verify never fires automatically — not on mount, not after any of
+- [x] Re-verify never fires automatically — not on mount, not after any of
       the three actions confirms — only on explicit operator click, verified
       by a test asserting no verify call happens without it.
-- [ ] The new route adds no verification logic of its own — it calls
+- [x] The new route adds no verification logic of its own — it calls
       `verify_citation_use_site` unchanged — verified by review (no new
       grounding, panel, or verdict logic introduced outside the existing
       module).
@@ -281,6 +289,40 @@ actually is, independent of whether any edit was made at all.
       **The `NotSupported` flag path (insert-after-`<ref>`) is not required
       for this item**: it's blocked on the new insert-at-position primitive
       (see Proposal, Open questions) and may close in a follow-on PR.
+
+### Implementation status (2026-07-01)
+
+The mechanism, routing, and gating logic above are implemented and unit
+tested; the checked items reflect that. Three caveats on *how* "verified by"
+was satisfied, since this repo has no Leptos DOM/e2e test harness (pre-existing,
+not introduced here) and `sp42-app`'s `pages`/`components`/`platform` modules
+are wasm32-gated at the crate root, so even pure-logic tests in those modules
+don't run under the workspace's plain `cargo test`: "component test" /
+"end-to-end test" / "rendering test" / "snapshot test" items are satisfied by
+pure-function unit tests (compiled and traced by hand under
+`--target wasm32-unknown-unknown`) plus manual code review, not by an
+automated DOM harness — genuinely new coverage here, but a different kind
+than the checklist item names.
+
+Left unchecked, not just under-verified:
+
+- **Side-by-side layout.** The evidence disclosure now defaults open when the
+  action row shows (so the located passage isn't hidden behind a click), but
+  claim and passage still render stacked, not side by side.
+- **"No configured template" as a distinct, surfaced message.** The
+  underlying refusal is real and tested server-side
+  (`citation-concern-not-enabled`), but the row doesn't proactively check
+  config before rendering the button — the reason only surfaces reactively,
+  in the status line, after the operator clicks confirm and it's refused.
+- **Decline-is-zero-writes**, implemented (Cancel sends nothing) but
+  unverified by an automated test, for the harness reason above.
+- **Wiki-level enablement gating in the UI.** The row renders for any wiki
+  based on verdict alone; enablement is enforced by the underlying actions
+  refusing server-side, not by hiding the row per wiki. There was no prior
+  browser UI for PRD-0008 to establish a convention either way.
+- **The live-edit acceptance gate itself.** Not done — needs an authenticated
+  Wikimedia session against `test.wikipedia.org`, driven through the browser,
+  which this implementation pass didn't have credentials for.
 
 ## Alternatives
 

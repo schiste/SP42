@@ -1,196 +1,255 @@
 # SP42
 
-SP42 is a Rust-first Wikipedia patrolling workbench. It combines shared patrol logic, a browser shell, a CLI, a desktop shell, and a localhost bridge so the same review flow can be exercised across targets while the project moves toward live Wikimedia verification.
+SP42 is a platform for Wikimedia quality gates.
 
-SP42 is currently alpha software. The repository is public and buildable, but it is not yet a production-ready moderation tool.
+It is built to host checks that help an operator decide whether a page, edit,
+source, or proposed change is ready to trust. Today that means patrol review,
+edit scoring, citation verification, source/readability checks, and
+operator-confirmed citation repair. The long-term shape is broader: shared
+platform layers underneath, domain-specific gates on top, and browser/CLI/desktop
+shells that expose the same contracts.
 
-## What SP42 Is
+SP42 is **alpha software**. It is public and buildable, and the local development
+stack is the main working surface. It is not yet a production moderation service
+and it does not autonomously edit Wikimedia projects.
 
-- A shared core for patrol queueing, diffing, scoring, context building, and MediaWiki action preparation
-- A browser shell for patrol review, diagnostics, and local single-user Wikimedia testing
-- A CLI and desktop shell that reuse the same core contracts
-- A localhost server for coordination, debug surfaces, and the local development auth bridge
+## SP42 Challenges
 
-## Current Status
+Wikimedia quality work does not fit one workflow, one wiki, or one language
+edition. A gate that works for recent-changes patrol may not fit citation review;
+a policy that is correct on one project may be wrong on another; and local
+practices often live in templates, norms, queues, and reviewer habits rather than
+in one central API.
 
-- Local and offline development is substantially implemented
-- Single-user local Wikimedia token testing is supported through a localhost bridge
-- Live Wikimedia integration is still the main remaining external milestone
-- Multi-user production auth is not implemented yet
+SP42's core challenge is to make those differences portable without turning every
+new gate into a one-off application. The project needs shared components and
+shared functions that can be reused across patrol, references, scoring, editing,
+coordination, reporting, and future domains. It also needs abstraction layers
+that can accept project-specific policies and practices for any Wikimedia project
+or language edition: scoring rules, source expectations, citation templates,
+review actions, capability checks, model prompts, and operator workflows.
 
-Phase summary:
+That is why SP42 is structured as platform plus domains. The platform provides
+stable mechanisms; domains describe the quality gate; per-project configuration
+and policy decide how that gate behaves in context.
 
-- `Phase 1`: offline patrol core and queueing, effectively complete for local/offline development
-- `Phase 2`: coordination and shared room state, effectively complete for local development
-- `Phase 3`: browser, CLI, and desktop shells with shared reports, shared shell-state, telemetry, and the interactive patrol rail, effectively complete for local development
-- `Phase 4`: live Wikimedia integration, pending real credentials and external verification
-- `Phase 5`: PWA/offline packaging and installability, effectively complete for local development
+## What SP42 Does
 
-Detailed status lives in [docs/STATUS.md](docs/STATUS.md).
+- Runs a browser-based operator workbench backed by an SP42 server.
+- Ingests live or replayable Wikimedia edit queues and builds review context.
+- Scores edits and ranks work through configurable policy documents.
+- Presents diffs, action previews, identity/capability state, and coordination
+  state for patrol workflows.
+- Verifies whether cited sources support claims and reports the result with
+  locatable evidence when support is claimed.
+- Proposes citation repairs through an operator-confirmed propose/apply flow.
+- Keeps model access, Wikimedia credentials, storage, fetch policy, and runtime
+  configuration behind shared platform boundaries.
 
-## Repository Layout
+The design rule is simple: domains own Wikimedia quality gates; the platform owns
+the reusable mechanisms those gates need.
 
-SP42 is a platform that owns shared abstraction layers, with domains that consume
-them. The crates group along that seam.
+## Current Domains
 
-Platform layers (shared, domain-agnostic):
+**Patrolling**
 
-- `crates/sp42-types`: transport contracts and storage/HTTP/clock abstractions
-- `crates/sp42-coordination`: multi-operator collaboration protocol and room state
-- `crates/sp42-wiki`: wiki config parsing, registry/default selection, and capability profiles
-- `crates/sp42-server`: localhost HTTP/WebSocket server, auth bridge, and routing
-- `crates/sp42-devtools`: deterministic fixtures and demo-surface builders
-- `crates/sp42-core`: shared contracts, runtime primitives, and the scoring engine (also hosts patrolling action/queue logic pending a future split)
-- `xtask`: workspace build tasks
+The patrol domain covers queueing, scoring, diff review, action preflight,
+operator identity, and multi-operator coordination.
 
-Patrolling domain (the shipped review workflow):
+Main crates: `sp42-patrol`, `sp42-live`, `sp42-reporting`.
 
-- `crates/sp42-live`: EventStreams ingestion, recentchanges/backlog polling, and live queue filtering
-- `crates/sp42-reporting`: patrol scenario, session-digest, and operator-summary reporting
-- `crates/sp42-cli`: CLI shell
-- `crates/sp42-app`: browser and PWA shell
-- `crates/sp42-desktop`: desktop shell
+**References / Citation**
 
-References / citation domain is incoming (no crate yet); see the PRD and ADRs in
-`docs/domains/references/`.
+The references domain covers citation verification, article-level citation
+reports, source snapshots, body-usability classification, Citoid-backed bare-URL
+repair, and model-panel voting.
 
-Supporting trees:
+Main crate: `sp42-citation`.
 
-- `configs/`: per-wiki and scoring configuration
-- `schemas/`: config schemas
-- `fixtures/`: test fixtures
-- `docs/`: platform, domain, and project documentation (see [docs/README.md](docs/README.md))
+More domains should follow the same pattern: platform contracts first, a narrow
+domain crate second, shell integration last.
 
-## Requirements
+## Quick Start: Local Browser App
+
+Requirements:
 
 - Rust `1.96` or newer
-- The `wasm32-unknown-unknown` target for browser builds
-
-Optional:
-
+- the `wasm32-unknown-unknown` Rust target
 - `trunk` for serving the browser app during development
-- `sccache` for faster repeated local Rust builds
-- A local Wikimedia testing token in `.env.wikimedia.local` for the single-user auth bridge
 
-## Quick Start
-
-### 1. Clone and build
-
-```sh
-./scripts/build-local.sh
-```
-
-Builds are incremental by default. Pass `--clean` to any build entrypoint when
-you want to purge generated artifacts, including `target/`, before building.
-
-For a deployable web release build:
-
-```sh
-./scripts/build-web-release.sh
-```
-
-For CI-shaped builds with deterministic caching:
-
-```sh
-./scripts/ci-all.sh
-```
-
-For focused local checks during iteration:
-
-```sh
-./scripts/check-focused.sh
-```
-
-### 2. Run the localhost server
-
-```sh
-cargo run -p sp42-server
-```
-
-Useful local endpoints:
-
-- `http://127.0.0.1:8788/healthz`
-- `http://127.0.0.1:8788/debug/summary`
-- `http://127.0.0.1:8788/dev/auth/bootstrap/status`
-
-### 3. Run the CLI
-
-```sh
-cargo run -p sp42-cli
-```
-
-### 4. Build the browser app
+Setup:
 
 ```sh
 rustup target add wasm32-unknown-unknown
-./scripts/build-frontend.sh
+cargo install trunk
 ```
 
-To generate Cargo timings reports:
+Run the local development stack:
 
 ```sh
-./scripts/build-timings.sh
-```
-
-For live local development with the server and Trunk proxy running together:
-
-```sh
-./scripts/dev-local.sh
 ./scripts/dev-local.sh --smoke
 ```
 
-The dev command runs `sp42-server` on `127.0.0.1:8788` and Trunk on
-`127.0.0.1:4173`.
+This starts:
 
-For runtime settings, local credentials, and API base URL behavior, see
+- browser app: `http://127.0.0.1:4173`
+- local server: `http://127.0.0.1:8788`
+
+The script writes logs under `.tmp/` and stops both processes on `Ctrl-C`.
+
+Useful local server endpoints:
+
+- `http://127.0.0.1:8788/healthz`
+- `http://127.0.0.1:8788/debug/runtime`
+- `http://127.0.0.1:8788/debug/summary`
+- `http://127.0.0.1:8788/dev/auth/bootstrap/status`
+
+Most local development does not require committing credentials. Authenticated
+Wikimedia actions use the localhost development auth bridge; configure that in a
+local `.env.wikimedia.local` file when needed. See
 [docs/platform/RUNTIME_CONFIGURATION.md](docs/platform/RUNTIME_CONFIGURATION.md).
-For desktop app packaging, see
-[docs/platform/DESKTOP_DISTRIBUTION.md](docs/platform/DESKTOP_DISTRIBUTION.md).
-For a Wikimedia Cloud VPS artifact, run `./scripts/package-vps.sh`; the
-generated package includes its own deployment README.
 
-## Development Commands
+LLM-backed citation verification uses the `SP42_INFERENCE_*` environment
+variables documented in the inference/platform notes. Keep provider tokens on the
+server side; the browser shell should never receive them.
+
+## Common Commands
+
+Focused local checks while iterating:
+
+```sh
+./scripts/check-focused.sh
+```
+
+Build the Rust workspace:
 
 ```sh
 ./scripts/build-local.sh
-./scripts/build-local.sh --clean
-./scripts/build-server.sh
+```
+
+Build the browser bundle:
+
+```sh
 ./scripts/build-frontend.sh
-./scripts/build-web-release.sh
-./scripts/package-vps.sh
-./scripts/build-desktop.sh --platform macos --debug
-./scripts/dev-local.sh --smoke
-./scripts/check-focused.sh
+```
+
+Run CI-shaped local validation:
+
+```sh
 ./scripts/ci-all.sh
 ```
 
-Contributor validation expectations live in [CONTRIBUTING.md](CONTRIBUTING.md).
-Maintainer/full-CI commands live behind `./scripts/ci-all.sh` and the Cargo
-aliases in [.cargo/config.toml](.cargo/config.toml).
+Build deployable artifacts:
 
-Optional shared compiler cache:
+```sh
+./scripts/build-web-release.sh
+./scripts/package-vps.sh
+./scripts/build-desktop.sh --platform macos --debug
+```
 
-- Install `sccache` for faster repeated local builds
-- Set `SP42_USE_SCCACHE=1` to require `sccache`
-- Leave `SP42_USE_SCCACHE` unset to auto-enable `sccache` when available without making it mandatory
+Optional compiler cache:
+
+- leave `SP42_USE_SCCACHE` unset to auto-use `sccache` when available
+- set `SP42_USE_SCCACHE=1` to require it
+
+## Repository Layout
+
+Platform and shared contracts:
+
+- `crates/sp42-types`: neutral transport/model/storage contracts and DTOs
+- `crates/sp42-platform`: scoring, diffing, action contracts, OAuth/dev-auth,
+  wikitext editing, queueing, policy loading, and other reusable mechanisms
+- `crates/sp42-coordination`: room state, presence, claims, and collaboration
+  protocol
+- `crates/sp42-wiki`: Wikimedia project registry, configs, SiteMatrix snapshot,
+  and capability profiles
+- `crates/sp42-reporting`: shared report document/rendering framework
+- `crates/sp42-inference`: server-side model client construction
+- `crates/sp42-server`: localhost/server runtime, HTTP routes, WebSockets, auth
+  bridge, static app serving, and Wikimedia-facing adapters
+- `crates/sp42-devtools`: deterministic fixtures and demo builders
+- `crates/sp42-core`: temporary migration facade that re-exports platform and
+  domain crates while callers move to the new boundaries
+
+Domains:
+
+- `crates/sp42-patrol`: patrol workflow, reports, shell-state models, and scoring
+  evaluation fixtures
+- `crates/sp42-live`: EventStreams/recentchanges ingestion and live queue support
+- `crates/sp42-citation`: citation verification, citation reports, source fetch
+  helpers, and bare-URL repair
+
+Shells:
+
+- `crates/sp42-app`: Leptos browser/PWA shell
+- `crates/sp42-cli`: command-line shell
+- `crates/sp42-desktop`: desktop shell and Tauri packaging
+
+Supporting trees:
+
+- `configs/`: per-wiki configuration
+- `schemas/`: configuration schemas
+- `fixtures/`: test fixtures
+- `docs/`: architecture, domain, PRD, ADR, and process documentation
+- `scripts/`: build, CI, dev, packaging, and repository hygiene entrypoints
+- `xtask/`: workspace build tasks used by scripts
+
+The current architecture is recorded in
+[ADR-0013](docs/platform/adr/0013-layered-platform-domain-architecture.md).
+
+## Runtime Configuration
+
+The server defaults to local mode and binds to `127.0.0.1:8788`.
+
+Important environment variables include:
+
+- `SP42_DEPLOYMENT_MODE=local|vps|desktop`
+- `SP42_BIND_ADDR`
+- `SP42_PUBLIC_BASE_URL`
+- `SP42_APP_DIST_DIR`
+- `SP42_RUNTIME_DIR`
+- `SP42_ALLOWED_ORIGINS`
+- `SP42_WIKI_CONFIG_DIR`
+- `SP42_DEFAULT_WIKI_ID`
+- `SP42_SUPERVISOR_WIKIS`
+
+The browser app uses same-origin API paths by default. Split frontend/API setups
+can configure the API base URL through runtime config, metadata, or build-time
+environment variables. See
+[docs/platform/RUNTIME_CONFIGURATION.md](docs/platform/RUNTIME_CONFIGURATION.md)
+for the full contract.
 
 ## Documentation
 
-Documentation is organized to mirror the platform/domain architecture. Start with
-the docs map, then drill into a layer or domain:
+Start here:
 
-- [docs/README.md](docs/README.md): documentation map — platform, domains, and project docs
-- [docs/platform/README.md](docs/platform/README.md): platform layers — runtime, desktop, developer surface, design contract, scoring, and ADR-0001–0006
-- [docs/domains/README.md](docs/domains/README.md): domains — patrolling (shipped) and references/citation (incoming)
+- [docs/README.md](docs/README.md): documentation map
+- [docs/STATUS.md](docs/STATUS.md): implementation status
+- [docs/platform/README.md](docs/platform/README.md): platform docs and ADRs
+- [docs/domains/README.md](docs/domains/README.md): domain docs
+- [CONTRIBUTING.md](CONTRIBUTING.md): contributor checks and workflow
+- [GOVERNANCE.md](GOVERNANCE.md): maintainer model and decision process
+- [CONSTITUTION.md](CONSTITUTION.md): binding engineering rules
 
-Project and process docs:
+Key architecture records:
 
-- [docs/STATUS.md](docs/STATUS.md): phase-by-phase project status
-- [CONTRIBUTING.md](CONTRIBUTING.md): contributor workflow and local checks
-- [GOVERNANCE.md](GOVERNANCE.md): maintainer model, protected areas, and release authority
-- [CONSTITUTION.md](CONSTITUTION.md): binding engineering laws
-- [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md): participation expectations
-- [docs/process/prd-protocol.md](docs/process/prd-protocol.md): PRD protocol for user-facing changes
+- [ADR-0004](docs/platform/adr/0004-crate-boundary-collaboration-model.md):
+  crate boundaries and collaboration model
+- [ADR-0005](docs/platform/adr/0005-design-system-shared-component-layer.md):
+  design-system/shared-component direction
+- [ADR-0006](docs/platform/adr/0006-using-llms.md): model-panel and inference
+  boundary
+- [ADR-0013](docs/platform/adr/0013-layered-platform-domain-architecture.md):
+  platform/domain layering
+- [ADR-0014](docs/platform/adr/0014-wikimedia-oauth-and-any-project.md):
+  Wikimedia OAuth and any-project support
+
+## Project Status
+
+SP42 is actively changing. Treat the root README as the operator/developer entry
+point, not the full project ledger. The detailed moving status lives in
+[docs/STATUS.md](docs/STATUS.md), and product/architecture changes should be
+captured as PRDs or ADRs under `docs/`.
 
 ## License
 

@@ -14,8 +14,8 @@ mod select;
 
 pub use capability::{ContentCapabilityProfile, derive_content_capability_profile};
 pub use diff::{
-    AliasChange, EntityDiff, SitelinkChange, StatementChange, StatementChangeParts, TermChange,
-    diff_entities,
+    AliasChange, ContentDiff, EntityDiff, SitelinkChange, StatementChange, StatementChangeParts,
+    TermChange, diff_entities, route_content_diff,
 };
 pub use model::{
     Entity, EntityId, Lang, PropertyId, Reference, Sitelink, Snak, Statement, StatementId,

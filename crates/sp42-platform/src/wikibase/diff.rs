@@ -2,7 +2,10 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
-use super::model::{Entity, Lang, PropertyId, Sitelink, Statement};
+use crate::diff_engine::StructuredDiff;
+use crate::types::ContentModel;
+
+use super::model::{Entity, EntityId, Lang, PropertyId, Sitelink, Statement};
 
 /// Structured diff of two Wikibase entity revisions (ADR-0016 Decision 3).
 /// Sibling of `StructuredDiff` (`diff_engine`), selected by `ContentDiff` (Phase 6).
@@ -322,6 +325,77 @@ fn diff_statement_parts(old: &Statement, new: &Statement) -> StatementChangePart
     }
 }
 
+/// The diff a consumer receives, selected by the revision's content model
+/// (ADR-0016 Decision 4). Wikitext is byte-for-byte the existing path.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum ContentDiff {
+    Text {
+        diff: StructuredDiff,
+        /// Set when this is a degradation (unknown model, unparseable entity):
+        /// honest fallback, not a silent lie (D4).
+        note: Option<String>,
+    },
+    Entity(EntityDiff),
+}
+
+/// Route two revision bodies to the right diff. `entity_id` is required only for
+/// the entity path (parse needs the id); pass the page title (Q-id) from patrol.
+#[must_use]
+pub fn route_content_diff(
+    model: &ContentModel,
+    entity_id: Option<&EntityId>,
+    before: Option<&str>,
+    after: &str,
+) -> ContentDiff {
+    match model {
+        ContentModel::Wikitext => {
+            let before_text = before.unwrap_or("");
+            let diff = crate::diff_engine::diff_lines(before_text, after);
+            ContentDiff::Text { diff, note: None }
+        }
+        ContentModel::WikibaseItem | ContentModel::WikibaseProperty => {
+            // entity_id is required for parsing; if missing, degrade to text
+            let Some(id) = entity_id else {
+                let diff = crate::diff_engine::diff_lines(before.unwrap_or(""), after);
+                return ContentDiff::Text {
+                    diff,
+                    note: Some(
+                        "entity revision could not be parsed; showing text diff".to_string(),
+                    ),
+                };
+            };
+
+            // Parse both sides (before `None` → first revision)
+            let before_entity =
+                before.and_then(|body| crate::wikibase::parse_entity(id, body.as_bytes()).ok());
+            let Ok(after_entity) = crate::wikibase::parse_entity(id, after.as_bytes()) else {
+                // Unparseable entity → text with note
+                let diff = crate::diff_engine::diff_lines(before.unwrap_or(""), after);
+                return ContentDiff::Text {
+                    diff,
+                    note: Some(
+                        "entity revision could not be parsed; showing text diff".to_string(),
+                    ),
+                };
+            };
+
+            // Both parses OK → compute entity diff
+            let entity_diff = diff_entities(before_entity.as_ref(), &after_entity);
+            ContentDiff::Entity(entity_diff)
+        }
+        ContentModel::Other(m) => {
+            let before_text = before.unwrap_or("");
+            let diff = crate::diff_engine::diff_lines(before_text, after);
+            ContentDiff::Text {
+                diff,
+                note: Some(format!(
+                    "content model {m} is not specially handled; showing text diff"
+                )),
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -470,5 +544,88 @@ mod tests {
             diff.is_empty(),
             "pure reordering of GUID-stable statements should yield empty diff"
         );
+    }
+
+    #[test]
+    fn wikitext_routes_to_text_diff() {
+        let diff = route_content_diff(&ContentModel::Wikitext, None, Some("old text"), "new text");
+        assert!(matches!(diff, ContentDiff::Text { note: None, .. }));
+    }
+
+    #[test]
+    fn wikitext_with_no_before_uses_empty_string() {
+        let diff = route_content_diff(&ContentModel::Wikitext, None, None, "new text");
+        assert!(matches!(diff, ContentDiff::Text { note: None, .. }));
+    }
+
+    #[test]
+    fn entity_models_route_to_entity_diff() {
+        let entity_json = r#"{"id":"Q42","type":"item","labels":{"en":{"language":"en","value":"Answer"}},"descriptions":{},"aliases":{},"claims":{},"sitelinks":{}}"#;
+        let entity_json_updated = r#"{"id":"Q42","type":"item","labels":{"en":{"language":"en","value":"The Answer"}},"descriptions":{},"aliases":{},"claims":{},"sitelinks":{}}"#;
+
+        let diff = route_content_diff(
+            &ContentModel::WikibaseItem,
+            Some(&EntityId::new("Q42")),
+            Some(entity_json),
+            entity_json_updated,
+        );
+
+        assert!(matches!(diff, ContentDiff::Entity(_)));
+    }
+
+    #[test]
+    fn unparseable_entity_body_degrades_to_text_with_note() {
+        let diff = route_content_diff(
+            &ContentModel::WikibaseItem,
+            Some(&EntityId::new("Q42")),
+            Some(r#"{"id":"Q42"}"#),
+            "garbage JSON {{{",
+        );
+
+        match diff {
+            ContentDiff::Text { note: Some(n), .. } => {
+                assert_eq!(n, "entity revision could not be parsed; showing text diff");
+            }
+            _ => panic!("Expected Text with note, got {diff:?}"),
+        }
+    }
+
+    #[test]
+    fn entity_without_id_degrades_to_text_with_note() {
+        let entity_json = r#"{"id":"Q42","type":"item","labels":{"en":{"language":"en","value":"Answer"}},"descriptions":{},"aliases":{},"claims":{},"sitelinks":{}}"#;
+
+        let diff = route_content_diff(
+            &ContentModel::WikibaseItem,
+            None,
+            Some(entity_json),
+            entity_json,
+        );
+
+        match diff {
+            ContentDiff::Text { note: Some(n), .. } => {
+                assert_eq!(n, "entity revision could not be parsed; showing text diff");
+            }
+            _ => panic!("Expected Text with note, got {diff:?}"),
+        }
+    }
+
+    #[test]
+    fn unknown_model_degrades_to_text_with_note() {
+        let diff = route_content_diff(
+            &ContentModel::Other("Scribunto".into()),
+            None,
+            Some("old"),
+            "new",
+        );
+
+        match diff {
+            ContentDiff::Text { note: Some(n), .. } => {
+                assert_eq!(
+                    n,
+                    "content model Scribunto is not specially handled; showing text diff"
+                );
+            }
+            _ => panic!("Expected Text with note, got {diff:?}"),
+        }
     }
 }

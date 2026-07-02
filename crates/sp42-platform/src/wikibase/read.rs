@@ -22,8 +22,7 @@ pub fn build_entity_request(id: &EntityId, revision: Option<u64>) -> HttpRequest
     );
 
     let url = if let Some(rev) = revision {
-        Url::parse(&format!("{base_url}?revision={rev}"))
-            .unwrap_or_else(|_| Url::parse(&base_url).expect("base URL should parse"))
+        Url::parse(&format!("{base_url}?revision={rev}")).expect("revision URL should parse")
     } else {
         Url::parse(&base_url).expect("base URL should parse")
     };

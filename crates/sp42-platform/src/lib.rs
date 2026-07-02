@@ -59,8 +59,8 @@ pub mod training_data;
 pub mod traits;
 pub mod types;
 pub mod user_analyzer;
-pub mod wikibase;
 pub mod wiki_storage;
+pub mod wikibase;
 pub mod wikitext_editor;
 
 pub use action_contracts::{

@@ -4,6 +4,7 @@
 //! (PRD-0010), patrol's `EntityDiff`, and the statement write lane (ADR-0017).
 //! Design: docs/design-plans/2026-07-01-wikidata-read-model.md.
 
+mod capability;
 mod diff;
 mod model;
 mod parse;
@@ -11,6 +12,7 @@ mod read;
 mod render;
 mod select;
 
+pub use capability::{ContentCapabilityProfile, derive_content_capability_profile};
 pub use diff::{
     AliasChange, EntityDiff, SitelinkChange, StatementChange, StatementChangeParts, TermChange,
     diff_entities,

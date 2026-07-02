@@ -28,7 +28,11 @@ const WIKIMEDIA_API_RETRY_DELAY_MS: u64 = 150;
 #[derive(Debug, Clone)]
 pub(crate) struct RevisionSlotContent {
     pub(crate) text: String,
-    #[allow(dead_code)] // Phase 6: docs/platform/adr/0016-wikidata-entity-content-model.md #16
+    // Read in production by Phase 6 content-model routing (ADR-0016 D4,
+    // docs/platform/adr/0016-wikidata-entity-content-model.md). Not
+    // `#[expect]`: tests read the field, so the expectation is unfulfilled
+    // in test builds.
+    #[allow(dead_code)] // ADR-0016 D4: https://github.com/schiste/SP42
     pub(crate) content_model: ContentModel,
 }
 

@@ -7,6 +7,7 @@
 mod model;
 mod parse;
 mod read;
+mod render;
 mod select;
 
 pub use model::{
@@ -18,4 +19,5 @@ pub use read::{
     Labels, RevisionContent, build_entity_request, build_label_request,
     build_revision_pair_request, parse_labels, parse_revision_contents,
 };
+pub use render::{ValueDisplay, render_statement_claim, render_value};
 pub use select::StatementRef;

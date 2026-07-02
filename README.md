@@ -11,6 +11,9 @@ SP42 is currently alpha software. The repository is public and buildable, but it
 - A CLI and desktop shell that reuse the same core contracts
 - A localhost server for coordination, debug surfaces, and the local development auth bridge
 
+<img width="1920" height="991" alt="Screenshot 2026-07-02 at 09 44 41" src="https://github.com/user-attachments/assets/411286b2-d41c-44c4-a67b-19f93be8eebc" />
+
+
 ## Current Status
 
 - Local and offline development is substantially implemented

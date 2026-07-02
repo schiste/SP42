@@ -139,13 +139,22 @@ pub enum Snak {
 pub enum WikibaseValue {
     String(String),
     EntityId(EntityId),
-    Monolingual { lang: Lang, text: String },
-    Time { time: String, precision: u8 },
+    Monolingual {
+        lang: Lang,
+        text: String,
+    },
+    Time {
+        time: String,
+        precision: u8,
+    },
     Quantity {
         amount: String,
         unit: Option<EntityId>,
     },
-    GlobeCoordinate { lat: f64, lon: f64 },
+    GlobeCoordinate {
+        lat: f64,
+        lon: f64,
+    },
     /// Forward-compat: unknown datatypes preserved, never a parse failure,
     /// still diffable via `Statement.raw`.
     Other(serde_json::Value),

@@ -6,9 +6,11 @@
 
 mod model;
 mod parse;
+mod read;
 
 pub use model::{
     Entity, EntityId, Lang, PropertyId, Reference, Sitelink, Snak, Statement, StatementId,
     StatementRank, TermMap, WikibaseValue,
 };
-pub use parse::{parse_entity, WikibaseParseError};
+pub use parse::{WikibaseParseError, parse_entity};
+pub use read::{Labels, build_entity_request, build_label_request, parse_labels};

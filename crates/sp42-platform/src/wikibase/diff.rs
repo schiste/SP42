@@ -1,6 +1,8 @@
+use std::collections::BTreeMap;
+
 use serde::{Deserialize, Serialize};
 
-use super::model::{Lang, Sitelink, Statement};
+use super::model::{Entity, Lang, PropertyId, Sitelink, Statement};
 
 /// Structured diff of two Wikibase entity revisions (ADR-0016 Decision 3).
 /// Sibling of `StructuredDiff` (`diff_engine`), selected by `ContentDiff` (Phase 6).
@@ -68,4 +70,381 @@ pub struct StatementChangeParts {
     pub qualifiers: bool,
     pub rank: bool,
     pub references: bool,
+}
+
+/// Diff two entity revisions. `old = None` = first revision (everything Added).
+/// Change detection uses `Statement.raw` equality, so unknown datatypes still
+/// register (the honesty invariant, ADR-0016 Decision 3).
+#[must_use]
+#[allow(clippy::too_many_lines)] // https://github.com/schiste/SP42/blob/main/docs/adr/0016-wikibase-read-model.md
+pub fn diff_entities(old: Option<&Entity>, new: &Entity) -> EntityDiff {
+    let mut diff = EntityDiff::default();
+
+    // Handle labels: union of language keys
+    {
+        let mut langs = BTreeMap::new();
+        if let Some(old_entity) = old {
+            for lang in old_entity.labels.keys() {
+                langs.insert(lang.clone(), (old_entity.labels.get(lang).cloned(), None));
+            }
+        }
+        for lang in new.labels.keys() {
+            let entry = langs.entry(lang.clone()).or_insert((None, None));
+            entry.1 = new.labels.get(lang).cloned();
+        }
+
+        for (lang, (before, after)) in langs {
+            if before != after {
+                diff.labels.push(TermChange {
+                    lang,
+                    before,
+                    after,
+                });
+            }
+        }
+    }
+
+    // Handle descriptions: union of language keys
+    {
+        let mut langs = BTreeMap::new();
+        if let Some(old_entity) = old {
+            for lang in old_entity.descriptions.keys() {
+                langs.insert(
+                    lang.clone(),
+                    (old_entity.descriptions.get(lang).cloned(), None),
+                );
+            }
+        }
+        for lang in new.descriptions.keys() {
+            let entry = langs.entry(lang.clone()).or_insert((None, None));
+            entry.1 = new.descriptions.get(lang).cloned();
+        }
+
+        for (lang, (before, after)) in langs {
+            if before != after {
+                diff.descriptions.push(TermChange {
+                    lang,
+                    before,
+                    after,
+                });
+            }
+        }
+    }
+
+    // Handle aliases: union of language keys
+    {
+        let mut langs = BTreeMap::new();
+        if let Some(old_entity) = old {
+            for lang in old_entity.aliases.keys() {
+                langs.insert(lang.clone(), (old_entity.aliases.get(lang).cloned(), None));
+            }
+        }
+        for lang in new.aliases.keys() {
+            let entry = langs.entry(lang.clone()).or_insert((None, None));
+            entry.1 = new.aliases.get(lang).cloned();
+        }
+
+        for (lang, (before, after)) in langs {
+            let before_vec = before.unwrap_or_default();
+            let after_vec = after.unwrap_or_default();
+            if before_vec != after_vec {
+                diff.aliases.push(AliasChange {
+                    lang,
+                    before: before_vec,
+                    after: after_vec,
+                });
+            }
+        }
+    }
+
+    // Handle sitelinks: union of site keys
+    {
+        let mut sites = BTreeMap::new();
+        if let Some(old_entity) = old {
+            for site in old_entity.sitelinks.keys() {
+                sites.insert(
+                    site.clone(),
+                    (old_entity.sitelinks.get(site).cloned(), None),
+                );
+            }
+        }
+        for site in new.sitelinks.keys() {
+            let entry = sites.entry(site.clone()).or_insert((None, None));
+            entry.1 = new.sitelinks.get(site).cloned();
+        }
+
+        for (site, (before, after)) in sites {
+            if before != after {
+                diff.sitelinks.push(SitelinkChange {
+                    site,
+                    before,
+                    after,
+                });
+            }
+        }
+    }
+
+    // Handle statements: key by GUID, falling back to (property, index) position
+    {
+        // Build maps of GUID → statement for both sides
+        let mut old_by_guid: BTreeMap<String, &Statement> = BTreeMap::new();
+        let mut old_by_position: BTreeMap<(PropertyId, usize), &Statement> = BTreeMap::new();
+        if let Some(old_entity) = old {
+            for (prop_id, stmts) in &old_entity.statements {
+                for (idx, stmt) in stmts.iter().enumerate() {
+                    if let Some(id) = &stmt.id {
+                        old_by_guid.insert(id.as_str().to_string(), stmt);
+                    } else {
+                        old_by_position.insert((prop_id.clone(), idx), stmt);
+                    }
+                }
+            }
+        }
+
+        let mut new_by_guid: BTreeMap<String, &Statement> = BTreeMap::new();
+        let mut new_by_position: BTreeMap<(PropertyId, usize), &Statement> = BTreeMap::new();
+        for (prop_id, stmts) in &new.statements {
+            for (idx, stmt) in stmts.iter().enumerate() {
+                if let Some(id) = &stmt.id {
+                    new_by_guid.insert(id.as_str().to_string(), stmt);
+                } else {
+                    new_by_position.insert((prop_id.clone(), idx), stmt);
+                }
+            }
+        }
+
+        // Process GUID-keyed statements
+        let mut all_guids = BTreeMap::new();
+        for guid in old_by_guid.keys() {
+            all_guids.insert(guid.clone(), (old_by_guid.get(guid).copied(), None));
+        }
+        for guid in new_by_guid.keys() {
+            let entry = all_guids.entry(guid.clone()).or_insert((None, None));
+            entry.1 = new_by_guid.get(guid).copied();
+        }
+
+        for (_guid, (old_stmt, new_stmt)) in all_guids {
+            match (old_stmt, new_stmt) {
+                (Some(old), Some(new)) => {
+                    // Both sides have this GUID
+                    if old.raw != new.raw {
+                        let parts = diff_statement_parts(old, new);
+                        diff.statements.push(StatementChange::Changed {
+                            before: old.clone(),
+                            after: new.clone(),
+                            parts,
+                        });
+                    }
+                }
+                (Some(old), None) => {
+                    // Only in old
+                    diff.statements.push(StatementChange::Removed(old.clone()));
+                }
+                (None, Some(new)) => {
+                    // Only in new
+                    diff.statements.push(StatementChange::Added(new.clone()));
+                }
+                (None, None) => unreachable!(),
+            }
+        }
+
+        // Process position-keyed statements
+        let mut all_positions = BTreeMap::new();
+        for pos in old_by_position.keys() {
+            all_positions.insert(pos.clone(), (old_by_position.get(pos).copied(), None));
+        }
+        for pos in new_by_position.keys() {
+            let entry = all_positions.entry(pos.clone()).or_insert((None, None));
+            entry.1 = new_by_position.get(pos).copied();
+        }
+
+        for (_pos, (old_stmt, new_stmt)) in all_positions {
+            match (old_stmt, new_stmt) {
+                (Some(old), Some(new)) => {
+                    // Both sides have this position
+                    if old.raw != new.raw {
+                        let parts = diff_statement_parts(old, new);
+                        diff.statements.push(StatementChange::Changed {
+                            before: old.clone(),
+                            after: new.clone(),
+                            parts,
+                        });
+                    }
+                }
+                (Some(old), None) => {
+                    // Only in old
+                    diff.statements.push(StatementChange::Removed(old.clone()));
+                }
+                (None, Some(new)) => {
+                    // Only in new
+                    diff.statements.push(StatementChange::Added(new.clone()));
+                }
+                (None, None) => unreachable!(),
+            }
+        }
+    }
+
+    diff
+}
+
+fn diff_statement_parts(old: &Statement, new: &Statement) -> StatementChangeParts {
+    let old_raw = &old.raw;
+    let new_raw = &new.raw;
+
+    let mainsnak_changed = old_raw.get("mainsnak") != new_raw.get("mainsnak");
+    let qualifiers_changed = old_raw.get("qualifiers") != new_raw.get("qualifiers");
+    let rank_changed = old_raw.get("rank") != new_raw.get("rank");
+    let references_changed = old_raw.get("references") != new_raw.get("references");
+
+    // If raw differs but all four sub-parts are equal, set value: true as the
+    // catch-all so the change is visible (honesty invariant).
+    if !mainsnak_changed && !qualifiers_changed && !rank_changed && !references_changed {
+        return StatementChangeParts {
+            value: true,
+            qualifiers: false,
+            rank: false,
+            references: false,
+        };
+    }
+
+    StatementChangeParts {
+        value: mainsnak_changed,
+        qualifiers: qualifiers_changed,
+        rank: rank_changed,
+        references: references_changed,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::wikibase::{EntityId, parse_entity};
+
+    fn entity(claims_json: &str, label: &str) -> crate::wikibase::Entity {
+        let doc = format!(
+            r#"{{"id":"Q1","type":"item","labels":{{"en":{{"language":"en","value":"{label}"}}}},
+               "descriptions":{{}},"aliases":{{}},"claims":{claims_json},"sitelinks":{{}}}}"#
+        );
+        parse_entity(&EntityId::new("Q1"), doc.as_bytes()).unwrap()
+    }
+
+    const STMT: &str = r#"{"P569":[{"id":"Q1$a","mainsnak":{"snaktype":"value","property":"P569",
+        "datavalue":{"value":"x","type":"string"}},"type":"statement","rank":"normal","references":[]}]}"#;
+
+    #[test]
+    fn identical_entities_diff_empty() {
+        assert!(diff_entities(Some(&entity(STMT, "A")), &entity(STMT, "A")).is_empty());
+    }
+
+    #[test]
+    fn missing_parent_yields_all_added_not_an_error() {
+        let diff = diff_entities(None, &entity(STMT, "A"));
+        assert_eq!(diff.labels.len(), 1);
+        assert!(matches!(diff.statements[0], StatementChange::Added(_)));
+    }
+
+    #[test]
+    fn label_change_is_classified() {
+        let diff = diff_entities(Some(&entity(STMT, "A")), &entity(STMT, "B"));
+        assert_eq!(
+            diff.labels,
+            vec![TermChange {
+                lang: "en".into(),
+                before: Some("A".into()),
+                after: Some("B".into()),
+            }]
+        );
+        assert!(diff.statements.is_empty());
+    }
+
+    #[test]
+    fn rank_only_change_is_never_a_no_op() {
+        let promoted = STMT.replace(r#""rank":"normal""#, r#""rank":"preferred""#);
+        let diff = diff_entities(Some(&entity(STMT, "A")), &entity(&promoted, "A"));
+        let StatementChange::Changed { parts, .. } = &diff.statements[0] else {
+            panic!("expected Changed, got {:?}", diff.statements)
+        };
+        assert!(parts.rank);
+        assert!(!parts.value && !parts.qualifiers && !parts.references);
+    }
+
+    #[test]
+    fn qualifiers_only_change_is_never_a_no_op() {
+        let with_qualifier = STMT.replace(
+            r#""type":"statement","rank":"normal""#,
+            r#""type":"statement","qualifiers":{"P580":[{"snaktype":"value","property":"P580",
+                "datavalue":{"value":{"time":"+1971-00-00T00:00:00Z","precision":9},"type":"time"}}]},"rank":"normal""#,
+        );
+        let diff = diff_entities(Some(&entity(STMT, "A")), &entity(&with_qualifier, "A"));
+        let StatementChange::Changed { parts, .. } = &diff.statements[0] else {
+            panic!()
+        };
+        assert!(parts.qualifiers);
+        assert!(!parts.value && !parts.rank && !parts.references);
+    }
+
+    #[test]
+    fn raw_difference_outside_the_four_sub_parts_still_surfaces() {
+        // The honesty catch-all: a field none of the four classifiers cover
+        // (e.g. a statement-level "hash") must still register as a change.
+        let with_extra = STMT.replace(
+            r#""type":"statement""#,
+            r#""type":"statement","hash":"deadbeef""#,
+        );
+        let diff = diff_entities(Some(&entity(STMT, "A")), &entity(&with_extra, "A"));
+        let StatementChange::Changed { parts, .. } = &diff.statements[0] else {
+            panic!("difference outside sub-parts must never be a no-op")
+        };
+        assert!(
+            parts.value,
+            "catch-all marks value so the change is visible"
+        );
+    }
+
+    #[test]
+    fn reference_only_change_is_never_a_no_op() {
+        let with_ref = STMT.replace(
+            r#""references":[]"#,
+            r#""references":[{"snaks":{"P854":[{"snaktype":"value","property":"P854",
+                "datavalue":{"value":"https://e.org","type":"string"}}]}}]"#,
+        );
+        let diff = diff_entities(Some(&entity(STMT, "A")), &entity(&with_ref, "A"));
+        let StatementChange::Changed { parts, .. } = &diff.statements[0] else {
+            panic!()
+        };
+        assert!(parts.references && !parts.value);
+    }
+
+    #[test]
+    fn statement_added_and_removed_by_guid() {
+        let two = STMT.replace(
+            r"}]}",
+            r#"},{"id":"Q1$b","mainsnak":{"snaktype":"value","property":"P569",
+               "datavalue":{"value":"y","type":"string"}},"type":"statement","rank":"normal","references":[]}]}"#,
+        );
+        let diff = diff_entities(Some(&entity(STMT, "A")), &entity(&two, "A"));
+        assert!(matches!(
+            diff.statements.as_slice(),
+            [StatementChange::Added(s)] if s.id.as_ref().expect("statement has id").as_str() == "Q1$b"
+        ));
+        let reverse = diff_entities(Some(&entity(&two, "A")), &entity(STMT, "A"));
+        assert!(matches!(
+            reverse.statements.as_slice(),
+            [StatementChange::Removed(_)]
+        ));
+    }
+
+    #[test]
+    fn unknown_datatype_change_still_registers() {
+        // The honesty invariant for datatypes we model as Other: raw equality catches it.
+        let odd = STMT.replace(
+            r#""value":"x","type":"string""#,
+            r#""value":{"z":1},"type":"musical-notation""#,
+        );
+        let odd2 = odd.replace(r#"{"z":1}"#, r#"{"z":2}"#);
+        let diff = diff_entities(Some(&entity(&odd, "A")), &entity(&odd2, "A"));
+        assert!(
+            matches!(&diff.statements[0], StatementChange::Changed { parts, .. } if parts.value)
+        );
+    }
 }

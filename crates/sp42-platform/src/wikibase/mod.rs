@@ -13,6 +13,7 @@ mod select;
 
 pub use diff::{
     AliasChange, EntityDiff, SitelinkChange, StatementChange, StatementChangeParts, TermChange,
+    diff_entities,
 };
 pub use model::{
     Entity, EntityId, Lang, PropertyId, Reference, Sitelink, Snak, Statement, StatementId,

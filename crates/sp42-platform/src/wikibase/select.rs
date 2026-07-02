@@ -89,8 +89,17 @@ mod tests {
 
     #[test]
     fn reference_urls_empty_when_no_p854() {
-        let entity = q42();
-        let birth = &entity.statements[&PropertyId::new("P569")][0];
-        assert!(birth.references.is_empty()); // fixture has none — abstention case stays reachable
+        // Test the case where a reference exists but has no P854 snak.
+        // Create a reference with P248 ("stated in") snak instead.
+        let reference = Reference {
+            snaks: vec![Snak::Value {
+                property: PropertyId::new("P248"),
+                value: WikibaseValue::EntityId(EntityId::new("Q1234567")),
+            }],
+            raw: serde_json::json!({"snaks": {"P248": [{"snaktype": "value"}]}}),
+        };
+
+        // Assert that urls() yields nothing when P854 is absent
+        assert!(reference.urls().next().is_none());
     }
 }

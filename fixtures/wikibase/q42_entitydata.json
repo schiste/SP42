@@ -1,0 +1,165 @@
+{
+  "entities": {
+    "Q42": {
+      "type": "item",
+      "id": "Q42",
+      "lastrevid": 2000341,
+      "labels": {
+        "en": { "language": "en", "value": "Douglas Adams" },
+        "fr": { "language": "fr", "value": "Douglas Adams" }
+      },
+      "descriptions": {
+        "en": { "language": "en", "value": "English author and humourist" }
+      },
+      "aliases": {
+        "en": [
+          { "language": "en", "value": "Douglas Noel Adams" },
+          { "language": "en", "value": "DNA" }
+        ]
+      },
+      "sitelinks": {
+        "enwiki": { "site": "enwiki", "title": "Douglas Adams" }
+      },
+      "claims": {
+        "P69": [
+          {
+            "id": "Q42$0E9C4724-C954-4698-84A7-5CE0D296A6F2",
+            "mainsnak": {
+              "snaktype": "value",
+              "property": "P69",
+              "datavalue": {
+                "value": { "entity-type": "item", "numeric-id": 691283, "id": "Q691283" },
+                "type": "wikibase-entityid"
+              }
+            },
+            "type": "statement",
+            "qualifiers": {
+              "P580": [
+                {
+                  "snaktype": "value",
+                  "property": "P580",
+                  "datavalue": {
+                    "value": { "time": "+1971-00-00T00:00:00Z", "precision": 9 },
+                    "type": "time"
+                  }
+                }
+              ]
+            },
+            "rank": "normal",
+            "references": [
+              {
+                "snaks": {
+                  "P854": [
+                    {
+                      "snaktype": "value",
+                      "property": "P854",
+                      "datavalue": { "value": "https://example.org/adams-bio", "type": "string" }
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ],
+        "P569": [
+          {
+            "id": "Q42$D8404CDA-25E4-4334-AF13-A3290BCD9C0F",
+            "mainsnak": {
+              "snaktype": "value",
+              "property": "P569",
+              "datavalue": {
+                "value": { "time": "+1952-03-11T00:00:00Z", "precision": 11 },
+                "type": "time"
+              }
+            },
+            "type": "statement",
+            "rank": "normal",
+            "references": []
+          }
+        ],
+        "P2048": [
+          {
+            "id": "Q42$fake-quantity",
+            "mainsnak": {
+              "snaktype": "value",
+              "property": "P2048",
+              "datavalue": {
+                "value": { "amount": "+1.96", "unit": "http://www.wikidata.org/entity/Q11573" },
+                "type": "quantity"
+              }
+            },
+            "type": "statement",
+            "rank": "preferred",
+            "references": []
+          }
+        ],
+        "P9999": [
+          {
+            "id": "Q42$unknown-datatype",
+            "mainsnak": {
+              "snaktype": "value",
+              "property": "P9999",
+              "datavalue": {
+                "value": { "some": "future-shape" },
+                "type": "musical-notation"
+              }
+            },
+            "type": "statement",
+            "rank": "deprecated",
+            "references": []
+          }
+        ],
+        "P106": [
+          {
+            "id": "Q42$novalue-example",
+            "mainsnak": { "snaktype": "novalue", "property": "P106" },
+            "type": "statement",
+            "rank": "normal",
+            "references": []
+          }
+        ],
+        "P1477": [
+          {
+            "id": "Q42$monolingual-example",
+            "mainsnak": {
+              "snaktype": "value",
+              "property": "P1477",
+              "datavalue": {
+                "value": { "text": "Douglas Noel Adams", "language": "en" },
+                "type": "monolingualtext"
+              }
+            },
+            "type": "statement",
+            "rank": "normal",
+            "references": []
+          }
+        ],
+        "P625": [
+          {
+            "id": "Q42$coordinate-example",
+            "mainsnak": {
+              "snaktype": "value",
+              "property": "P625",
+              "datavalue": {
+                "value": { "latitude": 51.75194, "longitude": -0.33638 },
+                "type": "globecoordinate"
+              }
+            },
+            "type": "statement",
+            "rank": "normal",
+            "references": []
+          }
+        ],
+        "P40": [
+          {
+            "id": "Q42$somevalue-example",
+            "mainsnak": { "snaktype": "somevalue", "property": "P40" },
+            "type": "statement",
+            "rank": "normal",
+            "references": []
+          }
+        ]
+      }
+    }
+  }
+}

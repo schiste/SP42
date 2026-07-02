@@ -45,13 +45,16 @@ pub fn render_value(value: &WikibaseValue) -> ValueDisplay {
 
 /// Render a statement to a natural-language claim
 /// ("&lt;subject-label&gt; &lt;property-label&gt; &lt;value&gt;."), resolving labels via `labels`
-/// with id fallback. This IS #103's `claim_rendered`.
+/// with fallback chain: en → mul → entity id. This IS #103's `claim_rendered`.
+/// The mul fallback mirrors Wikidata's convention: mul is the language-neutral default,
+/// specific languages (like en) override it.
 #[must_use]
 pub fn render_statement_claim(subject: &Entity, stmt: &Statement, labels: &Labels) -> String {
-    // Get subject label: entity's "en" label, falling back to entity id
+    // Get subject label: entity's "en" label, falling back to "mul", then to entity id
     let subject_label = subject
         .labels
         .get("en")
+        .or_else(|| subject.labels.get("mul"))
         .map_or_else(|| subject.id.as_str(), String::as_str);
 
     // Get property label: labels.get(property), falling back to property id
@@ -160,6 +163,89 @@ mod tests {
         assert_eq!(
             render_statement_claim(&entity, stmt, &labels),
             "Douglas Adams P69 Q691283."
+        );
+    }
+
+    #[test]
+    fn subject_label_falls_back_to_mul_when_en_missing() {
+        // Entity with only mul label (like live Wikidata Q42 now)
+        let mul_only_json = r#"{
+            "entities": {
+                "Q1234": {
+                    "type": "item",
+                    "id": "Q1234",
+                    "labels": {
+                        "mul": { "language": "mul", "value": "Default Label" }
+                    },
+                    "claims": {
+                        "P69": [{
+                            "id": "Q1234$abc",
+                            "mainsnak": {
+                                "snaktype": "value",
+                                "property": "P69",
+                                "datavalue": {
+                                    "value": { "entity-type": "item", "numeric-id": 691283, "id": "Q691283" },
+                                    "type": "wikibase-entityid"
+                                }
+                            },
+                            "type": "statement",
+                            "rank": "normal"
+                        }]
+                    }
+                }
+            }
+        }"#;
+
+        let entity = parse_entity(&EntityId::new("Q1234"), mul_only_json.as_bytes()).unwrap();
+        let labels = crate::wikibase::Labels::default();
+        let stmt = &entity.statements[&PropertyId::new("P69")][0];
+
+        // Should use mul label when en is missing
+        assert_eq!(
+            render_statement_claim(&entity, stmt, &labels),
+            "Default Label P69 Q691283."
+        );
+    }
+
+    #[test]
+    fn subject_label_prefers_en_over_mul() {
+        // Entity with both en and mul labels: en should win
+        let en_and_mul_json = r#"{
+            "entities": {
+                "Q5678": {
+                    "type": "item",
+                    "id": "Q5678",
+                    "labels": {
+                        "en": { "language": "en", "value": "English Label" },
+                        "mul": { "language": "mul", "value": "Default Label" }
+                    },
+                    "claims": {
+                        "P69": [{
+                            "id": "Q5678$def",
+                            "mainsnak": {
+                                "snaktype": "value",
+                                "property": "P69",
+                                "datavalue": {
+                                    "value": { "entity-type": "item", "numeric-id": 691283, "id": "Q691283" },
+                                    "type": "wikibase-entityid"
+                                }
+                            },
+                            "type": "statement",
+                            "rank": "normal"
+                        }]
+                    }
+                }
+            }
+        }"#;
+
+        let entity = parse_entity(&EntityId::new("Q5678"), en_and_mul_json.as_bytes()).unwrap();
+        let labels = crate::wikibase::Labels::default();
+        let stmt = &entity.statements[&PropertyId::new("P69")][0];
+
+        // Should prefer en label when both present
+        assert_eq!(
+            render_statement_claim(&entity, stmt, &labels),
+            "English Label P69 Q691283."
         );
     }
 }

@@ -38,19 +38,25 @@ pub fn build_entity_request(id: &EntityId, revision: Option<u64>) -> HttpRequest
 /// `wbgetentities&props=labels` — resolve property/item ids to display labels.
 /// Targets Wikidata.org; test instances arrive with patrol wiring.
 ///
+/// Requests labels in the specific language and falls back to `mul` (Wikidata's
+/// language-neutral default). This mirrors Wikidata's own fallback convention:
+/// mul labels provide defaults that specific languages override.
+///
 /// # Panics
 ///
 /// Panics if the URL cannot be constructed (should never happen with valid params).
 #[must_use]
 pub fn build_label_request(ids: &[&str], lang: &str) -> HttpRequest {
     let ids_joined = ids.join("|");
+    // Request both the specific language and mul (language-neutral default)
+    let languages = format!("{lang}|mul");
     let url = Url::parse_with_params(
         "https://www.wikidata.org/w/api.php",
         &[
             ("action", "wbgetentities"),
             ("ids", ids_joined.as_str()),
             ("props", "labels"),
-            ("languages", lang),
+            ("languages", &languages),
             ("format", "json"),
         ],
     )
@@ -77,6 +83,10 @@ impl Labels {
 
 /// Parse labels from a Wikibase API response (`wbgetentities&props=labels`).
 ///
+/// When multiple language labels are present (e.g. en and mul), prefers the
+/// specific language over mul, since mul is the language-neutral default that
+/// specific languages override.
+///
 /// # Errors
 ///
 /// Returns `WikibaseParseError::InvalidJson` if the body is not valid JSON.
@@ -88,10 +98,16 @@ pub fn parse_labels(body: &[u8]) -> Result<Labels, WikibaseParseError> {
     if let Some(entities) = value.get("entities").and_then(|v| v.as_object()) {
         for (id, entity_obj) in entities {
             if let Some(labels_obj) = entity_obj.get("labels").and_then(|v| v.as_object()) {
-                // Get the first (only) language's value
-                if let Some((_, lang_obj)) = labels_obj.iter().next()
-                    && let Some(label_value) = lang_obj.get("value").and_then(|v| v.as_str())
-                {
+                // Prefer specific language over mul (language-neutral default).
+                // First try to find a non-mul label, then fall back to mul.
+                let label_value = labels_obj
+                    .iter()
+                    .find(|(lang, _)| lang.as_str() != "mul")
+                    .or_else(|| labels_obj.iter().next())
+                    .and_then(|(_, lang_obj)| lang_obj.get("value"))
+                    .and_then(|v| v.as_str());
+
+                if let Some(label_value) = label_value {
                     labels.insert(id.clone(), label_value.to_string());
                 }
             }
@@ -239,7 +255,7 @@ mod tests {
             "action=wbgetentities",
             "ids=P69%7CQ691283",
             "props=labels",
-            "languages=en",
+            "languages=en%7Cmul", // Now includes mul fallback
             "format=json",
         ] {
             assert!(url.contains(needle), "missing {needle} in {url}");
@@ -254,6 +270,54 @@ mod tests {
         assert_eq!(labels.get("P69"), Some("educated at"));
         assert_eq!(labels.get("Q691283"), Some("St John's College"));
         assert_eq!(labels.get("Q1"), None);
+    }
+
+    #[test]
+    fn label_request_includes_mul_fallback() {
+        // URL should contain "languages=en%7Cmul" (URL-encoded pipe)
+        let req = build_label_request(&["P69", "Q691283"], "en");
+        let url = req.url.as_str();
+        // The languages param should include both en and mul
+        assert!(
+            url.contains("languages=en%7Cmul") || url.contains("languages=en|mul"),
+            "expected languages param to include mul fallback in {url}"
+        );
+    }
+
+    #[test]
+    fn parses_labels_with_mul_only() {
+        // Entity with only mul label
+        let mul_only_json = r#"{
+            "entities": {
+                "Q9999": { "type": "item", "id": "Q9999", "labels": { "mul": { "language": "mul", "value": "Default Label" } } }
+            },
+            "success": 1
+        }"#;
+
+        let labels = parse_labels(mul_only_json.as_bytes()).expect("parses");
+        assert_eq!(labels.get("Q9999"), Some("Default Label"));
+    }
+
+    #[test]
+    fn parses_labels_prefers_specific_lang_over_mul() {
+        // Entity with both en and mul labels: en should win
+        let both_langs_json = r#"{
+            "entities": {
+                "P8888": {
+                    "type": "property",
+                    "id": "P8888",
+                    "labels": {
+                        "en": { "language": "en", "value": "English Label" },
+                        "mul": { "language": "mul", "value": "Default Label" }
+                    }
+                }
+            },
+            "success": 1
+        }"#;
+
+        let labels = parse_labels(both_langs_json.as_bytes()).expect("parses");
+        // Should prefer en over mul
+        assert_eq!(labels.get("P8888"), Some("English Label"));
     }
 
     #[test]

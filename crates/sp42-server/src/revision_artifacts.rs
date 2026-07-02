@@ -28,7 +28,7 @@ const WIKIMEDIA_API_RETRY_DELAY_MS: u64 = 150;
 #[derive(Debug, Clone)]
 pub(crate) struct RevisionSlotContent {
     pub(crate) text: String,
-    #[allow(dead_code)] // ADR-0016 (Phase 6): https://github.com/schiste/SP42
+    #[allow(dead_code)] // Phase 6: docs/platform/adr/0016-wikidata-entity-content-model.md #16
     pub(crate) content_model: ContentModel,
 }
 

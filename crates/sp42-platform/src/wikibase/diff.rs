@@ -237,7 +237,7 @@ pub fn diff_entities(old: Option<&Entity>, new: &Entity) -> EntityDiff {
             }
             let guid_pairs: Vec<_> = all_guids
                 .into_iter()
-                .map(|(guid, (old, new))| (guid, old, new))
+                .map(|(_, (old, new))| (old, new))
                 .collect();
             diff.statements.extend(emit_statement_changes(guid_pairs));
         }
@@ -254,7 +254,7 @@ pub fn diff_entities(old: Option<&Entity>, new: &Entity) -> EntityDiff {
             }
             let position_pairs: Vec<_> = all_positions
                 .into_iter()
-                .map(|(pos, (old, new))| (pos, old, new))
+                .map(|(_, (old, new))| (old, new))
                 .collect();
             diff.statements
                 .extend(emit_statement_changes(position_pairs));
@@ -266,11 +266,11 @@ pub fn diff_entities(old: Option<&Entity>, new: &Entity) -> EntityDiff {
 
 /// Process statement pairs and emit `StatementChange` for each (old, new) combination.
 /// Handles both GUID-keyed and position-keyed statements with identical logic.
-fn emit_statement_changes<K>(
-    stmt_pairs: Vec<(K, Option<&Statement>, Option<&Statement>)>,
+fn emit_statement_changes(
+    stmt_pairs: Vec<(Option<&Statement>, Option<&Statement>)>,
 ) -> Vec<StatementChange> {
     let mut changes = Vec::new();
-    for (_key, old_stmt, new_stmt) in stmt_pairs {
+    for (old_stmt, new_stmt) in stmt_pairs {
         match (old_stmt, new_stmt) {
             (Some(old), Some(new)) => {
                 if old.raw != new.raw {

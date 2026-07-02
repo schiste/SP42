@@ -7,7 +7,7 @@ use axum::{
     http::{HeaderMap, StatusCode},
 };
 use sp42_core::{
-    QueuedEdit, RenderedHunkPreview, RenderedHunkSide, StructuredDiff, WikiConfig,
+    ContentModel, QueuedEdit, RenderedHunkPreview, RenderedHunkSide, StructuredDiff, WikiConfig,
     build_media_diff, diff_lines,
 };
 use tracing::warn;
@@ -21,6 +21,16 @@ const REVISION_ARTIFACT_CACHE_TTL_MS: i64 = 5 * 60 * 1000;
 const RENDERED_HUNK_CACHE_TTL_MS: i64 = 5 * 60 * 1000;
 const WIKIMEDIA_API_RETRY_ATTEMPTS: usize = 3;
 const WIKIMEDIA_API_RETRY_DELAY_MS: u64 = 150;
+
+/// A revision slot's content and its associated metadata.
+/// The `content_model` field is populated by ADR-0016 D1 but routed on in a
+/// future phase (D4) when content-model-specific handling is implemented.
+#[derive(Debug, Clone)]
+pub(crate) struct RevisionSlotContent {
+    pub(crate) text: String,
+    #[allow(dead_code)] // #0016
+    pub(crate) content_model: ContentModel,
+}
 
 #[derive(Debug, Clone)]
 pub(crate) struct RevisionArtifacts {
@@ -254,16 +264,16 @@ async fn revision_artifacts_for_pair(
         }
     }
 
-    let Some((before_text, after_text)) =
+    let Some((before_content, after_content)) =
         fetch_revision_text_pair(&state.http_client, access_token, config, rev_id, old_rev_id)
             .await?
     else {
         return Ok(None);
     };
 
-    let diff = diff_lines(&before_text, &after_text);
+    let diff = diff_lines(&before_content.text, &after_content.text);
     let media_diff = {
-        let mut report = build_media_diff(&before_text, &after_text);
+        let mut report = build_media_diff(&before_content.text, &after_content.text);
         if report.has_changes() {
             populate_media_preview_urls(config, &mut report);
             Some(report)
@@ -291,7 +301,7 @@ async fn fetch_revision_text_pair(
     config: &WikiConfig,
     rev_id: u64,
     old_rev_id: u64,
-) -> Result<Option<(String, String)>, String> {
+) -> Result<Option<(RevisionSlotContent, RevisionSlotContent)>, String> {
     let revisions =
         fetch_revision_texts(client, access_token, config, &[old_rev_id, rev_id]).await?;
     let Some(before) = revisions.get(&old_rev_id) else {
@@ -491,7 +501,7 @@ async fn fetch_revision_texts(
     access_token: &str,
     config: &WikiConfig,
     revision_ids: &[u64],
-) -> Result<HashMap<u64, String>, String> {
+) -> Result<HashMap<u64, RevisionSlotContent>, String> {
     if revision_ids.is_empty() {
         return Ok(HashMap::new());
     }
@@ -509,7 +519,7 @@ async fn fetch_revision_texts(
             ("action", "query"),
             ("prop", "revisions"),
             ("revids", revids.as_str()),
-            ("rvprop", "ids|content"),
+            ("rvprop", "ids|content|contentmodel"),
             ("rvslots", "main"),
             ("format", "json"),
             ("formatversion", "2"),
@@ -535,15 +545,32 @@ async fn fetch_revision_texts(
             let Some(rev_id) = revision.get("revid").and_then(serde_json::Value::as_u64) else {
                 continue;
             };
-            let content = revision
+            let Some(main_slot) = revision
                 .get("slots")
                 .and_then(|value| value.get("main"))
-                .and_then(|value| value.get("content"))
+                .and_then(serde_json::Value::as_object)
+            else {
+                continue;
+            };
+            let Some(content) = main_slot
+                .get("content")
                 .and_then(serde_json::Value::as_str)
-                .map(ToString::to_string);
-            if let Some(content) = content {
-                map.insert(rev_id, content);
-            }
+                .map(ToString::to_string)
+            else {
+                continue;
+            };
+            let content_model = main_slot
+                .get("contentmodel")
+                .and_then(serde_json::Value::as_str)
+                .map(ContentModel::parse)
+                .unwrap_or_default();
+            map.insert(
+                rev_id,
+                RevisionSlotContent {
+                    text: content,
+                    content_model,
+                },
+            );
         }
     }
 
@@ -622,4 +649,87 @@ async fn fetch_wikimedia_api_bytes(
     }
 
     Err(last_error.unwrap_or_else(|| format!("{label} failed without a response")))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn revision_slot_content_parses_contentmodel_variants() {
+        // Verify that contentmodel strings parse correctly to ContentModel variants.
+        // This test is applied to the parsed JSON response data structure, which
+        // includes contentmodel in the revision slots (rvprop=ids|content|contentmodel,
+        // ADR-0016 D1). Wikitext is the default when contentmodel is absent.
+
+        // Simulate parsing a wikitext slot (typical Wikipedia edit).
+        let wikitext_json = serde_json::json!({
+            "slots": {
+                "main": {
+                    "content": "Example wikitext",
+                    "contentmodel": "wikitext"
+                }
+            }
+        });
+        let main_slot = wikitext_json["slots"]["main"].as_object().unwrap();
+        let cm = main_slot
+            .get("contentmodel")
+            .and_then(serde_json::Value::as_str)
+            .map(ContentModel::parse)
+            .unwrap_or_default();
+        assert_eq!(cm, ContentModel::Wikitext);
+        // Verify the content can be wrapped in RevisionSlotContent and accessed.
+        let slot_content = RevisionSlotContent {
+            text: "wikitext content".to_string(),
+            content_model: cm,
+        };
+        assert_eq!(slot_content.content_model, ContentModel::Wikitext);
+
+        // Simulate parsing a wikibase-item slot (Wikidata item).
+        let wikibase_item_json = serde_json::json!({
+            "slots": {
+                "main": {
+                    "content": "{}",
+                    "contentmodel": "wikibase-item"
+                }
+            }
+        });
+        let main_slot = wikibase_item_json["slots"]["main"].as_object().unwrap();
+        let cm = main_slot
+            .get("contentmodel")
+            .and_then(serde_json::Value::as_str)
+            .map(ContentModel::parse)
+            .unwrap_or_default();
+        assert_eq!(cm, ContentModel::WikibaseItem);
+        let slot_content = RevisionSlotContent {
+            text: "{}".to_string(),
+            content_model: cm,
+        };
+        assert_eq!(slot_content.content_model, ContentModel::WikibaseItem);
+
+        // Simulate parsing when contentmodel is absent (defaults to wikitext).
+        let no_contentmodel_json = serde_json::json!({
+            "slots": {
+                "main": {
+                    "content": "Some text"
+                }
+            }
+        });
+        let main_slot = no_contentmodel_json["slots"]["main"].as_object().unwrap();
+        let cm = main_slot
+            .get("contentmodel")
+            .and_then(serde_json::Value::as_str)
+            .map(ContentModel::parse)
+            .unwrap_or_default();
+        assert_eq!(
+            cm,
+            ContentModel::Wikitext,
+            "contentmodel defaults to wikitext when absent from the response"
+        );
+        let slot_content = RevisionSlotContent {
+            text: "Some text".to_string(),
+            content_model: cm,
+        };
+        assert_eq!(slot_content.content_model, ContentModel::Wikitext);
+    }
 }

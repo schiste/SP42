@@ -187,29 +187,29 @@ fn mock_revisions_response(
                         serde_json::json!([
                             {
                                 "revid": 123_456,
-                                "slots": { "main": { "content": mock_storage_page(title) } }
+                                "slots": { "main": { "content": mock_storage_page(title), "contentmodel": "wikitext" } }
                             }
                         ])
                     } else if include_second {
                         serde_json::json!([
                             {
                                 "revid": 123_456,
-                                "slots": { "main": { "content": "After text with removal" } }
+                                "slots": { "main": { "content": "After text with removal", "contentmodel": "wikitext" } }
                             },
                             {
                                 "revid": 123_457,
-                                "slots": { "main": { "content": "Page 2 after text" } }
+                                "slots": { "main": { "content": "Page 2 after text", "contentmodel": "wikitext" } }
                             }
                         ])
                     } else {
                         serde_json::json!([
                             {
                                 "revid": 123_455,
-                                "slots": { "main": { "content": "Before text" } }
+                                "slots": { "main": { "content": "Before text", "contentmodel": "wikitext" } }
                             },
                             {
                                 "revid": 123_456,
-                                "slots": { "main": { "content": "After text with removal" } }
+                                "slots": { "main": { "content": "After text with removal", "contentmodel": "wikitext" } }
                             }
                         ])
                     }

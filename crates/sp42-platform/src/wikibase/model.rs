@@ -14,6 +14,7 @@ impl EntityId {
     }
 
     /// Get the entity ID as a string slice.
+    #[must_use]
     pub fn as_str(&self) -> &str {
         &self.0
     }
@@ -36,6 +37,7 @@ impl PropertyId {
     }
 
     /// Get the property ID as a string slice.
+    #[must_use]
     pub fn as_str(&self) -> &str {
         &self.0
     }
@@ -58,6 +60,7 @@ impl StatementId {
     }
 
     /// Get the statement ID as a string slice.
+    #[must_use]
     pub fn as_str(&self) -> &str {
         &self.0
     }

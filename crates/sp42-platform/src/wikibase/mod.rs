@@ -5,8 +5,10 @@
 //! Design: docs/design-plans/2026-07-01-wikidata-read-model.md.
 
 mod model;
+mod parse;
 
 pub use model::{
     Entity, EntityId, Lang, PropertyId, Reference, Sitelink, Snak, Statement, StatementId,
     StatementRank, TermMap, WikibaseValue,
 };
+pub use parse::{parse_entity, WikibaseParseError};

@@ -1,0 +1,36 @@
+{
+  "batchcomplete": true,
+  "query": {
+    "pages": [
+      {
+        "pageid": 138,
+        "ns": 0,
+        "title": "Q42",
+        "revisions": [
+          {
+            "revid": 2000341,
+            "parentid": 2000200,
+            "slots": {
+              "main": {
+                "contentmodel": "wikibase-item",
+                "contentformat": "application/json",
+                "content": "{\"type\":\"item\",\"id\":\"Q42\",\"labels\":{\"en\":{\"language\":\"en\",\"value\":\"Douglas Adams\"}},\"descriptions\":{},\"aliases\":{},\"claims\":{},\"sitelinks\":{}}"
+              }
+            }
+          },
+          {
+            "revid": 2000200,
+            "parentid": 1999990,
+            "slots": {
+              "main": {
+                "contentmodel": "wikibase-item",
+                "contentformat": "application/json",
+                "content": "{\"type\":\"item\",\"id\":\"Q42\",\"labels\":{\"en\":{\"language\":\"en\",\"value\":\"Douglas N. Adams\"}},\"descriptions\":{},\"aliases\":{},\"claims\":{},\"sitelinks\":{}}"
+              }
+            }
+          }
+        ]
+      }
+    ]
+  }
+}

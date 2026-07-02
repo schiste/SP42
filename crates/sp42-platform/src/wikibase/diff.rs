@@ -16,8 +16,9 @@ pub struct EntityDiff {
 }
 
 impl EntityDiff {
-    /// No classified changes at all. With the honesty invariant this is
-    /// equivalent to "the two revisions are byte-identical entities".
+    /// No classified changes between the two parsed entities. Statement identity is
+    /// GUID-based, so a pure reordering of GUID-stable statements within a property
+    /// is intentionally not surfaced (yields an empty diff).
     #[must_use]
     pub fn is_empty(&self) -> bool {
         self.labels.is_empty()
@@ -50,7 +51,7 @@ pub struct SitelinkChange {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[allow(clippy::large_enum_variant)] // https://github.com/schiste/SP42/blob/main/docs/adr/0016-wikibase-read-model.md
+#[allow(clippy::large_enum_variant)] // #105: Changed is the common case; boxing would hurt ergonomics for a short-lived diff value
 pub enum StatementChange {
     Added(Statement),
     Removed(Statement),
@@ -64,7 +65,7 @@ pub enum StatementChange {
 /// Which sub-parts of a statement moved — powers "an edit touching only a
 /// qualifier / rank / reference is never a no-op". Computed from raw-JSON equality.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[allow(clippy::struct_excessive_bools)] // https://github.com/schiste/SP42/blob/main/docs/adr/0016-wikibase-read-model.md
+#[allow(clippy::struct_excessive_bools)] // #105: Four independent semantically-distinct change flags, not a state machine
 pub struct StatementChangeParts {
     pub value: bool,
     pub qualifiers: bool,
@@ -72,28 +73,52 @@ pub struct StatementChangeParts {
     pub references: bool,
 }
 
+/// Compute union-diff of two key-value collections. For each key in the union of both
+/// collections, returns (key, `before_value`, `after_value`) where before/after are `Option`.
+fn union_diff_pairs<K, V>(
+    old_keys: Vec<K>,
+    new_keys: Vec<K>,
+    old_getter: impl Fn(&K) -> Option<V>,
+    new_getter: impl Fn(&K) -> Option<V>,
+) -> Vec<(K, Option<V>, Option<V>)>
+where
+    K: Ord + Clone,
+    V: Clone,
+{
+    let mut all_keys = BTreeMap::new();
+    for key in old_keys {
+        all_keys.insert(key.clone(), (old_getter(&key), None));
+    }
+    for key in new_keys {
+        let entry = all_keys.entry(key.clone()).or_insert((None, None));
+        entry.1 = new_getter(&key);
+    }
+    all_keys
+        .into_iter()
+        .map(|(k, (before, after))| (k, before, after))
+        .collect()
+}
+
 /// Diff two entity revisions. `old = None` = first revision (everything Added).
 /// Change detection uses `Statement.raw` equality, so unknown datatypes still
 /// register (the honesty invariant, ADR-0016 Decision 3).
 #[must_use]
-#[allow(clippy::too_many_lines)] // https://github.com/schiste/SP42/blob/main/docs/adr/0016-wikibase-read-model.md
+#[allow(clippy::too_many_lines)] // #105: Five parallel union-diff blocks with statement processing; helper extracts duplication
 pub fn diff_entities(old: Option<&Entity>, new: &Entity) -> EntityDiff {
     let mut diff = EntityDiff::default();
 
     // Handle labels: union of language keys
     {
-        let mut langs = BTreeMap::new();
-        if let Some(old_entity) = old {
-            for lang in old_entity.labels.keys() {
-                langs.insert(lang.clone(), (old_entity.labels.get(lang).cloned(), None));
-            }
-        }
-        for lang in new.labels.keys() {
-            let entry = langs.entry(lang.clone()).or_insert((None, None));
-            entry.1 = new.labels.get(lang).cloned();
-        }
-
-        for (lang, (before, after)) in langs {
+        let old_keys: Vec<_> = old
+            .map(|e| e.labels.keys().cloned().collect())
+            .unwrap_or_default();
+        let new_keys: Vec<_> = new.labels.keys().cloned().collect();
+        for (lang, before, after) in union_diff_pairs(
+            old_keys,
+            new_keys,
+            |lang| old.and_then(|e| e.labels.get(lang).cloned()),
+            |lang| new.labels.get(lang).cloned(),
+        ) {
             if before != after {
                 diff.labels.push(TermChange {
                     lang,
@@ -106,21 +131,16 @@ pub fn diff_entities(old: Option<&Entity>, new: &Entity) -> EntityDiff {
 
     // Handle descriptions: union of language keys
     {
-        let mut langs = BTreeMap::new();
-        if let Some(old_entity) = old {
-            for lang in old_entity.descriptions.keys() {
-                langs.insert(
-                    lang.clone(),
-                    (old_entity.descriptions.get(lang).cloned(), None),
-                );
-            }
-        }
-        for lang in new.descriptions.keys() {
-            let entry = langs.entry(lang.clone()).or_insert((None, None));
-            entry.1 = new.descriptions.get(lang).cloned();
-        }
-
-        for (lang, (before, after)) in langs {
+        let old_keys: Vec<_> = old
+            .map(|e| e.descriptions.keys().cloned().collect())
+            .unwrap_or_default();
+        let new_keys: Vec<_> = new.descriptions.keys().cloned().collect();
+        for (lang, before, after) in union_diff_pairs(
+            old_keys,
+            new_keys,
+            |lang| old.and_then(|e| e.descriptions.get(lang).cloned()),
+            |lang| new.descriptions.get(lang).cloned(),
+        ) {
             if before != after {
                 diff.descriptions.push(TermChange {
                     lang,
@@ -133,18 +153,16 @@ pub fn diff_entities(old: Option<&Entity>, new: &Entity) -> EntityDiff {
 
     // Handle aliases: union of language keys
     {
-        let mut langs = BTreeMap::new();
-        if let Some(old_entity) = old {
-            for lang in old_entity.aliases.keys() {
-                langs.insert(lang.clone(), (old_entity.aliases.get(lang).cloned(), None));
-            }
-        }
-        for lang in new.aliases.keys() {
-            let entry = langs.entry(lang.clone()).or_insert((None, None));
-            entry.1 = new.aliases.get(lang).cloned();
-        }
-
-        for (lang, (before, after)) in langs {
+        let old_keys: Vec<_> = old
+            .map(|e| e.aliases.keys().cloned().collect())
+            .unwrap_or_default();
+        let new_keys: Vec<_> = new.aliases.keys().cloned().collect();
+        for (lang, before, after) in union_diff_pairs(
+            old_keys,
+            new_keys,
+            |lang| old.and_then(|e| e.aliases.get(lang).cloned()),
+            |lang| new.aliases.get(lang).cloned(),
+        ) {
             let before_vec = before.unwrap_or_default();
             let after_vec = after.unwrap_or_default();
             if before_vec != after_vec {
@@ -159,21 +177,16 @@ pub fn diff_entities(old: Option<&Entity>, new: &Entity) -> EntityDiff {
 
     // Handle sitelinks: union of site keys
     {
-        let mut sites = BTreeMap::new();
-        if let Some(old_entity) = old {
-            for site in old_entity.sitelinks.keys() {
-                sites.insert(
-                    site.clone(),
-                    (old_entity.sitelinks.get(site).cloned(), None),
-                );
-            }
-        }
-        for site in new.sitelinks.keys() {
-            let entry = sites.entry(site.clone()).or_insert((None, None));
-            entry.1 = new.sitelinks.get(site).cloned();
-        }
-
-        for (site, (before, after)) in sites {
+        let old_keys: Vec<_> = old
+            .map(|e| e.sitelinks.keys().cloned().collect())
+            .unwrap_or_default();
+        let new_keys: Vec<_> = new.sitelinks.keys().cloned().collect();
+        for (site, before, after) in union_diff_pairs(
+            old_keys,
+            new_keys,
+            |site| old.and_then(|e| e.sitelinks.get(site).cloned()),
+            |site| new.sitelinks.get(site).cloned(),
+        ) {
             if before != after {
                 diff.sitelinks.push(SitelinkChange {
                     site,
@@ -186,7 +199,6 @@ pub fn diff_entities(old: Option<&Entity>, new: &Entity) -> EntityDiff {
 
     // Handle statements: key by GUID, falling back to (property, index) position
     {
-        // Build maps of GUID → statement for both sides
         let mut old_by_guid: BTreeMap<String, &Statement> = BTreeMap::new();
         let mut old_by_position: BTreeMap<(PropertyId, usize), &Statement> = BTreeMap::new();
         if let Some(old_entity) = old {
@@ -214,77 +226,72 @@ pub fn diff_entities(old: Option<&Entity>, new: &Entity) -> EntityDiff {
         }
 
         // Process GUID-keyed statements
-        let mut all_guids = BTreeMap::new();
-        for guid in old_by_guid.keys() {
-            all_guids.insert(guid.clone(), (old_by_guid.get(guid).copied(), None));
-        }
-        for guid in new_by_guid.keys() {
-            let entry = all_guids.entry(guid.clone()).or_insert((None, None));
-            entry.1 = new_by_guid.get(guid).copied();
-        }
-
-        for (_guid, (old_stmt, new_stmt)) in all_guids {
-            match (old_stmt, new_stmt) {
-                (Some(old), Some(new)) => {
-                    // Both sides have this GUID
-                    if old.raw != new.raw {
-                        let parts = diff_statement_parts(old, new);
-                        diff.statements.push(StatementChange::Changed {
-                            before: old.clone(),
-                            after: new.clone(),
-                            parts,
-                        });
-                    }
-                }
-                (Some(old), None) => {
-                    // Only in old
-                    diff.statements.push(StatementChange::Removed(old.clone()));
-                }
-                (None, Some(new)) => {
-                    // Only in new
-                    diff.statements.push(StatementChange::Added(new.clone()));
-                }
-                (None, None) => unreachable!(),
+        {
+            let mut all_guids = BTreeMap::new();
+            for guid in old_by_guid.keys() {
+                all_guids.insert(guid.clone(), (old_by_guid.get(guid).copied(), None));
             }
+            for guid in new_by_guid.keys() {
+                let entry = all_guids.entry(guid.clone()).or_insert((None, None));
+                entry.1 = new_by_guid.get(guid).copied();
+            }
+            let guid_pairs: Vec<_> = all_guids
+                .into_iter()
+                .map(|(guid, (old, new))| (guid, old, new))
+                .collect();
+            diff.statements.extend(emit_statement_changes(guid_pairs));
         }
 
         // Process position-keyed statements
-        let mut all_positions = BTreeMap::new();
-        for pos in old_by_position.keys() {
-            all_positions.insert(pos.clone(), (old_by_position.get(pos).copied(), None));
-        }
-        for pos in new_by_position.keys() {
-            let entry = all_positions.entry(pos.clone()).or_insert((None, None));
-            entry.1 = new_by_position.get(pos).copied();
-        }
-
-        for (_pos, (old_stmt, new_stmt)) in all_positions {
-            match (old_stmt, new_stmt) {
-                (Some(old), Some(new)) => {
-                    // Both sides have this position
-                    if old.raw != new.raw {
-                        let parts = diff_statement_parts(old, new);
-                        diff.statements.push(StatementChange::Changed {
-                            before: old.clone(),
-                            after: new.clone(),
-                            parts,
-                        });
-                    }
-                }
-                (Some(old), None) => {
-                    // Only in old
-                    diff.statements.push(StatementChange::Removed(old.clone()));
-                }
-                (None, Some(new)) => {
-                    // Only in new
-                    diff.statements.push(StatementChange::Added(new.clone()));
-                }
-                (None, None) => unreachable!(),
+        {
+            let mut all_positions = BTreeMap::new();
+            for pos in old_by_position.keys() {
+                all_positions.insert(pos.clone(), (old_by_position.get(pos).copied(), None));
             }
+            for pos in new_by_position.keys() {
+                let entry = all_positions.entry(pos.clone()).or_insert((None, None));
+                entry.1 = new_by_position.get(pos).copied();
+            }
+            let position_pairs: Vec<_> = all_positions
+                .into_iter()
+                .map(|(pos, (old, new))| (pos, old, new))
+                .collect();
+            diff.statements
+                .extend(emit_statement_changes(position_pairs));
         }
     }
 
     diff
+}
+
+/// Process statement pairs and emit `StatementChange` for each (old, new) combination.
+/// Handles both GUID-keyed and position-keyed statements with identical logic.
+fn emit_statement_changes<K>(
+    stmt_pairs: Vec<(K, Option<&Statement>, Option<&Statement>)>,
+) -> Vec<StatementChange> {
+    let mut changes = Vec::new();
+    for (_key, old_stmt, new_stmt) in stmt_pairs {
+        match (old_stmt, new_stmt) {
+            (Some(old), Some(new)) => {
+                if old.raw != new.raw {
+                    let parts = diff_statement_parts(old, new);
+                    changes.push(StatementChange::Changed {
+                        before: old.clone(),
+                        after: new.clone(),
+                        parts,
+                    });
+                }
+            }
+            (Some(old), None) => {
+                changes.push(StatementChange::Removed(old.clone()));
+            }
+            (None, Some(new)) => {
+                changes.push(StatementChange::Added(new.clone()));
+            }
+            (None, None) => unreachable!(),
+        }
+    }
+    changes
 }
 
 fn diff_statement_parts(old: &Statement, new: &Statement) -> StatementChangeParts {
@@ -445,6 +452,23 @@ mod tests {
         let diff = diff_entities(Some(&entity(&odd, "A")), &entity(&odd2, "A"));
         assert!(
             matches!(&diff.statements[0], StatementChange::Changed { parts, .. } if parts.value)
+        );
+    }
+
+    #[test]
+    fn reordering_statements_within_property_yields_empty_diff() {
+        // Pure reordering of GUID-stable statements within a property should yield
+        // an empty diff, since statement identity is GUID-based, not position-based.
+        let stmt_a = r#"{"id":"Q1$a","mainsnak":{"snaktype":"value","property":"P569","datavalue":{"value":"x","type":"string"}},"type":"statement","rank":"normal","references":[]}"#;
+        let stmt_b = r#"{"id":"Q1$b","mainsnak":{"snaktype":"value","property":"P569","datavalue":{"value":"y","type":"string"}},"type":"statement","rank":"normal","references":[]}"#;
+        let original = format!(r#"{{"P569":[{stmt_a},{stmt_b}]}}"#);
+        let reordered = format!(r#"{{"P569":[{stmt_b},{stmt_a}]}}"#);
+        let old_ent = entity(&original, "A");
+        let new_ent = entity(&reordered, "A");
+        let diff = diff_entities(Some(&old_ent), &new_ent);
+        assert!(
+            diff.is_empty(),
+            "pure reordering of GUID-stable statements should yield empty diff"
         );
     }
 }

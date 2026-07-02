@@ -366,8 +366,22 @@ pub fn route_content_diff(
             };
 
             // Parse both sides (before `None` → first revision)
-            let before_entity =
-                before.and_then(|body| crate::wikibase::parse_entity(id, body.as_bytes()).ok());
+            let before_entity = if let Some(body) = before {
+                if let Ok(entity) = crate::wikibase::parse_entity(id, body.as_bytes()) {
+                    Some(entity)
+                } else {
+                    // before exists but is unparseable → degrade to text diff
+                    let diff = crate::diff_engine::diff_lines(body, after);
+                    return ContentDiff::Text {
+                        diff,
+                        note: Some(
+                            "entity revision could not be parsed; showing text diff".to_string(),
+                        ),
+                    };
+                }
+            } else {
+                None
+            };
             let Ok(after_entity) = crate::wikibase::parse_entity(id, after.as_bytes()) else {
                 // Unparseable entity → text with note
                 let diff = crate::diff_engine::diff_lines(before.unwrap_or(""), after);
@@ -587,6 +601,25 @@ mod tests {
                 assert_eq!(n, "entity revision could not be parsed; showing text diff");
             }
             _ => panic!("Expected Text with note, got {diff:?}"),
+        }
+    }
+
+    #[test]
+    fn unparseable_before_with_valid_after_degrades_to_text_with_note() {
+        let valid_entity_json = r#"{"id":"Q42","type":"item","labels":{"en":{"language":"en","value":"Answer"}},"descriptions":{},"aliases":{},"claims":{},"sitelinks":{}}"#;
+
+        let diff = route_content_diff(
+            &ContentModel::WikibaseItem,
+            Some(&EntityId::new("Q42")),
+            Some("garbage JSON {{{"),
+            valid_entity_json,
+        );
+
+        match diff {
+            ContentDiff::Text { note: Some(n), .. } => {
+                assert_eq!(n, "entity revision could not be parsed; showing text diff");
+            }
+            _ => panic!("Expected Text with note for unparseable before, got {diff:?}"),
         }
     }
 

@@ -216,7 +216,7 @@ mod tests {
     use super::{BacklogRuntime, BacklogRuntimeConfig};
     use crate::recent_changes::RecentChangesBatch;
     use crate::test_fixtures::fixture_wiki_config;
-    use sp42_platform::{EditEvent, EditorIdentity};
+    use sp42_platform::{ContentModel, EditEvent, EditorIdentity};
     use sp42_types::{HttpResponse, MemoryStorage, Storage, StorageError, StubHttpClient};
 
     #[test]
@@ -623,6 +623,7 @@ mod tests {
             comment: Some("demo".to_string()),
             byte_delta: 20,
             is_patrolled: false.into(),
+            content_model: ContentModel::default(),
         }
     }
 }

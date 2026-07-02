@@ -150,8 +150,8 @@ mod tests {
         build_ranked_queue, build_ranked_queue_with_contexts, build_ranked_queue_with_policy,
     };
     use crate::types::{
-        EditEvent, EditorIdentity, QueueHeuristicPolicy, ScoringConfig, ScoringContext,
-        ScoringSignal, UserRiskProfile, WarningLevel,
+        ContentModel, EditEvent, EditorIdentity, QueueHeuristicPolicy, ScoringConfig,
+        ScoringContext, ScoringSignal, UserRiskProfile, WarningLevel,
     };
 
     #[test]
@@ -174,6 +174,7 @@ mod tests {
                 comment: Some("cleanup".to_string()),
                 byte_delta: 5,
                 is_patrolled: false.into(),
+                content_model: ContentModel::default(),
             },
             EditEvent {
                 wiki_id: "frwiki".to_string(),
@@ -192,6 +193,7 @@ mod tests {
                 comment: Some("http://spam.example".to_string()),
                 byte_delta: 250,
                 is_patrolled: false.into(),
+                content_model: ContentModel::default(),
             },
         ];
 
@@ -223,6 +225,7 @@ mod tests {
                     comment: Some("cleanup".to_string()),
                     byte_delta: 5,
                     is_patrolled: false.into(),
+                    content_model: ContentModel::default(),
                 },
                 ScoringContext::default(),
             ),
@@ -244,6 +247,7 @@ mod tests {
                     comment: Some("blanking".to_string()),
                     byte_delta: -20,
                     is_patrolled: false.into(),
+                    content_model: ContentModel::default(),
                 },
                 ScoringContext {
                     user_risk: Some(UserRiskProfile {
@@ -284,6 +288,7 @@ mod tests {
                 comment: Some("sincere cleanup".to_string()),
                 byte_delta: 50,
                 is_patrolled: false.into(),
+                content_model: ContentModel::default(),
             },
             EditEvent {
                 wiki_id: "frwiki".to_string(),
@@ -302,6 +307,7 @@ mod tests {
                 comment: Some("rvv vandalisme".to_string()),
                 byte_delta: -1_200,
                 is_patrolled: false.into(),
+                content_model: ContentModel::default(),
             },
         ];
 
@@ -345,6 +351,7 @@ mod tests {
                 comment: Some("spam link".to_string()),
                 byte_delta: 200,
                 is_patrolled: false.into(),
+                content_model: ContentModel::default(),
             },
             EditEvent {
                 wiki_id: "frwiki".to_string(),
@@ -363,6 +370,7 @@ mod tests {
                 comment: Some("spam link".to_string()),
                 byte_delta: 220,
                 is_patrolled: false.into(),
+                content_model: ContentModel::default(),
             },
         ];
 

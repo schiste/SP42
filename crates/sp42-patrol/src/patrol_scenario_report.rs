@@ -603,7 +603,7 @@ mod tests {
     use sp42_platform::review_workbench::build_review_workbench;
     use sp42_platform::scoring_engine::score_edit;
     use sp42_platform::types::{
-        Action, EditEvent, EditorIdentity, QueuedEdit, ScoringConfig, ScoringContext,
+        Action, ContentModel, EditEvent, EditorIdentity, QueuedEdit, ScoringConfig, ScoringContext,
         UserRiskProfile, WarningLevel,
     };
     use sp42_wiki::test_fixtures::frwiki_config;
@@ -650,6 +650,7 @@ mod tests {
                     comment: Some("scenario".to_string()),
                     byte_delta,
                     is_patrolled: false.into(),
+                    content_model: ContentModel::default(),
                 };
                 let score =
                     score_edit(&event, &ScoringConfig::default()).expect("score should compute");

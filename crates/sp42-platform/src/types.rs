@@ -44,6 +44,50 @@ impl fmt::Display for FlagState {
     }
 }
 
+/// A revision's content model (ADR-0016 Decision 1). Per-revision, never per-wiki:
+/// wikidata.org carries wikitext (talk pages) and Wikipedias carry non-wikitext
+/// (JSON tabs, Scribunto). All content-model routing keys on this value.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(from = "String", into = "String")]
+pub enum ContentModel {
+    #[default]
+    Wikitext,
+    WikibaseItem,
+    WikibaseProperty,
+    /// Preserved verbatim; routes to the text path with a note (Decision 4).
+    Other(String),
+}
+
+impl ContentModel {
+    /// Parse a content model string into the appropriate variant.
+    #[must_use]
+    pub fn parse(s: &str) -> Self {
+        match s {
+            "wikitext" => Self::Wikitext,
+            "wikibase-item" => Self::WikibaseItem,
+            "wikibase-property" => Self::WikibaseProperty,
+            other => Self::Other(other.to_string()),
+        }
+    }
+}
+
+impl From<String> for ContentModel {
+    fn from(value: String) -> Self {
+        Self::parse(&value)
+    }
+}
+
+impl From<ContentModel> for String {
+    fn from(model: ContentModel) -> Self {
+        match model {
+            ContentModel::Wikitext => "wikitext".to_string(),
+            ContentModel::WikibaseItem => "wikibase-item".to_string(),
+            ContentModel::WikibaseProperty => "wikibase-property".to_string(),
+            ContentModel::Other(s) => s,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum EditorIdentity {
     Registered { username: String },
@@ -99,6 +143,8 @@ pub struct EditEvent {
     pub byte_delta: i32,
     #[serde(default)]
     pub is_patrolled: FlagState,
+    #[serde(default)]
+    pub content_model: ContentModel,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -469,7 +515,79 @@ pub struct LocalOAuthSourceReport {
 
 #[cfg(test)]
 mod tests {
-    use super::{LocalOAuthSourceReport, ScoringSignal, WarningLevel};
+    use super::{
+        ContentModel, EditEvent, EditorIdentity, FlagState, LocalOAuthSourceReport, ScoringSignal,
+        WarningLevel,
+    };
+
+    /// Create a sample `EditEvent` for testing.
+    fn sample_edit_event() -> EditEvent {
+        EditEvent {
+            wiki_id: "enwiki".to_string(),
+            title: "Test Article".to_string(),
+            namespace: 0,
+            rev_id: 12345,
+            old_rev_id: Some(12344),
+            performer: EditorIdentity::Registered {
+                username: "TestUser".to_string(),
+            },
+            timestamp_ms: 1_609_459_200_000,
+            is_bot: FlagState::Disabled,
+            is_minor: FlagState::Disabled,
+            is_new_page: FlagState::Disabled,
+            tags: vec![],
+            comment: Some("test edit".to_string()),
+            byte_delta: 100,
+            is_patrolled: FlagState::Disabled,
+            content_model: ContentModel::default(),
+        }
+    }
+
+    #[test]
+    fn content_model_defaults_to_wikitext_and_routes_known_models() {
+        assert_eq!(ContentModel::default(), ContentModel::Wikitext);
+        assert_eq!(ContentModel::parse("wikitext"), ContentModel::Wikitext);
+        assert_eq!(
+            ContentModel::parse("wikibase-item"),
+            ContentModel::WikibaseItem
+        );
+        assert_eq!(
+            ContentModel::parse("wikibase-property"),
+            ContentModel::WikibaseProperty
+        );
+        assert_eq!(
+            ContentModel::parse("Scribunto"),
+            ContentModel::Other("Scribunto".to_string())
+        );
+    }
+
+    #[test]
+    fn content_model_round_trips_the_wire_string() {
+        // The #[serde(from/into String)] pair underwrites ADR-0009 back-compat:
+        // unknown models must survive serialize→deserialize verbatim.
+        for model in [
+            ContentModel::Wikitext,
+            ContentModel::WikibaseItem,
+            ContentModel::Other("Scribunto".into()),
+        ] {
+            let json = serde_json::to_string(&model).unwrap();
+            let back: ContentModel = serde_json::from_str(&json).unwrap();
+            assert_eq!(back, model);
+        }
+        assert_eq!(
+            serde_json::to_string(&ContentModel::Other("Scribunto".into())).unwrap(),
+            r#""Scribunto""#
+        );
+    }
+
+    #[test]
+    fn edit_event_without_content_model_deserializes_as_wikitext() {
+        // Serialize an event, strip the field, deserialize — ADR-0009 back-compat.
+        let mut value = serde_json::to_value(sample_edit_event()).unwrap();
+        value.as_object_mut().unwrap().remove("content_model");
+        let event: EditEvent = serde_json::from_value(value).unwrap();
+        assert_eq!(event.content_model, ContentModel::Wikitext);
+    }
 
     #[test]
     fn local_oauth_source_report_serializes_without_requiring_path_disclosure() {

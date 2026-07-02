@@ -7,7 +7,7 @@ use std::str::FromStr;
 use serde::Deserialize;
 
 use sp42_platform::errors::StreamIngestorError;
-use sp42_platform::{EditEvent, EditorIdentity, WikiConfig};
+use sp42_platform::{ContentModel, EditEvent, EditorIdentity, WikiConfig};
 
 const SUPPORTED_CHANGE_TYPES: [&str; 2] = ["edit", "new"];
 
@@ -115,6 +115,10 @@ impl StreamIngestor {
             comment: raw.comment.filter(|value| !value.is_empty()),
             byte_delta,
             is_patrolled: false.into(),
+            // The recentchanges stream carries no content model; the authoritative
+            // per-revision value arrives with the revision-content read
+            // (rvprop=contentmodel, ADR-0016 D1) before any content-model routing.
+            content_model: ContentModel::default(),
         }))
     }
 

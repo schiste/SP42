@@ -608,8 +608,8 @@ fn merge_notes(existing: Option<String>, incoming: Option<String>) -> Option<Str
 mod tests {
     use super::{score_edit, score_edit_with_context};
     use crate::types::{
-        EditEvent, EditorIdentity, ScoringConfig, ScoringContext, ScoringSignal, UserRiskProfile,
-        WarningLevel,
+        ContentModel, EditEvent, EditorIdentity, ScoringConfig, ScoringContext, ScoringSignal,
+        UserRiskProfile, WarningLevel,
     };
     use proptest::prelude::*;
 
@@ -631,6 +631,7 @@ mod tests {
             comment: Some("Ajout http://spam.example.test".to_string()),
             byte_delta: 200,
             is_patrolled: false.into(),
+            content_model: ContentModel::default(),
         }
     }
 

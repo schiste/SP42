@@ -4,7 +4,9 @@ use std::collections::BTreeMap;
 
 use serde::Deserialize;
 
-use sp42_platform::{EditEvent, EditorIdentity, FlagState, RecentChangesError, WikiConfig};
+use sp42_platform::{
+    ContentModel, EditEvent, EditorIdentity, FlagState, RecentChangesError, WikiConfig,
+};
 use sp42_types::{HttpClient, HttpMethod, HttpRequest, HttpResponse};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -245,6 +247,10 @@ pub fn parse_recent_changes_response(
             comment: change.comment.filter(|value| !value.is_empty()),
             byte_delta: compute_byte_delta(change.newlen, change.oldlen),
             is_patrolled: change.patrolled,
+            // The recentchanges list carries no content model; the authoritative
+            // per-revision value arrives with the revision-content read
+            // (rvprop=contentmodel, ADR-0016 D1) before any content-model routing.
+            content_model: ContentModel::default(),
         });
     }
 

@@ -621,7 +621,7 @@ mod tests {
         build_live_operator_action_preflight, classify_retry, filter_live_operator_queue,
     };
     use sp42_platform::{
-        ActionExecutionStatusReport, CompositeScore, DevAuthActionTokenAvailability,
+        ActionExecutionStatusReport, CompositeScore, ContentModel, DevAuthActionTokenAvailability,
         DevAuthCapabilityReadiness, DevAuthCapabilityReport, DevAuthDerivedCapabilities,
         DevAuthEditCapabilities, DevAuthModerationCapabilities, DevAuthProbeAcceptance,
         DevAuthSessionStatus, EditEvent, EditorIdentity, FlagState, LocalOAuthConfigStatus,
@@ -714,6 +714,7 @@ mod tests {
                 comment: None,
                 byte_delta: 12,
                 is_patrolled: FlagState::Disabled,
+                content_model: ContentModel::default(),
             },
         }
     }

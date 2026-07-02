@@ -209,7 +209,7 @@ fn performer_label(performer: &EditorIdentity) -> String {
 mod tests {
     use crate::scoring_engine::score_edit;
     use crate::test_fixtures::fixture_wiki_config;
-    use crate::types::{EditEvent, EditorIdentity, QueuedEdit, ScoringConfig};
+    use crate::types::{ContentModel, EditEvent, EditorIdentity, QueuedEdit, ScoringConfig};
 
     use super::{build_review_workbench, build_session_action_execution_requests};
 
@@ -233,6 +233,7 @@ mod tests {
             comment: Some("cleanup".to_string()),
             byte_delta: 12,
             is_patrolled: false.into(),
+            content_model: ContentModel::default(),
         };
         let item = QueuedEdit {
             score: score_edit(&event, &ScoringConfig::default()).expect("score should compute"),
@@ -268,6 +269,7 @@ mod tests {
             comment: Some("cleanup".to_string()),
             byte_delta: 12,
             is_patrolled: false.into(),
+            content_model: ContentModel::default(),
         };
         let item = QueuedEdit {
             score: score_edit(&event, &ScoringConfig::default()).expect("score should compute"),

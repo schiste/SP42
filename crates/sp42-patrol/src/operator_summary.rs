@@ -262,7 +262,9 @@ mod tests {
     use sp42_platform::diff_engine::diff_lines;
     use sp42_platform::review_workbench::build_review_workbench;
     use sp42_platform::scoring_engine::score_edit;
-    use sp42_platform::types::{EditEvent, EditorIdentity, QueuedEdit, ScoringConfig};
+    use sp42_platform::types::{
+        ContentModel, EditEvent, EditorIdentity, QueuedEdit, ScoringConfig,
+    };
     use sp42_wiki::test_fixtures::frwiki_config;
 
     use super::{
@@ -291,6 +293,7 @@ mod tests {
             comment: Some("cleanup".to_string()),
             byte_delta: 12,
             is_patrolled: false.into(),
+            content_model: ContentModel::default(),
         };
         let queue_item = QueuedEdit {
             score: score_edit(&event, &ScoringConfig::default()).expect("score should compute"),
@@ -363,6 +366,7 @@ mod tests {
             comment: Some("cleanup".to_string()),
             byte_delta: 12,
             is_patrolled: false.into(),
+            content_model: ContentModel::default(),
         };
         let queue_item = QueuedEdit {
             score: score_edit(&event, &ScoringConfig::default()).expect("score should compute"),

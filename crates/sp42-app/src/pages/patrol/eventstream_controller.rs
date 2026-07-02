@@ -3,7 +3,7 @@ use std::sync::{Arc, Mutex};
 use leptos::prelude::*;
 use send_wrapper::SendWrapper;
 use sp42_core::{
-    CompositeScore, EditEvent, EditorIdentity, FlagState, QueuedEdit, ScoringSignal,
+    CompositeScore, ContentModel, EditEvent, EditorIdentity, FlagState, QueuedEdit, ScoringSignal,
     SignalContribution,
 };
 
@@ -120,6 +120,7 @@ fn stream_event_to_queued_edit(event: &StreamEvent) -> QueuedEdit {
             comment: event.comment.clone(),
             byte_delta: event.byte_delta(),
             is_patrolled: FlagState::from(event.patrolled),
+            content_model: ContentModel::default(),
         },
         score: CompositeScore {
             total: score,

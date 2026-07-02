@@ -266,8 +266,8 @@ mod tests {
     use sp42_platform::review_workbench::build_review_workbench;
     use sp42_platform::scoring_engine::{score_edit, score_edit_with_context};
     use sp42_platform::types::{
-        EditEvent, EditorIdentity, QueuedEdit, ScoringConfig, ScoringContext, UserRiskProfile,
-        WarningLevel,
+        ContentModel, EditEvent, EditorIdentity, QueuedEdit, ScoringConfig, ScoringContext,
+        UserRiskProfile, WarningLevel,
     };
 
     use super::{DebugSnapshotInputs, TraceLevel, build_debug_snapshot};
@@ -292,6 +292,7 @@ mod tests {
             comment: Some("demo".to_string()),
             byte_delta: -30,
             is_patrolled: false.into(),
+            content_model: ContentModel::default(),
         };
         let context = ScoringContext {
             user_risk: Some(UserRiskProfile {
@@ -404,6 +405,7 @@ mod tests {
             comment: None,
             byte_delta: 100,
             is_patrolled: false.into(),
+            content_model: ContentModel::default(),
         };
         let item = QueuedEdit {
             score: score_edit(&event, &ScoringConfig::default()).expect("score should compute"),

@@ -1,10 +1,10 @@
-# ADR-0015: Wikimedia OAuth token seam for non-server shells
+# ADR-0018: Wikimedia OAuth token seam for non-server shells
 
 **Status:** Draft
 **Date:** 2026-07-01
 **Author:** Luis Villa (drafted with Claude)
 
-> Spawned by PRD-0011; extends ADR-0014.
+> Spawned by PRD-0013; extends ADR-0014.
 
 ## Context
 
@@ -14,11 +14,11 @@ routes exchange the code, store the token in a session, and actions run with the
 token. Nothing exposes a **reusable way for a non-server shell to obtain and hold a Wikimedia OAuth
 token.**
 
-A new shell now needs one: the MCP editing surface (PRD-0011) runs as a standalone (stdio, or hosted)
+A new shell now needs one: the MCP editing surface (PRD-0013) runs as a standalone (stdio, or hosted)
 process with no browser session and no cookie jar, but must make **authenticated** edits on the
 operator's behalf. Two acquisition paths follow from that — a bring-your-own owner-only token from the
 environment (the MVP, no browser at all) and an interactive login for shells that can open a URL — and
-the seam has to serve both. The same need will recur for the CLI insertion flow (PRD-0009) and any
+the seam has to serve both. The same need will recur for the CLI insertion flow (PRD-0012) and any
 future non-server consumer.
 
 This is architecturally significant — and hence an ADR — because it introduces a **new
@@ -44,7 +44,7 @@ Two constraints from adjacent decisions shape this:
 
 ### 1. A platform token-source contract
 Define a `sp42-platform` contract — `WikimediaTokenSource` — that decouples *how* a Wikimedia token is
-obtained from *how* edits consume it. The guarded-edit pipeline (PRD-0011) and every shell depend only
+obtained from *how* edits consume it. The guarded-edit pipeline (PRD-0013) and every shell depend only
 on this contract:
 
 ```rust
@@ -105,7 +105,7 @@ Wikidata, and any other project without per-project code.
 - **Cached-token protection is the interactive path's burden.** The env impl caches nothing (the token
   lives in the process environment). The interactive impl must persist a token across restarts — OS
   keychain when available, `0600` file fallback, never committed (mirrors `.env.wikimedia.local`). This
-  is PRD-0011 Open Question #2; same decision, tracked in one place.
+  is PRD-0013 Open Question #2; same decision, tracked in one place.
 - **Hosted multi-user is out of scope for the MVP.** An owner-only token is one operator's account. A
   multi-tenant hosted deployment (per-user tokens, session isolation) needs more, but the seam is
   compatible with it — each user gets their own `WikimediaTokenSource` — so nothing here blocks that
@@ -117,7 +117,7 @@ Wikidata, and any other project without per-project code.
 
 - **Proxy the running `sp42-server` session** (reuse its OAuth wholesale instead of a platform seam):
   rejected — couples every non-server shell to a running server and its browser session, defeating the
-  stdio/BYO-cred posture PRD-0011 depends on. The seam instead lets the server *optionally* back the
+  stdio/BYO-cred posture PRD-0013 depends on. The seam instead lets the server *optionally* back the
   contract later (Consequences) without any shell requiring it.
 - **Rely on rmcp's `auth` feature:** rejected — it is the *client→server* authorization half (the shell
   authenticating an inbound caller), not a *downstream* Wikimedia-token/broker seam. Orthogonal layer;

@@ -1,11 +1,11 @@
-# PRD-0011: Citation write surface (MCP editing shell)
+# PRD-0013: Citation write surface (MCP editing shell)
 
 **Author:** Luis Villa (drafted with Claude)
 **Date:** 2026-07-01
 **State:** Draft
 **Discussion:** <PR link TBD>
-**Spawned ADRs:** ADR-0015 (Wikimedia OAuth token seam for non-server shells). Depends on the
-ADR-0003 *insertion* extension spawned by PRD-0009 (used in the add phase, not owned here).
+**Spawned ADRs:** ADR-0018 (Wikimedia OAuth token seam for non-server shells). Depends on the
+ADR-0003 *insertion* extension spawned by PRD-0012 (used in the add phase, not owned here).
 
 > Design detail lives in `docs/design-plans/2026-07-01-citation-write-surface.md`.
 
@@ -28,7 +28,7 @@ shown the concrete before/after and **confirms or declines** via an MCP elicitat
 confirmation does it land as a real, attributed Wikipedia edit under the operator's own account
 (the authenticated apply verb, e.g. `apply_citation_edit`). If the article moved underneath, apply
 **refuses** rather than guesses (anti-drift + `baserevid`), returning a structured
-refusal/decline/conflict. Adding a citation to an unsourced claim (PRD-0009) rides the same
+refusal/decline/conflict. Adding a citation to an unsourced claim (PRD-0012) rides the same
 propose/confirm path once available.
 
 The verbs also carry accurate MCP tool annotations — preview marked read-only, apply marked
@@ -38,7 +38,7 @@ actually enforces confirm-or-fail-closed (see Risks).
 
 Scope of *this* PRD: the **MCP editing surface**, the **replace/repair** path, and the **auth model**
 — how a non-server client authenticates to edit. The **add** flow — inserting a `<ref>` on an
-unsourced claim — is PRD-0009's; this PRD *delivers it over MCP* rather than redefining it (add phase).
+unsourced claim — is PRD-0012's; this PRD *delivers it over MCP* rather than redefining it (add phase).
 Edit authority is a Wikimedia OAuth token: bring-your-own owner-only token via env (MVP), interactive
 `elicit_url` login (fast-follow); a separate downstream token, never the MCP client's own; valid for
 any Wikimedia project.
@@ -52,7 +52,7 @@ enabled by this PRD's closing PR.
   revision whose wikitext carries the replacement cite, verified end-to-end against the stub editor.
 - [ ] **Add lands end-to-end:** on elicitation `accept` with no drift, apply inserts a `<ref>` on the
   targeted unsourced claim and produces a new revision carrying it, verified end-to-end against the
-  stub editor. *(Blocked on PRD-0009 insertion flow + the ADR-0003 insertion extension; see Dependencies.)*
+  stub editor. *(Blocked on PRD-0012 insertion flow + the ADR-0003 insertion extension; see Dependencies.)*
 - [ ] The preview verb computes a replayable proposal with **zero writes**, verified by a stub-editor test.
 - [ ] The apply verb writes only after an elicitation `accept`; `decline`/`cancel` → structured `Declined`, no write — stub-tested across all three.
 - [ ] A non-elicitation-capable client → the apply verb **refuses** (fail-closed), verified by capability-negotiation test.
@@ -66,9 +66,9 @@ enabled by this PRD's closing PR.
 This PRD's closing PR is **blocked** on two Draft artifacts landing first — the add path has no edit
 machinery without them:
 
-- **PRD-0009 citation insertion** — owns the propose→confirm→insert `<ref>` flow this PRD delivers
+- **PRD-0012 citation insertion** — owns the propose→confirm→insert `<ref>` flow this PRD delivers
   over MCP.
-- **The ADR-0003 insertion extension** (spawned by PRD-0009) — node-anchored editing currently does
+- **The ADR-0003 insertion extension** (spawned by PRD-0012) — node-anchored editing currently does
   replace/modify only; insertion is the planned extension the add path anchors on.
 
 The **replace/repair** path has no such block (it reuses the existing bare-URL-repair apply flow), so
@@ -80,10 +80,10 @@ explicitly.
 - **Proxy to a running `sp42-server`** (reuse its session/OAuth wholesale): rejected — couples the
   standalone MCP binary to a running server and moves confirmation to the browser, breaking the
   BYO-cred stdio posture.
-- **One fused write verb** (no separate preview): rejected — ADR-0010 and PRD-0009 are two-step; a
+- **One fused write verb** (no separate preview): rejected — ADR-0010 and PRD-0012 are two-step; a
   read-only preview keeps inspection cheap and auth-free.
-- **Extend PRD-0009 into one editing PRD**: rejected — bloats 0009's tight test.wiki/CLI insertion MVP.
-  This PRD *depends on* 0009's insertion machinery and references it, rather than *absorbing* insertion's
+- **Extend PRD-0012 into one editing PRD**: rejected — bloats 0012's tight test.wiki/CLI insertion MVP.
+  This PRD *depends on* 0012's insertion machinery and references it, rather than *absorbing* insertion's
   definition here; depend-on and fold-into are different, and the former keeps each doc's scope tight.
 - **Rely on tool annotations for the confirm gate** (`destructive_hint` etc.): rejected — annotations
   are untrusted client-side hints, not a guarantee. We still emit them accurately as advisory labeling,

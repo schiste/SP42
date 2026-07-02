@@ -504,6 +504,18 @@ fn parse_concern_kind(value: &str) -> Option<CitationConcernKind> {
     }
 }
 
+/// Which concern kind "Confirm flag" applies (PRD-0014, Resolved question 5):
+/// the operator's selection always wins when present and parseable — SP42
+/// only suggests, never decides, so a value the operator chose (including a
+/// deliberate override away from the suggestion) takes priority over
+/// `finding.verdict`'s default.
+fn resolve_concern_kind(
+    selected: Option<&str>,
+    suggested: Option<CitationConcernKind>,
+) -> Option<CitationConcernKind> {
+    selected.and_then(parse_concern_kind).or(suggested)
+}
+
 /// The action row beneath a finding's card (PRD-0014): three equal-weight
 /// actions (edit article text / fix citation / flag citation) plus a fourth,
 /// always-available Re-verify control. None is pre-selected or defaulted;
@@ -776,10 +788,11 @@ fn FindingActionRow(
                                                         .with_disabled(Signal::derive(move || busy.get()))
                                                         .on_click(move |_| {
                                                             let current = finding.get_untracked();
-                                                            let kind = select_value(&concern_select_for_confirm)
-                                                                .as_deref()
-                                                                .and_then(parse_concern_kind)
-                                                                .or_else(|| suggested_concern_kind(&current));
+                                                            let kind = resolve_concern_kind(
+                                                                select_value(&concern_select_for_confirm)
+                                                                    .as_deref(),
+                                                                suggested_concern_kind(&current),
+                                                            );
                                                             let Some(kind) = kind else {
                                                                 set_status.set(
                                                                     "Choose a concern kind before confirming."
@@ -1274,7 +1287,7 @@ fn select_value(_id: &str) -> Option<String> {
 mod action_row_tests {
     use super::{
         FixCitationRoute, finding_has_action_row, fix_citation_route, parse_concern_kind,
-        suggested_concern_kind,
+        resolve_concern_kind, suggested_concern_kind,
     };
     use sp42_core::{
         CitationConcernKind, CitationFinding, CitationFindingKind, CitationVerdict,
@@ -1385,5 +1398,30 @@ mod action_row_tests {
     #[test]
     fn parse_concern_kind_rejects_unknown_value() {
         assert_eq!(parse_concern_kind("unknown-kind"), None);
+    }
+
+    #[test]
+    fn operator_override_wins_over_suggestion() {
+        // PRD-0014 DoD: "the operator can override the suggested
+        // CitationConcernKind for any other wiki-configured one before
+        // confirming ... the apply payload reflects the operator's choice,
+        // not just the suggestion."
+        let suggested = Some(CitationConcernKind::PartialSupport);
+        let operator_choice = Some("failed-verification");
+        assert_eq!(
+            resolve_concern_kind(operator_choice, suggested),
+            Some(CitationConcernKind::FailedVerification)
+        );
+    }
+
+    #[test]
+    fn falls_back_to_suggestion_when_operator_makes_no_selection() {
+        let suggested = Some(CitationConcernKind::FailedVerification);
+        assert_eq!(resolve_concern_kind(None, suggested), suggested);
+    }
+
+    #[test]
+    fn resolves_to_none_when_neither_selected_nor_suggested() {
+        assert_eq!(resolve_concern_kind(None, None), None);
     }
 }

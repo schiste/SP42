@@ -477,6 +477,7 @@ mod tests {
         execute_recent_changes, parse_recent_changes_response, parse_rfc3339_utc_to_ms,
     };
     use crate::test_fixtures::fixture_wiki_config;
+    use sp42_platform::ContentModel;
     use sp42_types::{HttpResponse, StubHttpClient};
 
     #[test]
@@ -603,6 +604,47 @@ mod tests {
         assert_eq!(batch.events.len(), 1);
         assert_eq!(batch.events[0].rev_id, 123_456);
         assert_eq!(batch.next_continue.as_deref(), Some("next-token"));
+    }
+
+    #[test]
+    fn recentchanges_events_default_to_wikitext_content_model() {
+        let config = fixture_wiki_config();
+        let response = HttpResponse {
+            status: 200,
+            headers: BTreeMap::new(),
+            body: br#"{
+                "query":{"recentchanges":[
+                    {
+                        "type":"edit",
+                        "ns":0,
+                        "title":"Example",
+                        "user":"192.0.2.1",
+                        "timestamp":"2026-03-24T15:42:00Z",
+                        "bot":false,
+                        "minor":false,
+                        "revid":123456,
+                        "old_revid":123455,
+                        "oldlen":100,
+                        "newlen":120,
+                        "comment":"sample edit",
+                        "tags":[]
+                    }
+                ]}}"#
+                .to_vec(),
+        };
+
+        let query = RecentChangesQuery::initial(25, false);
+        let batch = parse_recent_changes_response(&config, &response, &query)
+            .expect("response should parse");
+
+        assert_eq!(batch.events.len(), 1);
+        assert_eq!(
+            batch.events[0].content_model,
+            ContentModel::Wikitext,
+            "recentchanges-sourced EditEvents should default to wikitext content model, \
+            as the authoritative per-revision value arrives with the revision-content read \
+            (rvprop=contentmodel, ADR-0016 D1) before any content-model routing"
+        );
     }
 
     #[test]

@@ -13,4 +13,7 @@ pub use model::{
     StatementRank, TermMap, WikibaseValue,
 };
 pub use parse::{WikibaseParseError, parse_entity};
-pub use read::{Labels, build_entity_request, build_label_request, parse_labels};
+pub use read::{
+    Labels, RevisionContent, build_entity_request, build_label_request,
+    build_revision_pair_request, parse_labels, parse_revision_contents,
+};

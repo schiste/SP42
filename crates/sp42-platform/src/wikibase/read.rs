@@ -102,6 +102,112 @@ pub fn parse_labels(body: &[u8]) -> Result<Labels, WikibaseParseError> {
     Ok(Labels(labels))
 }
 
+/// One revision's main-slot content as returned by `prop=revisions`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RevisionContent {
+    pub revid: u64,
+    pub parentid: Option<u64>,
+    pub content_model: String,
+    pub content: String,
+}
+
+/// Action-API read of specific revisions' main-slot content **and content model**
+/// (ADR-0016 Decisions 1–2): one call returns both sides of a diff plus the
+/// routing key. `api_endpoint` comes from the caller's `WikiConfig` (any wiki —
+/// this read is not Wikidata-specific).
+///
+/// # Panics
+///
+/// Panics if the URL cannot be constructed (should never happen with valid params).
+#[must_use]
+pub fn build_revision_pair_request(api_endpoint: &str, revids: &[u64]) -> HttpRequest {
+    let revids_joined = revids
+        .iter()
+        .map(ToString::to_string)
+        .collect::<Vec<_>>()
+        .join("|");
+
+    let url = Url::parse_with_params(
+        api_endpoint,
+        &[
+            ("action", "query"),
+            ("format", "json"),
+            ("formatversion", "2"),
+            ("prop", "revisions"),
+            ("revids", revids_joined.as_str()),
+            ("rvslots", "main"),
+            ("rvprop", "ids|content|contentmodel"),
+        ],
+    )
+    .expect("URL and params should be valid");
+
+    HttpRequest {
+        method: HttpMethod::Get,
+        url,
+        headers: BTreeMap::new(),
+        body: Vec::new(),
+    }
+}
+
+/// Parse revision contents from an Action-API response.
+///
+/// # Errors
+///
+/// Returns `WikibaseParseError::InvalidJson` if the body is not valid JSON.
+pub fn parse_revision_contents(body: &[u8]) -> Result<Vec<RevisionContent>, WikibaseParseError> {
+    let value: Value = serde_json::from_slice(body)?;
+
+    let mut revisions = Vec::new();
+
+    if let Some(pages) = value
+        .get("query")
+        .and_then(|q| q.get("pages"))
+        .and_then(|p| p.as_array())
+    {
+        for page in pages {
+            if let Some(page_revs) = page.get("revisions").and_then(|r| r.as_array()) {
+                for rev in page_revs {
+                    let Some(revid) = rev.get("revid").and_then(Value::as_u64) else {
+                        continue;
+                    };
+
+                    let parentid = rev.get("parentid").and_then(Value::as_u64);
+
+                    // Extract content model and content from the main slot
+                    let Some(slot) = rev.get("slots").and_then(|s| s.get("main")) else {
+                        continue; // Skip revisions without main slot
+                    };
+
+                    let Some(content_model) = slot
+                        .get("contentmodel")
+                        .and_then(Value::as_str)
+                        .map(ToString::to_string)
+                    else {
+                        continue;
+                    };
+
+                    let Some(content) = slot
+                        .get("content")
+                        .and_then(Value::as_str)
+                        .map(ToString::to_string)
+                    else {
+                        continue;
+                    };
+
+                    revisions.push(RevisionContent {
+                        revid,
+                        parentid,
+                        content_model,
+                        content,
+                    });
+                }
+            }
+        }
+    }
+
+    Ok(revisions)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -149,5 +255,42 @@ mod tests {
         assert_eq!(labels.get("P69"), Some("educated at"));
         assert_eq!(labels.get("Q691283"), Some("St John's College"));
         assert_eq!(labels.get("Q1"), None);
+    }
+
+    #[test]
+    fn revision_pair_request_asks_for_ids_content_and_model() {
+        let req = build_revision_pair_request(
+            "https://www.wikidata.org/w/api.php",
+            &[2_000_200, 2_000_341],
+        );
+        let url = req.url.as_str();
+        for needle in [
+            "action=query",
+            "prop=revisions",
+            "revids=2000200%7C2000341",
+            "rvslots=main",
+            "rvprop=ids%7Ccontent%7Ccontentmodel",
+            "formatversion=2",
+        ] {
+            assert!(url.contains(needle), "missing {needle} in {url}");
+        }
+    }
+
+    #[test]
+    fn parses_revision_contents_with_model() {
+        let revs = parse_revision_contents(
+            include_str!("../../../../fixtures/wikibase/q42_revision_pair.json").as_bytes(),
+        )
+        .expect("parses");
+        assert_eq!(revs.len(), 2);
+        let new = revs.iter().find(|r| r.revid == 2_000_341).unwrap();
+        assert_eq!(new.content_model, "wikibase-item");
+        // The slot content chains into Phase 1's endpoint-agnostic parser:
+        let entity =
+            crate::wikibase::parse_entity(&EntityId::new("Q42"), new.content.as_bytes()).unwrap();
+        assert_eq!(
+            entity.labels.get("en").map(String::as_str),
+            Some("Douglas Adams")
+        );
     }
 }

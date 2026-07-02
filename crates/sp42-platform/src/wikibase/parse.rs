@@ -137,9 +137,7 @@ fn parse_statements(value: Option<&Value>) -> BTreeMap<PropertyId, Vec<Statement
             let mut statements = Vec::new();
             if let Some(arr) = statement_array.as_array() {
                 for stmt_value in arr {
-                    if let Some(stmt) = parse_statement(&property, stmt_value) {
-                        statements.push(stmt);
-                    }
+                    statements.push(parse_statement(&property, stmt_value));
                 }
             }
             if !statements.is_empty() {
@@ -150,8 +148,7 @@ fn parse_statements(value: Option<&Value>) -> BTreeMap<PropertyId, Vec<Statement
     map
 }
 
-#[allow(clippy::unnecessary_wraps)]
-fn parse_statement(property: &PropertyId, stmt_value: &Value) -> Option<Statement> {
+fn parse_statement(property: &PropertyId, stmt_value: &Value) -> Statement {
     // Store the raw statement before extraction
     let raw = stmt_value.clone();
 
@@ -159,16 +156,9 @@ fn parse_statement(property: &PropertyId, stmt_value: &Value) -> Option<Statemen
     let value = stmt_value.get("mainsnak").and_then(parse_snak);
 
     // If mainsnak parsing failed completely, create a recovery snak
-    let value = value.unwrap_or_else(|| {
-        Snak::Value {
-            property: property.clone(),
-            value: WikibaseValue::Other(
-                stmt_value
-                    .get("mainsnak")
-                    .cloned()
-                    .unwrap_or(Value::Null),
-            ),
-        }
+    let value = value.unwrap_or_else(|| Snak::Value {
+        property: property.clone(),
+        value: WikibaseValue::Other(stmt_value.get("mainsnak").cloned().unwrap_or(Value::Null)),
     });
 
     // Parse qualifiers
@@ -213,7 +203,7 @@ fn parse_statement(property: &PropertyId, stmt_value: &Value) -> Option<Statemen
         .and_then(|id_val| id_val.as_str())
         .map(|id_str| StatementId::new(id_str.to_string()));
 
-    Some(Statement {
+    Statement {
         id,
         property: property.clone(),
         value,
@@ -221,7 +211,7 @@ fn parse_statement(property: &PropertyId, stmt_value: &Value) -> Option<Statemen
         rank,
         references,
         raw,
-    })
+    }
 }
 
 fn parse_snak(snak_value: &Value) -> Option<Snak> {
@@ -234,14 +224,14 @@ fn parse_snak(snak_value: &Value) -> Option<Snak> {
         "somevalue" => Some(Snak::SomeValue { property }),
         "value" => {
             let datavalue = snak_value.get("datavalue")?;
-            let value = parse_datavalue(&property, datavalue)?;
+            let value = parse_datavalue(datavalue)?;
             Some(Snak::Value { property, value })
         }
         _ => None,
     }
 }
 
-fn parse_datavalue(_property: &PropertyId, datavalue: &Value) -> Option<WikibaseValue> {
+fn parse_datavalue(datavalue: &Value) -> Option<WikibaseValue> {
     let datatype = datavalue.get("type")?.as_str()?;
     let value_obj = datavalue.get("value")?;
 
@@ -278,7 +268,12 @@ fn parse_datavalue(_property: &PropertyId, datavalue: &Value) -> Option<Wikibase
                         None
                     } else {
                         // Extract the last segment of the URI
-                        let unit_id = unit_str.split('/').next_back().unwrap_or("1");
+                        // SAFETY: unit_str is non-empty (checked above), so split().next_back()
+                        // always yields Some.
+                        let unit_id = unit_str
+                            .split('/')
+                            .next_back()
+                            .expect("non-empty string always yields segment");
                         Some(EntityId::new(unit_id.to_string()))
                     }
                 });
@@ -331,7 +326,10 @@ mod tests {
         let entity = q42();
         assert_eq!(entity.id, EntityId::new("Q42"));
         assert_eq!(entity.last_revid, Some(2_000_341));
-        assert_eq!(entity.labels.get("en").map(String::as_str), Some("Douglas Adams"));
+        assert_eq!(
+            entity.labels.get("en").map(String::as_str),
+            Some("Douglas Adams")
+        );
         assert_eq!(entity.aliases["en"], vec!["Douglas Noel Adams", "DNA"]);
         assert_eq!(entity.sitelinks["enwiki"].title, "Douglas Adams");
     }
@@ -354,7 +352,13 @@ mod tests {
     fn unknown_datatype_parses_as_other_never_fails() {
         let entity = q42();
         let unknown = &entity.statements[&PropertyId::new("P9999")][0];
-        assert!(matches!(&unknown.value, Snak::Value { value: WikibaseValue::Other(_), .. }));
+        assert!(matches!(
+            &unknown.value,
+            Snak::Value {
+                value: WikibaseValue::Other(_),
+                ..
+            }
+        ));
         assert_eq!(unknown.rank, StatementRank::Deprecated);
     }
 
@@ -381,7 +385,10 @@ mod tests {
         ));
         assert!(matches!(
             &entity.statements[&PropertyId::new("P625")][0].value,
-            Snak::Value { value: WikibaseValue::GlobeCoordinate { .. }, .. }
+            Snak::Value {
+                value: WikibaseValue::GlobeCoordinate { .. },
+                ..
+            }
         ));
     }
 
@@ -392,12 +399,37 @@ mod tests {
         let doc: serde_json::Value = serde_json::from_str(ENTITYDATA).unwrap();
         let bare = serde_json::to_vec(&doc["entities"]["Q42"]).unwrap();
         let entity = parse_entity(&EntityId::new("Q42"), &bare).expect("parses bare form");
-        assert_eq!(entity.labels.get("en").map(String::as_str), Some("Douglas Adams"));
+        assert_eq!(
+            entity.labels.get("en").map(String::as_str),
+            Some("Douglas Adams")
+        );
     }
 
     #[test]
     fn missing_entity_is_an_error() {
         let err = parse_entity(&EntityId::new("Q1"), ENTITYDATA.as_bytes()).unwrap_err();
         assert!(matches!(err, WikibaseParseError::EntityNotFound { .. }));
+    }
+
+    #[test]
+    fn serde_roundtrip_preserves_entity() {
+        let entity = q42();
+        let serialized = serde_json::to_value(&entity).expect("serializes");
+        let deserialized: Entity = serde_json::from_value(serialized).expect("deserializes");
+        assert_eq!(entity, deserialized);
+    }
+
+    #[test]
+    fn invalid_json_is_an_error() {
+        let bad_json = b"{ invalid json }";
+        let err = parse_entity(&EntityId::new("Q42"), bad_json).unwrap_err();
+        assert!(matches!(err, WikibaseParseError::InvalidJson(_)));
+    }
+
+    #[test]
+    fn unrecognized_shape_is_an_error() {
+        let unrecognized = br#"{"not_an_entity": "structure"}"#;
+        let err = parse_entity(&EntityId::new("Q42"), unrecognized).unwrap_err();
+        assert!(matches!(err, WikibaseParseError::UnrecognizedShape { .. }));
     }
 }

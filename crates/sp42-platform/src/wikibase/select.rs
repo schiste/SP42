@@ -1,6 +1,8 @@
 use serde::{Deserialize, Serialize};
 
-use super::model::{Entity, EntityId, PropertyId, Statement, StatementId};
+use super::model::{
+    Entity, EntityId, PropertyId, Reference, Snak, Statement, StatementId, WikibaseValue,
+};
 
 /// Names one statement on one entity. Promoted from PR #103's `sp42-mcp::StatementRef`
 /// (design plan §Statement identity); #103 re-exports this after convergence.
@@ -21,6 +23,20 @@ impl Entity {
             Some(guid) => statements.iter().find(|s| s.id.as_ref() == Some(guid)),
             None => statements.first(),
         }
+    }
+}
+
+impl Reference {
+    /// P854 ("reference URL") snaks. This is #103's `extract_ref_url`, typed and
+    /// plural — #103 takes `.next()` for its first-URL behavior.
+    pub fn urls(&self) -> impl Iterator<Item = &str> {
+        self.snaks.iter().filter_map(|snak| match snak {
+            Snak::Value {
+                property,
+                value: WikibaseValue::String(url),
+            } if property.as_str() == "P854" => Some(url.as_str()),
+            _ => None,
+        })
     }
 }
 
@@ -61,5 +77,20 @@ mod tests {
             ..r
         };
         assert!(entity.statement(&miss).is_none());
+    }
+
+    #[test]
+    fn reference_urls_yields_p854_strings() {
+        let entity = q42();
+        let educated = &entity.statements[&PropertyId::new("P69")][0];
+        let urls: Vec<&str> = educated.references[0].urls().collect();
+        assert_eq!(urls, vec!["https://example.org/adams-bio"]);
+    }
+
+    #[test]
+    fn reference_urls_empty_when_no_p854() {
+        let entity = q42();
+        let birth = &entity.statements[&PropertyId::new("P569")][0];
+        assert!(birth.references.is_empty()); // fixture has none — abstention case stays reachable
     }
 }

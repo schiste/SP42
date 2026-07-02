@@ -28,7 +28,7 @@ const WIKIMEDIA_API_RETRY_DELAY_MS: u64 = 150;
 #[derive(Debug, Clone)]
 pub(crate) struct RevisionSlotContent {
     pub(crate) text: String,
-    #[allow(dead_code)] // #0016
+    #[allow(dead_code)] // ADR-0016 (Phase 6): https://github.com/schiste/SP42
     pub(crate) content_model: ContentModel,
 }
 
@@ -496,6 +496,27 @@ fn wiki_origin_url(config: &WikiConfig) -> url::Url {
     url
 }
 
+/// Parse a revision slot object from Wikimedia API response into `RevisionSlotContent`.
+/// Extracts the text content and content model, defaulting to `ContentModel::Wikitext`
+/// when contentmodel is absent from the response.
+fn parse_revision_slot_to_content(
+    main_slot: &serde_json::Map<String, serde_json::Value>,
+) -> Option<RevisionSlotContent> {
+    let content = main_slot
+        .get("content")
+        .and_then(serde_json::Value::as_str)
+        .map(ToString::to_string)?;
+    let content_model = main_slot
+        .get("contentmodel")
+        .and_then(serde_json::Value::as_str)
+        .map(ContentModel::parse)
+        .unwrap_or_default();
+    Some(RevisionSlotContent {
+        text: content,
+        content_model,
+    })
+}
+
 async fn fetch_revision_texts(
     client: &reqwest::Client,
     access_token: &str,
@@ -552,25 +573,9 @@ async fn fetch_revision_texts(
             else {
                 continue;
             };
-            let Some(content) = main_slot
-                .get("content")
-                .and_then(serde_json::Value::as_str)
-                .map(ToString::to_string)
-            else {
-                continue;
-            };
-            let content_model = main_slot
-                .get("contentmodel")
-                .and_then(serde_json::Value::as_str)
-                .map(ContentModel::parse)
-                .unwrap_or_default();
-            map.insert(
-                rev_id,
-                RevisionSlotContent {
-                    text: content,
-                    content_model,
-                },
-            );
+            if let Some(slot_content) = parse_revision_slot_to_content(main_slot) {
+                map.insert(rev_id, slot_content);
+            }
         }
     }
 
@@ -657,79 +662,47 @@ mod tests {
 
     #[test]
     fn revision_slot_content_parses_contentmodel_variants() {
-        // Verify that contentmodel strings parse correctly to ContentModel variants.
-        // This test is applied to the parsed JSON response data structure, which
-        // includes contentmodel in the revision slots (rvprop=ids|content|contentmodel,
-        // ADR-0016 D1). Wikitext is the default when contentmodel is absent.
+        // Verify that parse_revision_slot_to_content correctly handles contentmodel
+        // variants (ADR-0016 D1) and defaults to Wikitext when contentmodel is absent.
 
-        // Simulate parsing a wikitext slot (typical Wikipedia edit).
-        let wikitext_json = serde_json::json!({
-            "slots": {
-                "main": {
-                    "content": "Example wikitext",
-                    "contentmodel": "wikitext"
-                }
-            }
+        // Test case: wikitext slot (typical Wikipedia edit).
+        let wikitext_slot = serde_json::json!({
+            "content": "Example wikitext",
+            "contentmodel": "wikitext"
         });
-        let main_slot = wikitext_json["slots"]["main"].as_object().unwrap();
-        let cm = main_slot
-            .get("contentmodel")
-            .and_then(serde_json::Value::as_str)
-            .map(ContentModel::parse)
-            .unwrap_or_default();
-        assert_eq!(cm, ContentModel::Wikitext);
-        // Verify the content can be wrapped in RevisionSlotContent and accessed.
-        let slot_content = RevisionSlotContent {
-            text: "wikitext content".to_string(),
-            content_model: cm,
-        };
-        assert_eq!(slot_content.content_model, ContentModel::Wikitext);
+        let result = parse_revision_slot_to_content(wikitext_slot.as_object().unwrap());
+        let slot = result.expect("wikitext slot should parse");
+        assert_eq!(slot.text, "Example wikitext");
+        assert_eq!(slot.content_model, ContentModel::Wikitext);
 
-        // Simulate parsing a wikibase-item slot (Wikidata item).
-        let wikibase_item_json = serde_json::json!({
-            "slots": {
-                "main": {
-                    "content": "{}",
-                    "contentmodel": "wikibase-item"
-                }
-            }
+        // Test case: wikibase-item slot (Wikidata item).
+        let wikibase_item_slot = serde_json::json!({
+            "content": "{}",
+            "contentmodel": "wikibase-item"
         });
-        let main_slot = wikibase_item_json["slots"]["main"].as_object().unwrap();
-        let cm = main_slot
-            .get("contentmodel")
-            .and_then(serde_json::Value::as_str)
-            .map(ContentModel::parse)
-            .unwrap_or_default();
-        assert_eq!(cm, ContentModel::WikibaseItem);
-        let slot_content = RevisionSlotContent {
-            text: "{}".to_string(),
-            content_model: cm,
-        };
-        assert_eq!(slot_content.content_model, ContentModel::WikibaseItem);
+        let result = parse_revision_slot_to_content(wikibase_item_slot.as_object().unwrap());
+        let slot = result.expect("wikibase-item slot should parse");
+        assert_eq!(slot.text, "{}");
+        assert_eq!(slot.content_model, ContentModel::WikibaseItem);
 
-        // Simulate parsing when contentmodel is absent (defaults to wikitext).
-        let no_contentmodel_json = serde_json::json!({
-            "slots": {
-                "main": {
-                    "content": "Some text"
-                }
-            }
+        // Test case: contentmodel absent (should default to wikitext).
+        let no_contentmodel_slot = serde_json::json!({
+            "content": "Some text"
         });
-        let main_slot = no_contentmodel_json["slots"]["main"].as_object().unwrap();
-        let cm = main_slot
-            .get("contentmodel")
-            .and_then(serde_json::Value::as_str)
-            .map(ContentModel::parse)
-            .unwrap_or_default();
+        let result = parse_revision_slot_to_content(no_contentmodel_slot.as_object().unwrap());
+        let slot = result.expect("slot without contentmodel should parse");
+        assert_eq!(slot.text, "Some text");
         assert_eq!(
-            cm,
+            slot.content_model,
             ContentModel::Wikitext,
             "contentmodel defaults to wikitext when absent from the response"
         );
-        let slot_content = RevisionSlotContent {
-            text: "Some text".to_string(),
-            content_model: cm,
-        };
-        assert_eq!(slot_content.content_model, ContentModel::Wikitext);
+
+        // Test case: missing content should return None.
+        let no_content_slot = serde_json::json!({
+            "contentmodel": "wikitext"
+        });
+        let result = parse_revision_slot_to_content(no_content_slot.as_object().unwrap());
+        assert!(result.is_none(), "slot without content should return None");
     }
 }

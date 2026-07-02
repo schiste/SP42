@@ -14,7 +14,7 @@ use sp42_core::{
     WikiPageSaveRequest, WikitextEditor, WikitextNodeKind, WikitextNodeLocator, WikitextPageRef,
     bare_url_references, build_citoid_header, build_citoid_request, citoid_language,
     execute_fetch_token, execute_wiki_page_save, extract_use_sites, parse_action_response_summary,
-    render_bare_url_citation, verify_page,
+    render_bare_url_citation, verify_one_use_site, verify_page,
 };
 
 use axum::{
@@ -393,6 +393,125 @@ pub(crate) async fn post_verify_page(
     }
 
     Ok(Json(report))
+}
+
+/// Re-verify one finding in place (PRD-0014): operator-triggered only, never
+/// automatic. Re-extracts the page's use-sites against the *current* article
+/// state and re-runs `verify_one_use_site` (unchanged — same primitive
+/// `verify_page`'s fan-out uses) for just the one matching `ref_id`, so the
+/// inference cost is exactly one use-site, not a full-page rescan.
+///
+/// # Errors
+///
+/// `ref-not-found` (404) when the ref no longer exists on the current page,
+/// the same `503`/`400` inference-wiring and config-resolution errors as
+/// `verify-page`, or an upstream verification failure (502).
+pub(crate) async fn post_citation_reverify(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(mut payload): Json<sp42_core::ReverifyFindingRequest>,
+) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
+    let Some(session) = current_session_snapshot(&state, &headers, true).await else {
+        return Err(unauthorized_error(
+            "No authenticated bridge session is active.",
+        ));
+    };
+    validate_csrf_header(&headers, &session)?;
+    let config = config_for_state_wiki(&state, &payload.wiki_id)?;
+
+    if payload.ref_id.trim().is_empty() {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({ "error": "ref_id is required" })),
+        ));
+    }
+
+    let panel = sp42_inference::panel_from_env().map_err(|error| {
+        (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(serde_json::json!({ "error": error })),
+        )
+    })?;
+    let model_client = sp42_inference::client_from_env().map_err(|error| {
+        (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(serde_json::json!({ "error": error })),
+        )
+    })?;
+    let http_client = PlainHttpClient::new().map_err(|error| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": error })),
+        )
+    })?;
+
+    if payload.rev_id == 0 {
+        let wiki_client =
+            BearerHttpClient::new(state.http_client.clone(), session.access_token.clone());
+        payload.rev_id = fetch_latest_revid(&wiki_client, &config, &payload.title)
+            .await
+            .map_err(|error| action_error_response(&error))?;
+    }
+
+    let page_ref = WikitextPageRef {
+        title: payload.title.clone(),
+        rev_id: payload.rev_id,
+    };
+    let blocks = state
+        .wikitext_editor
+        .extract_blocks(&config, &page_ref)
+        .await
+        .map_err(|error| action_error_response(&action_error_from_editor(&error)))?;
+    let page_request = PageVerificationRequest {
+        wiki_id: payload.wiki_id.clone(),
+        title: payload.title.clone(),
+        rev_id: payload.rev_id,
+    };
+    let extract = extract_use_sites(&blocks, &page_request);
+    let Some(use_site) = extract
+        .use_sites
+        .into_iter()
+        .find(|use_site| use_site.ref_id == payload.ref_id)
+    else {
+        return Err((
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({
+                "error": format!(
+                    "ref {} was not found on the current revision of {}",
+                    payload.ref_id, payload.title
+                ),
+                "code": "ref-not-found",
+            })),
+        ));
+    };
+
+    let options = VerifyOptions::default();
+    let (_, _, outcome) = verify_one_use_site(
+        &http_client,
+        &model_client,
+        state.clock.as_ref(),
+        &panel,
+        use_site,
+        &std::collections::HashMap::new(),
+        &options,
+    )
+    .await;
+    let finding = match outcome {
+        Ok(outcome) => outcome.finding,
+        Err(error) => {
+            return Err((
+                StatusCode::BAD_GATEWAY,
+                Json(serde_json::json!({ "error": error.to_string() })),
+            ));
+        }
+    };
+
+    Ok(Json(sp42_core::ReverifyFindingResponse {
+        wiki_id: payload.wiki_id,
+        rev_id: payload.rev_id,
+        title: payload.title,
+        finding,
+    }))
 }
 
 /// Replay one proposal verbatim: gate → CSRF token → node-anchored replace

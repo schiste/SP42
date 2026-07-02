@@ -8,12 +8,12 @@ use tracing::info;
 
 use sp42_core::{
     ActionError, ActionExecutionHistoryReport, ActionExecutionLogEntry,
-    ActionExecutionStatusReport, ActionResponseSummary, DevAuthCapabilityReport, FlagState,
-    PatrolRequest, RollbackRequest, SessionActionExecutionRequest, SessionActionExecutionResponse,
-    SessionActionKind, TokenKind, UndoRequest, WikiPageSaveRequest, WikitextEditOutcome,
-    WikitextEditor, WikitextEditorError, WikitextNodeLocator, WikitextPageRef, execute_fetch_token,
-    execute_patrol, execute_rollback, execute_undo, execute_wiki_page_save,
-    parse_action_response_summary, replace_exactly_once,
+    ActionExecutionStatusReport, ActionResponseSummary, CitationConcernKind,
+    DevAuthCapabilityReport, FlagState, PatrolRequest, RollbackRequest,
+    SessionActionExecutionRequest, SessionActionExecutionResponse, SessionActionKind, TokenKind,
+    UndoRequest, WikiPageSaveRequest, WikitextEditOutcome, WikitextEditor, WikitextEditorError,
+    WikitextNodeLocator, WikitextPageRef, execute_fetch_token, execute_patrol, execute_rollback,
+    execute_undo, execute_wiki_page_save, parse_action_response_summary, replace_exactly_once,
 };
 use sp42_types::HttpResponse;
 
@@ -325,6 +325,9 @@ async fn execute_session_action(
         SessionActionKind::InlineEdit => {
             execute_inline_edit_action(client, config, payload, editor).await
         }
+        SessionActionKind::FlagCitation => {
+            execute_flag_citation_action(client, config, payload).await
+        }
     }
 }
 
@@ -521,6 +524,133 @@ fn apply_citation_template(
     replace_exactly_once(page_text, selected_text, &tagged)
 }
 
+/// Generalizes `execute_tag_citation_needed_action`/`apply_citation_template`
+/// to PRD-0014's closed `CitationConcernKind` set. Only `PartialSupport`
+/// (span-wrap) is wired to an anchor mechanism today — it's structurally
+/// identical to `TagCitationNeeded`'s literal-fallback path. `FailedVerification`
+/// (insert-after-`<ref>`) needs a new insert-at-position primitive this slice
+/// doesn't yet ship (PRD-0014 Risks: "may close in a follow-on PR"), so it
+/// refuses informatively rather than silently doing nothing.
+pub(crate) async fn execute_flag_citation_action(
+    client: &BearerHttpClient,
+    config: &sp42_core::WikiConfig,
+    payload: &SessionActionExecutionRequest,
+) -> Result<HttpResponse, ActionError> {
+    let Some(kind) = payload.concern_kind else {
+        return Err(ActionError::Execution {
+            message: "concern_kind is required for flag citation".to_string(),
+            code: Some("invalid-input".to_string()),
+            http_status: None,
+            retryable: false,
+        });
+    };
+    if kind == CitationConcernKind::FailedVerification {
+        return Err(ActionError::Execution {
+            message: format!(
+                "flag citation ({}) needs an insert-after-<ref> anchor, not implemented yet; only partial-support flags ship in this release",
+                kind.label()
+            ),
+            code: Some("citation-concern-anchor-not-implemented".to_string()),
+            http_status: Some(501),
+            retryable: false,
+        });
+    }
+
+    let title = payload.title.clone().unwrap_or_default();
+    let selected_text = payload.selected_text.clone().unwrap_or_default();
+    if selected_text.trim().is_empty() {
+        return Err(ActionError::Execution {
+            message: "selected_text is required for flag citation".to_string(),
+            code: Some("invalid-input".to_string()),
+            http_status: None,
+            retryable: false,
+        });
+    }
+    let template = citation_concern_template(config, kind)?;
+    let token = execute_fetch_token(client, config, TokenKind::Csrf).await?;
+    let date = current_french_date();
+    let page_text = crate::fetch_page_wikitext(client, config, &title).await?;
+    let updated_text = apply_concern_template(
+        &page_text,
+        &selected_text,
+        template,
+        &date,
+        payload.reason.as_deref(),
+    )?;
+    let summary = payload
+        .summary
+        .clone()
+        .unwrap_or_else(|| format!("SP42: {{{{{template}|date={date}}}}} ({})", kind.label()));
+    let save_response = execute_wiki_page_save(
+        client,
+        config,
+        &WikiPageSaveRequest {
+            title,
+            text: updated_text,
+            token,
+            summary: Some(summary),
+            baserevid: Some(payload.rev_id),
+            tags: Vec::new(),
+            watchlist: None,
+            create_only: FlagState::Disabled,
+            minor: FlagState::Disabled,
+        },
+    )
+    .await?;
+    patrol_original_edit_if_possible(client, config, payload.rev_id).await;
+    Ok(save_response)
+}
+
+/// The configured maintenance template for `kind` on `config`, or a refusal.
+/// Mirrors `citation_needed_template`/`bare_url_template`: a wiki with no
+/// configured template for this concern kind refuses rather than inserting a
+/// wrong-language one.
+fn citation_concern_template(
+    config: &sp42_core::WikiConfig,
+    kind: CitationConcernKind,
+) -> Result<&str, ActionError> {
+    config
+        .templates
+        .citation_concerns
+        .get(&kind)
+        .map(String::as_str)
+        .ok_or_else(|| ActionError::Execution {
+            message: format!(
+                "flag citation ({}) is not configured for wiki {}",
+                kind.label(),
+                config.wiki_id
+            ),
+            code: Some("citation-concern-not-enabled".to_string()),
+            http_status: Some(400),
+            retryable: false,
+        })
+}
+
+/// Span-wraps `selected_text` in the verdict-appropriate concern template, with
+/// an optional `reason=` parameter — both v1 templates support one, per
+/// PRD-0014. Leaving `reason` blank omits the parameter rather than rendering
+/// it empty.
+fn apply_concern_template(
+    page_text: &str,
+    selected_text: &str,
+    template: &str,
+    date: &str,
+    reason: Option<&str>,
+) -> Result<String, ActionError> {
+    let text_param = if selected_text.contains('=') {
+        format!("1={selected_text}")
+    } else {
+        selected_text.to_string()
+    };
+    let reason_param = reason
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(|value| format!("|reason={value}"))
+        .unwrap_or_default();
+    let tagged = format!("{{{{{template}|{text_param}|date={date}{reason_param}}}}}");
+    replace_exactly_once(page_text, selected_text, &tagged)
+}
+
 pub(crate) async fn patrol_original_edit_if_possible(
     client: &BearerHttpClient,
     config: &sp42_core::WikiConfig,
@@ -659,6 +789,7 @@ pub(crate) fn action_feedback_for_entry(entry: &ActionExecutionLogEntry) -> Stri
         SessionActionKind::Undo => "Undo",
         SessionActionKind::TagCitationNeeded => "Citation needed",
         SessionActionKind::InlineEdit => "Inline edit",
+        SessionActionKind::FlagCitation => "Flag citation",
     };
     let rationale = entry
         .summary
@@ -946,8 +1077,39 @@ pub(crate) fn validate_action_request(
                 ));
             }
         }
+        SessionActionKind::FlagCitation => validate_flag_citation_payload(payload, capabilities)?,
     }
 
+    Ok(())
+}
+
+fn validate_flag_citation_payload(
+    payload: &SessionActionExecutionRequest,
+    capabilities: &DevAuthCapabilityReport,
+) -> Result<(), (StatusCode, Json<serde_json::Value>)> {
+    if payload.title.as_deref().is_none_or(str::is_empty) {
+        return Err(invalid_payload("title is required for flag citation"));
+    }
+    if payload.selected_text.as_deref().is_none_or(str::is_empty) {
+        return Err(invalid_payload(
+            "selected_text is required for flag citation",
+        ));
+    }
+    if payload.concern_kind.is_none() {
+        return Err(invalid_payload(
+            "concern_kind is required for flag citation",
+        ));
+    }
+    if payload.node_locator.is_some() {
+        return Err(invalid_payload(
+            "node_locator is not supported for flag citation",
+        ));
+    }
+    if !capabilities.capabilities.editing.can_edit {
+        return Err(forbidden_error(
+            "The authenticated session does not currently have edit capability on this wiki.",
+        ));
+    }
     Ok(())
 }
 
@@ -996,8 +1158,11 @@ fn action_error_message(body: &Json<serde_json::Value>) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{action_feedback_for_entry, apply_citation_template, citation_needed_template};
-    use sp42_core::{ActionError, ActionExecutionLogEntry, SessionActionKind};
+    use super::{
+        action_feedback_for_entry, apply_citation_template, apply_concern_template,
+        citation_concern_template, citation_needed_template,
+    };
+    use sp42_core::{ActionError, ActionExecutionLogEntry, CitationConcernKind, SessionActionKind};
 
     #[test]
     fn citation_needed_template_refuses_when_unconfigured() {
@@ -1084,5 +1249,105 @@ mod tests {
         .expect_err("missing selected text should refuse");
         let ActionError::Execution { code, .. } = error;
         assert_eq!(code.as_deref(), Some("text-not-found"));
+    }
+
+    #[test]
+    fn citation_concern_template_refuses_when_unconfigured() {
+        // a derived wiki has no citation_concerns configured (mirrors #91)
+        let config = sp42_wiki::derive_wiki_config("dewiki").expect("dewiki should derive");
+        let ActionError::Execution {
+            code, http_status, ..
+        } = citation_concern_template(&config, CitationConcernKind::PartialSupport)
+            .expect_err("derived wiki has no configured concern template");
+        assert_eq!(code.as_deref(), Some("citation-concern-not-enabled"));
+        assert_eq!(http_status, Some(400));
+    }
+
+    #[test]
+    fn citation_concern_template_returns_configured_value() {
+        let mut config = sp42_wiki::derive_wiki_config("dewiki").expect("dewiki should derive");
+        config.templates.citation_concerns.insert(
+            CitationConcernKind::PartialSupport,
+            "Failed verification span".to_string(),
+        );
+        assert_eq!(
+            citation_concern_template(&config, CitationConcernKind::PartialSupport)
+                .expect("configured template"),
+            "Failed verification span"
+        );
+    }
+
+    #[test]
+    fn citation_concern_template_gates_each_kind_independently() {
+        let mut config = sp42_wiki::derive_wiki_config("dewiki").expect("dewiki should derive");
+        config.templates.citation_concerns.insert(
+            CitationConcernKind::PartialSupport,
+            "Failed verification span".to_string(),
+        );
+        // PartialSupport is configured, FailedVerification is not.
+        assert!(citation_concern_template(&config, CitationConcernKind::PartialSupport).is_ok());
+        let ActionError::Execution { code, .. } =
+            citation_concern_template(&config, CitationConcernKind::FailedVerification)
+                .expect_err("FailedVerification has no configured template");
+        assert_eq!(code.as_deref(), Some("citation-concern-not-enabled"));
+    }
+
+    #[test]
+    fn apply_concern_template_wraps_unique_selected_text_without_reason() {
+        let updated = apply_concern_template(
+            "The source says 7% but the article claims 6%.",
+            "the article claims 6%",
+            "Failed verification span",
+            "June 2026",
+            None,
+        )
+        .expect("unique selected text should tag");
+        assert_eq!(
+            updated,
+            "The source says 7% but {{Failed verification span|the article claims 6%|date=June 2026}}."
+        );
+    }
+
+    #[test]
+    fn apply_concern_template_threads_reason_when_present() {
+        let updated = apply_concern_template(
+            "The article claims 6%.",
+            "The article claims 6%",
+            "Failed verification span",
+            "June 2026",
+            Some("source says 7%, not 6%"),
+        )
+        .expect("unique selected text should tag");
+        assert_eq!(
+            updated,
+            "{{Failed verification span|The article claims 6%|date=June 2026|reason=source says 7%, not 6%}}."
+        );
+    }
+
+    #[test]
+    fn apply_concern_template_omits_reason_when_blank() {
+        let updated = apply_concern_template(
+            "The article claims 6%.",
+            "The article claims 6%",
+            "Failed verification span",
+            "June 2026",
+            Some("   "),
+        )
+        .expect("blank reason should be omitted, not rendered empty");
+        assert!(!updated.contains("reason="));
+    }
+
+    #[test]
+    fn apply_concern_template_refuses_ambiguous_selected_text() {
+        let error = apply_concern_template(
+            "repeated text, repeated text.",
+            "repeated text",
+            "Failed verification span",
+            "June 2026",
+            None,
+        )
+        .expect_err("ambiguous selected text should refuse");
+        let ActionError::Execution { code, .. } = error;
+        assert_eq!(code.as_deref(), Some("text-ambiguous"));
     }
 }

@@ -69,6 +69,7 @@ pub enum SessionActionKind {
     Undo,
     TagCitationNeeded,
     InlineEdit,
+    FlagCitation,
 }
 
 impl SessionActionKind {
@@ -80,6 +81,36 @@ impl SessionActionKind {
             Self::Undo => "undo",
             Self::TagCitationNeeded => "tag-citation-needed",
             Self::InlineEdit => "inline-edit",
+            Self::FlagCitation => "flag-citation",
+        }
+    }
+}
+
+/// A small closed set of citation "concern" kinds an operator can flag on a
+/// `Partial`/`NotSupported` citation finding (PRD-0014). Each kind maps 1:1 to
+/// one of SP42's two in-scope verdicts and to a maintenance template, configured
+/// per wiki via `WikiTemplates::citation_concerns`. Deliberately closed rather
+/// than free-form: SP42 only measures claim-source support, so kinds outside
+/// this set (reliability, accuracy) would mislabel what SP42 actually found.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum CitationConcernKind {
+    /// `Partial` verdict: the citation partially supports the claim. Span-wraps
+    /// the claim text (e.g. `{{Failed verification span}}`) — structurally the
+    /// same literal-fallback mechanism as `TagCitationNeeded`.
+    PartialSupport,
+    /// `NotSupported` verdict: the citation does not support the claim at all.
+    /// Placed after the `<ref>` (e.g. `{{Failed verification}}`) — needs an
+    /// insert-at-position primitive this PRD's first slice does not yet ship.
+    FailedVerification,
+}
+
+impl CitationConcernKind {
+    #[must_use]
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::PartialSupport => "partial-support",
+            Self::FailedVerification => "failed-verification",
         }
     }
 }
@@ -104,6 +135,16 @@ pub struct SessionActionExecutionRequest {
     /// `selected_text` span.
     #[serde(default)]
     pub node_locator: Option<WikitextNodeLocator>,
+    /// Operator-chosen concern kind for `FlagCitation` (PRD-0014): the
+    /// suggestion derived from `finding.verdict`, or the operator's override.
+    /// Unused by every other `SessionActionKind`.
+    #[serde(default)]
+    pub concern_kind: Option<CitationConcernKind>,
+    /// Optional free-text explanation for `FlagCitation`, threaded into the
+    /// applied template's `reason=` parameter when present; left absent, the
+    /// template renders without one. Unused by every other `SessionActionKind`.
+    #[serde(default)]
+    pub reason: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -169,6 +210,8 @@ mod tests {
             batch_rev_ids: None,
             replacement_text: None,
             node_locator: None,
+            concern_kind: None,
+            reason: None,
         };
         let response = SessionActionExecutionResponse {
             wiki_id: "frwiki".to_string(),
@@ -224,6 +267,8 @@ mod tests {
                 ordinal: 2,
                 expected_text: "{{cite web|url=https://old.example.org|title=Exemple}}".to_string(),
             }),
+            concern_kind: None,
+            reason: None,
         };
 
         let json = serde_json::to_string(&request).expect("request should serialize");

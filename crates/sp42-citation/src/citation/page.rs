@@ -38,6 +38,29 @@ pub struct PageVerificationRequest {
     pub rev_id: u64,
 }
 
+/// Identifies one finding to re-verify (PRD-0014): the page it lives on, plus
+/// the originating ref's marker id. `rev_id == 0` means "latest", mirroring
+/// `PageVerificationRequest` — Re-verify checks the *current* article state,
+/// not necessarily the revision the original finding was produced against.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct ReverifyFindingRequest {
+    pub wiki_id: String,
+    pub title: String,
+    #[serde(default)]
+    pub rev_id: u64,
+    pub ref_id: String,
+}
+
+/// Result of re-verifying one finding: the fresh finding, replacing the
+/// operator's card in place (PRD-0014).
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct ReverifyFindingResponse {
+    pub wiki_id: String,
+    pub rev_id: u64,
+    pub title: String,
+    pub finding: CitationFinding,
+}
+
 /// Counts summarising a page run.
 #[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct PageVerificationStats {
@@ -130,13 +153,19 @@ where
 
 /// Verify a single use-site, including archive fallback attempts if the primary
 /// URL is unavailable. Returns (`ref_id`, `block_ordinal`, `outcome`).
-async fn verify_one_use_site<C, M>(
+///
+/// Used both by `verify_page`'s fan-out (with a shared prefetched-body cache)
+/// and directly by the Re-verify route (PRD-0014, with an empty `bodies` map
+/// so the source is always fetched fresh) — the single entry point for
+/// per-use-site verification, so Re-verify introduces no new verification
+/// logic of its own.
+pub async fn verify_one_use_site<C, M, S>(
     fetch_client: &C,
     model_client: &M,
     clock: &dyn Clock,
     panel: &[ModelRef],
     us: crate::citation::extract::CitationUseSite,
-    bodies: &HashMap<String, FetchedSource>,
+    bodies: &HashMap<String, FetchedSource, S>,
     options: &VerifyOptions,
 ) -> (
     String,
@@ -146,6 +175,7 @@ async fn verify_one_use_site<C, M>(
 where
     C: HttpClient + ?Sized,
     M: ModelClient + ?Sized,
+    S: std::hash::BuildHasher,
 {
     let mut opts = options.clone();
     opts.prefetched = bodies.get(&us.request.source_url.to_string()).cloned();

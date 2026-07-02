@@ -1,7 +1,7 @@
 # Shared Wikidata read model — convergence sketch
 
 **Date:** 2026-07-01
-**Status:** Sketch (pre-implementation), to converge PR #103 (PRD-0010) and PRD-0011
+**Status:** Implemented (sp42-platform::wikibase), to converge PR #103 (PRD-0010) and PRD-0011
 **Governs the *how* for:** ADR-0016 (entity read + `EntityDiff`), ADR-0017 (statement
 write contract). User-facing intent is PRD-0011; the verb surface is PRD-0010.
 

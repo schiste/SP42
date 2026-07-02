@@ -44,7 +44,7 @@ pub fn render_value(value: &WikibaseValue) -> ValueDisplay {
 }
 
 /// Render a statement to a natural-language claim
-/// ("<subject-label> <property-label> <value>."), resolving labels via `labels`
+/// ("&lt;subject-label&gt; &lt;property-label&gt; &lt;value&gt;."), resolving labels via `labels`
 /// with id fallback. This IS #103's `claim_rendered`.
 #[must_use]
 pub fn render_statement_claim(subject: &Entity, stmt: &Statement, labels: &Labels) -> String {

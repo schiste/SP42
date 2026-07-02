@@ -8,6 +8,7 @@ mod capability;
 mod diff;
 mod model;
 mod parse;
+mod proposal;
 mod read;
 mod render;
 mod select;
@@ -22,6 +23,7 @@ pub use model::{
     StatementRank, TermMap, WikibaseValue,
 };
 pub use parse::{WikibaseParseError, parse_entity};
+pub use proposal::{StatementGrounding, StatementProposal};
 pub use read::{
     Labels, RevisionContent, build_entity_request, build_label_request,
     build_revision_pair_request, parse_labels, parse_revision_contents,

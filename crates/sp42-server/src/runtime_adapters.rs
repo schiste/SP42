@@ -5,8 +5,6 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use rand::Rng as _;
-use sp42_core::check_fetchable_source_url;
-use sp42_inference::guarded_source_client;
 use sp42_types::{HttpClient, HttpClientError, HttpMethod, HttpRequest, HttpResponse};
 use tracing_subscriber::EnvFilter;
 
@@ -23,8 +21,8 @@ pub(crate) fn build_http_client() -> io::Result<reqwest::Client> {
         .timeout(Duration::from_secs(5))
         .user_agent(sp42_core::branding::USER_AGENT)
         // Use default redirect policy (limited to 10 redirects) for general-purpose clients
-        // (e.g., wiki API calls). Source fetches (PlainHttpClient) construct a dedicated
-        // guarded client with per-hop SSRF validation (SP42#34).
+        // (e.g., wiki API calls). Untrusted source fetches go through `sp42_fetch`, which
+        // attaches the SSRF resolver guard + caps (ADR-0015).
         .build()
         .map_err(|error| io::Error::other(format!("failed to build reqwest client: {error}")))
 }
@@ -110,131 +108,6 @@ impl HttpClient for BearerHttpClient {
             status,
             headers: headers.into_iter().collect(),
             body: body.to_vec(),
-        })
-    }
-}
-
-/// Minimal `HttpClient` wrapper around a `reqwest::Client` for read-only source fetches
-/// (no bearer auth, no special header handling). Enforces SSRF floor (SP42#34): blocks
-/// loopback/private/link-local/localhost hosts and non-http(s) schemes, honors
-/// `SP42_FETCH_ALLOW_PRIVATE=1` dev escape hatch, enforces GET-only and `MAX_SOURCE_BYTES` cap.
-/// The underlying client is built with a per-hop redirect policy that validates each redirect
-/// target against the same SSRF floor (capped at 5 hops).
-#[derive(Clone)]
-pub(crate) struct PlainHttpClient {
-    client: reqwest::Client,
-    /// Allow loopback/private source hosts — a dev/test escape hatch for the loopback-serving
-    /// benchmark harness (`SP42_FETCH_ALLOW_PRIVATE=1`). Off by default (SP42#34 SSRF floor).
-    allow_private: bool,
-}
-
-/// Source-response size cap. Enforced against `Content-Length` (a fast pre-read
-/// reject) and again while streaming the body, so a chunked / length-less response
-/// cannot exceed it (SP42#34 fetch edge).
-const MAX_SOURCE_BYTES: u64 = 8 * 1024 * 1024;
-
-impl PlainHttpClient {
-    pub(crate) fn new() -> Result<Self, String> {
-        let allow_private =
-            std::env::var("SP42_FETCH_ALLOW_PRIVATE").is_ok_and(|value| value == "1");
-        let client = guarded_source_client(allow_private)?;
-        Ok(Self {
-            client,
-            allow_private,
-        })
-    }
-
-    /// Construct with an explicit `allow_private`, bypassing the env-var lookup so a
-    /// test can fetch a loopback server without mutating shared process env.
-    #[cfg(test)]
-    pub(crate) fn with_allow_private(allow_private: bool) -> Result<Self, String> {
-        Ok(Self {
-            client: guarded_source_client(allow_private)?,
-            allow_private,
-        })
-    }
-}
-
-#[async_trait]
-impl HttpClient for PlainHttpClient {
-    async fn execute(&self, request: HttpRequest) -> Result<HttpResponse, HttpClientError> {
-        // SSRF floor (SP42#34): refuse a non-http(s) / loopback / private / link-local source
-        // host unless the dev/test escape hatch is set.
-        if !self.allow_private {
-            check_fetchable_source_url(&request.url)
-                .map_err(|message| HttpClientError::Transport { message })?;
-        }
-        // Read-only source fetch: GET only.
-        let HttpMethod::Get = request.method else {
-            return Err(HttpClientError::Transport {
-                message: format!("source fetch only allows GET, got {:?}", request.method),
-            });
-        };
-
-        let mut builder = self.client.get(request.url.clone());
-        for (key, value) in &request.headers {
-            builder = builder.header(key, value);
-        }
-
-        let mut response = builder
-            .send()
-            .await
-            .map_err(|error| HttpClientError::Transport {
-                message: error.to_string(),
-            })?;
-
-        if response
-            .content_length()
-            .is_some_and(|len| len > MAX_SOURCE_BYTES)
-        {
-            return Err(HttpClientError::Transport {
-                message: format!(
-                    "source response exceeds {MAX_SOURCE_BYTES}-byte cap (Content-Length)"
-                ),
-            });
-        }
-
-        let status = response.status().as_u16();
-        let headers = response
-            .headers()
-            .iter()
-            .filter_map(|(name, value)| {
-                value
-                    .to_str()
-                    .ok()
-                    .map(|value| (name.as_str().to_lowercase(), value.to_string()))
-            })
-            .collect();
-
-        // Enforce MAX_SOURCE_BYTES while streaming. A chunked / Content-Length-less
-        // response slips past the header check above, so without this an
-        // attacker-influenced source URL could buffer an unbounded body into memory
-        // (worse under verify-page's concurrent fetches). Fail as soon as the
-        // accumulated body would exceed the cap.
-        let cap = usize::try_from(MAX_SOURCE_BYTES).unwrap_or(usize::MAX);
-        let mut body = Vec::new();
-        while let Some(chunk) =
-            response
-                .chunk()
-                .await
-                .map_err(|error| HttpClientError::Transport {
-                    message: error.to_string(),
-                })?
-        {
-            if body.len() + chunk.len() > cap {
-                return Err(HttpClientError::Transport {
-                    message: format!(
-                        "source response exceeds {MAX_SOURCE_BYTES}-byte cap (streamed)"
-                    ),
-                });
-            }
-            body.extend_from_slice(&chunk);
-        }
-
-        Ok(HttpResponse {
-            status,
-            headers,
-            body,
         })
     }
 }

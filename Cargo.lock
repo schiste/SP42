@@ -1495,6 +1495,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "71dd52191aae121e8611f1e8dc3e324dd0dd1dee1e6dd91d10ee07a3cfb4d9d8"
 
 [[package]]
+name = "ip_network"
+version = "0.4.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "aa2f047c0a98b2f299aa5d6d7088443570faae494e9ae1305e48be000c9e0eb1"
+
+[[package]]
 name = "ipnet"
 version = "2.12.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3227,6 +3233,7 @@ dependencies = [
  "sp42-citation",
  "sp42-core",
  "sp42-devtools",
+ "sp42-fetch",
  "sp42-inference",
  "sp42-patrol",
  "sp42-reporting",
@@ -3300,6 +3307,19 @@ dependencies = [
  "sp42-types",
  "sp42-wiki",
  "thiserror 2.0.18",
+]
+
+[[package]]
+name = "sp42-fetch"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "ip_network",
+ "rand",
+ "reqwest 0.12.28",
+ "sp42-types",
+ "tokio",
+ "url",
 ]
 
 [[package]]
@@ -3394,6 +3414,7 @@ dependencies = [
  "serde_json",
  "sp42-coordination",
  "sp42-core",
+ "sp42-fetch",
  "sp42-inference",
  "sp42-live",
  "sp42-patrol",

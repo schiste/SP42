@@ -468,18 +468,29 @@ pub(crate) async fn post_citation_reverify(
         rev_id: payload.rev_id,
     };
     let extract = extract_use_sites(&blocks, &page_request);
-    let Some(use_site) = extract
-        .use_sites
-        .into_iter()
-        .find(|use_site| use_site.ref_id == payload.ref_id)
-    else {
+    // A ref can carry several use-sites (a citation template bundling multiple source URLs), so
+    // matching on `ref_id` alone would re-verify whichever use-site emits first. When the caller
+    // pins the document-order ordinal, select that exact use-site; otherwise fall back to the first
+    // ref match (back-compatible with callers that don't send an ordinal).
+    let Some(use_site) = extract.use_sites.into_iter().find(|use_site| {
+        use_site.ref_id == payload.ref_id
+            && payload
+                .use_site_ordinal
+                .is_none_or(|ordinal| use_site.use_site_ordinal == ordinal)
+    }) else {
         return Err((
             StatusCode::NOT_FOUND,
             Json(serde_json::json!({
-                "error": format!(
-                    "ref {} was not found on the current revision of {}",
-                    payload.ref_id, payload.title
-                ),
+                "error": match payload.use_site_ordinal {
+                    Some(ordinal) => format!(
+                        "ref {} (use-site {}) was not found on the current revision of {}",
+                        payload.ref_id, ordinal, payload.title
+                    ),
+                    None => format!(
+                        "ref {} was not found on the current revision of {}",
+                        payload.ref_id, payload.title
+                    ),
+                },
                 "code": "ref-not-found",
             })),
         ));

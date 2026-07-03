@@ -49,6 +49,14 @@ pub struct ReverifyFindingRequest {
     #[serde(default)]
     pub rev_id: u64,
     pub ref_id: String,
+    /// The finding's document-order use-site position. A single `ref_id` can
+    /// yield multiple use-sites (a reference bundling several source URLs), so
+    /// matching on `ref_id` alone re-verifies whichever use-site extraction
+    /// happens to emit first — the wrong source for any but the first card.
+    /// When set, the use-site is selected by ordinal; `None` falls back to the
+    /// first `ref_id` match (back-compatible with pre-PRD-0014 callers).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub use_site_ordinal: Option<u32>,
 }
 
 /// Result of re-verifying one finding: the fresh finding, replacing the

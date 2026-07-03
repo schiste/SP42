@@ -531,6 +531,11 @@ fn FindingActionRow(
     let (open, set_open) = signal(OpenPanel::None);
     let (status, set_status) = signal(String::new());
     let (busy, set_busy) = signal(false);
+    // The revision subsequent Edit/Fix/Flag actions from this row anchor to. Seeded with the
+    // report's revision, but a successful Re-verify (which runs against the *latest* revision)
+    // advances it to the revision actually verified — otherwise a later confirmed action would
+    // carry a stale `baserevid` and could hit an edit conflict or anchor to the wrong revision.
+    let (base_rev_id, set_base_rev_id) = signal(rev_id);
     let ordinal = finding.get_untracked().use_site_ordinal;
     let edit_textarea_id = format!("sp42-citation-edit-{ordinal}");
     let reason_textarea_id = format!("sp42-citation-reason-{ordinal}");
@@ -593,7 +598,8 @@ fn FindingActionRow(
                                 .with_density(Density::Compact)
                                 .with_disabled(Signal::derive(move || busy.get()))
                                 .on_click(move |_| {
-                                    let ref_id = finding.get_untracked().ref_id.clone();
+                                    let current = finding.get_untracked();
+                                    let ref_id = current.ref_id.clone();
                                     if ref_id.is_empty() {
                                         set_status.set(
                                             "Re-verify needs an existing citation reference on the page."
@@ -606,6 +612,9 @@ fn FindingActionRow(
                                         title: title.clone(),
                                         rev_id: 0,
                                         ref_id,
+                                        // Pin the exact use-site so a ref with several source URLs
+                                        // re-verifies this card's source, not the first extracted.
+                                        use_site_ordinal: Some(current.use_site_ordinal),
                                     };
                                     set_busy.set(true);
                                     set_status
@@ -613,6 +622,9 @@ fn FindingActionRow(
                                     wasm_bindgen_futures::spawn_local(async move {
                                         match reverify_finding(&request).await {
                                             Ok(response) => {
+                                                // Advance the baserevid for later actions to the
+                                                // revision we actually verified against.
+                                                set_base_rev_id.set(response.rev_id);
                                                 finding.set(response.finding);
                                                 set_status.set("Re-verified.".to_string());
                                             }
@@ -679,7 +691,7 @@ fn FindingActionRow(
                                                     let request = SessionActionExecutionRequest {
                                                         wiki_id: wiki_id.clone(),
                                                         kind: SessionActionKind::InlineEdit,
-                                                        rev_id,
+                                                        rev_id: base_rev_id.get_untracked(),
                                                         title: Some(title.clone()),
                                                         target_user: None,
                                                         undo_after_rev_id: None,
@@ -736,7 +748,7 @@ fn FindingActionRow(
                                 finding=finding
                                 wiki_id=wiki_id.clone()
                                 title=title.clone()
-                                rev_id=rev_id
+                                rev_id=base_rev_id.get_untracked()
                                 on_close=move || set_open.set(OpenPanel::None)
                                 set_status=set_status
                             />
@@ -811,7 +823,7 @@ fn FindingActionRow(
                                                             let request = SessionActionExecutionRequest {
                                                                 wiki_id: wiki_id.clone(),
                                                                 kind: SessionActionKind::FlagCitation,
-                                                                rev_id,
+                                                                rev_id: base_rev_id.get_untracked(),
                                                                 title: Some(title.clone()),
                                                                 target_user: None,
                                                                 undo_after_rev_id: None,
@@ -926,21 +938,38 @@ fn FixCitationPanel(
             wasm_bindgen_futures::spawn_local(async move {
                 match fetch_bare_url_proposals(&wiki_for_load, &title_for_load, rev_id).await {
                     Ok(response) => {
-                        if let Some(found) = response
+                        // A URL can appear on more than one reference; each yields its own
+                        // proposal with its own locator. The finding identifies only the source
+                        // URL, so if two references cite it, we can't tell which locator this card
+                        // belongs to — applying the first would repair the wrong reference. Proceed
+                        // only when the match is unique; otherwise refuse and point at the CLI,
+                        // which addresses a reference by locator.
+                        let mut matching = response
                             .proposals
                             .into_iter()
-                            .find(|p| p.url == source_url_for_load)
-                        {
-                            set_preview
-                                .set(Some((found.current_anchor.clone(), found.replacement_wikitext.clone())));
-                            set_proposal.set(Some(BareUrlApplyRequest {
-                                wiki_id: wiki_for_load.clone(),
-                                title: title_for_load.clone(),
-                                rev_id,
-                                locator: found.locator,
-                                replacement_wikitext: found.replacement_wikitext,
-                                summary: None,
-                            }));
+                            .filter(|p| p.url == source_url_for_load);
+                        match (matching.next(), matching.next()) {
+                            (Some(found), None) => {
+                                set_preview.set(Some((
+                                    found.current_anchor.clone(),
+                                    found.replacement_wikitext.clone(),
+                                )));
+                                set_proposal.set(Some(BareUrlApplyRequest {
+                                    wiki_id: wiki_for_load.clone(),
+                                    title: title_for_load.clone(),
+                                    rev_id,
+                                    locator: found.locator,
+                                    replacement_wikitext: found.replacement_wikitext,
+                                    summary: None,
+                                }));
+                            }
+                            (Some(_), Some(_)) => set_status.set(
+                                "Fix citation: this page has more than one reference to the same \
+                                 bare URL, so SP42 can't tell which one this finding points to. \
+                                 Repair it from the CLI, which targets the reference by locator."
+                                    .to_string(),
+                            ),
+                            (None, _) => {}
                         }
                     }
                     Err(error) => set_status.set(format!("Fix citation: {error}")),

@@ -49,6 +49,7 @@ LAYER = {
     "sp42-wiki": "platform",
     "sp42-inference": "platform",
     "sp42-live": "platform",
+    "sp42-parsoid": "platform",
     "sp42-reporting": "platform",
     "sp42-fetch": "platform",
     # shells
@@ -58,6 +59,7 @@ LAYER = {
     "sp42-desktop": "shell",
     "sp42-server": "shell",
     "sp42-devtools": "shell",
+    "sp42-mcp": "shell",
     # tooling (exempt)
     "xtask": "tooling",
     # domains

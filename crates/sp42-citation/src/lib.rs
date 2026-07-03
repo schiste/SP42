@@ -27,7 +27,9 @@ pub use bare_url_repair::{
     BareUrlReference, bare_url_references, citoid_language, classify_bare_url,
     iso_date_from_epoch_ms, render_bare_url_citation,
 };
-pub use citation::body_classifier::{BodyUsability, BodyUsabilityReason, classify_body_usability};
+pub use citation::body_classifier::{
+    BodyUsability, BodyUsabilityReason, classify_body_usability, classify_source_usability,
+};
 pub use citation::citoid::{
     CitoidMetadata, build_citoid_header, build_citoid_request, parse_citoid_response,
 };
@@ -59,8 +61,8 @@ pub use citation::verify::{
     CitationFinding, CitationVerificationRequest, FetchedSource, GroundingAssertion,
     GroundingStatus, LocatedPassage, ModelVerdict, ModelVote, SourceProvenance,
     SourceUnavailableReason, VerificationOutcome, VerifyModelInputs, VerifyOptions,
-    assemble_citation_finding, build_model_votes, execute_citation_verify, is_groundable_support,
-    sha256_hex, verify_citation_use_site,
+    assemble_citation_finding, build_model_votes, execute_citation_verify, fetch_source,
+    is_groundable_support, sha256_hex, verify_citation_use_site,
 };
 pub use citation::voting::{BinaryVote, NClassVote, PanelAgreement, binary_vote, n_class_vote};
 pub use citation_finding::{

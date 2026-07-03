@@ -404,7 +404,10 @@ mod tests {
             finding.ref_url,
             "https://web.archive.org/web/2020/https://example.com/dead"
         );
-        assert_eq!(finding.archive_of.as_deref(), Some("https://example.com/dead"));
+        assert_eq!(
+            finding.archive_of.as_deref(),
+            Some("https://example.com/dead")
+        );
     }
 
     #[tokio::test]

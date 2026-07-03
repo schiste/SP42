@@ -81,7 +81,7 @@ pub struct PageVerifyResult {
 /// `config` resolves the wiki (its `parsoid_url` and `wiki_id`); the caller is responsible for
 /// having selected/overridden it. When `estimate_only`, the page is fetched and decomposed but no
 /// panel runs — the result reports the counts only. `max_use_sites` overrides the default fan-out
-/// cap ([`DEFAULT_MAX_USE_SITES`]).
+/// cap (`DEFAULT_MAX_USE_SITES`).
 ///
 /// # Errors
 ///

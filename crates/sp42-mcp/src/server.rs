@@ -46,7 +46,8 @@ pub struct PageParams {
     #[serde(default)]
     pub wiki_id: Option<String>,
     /// An explicit Parsoid REST base URL (e.g. `https://en.wikipedia.org/w/rest.php`), overriding
-    /// the resolved wiki's configured endpoint. Useful for wikis the server ships no config for.
+    /// the resolved wiki's configured endpoint. Accepted only when `SP42_FETCH_ALLOW_PRIVATE=1`
+    /// is set; otherwise page verification uses registry-configured Parsoid endpoints only.
     #[serde(default)]
     pub parsoid_url: Option<String>,
     /// When `true`, fetch and decompose the page but run no panel — return the use-site count and
@@ -170,19 +171,10 @@ impl Sp42McpServer {
             None => self.registry.default_config(),
         };
         if let Some(parsoid_url) = &params.parsoid_url {
-            let parsed: url::Url = parsoid_url.parse().map_err(|error: url::ParseError| {
-                format!("invalid parsoid_url {parsoid_url:?}: {error}")
-            })?;
-            // SSRF floor: a caller-supplied Parsoid endpoint is fetched by `fetch_page_blocks`
-            // outside `GuardedHttpClient`, so a prompt-injected agent call could otherwise reach
-            // loopback/private/link-local hosts (e.g. cloud metadata at 169.254.169.254). Apply the
-            // same host guard used for source URLs, unless the dev escape hatch is enabled.
-            if !self.fetch.allow_private() {
-                sp42_citation::check_fetchable_source_url(&parsed).map_err(|message| {
-                    format!("refusing caller-supplied parsoid_url {parsoid_url:?}: {message}")
-                })?;
-            }
-            config.parsoid_url = Some(parsed);
+            config.parsoid_url = Some(parse_parsoid_override(
+                parsoid_url,
+                self.fetch.allows_private_addresses(),
+            )?);
         }
         let result = verify_wikipedia_page(
             &self.fetch,
@@ -212,9 +204,21 @@ impl Sp42McpServer {
 )]
 impl ServerHandler for Sp42McpServer {}
 
+fn parse_parsoid_override(parsoid_url: &str, allow_private: bool) -> Result<url::Url, String> {
+    if !allow_private {
+        return Err(
+            "parsoid_url overrides require SP42_FETCH_ALLOW_PRIVATE=1; use the configured wiki registry endpoint instead"
+                .to_owned(),
+        );
+    }
+    parsoid_url
+        .parse()
+        .map_err(|error: url::ParseError| format!("invalid parsoid_url {parsoid_url:?}: {error}"))
+}
+
 #[cfg(test)]
 mod tests {
-    use super::Sp42McpServer;
+    use super::{Sp42McpServer, parse_parsoid_override};
 
     #[test]
     fn tool_router_lists_the_mvp_verbs() {
@@ -235,5 +239,35 @@ mod tests {
         assert!(router.get("verify_claim").is_some());
         assert!(router.get("verify_wikidata_statement").is_some());
         assert!(router.get("verify_wikipedia_page").is_some());
+    }
+
+    #[test]
+    fn parsoid_override_is_rejected_without_private_escape_hatch() {
+        let error = parse_parsoid_override("http://169.254.169.254/latest/meta-data/", false)
+            .expect_err("caller-controlled Parsoid URLs are disabled by default");
+
+        assert!(
+            error.contains("SP42_FETCH_ALLOW_PRIVATE=1"),
+            "error should name the explicit escape hatch: {error}"
+        );
+    }
+
+    #[test]
+    fn parsoid_override_requires_a_valid_url_under_escape_hatch() {
+        let error =
+            parse_parsoid_override("not a url", true).expect_err("invalid override URL rejected");
+
+        assert!(
+            error.contains("invalid parsoid_url"),
+            "unexpected parse error: {error}"
+        );
+    }
+
+    #[test]
+    fn parsoid_override_is_allowed_under_private_escape_hatch() {
+        let url = parse_parsoid_override("http://127.0.0.1:8080/w/rest.php", true)
+            .expect("dev/test escape hatch allows caller-supplied Parsoid endpoints");
+
+        assert_eq!(url.as_str(), "http://127.0.0.1:8080/w/rest.php");
     }
 }

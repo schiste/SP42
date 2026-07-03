@@ -93,7 +93,7 @@ pub async fn fetch_page_blocks(
 ///
 /// Currently infallible (the `Result` mirrors the editing path and leaves room for a
 /// future DOM-interpretation failure).
-#[allow(clippy::unnecessary_wraps)]
+#[allow(clippy::unnecessary_wraps)] // https://github.com/schiste/SP42/pull/103 mirrors editor errors.
 pub fn blocks_from_revision(
     revision: &ImmutableWikicode,
 ) -> Result<Vec<ParsoidBlock>, WikitextEditorError> {

@@ -87,7 +87,7 @@ pub struct PageVerifyResult {
 ///
 /// Returns the stringified fetch/parse error if the revision cannot be fetched or decomposed
 /// (e.g. the wiki has no `parsoid_url`, or the revision is missing).
-#[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments)] // https://github.com/schiste/SP42/pull/103 keeps MCP deps explicit.
 pub async fn verify_wikipedia_page<C, M>(
     fetch_client: &C,
     model_client: &M,
@@ -129,7 +129,7 @@ where
 
 /// The post-fetch half: extract use-sites from `blocks`, then estimate or verify. Split out so it
 /// is stub-testable with hand-built blocks (no network).
-#[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments)] // https://github.com/schiste/SP42/pull/103 keeps testable deps explicit.
 async fn verify_extracted<C, M>(
     fetch_client: &C,
     model_client: &M,

@@ -5,12 +5,11 @@
 //! raw-snapshot rewrite, archive-URL detection, and live-over-archive source resolution.
 //! First cut: HTML pages + existing Wayback snapshots only (ADR-0009 §7).
 
-use std::net::{Ipv4Addr, Ipv6Addr};
 use std::sync::LazyLock;
 
 use percent_encoding::percent_decode_str;
 use regex::Regex;
-use url::{Host, Url};
+use url::Url;
 
 use crate::errors::CitationVerificationError;
 
@@ -150,66 +149,6 @@ pub(crate) fn encode_uri_component(input: &str) -> String {
     out
 }
 
-/// The basic SSRF floor for fetching an arbitrary cited-source URL (SP42#34): allow only
-/// `http`/`https`, and refuse a loopback / private / link-local / unspecified IP literal or
-/// `localhost`. Citation URLs come from wiki content (attacker-influenceable), so a source
-/// URL pointing at `127.0.0.1`, a private host, or `169.254.169.254` (cloud metadata) must
-/// not be fetched.
-///
-/// This is the *floor*, not the full guard: DNS-resolution-based checks (a hostname that
-/// resolves to a private IP) and per-redirect-hop re-checks are deferred to the #34 ADR.
-///
-/// # Errors
-///
-/// Returns a human-readable reason when the URL must not be fetched.
-pub fn check_fetchable_source_url(url: &Url) -> Result<(), String> {
-    match url.scheme() {
-        "http" | "https" => {}
-        other => return Err(format!("scheme not allowed for source fetch: {other}")),
-    }
-    match url.host() {
-        Some(Host::Ipv4(ip)) if is_blocked_ipv4(ip) => {
-            Err(format!("refusing to fetch private/loopback address: {ip}"))
-        }
-        Some(Host::Ipv6(ip)) if is_blocked_ipv6(ip) => {
-            Err(format!("refusing to fetch private/loopback address: {ip}"))
-        }
-        Some(Host::Domain(domain))
-            if {
-                let host = domain.trim_end_matches('.').to_ascii_lowercase();
-                host == "localhost" || host.ends_with(".localhost")
-            } =>
-        {
-            Err("refusing to fetch localhost".to_string())
-        }
-        Some(_) => Ok(()),
-        None => Err("source URL has no host".to_string()),
-    }
-}
-
-/// Whether an IPv4 address is in a range that must never be fetched from wiki-supplied input.
-fn is_blocked_ipv4(ip: Ipv4Addr) -> bool {
-    ip.is_loopback()
-        || ip.is_private()
-        || ip.is_link_local()
-        || ip.is_unspecified()
-        || ip.is_broadcast()
-}
-
-/// Whether an IPv6 address is loopback / unspecified / unique-local / link-local (or an
-/// IPv4-mapped form of a blocked v4 address).
-fn is_blocked_ipv6(ip: Ipv6Addr) -> bool {
-    if ip.is_loopback() || ip.is_unspecified() {
-        return true;
-    }
-    if let Some(mapped) = ip.to_ipv4_mapped() {
-        return is_blocked_ipv4(mapped);
-    }
-    let first = ip.segments()[0];
-    (first & 0xfe00) == 0xfc00 // unique-local fc00::/7
-        || (first & 0xffc0) == 0xfe80 // link-local fe80::/10
-}
-
 /// A page to verify: the `MediaWiki` page title and a revision (`0` = latest).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PageTarget {
@@ -287,10 +226,9 @@ fn normalize_title(raw: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        build_article_html_url, check_fetchable_source_url, is_archive_url, is_valid_wiki_code,
-        parse_page_target, parse_revision_from_etag, resolve_citation_url, rewrite_wayback_url,
+        build_article_html_url, is_archive_url, is_valid_wiki_code, parse_page_target,
+        parse_revision_from_etag, resolve_citation_url, rewrite_wayback_url,
     };
-    use url::Url;
 
     #[test]
     fn parse_page_target_passes_through_a_bare_title() {
@@ -328,52 +266,6 @@ mod tests {
         let target = parse_page_target("Template:Citation needed");
         assert_eq!(target.title, "Template:Citation needed");
         assert_eq!(target.rev_id, 0);
-    }
-
-    fn blocked(u: &str) -> bool {
-        check_fetchable_source_url(&Url::parse(u).expect("valid url")).is_err()
-    }
-
-    #[test]
-    fn ssrf_floor_blocks_loopback_private_linklocal_and_localhost() {
-        for u in [
-            "http://127.0.0.1/x",
-            "http://127.0.0.1:8080/admin",
-            "https://localhost/x",
-            "http://localhost:9000/x",
-            "http://sub.localhost/x",
-            "http://10.0.0.1/x",
-            "http://192.168.1.1/x",
-            "http://172.16.0.5/x",
-            "http://169.254.169.254/latest/meta-data/", // cloud metadata
-            "http://0.0.0.0/x",
-            "http://[::1]/x",
-            "http://[fc00::1]/x",
-            "http://[fe80::1]/x",
-        ] {
-            assert!(blocked(u), "should block {u}");
-        }
-    }
-
-    #[test]
-    fn ssrf_floor_blocks_non_http_schemes() {
-        assert!(blocked("ftp://example.com/x"));
-        assert!(blocked("file:///etc/passwd"));
-    }
-
-    #[test]
-    fn ssrf_floor_allows_public_hosts_and_ips() {
-        for u in [
-            "https://en.wikipedia.org/wiki/Foo",
-            "http://example.com/page",
-            "https://8.8.8.8/x",
-            "https://93.184.216.34/x", // a public IP
-        ] {
-            assert!(
-                check_fetchable_source_url(&Url::parse(u).expect("url")).is_ok(),
-                "should allow {u}"
-            );
-        }
     }
 
     #[test]

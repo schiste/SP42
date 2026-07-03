@@ -56,9 +56,12 @@ Yes, and it is two distinct systems:
   Catalog records are readable as JSON (the multi-identifier `/api/books` or
   `/works/OL…W.json` / `/books/OL…M.json` by record id); the Read API is an
   availability view over readable/borrowable volumes, not the catalog lookup.
-  Records are writable — either by
-  `PUT`ing the record URL as JSON or via `POST /api/import` for a whole edition —
-  under a login session. (The `/isbn/{isbn}.json` path is *not* purely read-only — it
+  Records are editable by logged-in Open Library users, but the machine apply path is
+  **not assumed here**: the documented REST save `PUT` path is internal/localhost-only,
+  and `/api/import` is an import surface that requires the appropriate production
+  privileges. The enrichment lane therefore requires a separate Open Library
+  apply-contract ADR before writes are enabled. (The `/isbn/{isbn}.json` path is *not*
+  purely read-only — it
   is documented under *Import by ISBN* and can import-on-miss — so the resolve lane
   deliberately avoids it; see Layer 1.) Every edit is attributed and reversible (wiki history).
   **This is the "editable book metadata" the enrichment lane targets.**
@@ -160,9 +163,14 @@ records **only from identifiers it already trusts**:
 When resolution yields an Internet Archive scan with searchable full text:
 
 - SP42 queries the scan's **"search inside" API**, which returns matched pages with a
-  **verbatim OCR snippet**, the page number, and match coordinates. That snippet is
-  the source body handed to the **existing** per-use-site verifier and panel
-  (ADR-0006/0007) — no new verdict semantics.
+  **verbatim OCR snippet**, the page number, and match coordinates. That snippet is a
+  new **book-snippet source body** that feeds the **existing** per-use-site verdict
+  contract and panel (ADR-0006/0007) — no new verdict semantics. It is not blindly
+  routed through the existing fetched-page body-usability gate: valid IA snippets can
+  be shorter than that gate's generic page-body floor. The read-contract ADR must
+  either fetch enough OCR context to satisfy the existing floor or define a
+  provenance-checked book-snippet wrapper that bypasses only the generic `ShortBody`
+  page-body check while preserving the located-passage/hash/replay discipline.
 - **Cited page first, then fall back.** When the cite template names a `|page=`, SP42
   scopes the first search pass to that page (higher precision); if it finds nothing
   there — scan pagination often differs from the cited edition (front-matter offset,
@@ -231,13 +239,17 @@ Open Library record and SP42 holds **sourced** values that record is missing:
   field** — including, for a synthesized description, the sources it was built from —
   and confirms or dismisses. It is a **proposal, not a write**: nothing reaches
   Open Library without the operator confirming that exact change (ADR-0010).
-- On confirm, SP42 applies the change through Open Library's write API **under the
-  operator's own per-operator Open Library session** (resolved Q1) — connected and
-  stored like the existing MediaWiki OAuth session, never a shared/baked-in service
-  key — with a descriptive edit comment (`SP42: sourced metadata enrichment`),
-  respecting Open Library's rate limits and import/bot etiquette. The edit is
-  attributed to the human who confirmed it and is reversible (wiki history) — an
-  assisted edit, not a bot run.
+- On confirm, SP42 applies the change only through the Open Library apply mechanism
+  chosen by the spawned apply-contract ADR. That ADR must prove a usable production
+  path before writes are enabled: either a supported API path for operators with the
+  required Open Library privileges/API usergroup, or a controlled browser/form-backed
+  submit path that preserves SP42's exact proposal, confirmation, edit comment, and
+  drift checks. The generic REST save `PUT` path is **not** assumed, because Open
+  Library documents it as internal/localhost-only; `/api/import` remains out of scope
+  for enriching existing records. If no supported apply path is available, Layer 3
+  remains proposal-only and produces no Open Library write. Any enabled write is still
+  under the operator's own per-operator Open Library identity, never a shared/baked-in
+  service key, and respects Open Library's rate limits and import/bot etiquette.
 - If the Open Library record changed under the proposal, SP42 **refuses rather than
   overwrites** and offers to re-propose against the current record (ADR-0010's
   refuse-on-drift, applied via the record's revision rather than a MediaWiki
@@ -280,6 +292,11 @@ Open Library / Internet Archive responses — no live network in tests (ADR-0009
       search-inside snippet**, verified by a replayed search-inside fixture; the
       ADR-0007 grounding gate rejects a passage not present in the snippet, and a
       `not_supported` verdict is never required to fabricate one.
+- [ ] A valid search-inside hit with a **short** snippet (below the current generic
+      fetched-page body floor) still reaches the book verification path through the
+      read-contract ADR's chosen context fetch or book-snippet wrapper, verified by a
+      fixture that would otherwise classify as `ShortBody`; arbitrary short fetched
+      web pages still short-circuit as before.
 - [ ] A citation with `|page=` searches that page first and **falls back to a
       whole-book search** when it misses; the finding reports the **scanned** page the
       passage was found on, verified by fixtures for both the page-hit and the
@@ -302,16 +319,24 @@ Open Library / Internet Archive responses — no live network in tests (ADR-0009
       present, shows the sources it drew from, and is withheld when that context is
       absent; an author-only Wikidata QID yields **no** description proposal, verified
       by fixtures for rich-context, sparse-context, and author-only cases.
-- [ ] Confirming applies **exactly the proposed field change** to Open Library under
-      the operator's **own per-operator session** with the edit comment, verified by a
-      mock-write-path test; **no** write occurs without a confirmation bound to that
-      exact proposal.
+- [ ] The Open Library apply-contract ADR names a usable production apply mechanism
+      before writes are enabled: either a supported API path plus required operator
+      privileges/API usergroup, or a controlled browser/form-backed submit path. A
+      mock capability test verifies that an operator without that path sees
+      proposal-only output and **zero** Open Library writes.
+- [ ] Confirming applies **exactly the proposed field change** to Open Library through
+      the chosen apply mechanism under the operator's **own per-operator identity**
+      with the edit comment, verified by a mock-write-path test; **no** write occurs
+      without a confirmation bound to that exact proposal.
 - [ ] A proposal whose target record drifted (edited since proposal) **refuses** and
       offers re-proposal, with **zero** writes reaching Open Library, verified by a
       write-path refusal test.
-- [ ] The Open Library write path is exercised end-to-end against the real service
-      exactly once as the live-edit acceptance gate; the closing PR records the
-      target record, the field before/after, and the resulting Open Library revision.
+- [ ] If the write lane is enabled, the chosen Open Library apply path is exercised
+      end-to-end against the real service exactly once as the live-edit acceptance
+      gate; the closing PR records the target record, the field before/after, the
+      operator capability used, and the resulting Open Library revision. If no
+      supported apply path is available, the closing PR records that Layer 3 remains
+      proposal-only and proves the apply action is not surfaced.
 
 ## Alternatives
 
@@ -344,9 +369,12 @@ Open Library / Internet Archive responses — no live network in tests (ADR-0009
   importing a new record is higher-stakes than enriching an existing one (dedup
   risk, import-privilege requirements) and warrants its own DoD; the MVP enriches
   records that already exist.
-- *Hand off to the Open Library website (open the edit page in a browser).*
-  Rejected for the same reason PRD-0008 rejected the visual-editor hand-off: the cost
-  being removed is leaving SP42 and losing review context.
+- *Hand off to the Open Library website (open the edit page and let the operator
+  continue manually).* Rejected for the same reason PRD-0008 rejected the visual-editor
+  hand-off: the cost being removed is leaving SP42 and losing review context. This does
+  **not** reject a controlled browser/form-backed apply contract if the spawned ADR can
+  preserve SP42's exact proposal, confirmation, edit comment, and drift checks inside
+  the SP42 flow.
 
 ## Risks
 
@@ -357,8 +385,10 @@ Open Library / Internet Archive responses — no live network in tests (ADR-0009
 - **Garbage / thin OCR.** Scan OCR quality varies; a bad scan can miss a passage
   that is genuinely in the book (false `SourceUnavailable`/`not_supported`).
   Mitigation: the grounded-passage gate keeps this conservative (SP42 never claims
-  support it cannot locate), and the deep link lets the operator confirm by eye. This
-  is a *tool limitation* framing (`unusable`), not a claim about the book.
+  support it cannot locate), and the deep link lets the operator confirm by eye. Short
+  IA snippets are handled as a book-specific source type or expanded with OCR context,
+  rather than being mistaken for generic short fetched web pages. This is a *tool
+  limitation* framing (`unusable`), not a claim about the book.
 - **Editing a public catalog.** Enrichment writes to a shared, human-curated
   resource. Mitigation: operator-confirmed, operator-attributed, one field at a
   time, sourced-only, with a clear edit comment and Open Library's history/revert
@@ -392,11 +422,13 @@ Open Library / Internet Archive responses — no live network in tests (ADR-0009
   small and sourced; a complete record yields no proposal at all, so proposals stay
   rare and worth reading. The synthesized description is the field most at risk of a
   rubber-stamp, which is the reason its provenance is shown inline.
-- **Credential handling for Open Library.** The write lane needs the operator's
-  Open Library session (resolved Q1: per-operator, never a shared/baked-in key).
-  Mitigation: store and refresh it exactly like the existing per-operator MediaWiki
-  session; an operator without a connected Open Library account simply does not see
-  the write lane (the read-only Resolve/Ground lanes still work).
+- **Credential and capability handling for Open Library.** The write lane needs the
+  operator's Open Library identity (resolved Q1: per-operator, never a shared/baked-in
+  key) **and** a supported apply capability. A normal account session alone may not be
+  enough for machine writes: Open Library's documented REST save path is internal, and
+  import-style API writes require the appropriate privileges. Mitigation: the apply ADR
+  must prove the chosen production path and capability gate; an operator without that
+  path sees proposal-only output (the read-only Resolve/Ground lanes still work).
 - **Three more external services (Open Library, IA search-inside, Wikidata).**
   Mitigation: each sits behind the `HttpClient` trait boundary with pure builders/
   parsers and replayed fixtures (ADR-0004/0008 pattern, as Citoid does); any one
@@ -410,9 +442,11 @@ Open Library / Internet Archive responses — no live network in tests (ADR-0009
 All six carry the Editor's decided answers (2026-07-01), folded into the body above;
 they remain open to reviewer reaction until acceptance.
 
-1. **Open Library credential model.** Resolved: **per-operator session**, connected
-   and stored like the existing MediaWiki OAuth session, so every enrichment is
-   attributed to the human who confirmed it. No shared/baked-in service key.
+1. **Open Library credential model.** Resolved: **per-operator identity**, never a
+   shared/baked-in service key. The apply-contract ADR must still prove the actual
+   production apply path and capability gate: supported API + required OL privileges/API
+   usergroup, or a controlled browser/form-backed submit path. Without that proof, the
+   enrichment lane remains proposal-only.
 2. **Enrich-only, or also import missing editions?** Resolved: **enrich existing
    records only** for this PRD. Importing a missing edition (`/api/import`) is
    deferred to its own PRD/DoD (dedup risk + import-privilege requirements).
@@ -431,7 +465,10 @@ they remain open to reviewer reaction until acceptance.
    when the Open Library edition has an `ocaid` **and** the archive.org item is a text
    item whose **search-inside** endpoint can run. Search-inside returns a **verbatim
    snippet + page** and typically works even for lending-restricted / in-copyright
-   scans, so SP42 grounds on the snippet without borrowing. Two empty results differ
+   scans, so SP42 grounds on the snippet without borrowing. Because IA snippets can be
+   shorter than SP42's generic fetched-page body floor, the read-contract ADR must
+   choose either enough OCR context or a book-snippet wrapper that bypasses only the
+   generic `ShortBody` page-body check. Two empty results differ
    (ADR-0007, per Layer 2): **no usable body** (no `ocaid` / not a text item / no
    full-text index) → `SourceUnavailable` (`unreachable`/`unusable`); but an
    **indexed** scan whose search-inside returns **zero matching snippets** →
@@ -444,12 +481,15 @@ they remain open to reviewer reaction until acceptance.
 6. **Does this need its own ADR now, or ride ADR-0010/0011?** Resolved: **two thin
    ADRs.** (a) A **read-contract ADR** — Internet Archive search-inside as a new
    grounding source type feeding the existing verifier, plus Wikidata as an enrichment
-   context source. (b) If the enrichment lane ships, a **separate apply-contract ADR**
-   for the Open Library write: ADR-0010's propose/confirm/refuse-on-drift **discipline**
+   context source, including the short-snippet handling above. (b) If the enrichment
+   lane ships, a **separate apply-contract ADR** for the Open Library write:
+   ADR-0010's propose/confirm/refuse-on-drift **discipline**
    transfers, but its **mechanism** is MediaWiki-specific (`WikitextNodeLocator` +
    `replacement_wikitext` + `baserevid` + wiki session/CSRF) and does **not** map to a
    field-level Open Library JSON change guarded by the OL record's own revision under an
-   OL session — so the OL payload, auth, and drift check get their own thin ADR, exactly
-   as the Wikidata statement write does (ADR-0017 over ADR-0010). **Not "reuse ADR-0010
-   as-is."** This matches the header's "a second ADR … against a non-wiki target."
+   OL identity. The ADR must also pick a supported apply path; Open Library's documented
+   REST save `PUT` is internal/localhost-only, and `/api/import` is out of scope here. If
+   no supported production apply path exists, Layer 3 stays proposal-only. **Not "reuse
+   ADR-0010 as-is."** This matches the header's "a second ADR … against a non-wiki
+   target."
    Numbers assigned when drafted.

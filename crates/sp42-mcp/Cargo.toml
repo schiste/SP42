@@ -10,12 +10,12 @@ workspace = true
 
 [dependencies]
 async-trait.workspace = true
-reqwest.workspace = true
 rmcp = { version = "2.0.0", features = ["server", "macros", "transport-io", "schemars"] }
 schemars = "1"
 serde.workspace = true
 serde_json.workspace = true
 sp42-citation = { path = "../sp42-citation" }
+sp42-fetch = { path = "../sp42-fetch" }
 sp42-inference = { path = "../sp42-inference" }
 sp42-parsoid = { path = "../sp42-parsoid" }
 sp42-platform = { path = "../sp42-platform" }

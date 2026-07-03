@@ -3420,12 +3420,12 @@ name = "sp42-mcp"
 version = "0.1.0"
 dependencies = [
  "async-trait",
- "reqwest 0.12.28",
  "rmcp",
  "schemars 1.2.1",
  "serde",
  "serde_json",
  "sp42-citation",
+ "sp42-fetch",
  "sp42-inference",
  "sp42-parsoid",
  "sp42-platform",

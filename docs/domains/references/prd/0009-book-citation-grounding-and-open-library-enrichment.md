@@ -33,9 +33,9 @@ It deliberately excludes adjacent concerns:
   permission-gated to item curators and is a different surface from the globally
   editable Open Library catalog; it is a Non-Goal here (see Non-Goals) and, if ever
   wanted, its own PRD.
-- **Wayback / archive-snapshot enrichment of URL citations** — that is PRD-0010
-  (issue #29). This PRD is about *books*, not about attaching web archives to dead
-  links.
+- **Wayback / archive-snapshot enrichment of URL citations** — that is a future
+  archive enrichment PRD (issue #29). This PRD is about *books*, not about
+  attaching web archives to dead links.
 - **The propose→confirm→apply *mechanism*** for the enrichment write — that reuses
   ADR-0010 (operator-confirmed content proposals) against a new (non-MediaWiki)
   target; this PRD relies on that discipline, it does not re-specify it.

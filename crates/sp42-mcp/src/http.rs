@@ -35,6 +35,15 @@ impl GuardedHttpClient {
             allow_private,
         })
     }
+
+    /// Whether the dev/test escape hatch (`SP42_FETCH_ALLOW_PRIVATE=1`) is set, permitting
+    /// loopback/private hosts. Callers that fetch a caller-supplied URL outside this client
+    /// (e.g. a Parsoid endpoint) should skip the SSRF floor only when this is `true`, matching
+    /// this client's own gating.
+    #[must_use]
+    pub fn allow_private(&self) -> bool {
+        self.allow_private
+    }
 }
 
 #[async_trait]

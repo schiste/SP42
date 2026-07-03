@@ -170,9 +170,19 @@ impl Sp42McpServer {
             None => self.registry.default_config(),
         };
         if let Some(parsoid_url) = &params.parsoid_url {
-            config.parsoid_url = Some(parsoid_url.parse().map_err(|error: url::ParseError| {
+            let parsed: url::Url = parsoid_url.parse().map_err(|error: url::ParseError| {
                 format!("invalid parsoid_url {parsoid_url:?}: {error}")
-            })?);
+            })?;
+            // SSRF floor: a caller-supplied Parsoid endpoint is fetched by `fetch_page_blocks`
+            // outside `GuardedHttpClient`, so a prompt-injected agent call could otherwise reach
+            // loopback/private/link-local hosts (e.g. cloud metadata at 169.254.169.254). Apply the
+            // same host guard used for source URLs, unless the dev escape hatch is enabled.
+            if !self.fetch.allow_private() {
+                sp42_citation::check_fetchable_source_url(&parsed).map_err(|message| {
+                    format!("refusing caller-supplied parsoid_url {parsoid_url:?}: {message}")
+                })?;
+            }
+            config.parsoid_url = Some(parsed);
         }
         let result = verify_wikipedia_page(
             &self.fetch,

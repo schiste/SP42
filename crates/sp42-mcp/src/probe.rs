@@ -1,11 +1,11 @@
 //! `probe_source` — deterministic, model-free source accessibility (PRD-0010, Phase 2).
 //!
-//! Wraps `sp42-core`'s hardened fetch (`fetch_source`) and the deterministic body-usability gate
-//! (`classify_body_usability`), mapping their results into [`ProbeResult`]. No model is ever
+//! Wraps `sp42-core`'s hardened fetch (`fetch_source`) and the deterministic source-usability gate
+//! (`classify_source_usability`), mapping their results into [`ProbeResult`]. No model is ever
 //! called. The verb's value is distinguishing *unreachable* from *reachable-but-unextractable*,
 //! so a consumer learns that a human could still read a source the pipeline cannot use.
 
-use sp42_citation::{classify_body_usability, fetch_source};
+use sp42_citation::{classify_source_usability, fetch_source};
 use sp42_types::HttpClient;
 
 use crate::ProbeResult;
@@ -40,8 +40,16 @@ where
         };
     }
 
-    let usability =
-        classify_body_usability((!fetched.text.is_empty()).then_some(fetched.text.as_str()));
+    // Use the SAME gate as verification (URL + content-type + raw HTML), not just the text-shape
+    // subset. A weaker gate here would let a PDF or a viewer/embed shell probe as extractable while
+    // `verify_claim` immediately returns SourceUnavailable — making the probe disagree with the
+    // path it exists to preflight.
+    let usability = classify_source_usability(
+        url,
+        &fetched.content_type,
+        fetched.raw_html.as_deref(),
+        (!fetched.text.is_empty()).then_some(fetched.text.as_str()),
+    );
     let extractable = usability.usable;
     ProbeResult {
         reachable: true,
@@ -66,11 +74,12 @@ mod tests {
     use crate::BodyUsabilityReason;
 
     fn response(status: u16, body: &str) -> HttpResponse {
+        response_with_ct(status, body, "text/plain; charset=utf-8")
+    }
+
+    fn response_with_ct(status: u16, body: &str, content_type: &str) -> HttpResponse {
         let mut headers = BTreeMap::new();
-        headers.insert(
-            "content-type".to_owned(),
-            "text/plain; charset=utf-8".to_owned(),
-        );
+        headers.insert("content-type".to_owned(), content_type.to_owned());
         HttpResponse {
             status,
             headers,
@@ -118,6 +127,20 @@ mod tests {
         assert!(result.reachable);
         assert!(!result.extractable);
         assert_eq!(result.unusable_reason, Some(BodyUsabilityReason::ShortBody));
+        assert!(result.human_readable_hint);
+    }
+
+    #[tokio::test]
+    async fn reachable_pdf_is_not_extractable_via_full_gate() {
+        // A PDF served as application/pdf clears the text-shape gate (its bytes read as prose) but
+        // the full usability gate rejects it as PdfBody — matching what verify_claim would return.
+        // This is exactly the disagreement the probe must not have with the verification path.
+        let body = format!("%PDF-1.7\n{CLEAN_BODY}");
+        let client = StubHttpClient::new([Ok(response_with_ct(200, &body, "application/pdf"))]);
+        let result = probe_source(&client, "https://example.org/paper.pdf").await;
+        assert!(result.reachable);
+        assert!(!result.extractable);
+        assert_eq!(result.unusable_reason, Some(BodyUsabilityReason::PdfBody));
         assert!(result.human_readable_hint);
     }
 

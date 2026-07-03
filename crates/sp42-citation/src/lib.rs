@@ -27,7 +27,9 @@ pub use bare_url_repair::{
     BareUrlReference, bare_url_references, citoid_language, classify_bare_url,
     iso_date_from_epoch_ms, render_bare_url_citation,
 };
-pub use citation::body_classifier::{BodyUsability, BodyUsabilityReason, classify_body_usability};
+pub use citation::body_classifier::{
+    BodyUsability, BodyUsabilityReason, classify_body_usability, classify_source_usability,
+};
 pub use citation::citoid::{
     CitoidMetadata, build_citoid_header, build_citoid_request, parse_citoid_response,
 };

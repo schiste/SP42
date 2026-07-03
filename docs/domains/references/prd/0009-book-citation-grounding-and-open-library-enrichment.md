@@ -53,8 +53,10 @@ Yes, and it is two distinct systems:
 
 - **Open Library** (`openlibrary.org`) — the Internet Archive's wiki-model,
   anyone-with-an-account-can-edit bibliographic catalog of *works* and *editions*.
-  Records are readable as JSON (the multi-identifier `/api/books`, the Read API, or
-  `/works/OL…W.json` / `/books/OL…M.json` by record id) and writable — either by
+  Catalog records are readable as JSON (the multi-identifier `/api/books` or
+  `/works/OL…W.json` / `/books/OL…M.json` by record id); the Read API is an
+  availability view over readable/borrowable volumes, not the catalog lookup.
+  Records are writable — either by
   `PUT`ing the record URL as JSON or via `POST /api/import` for a whole edition —
   under a login session. (The `/isbn/{isbn}.json` path is *not* purely read-only — it
   is documented under *Import by ISBN* and can import-on-miss — so the resolve lane
@@ -115,10 +117,17 @@ records **only from identifiers it already trusts**:
   article extractor drops a ref with no URL before any Citoid call, and Citoid is a
   URL→metadata sidecar that does not carry ISBN — so the identifier cannot come from
   Citoid and must be pulled from the template itself. With an identifier in hand, SP42
-  resolves it through a **strictly side-effect-free** Open Library read — the Books API
-  (`/api/books?bibkeys=ISBN:{isbn}&jscmd=data&format=json`) or the Read API
-  (`/api/volumes/brief/isbn/{isbn}.json`) — reaching the edition, its `works`, and (when
-  present) the linked Internet Archive scan `ocaid`. It **must not** use the
+  first resolves the **catalog record** through a **strictly side-effect-free** Open
+  Library read — the Books API
+  (`/api/books?bibkeys=ISBN:{isbn}&jscmd=data&format=json`, with the corresponding
+  OCLC/LCCN/OLID bibkey when that is the trusted identifier) or a direct
+  `/books/OL…M.json` / `/works/OL…W.json` record read for an explicit OLID — reaching
+  the edition and its `works`. It then uses the Read API
+  (`/api/volumes/brief/isbn/{isbn}.json`) only to discover readable/borrowable scan
+  availability and exact-vs-similar volume matches. An empty Read API `items` list does
+  **not** mean "no Open Library record found": it means the catalog record exists but
+  has no usable online scan for Layer 2, so grounding degrades to `SourceUnavailable`
+  while Layer 3 may still enrich the existing catalog record. It **must not** use the
   `/isbn/{isbn}.json` endpoint, which Open Library documents under *Import by ISBN* and
   which can **attempt an import or stage metadata on a miss** — a write side-effect that
   would violate this lane's read-only, no-auth promise and the "enrich existing only"
@@ -137,12 +146,14 @@ records **only from identifiers it already trusts**:
   checks, and `not_supported` conclusions, a similar-edition-only response
   degrades to `SourceUnavailable` with a refined "similar edition only" reason;
   SP42 never verifies a page-specific ISBN citation against a different edition.
-- **Wikidata is a secondary structured authority.** When the Open Library record (or
-  its work/author) carries a Wikidata link — or one is reachable via a shared
-  identifier — SP42 may pull the linked Wikidata item as *additional sourced
-  context*. It is not used for matching (identifier gating above still governs
-  resolution); it feeds the enrichment lane (Layer 3), where a richer structured
-  context is what unlocks a synthesized description.
+- **Wikidata is a secondary structured authority.** When the Open Library edition/work
+  carries a book-level Wikidata link — or a work/edition/book item is reachable via a
+  shared identifier — SP42 may pull that linked item as *additional sourced context*.
+  Author-record QIDs are narrower: SP42 may use them for author display/provenance, but
+  an author item is not book-level context and **must not** unlock or feed a synthesized
+  book description. Wikidata is not used for matching (identifier gating above still
+  governs resolution); book-level context feeds the enrichment lane (Layer 3), where a
+  richer structured context is what unlocks a synthesized description.
 
 ### Layer 2 — Ground (read-only, no auth)
 
@@ -205,10 +216,13 @@ Open Library record and SP42 holds **sourced** values that record is missing:
   - **Description — synthesized, but only from rich sourced context (resolved Q3).**
     SP42 *may* propose a model-**synthesized** `description`, but **only when it has
     assembled a substantial structured context** for the book — in practice, a linked
-    Wikidata item plus the Open Library / Citoid facts. The synthesis is constrained
-    to facts present in that assembled context (grounded synthesis, not open-ended
-    generation), and the proposal shows the sources it drew from. Where that rich
-    context is absent, **no description is proposed.** This is the deliberate
+    work/edition/book Wikidata item plus the Open Library / Citoid facts. Author
+    Wikidata items are excluded from this description context; an author-only QID may
+    support author provenance/display but **does not** permit a book description. The
+    synthesis is constrained to facts present in that assembled context (grounded
+    synthesis, not open-ended generation), and the proposal shows the sources it drew
+    from. Where that rich book-level context is absent, **no description is proposed.**
+    This is the deliberate
     "judgment in the loop" crossing PRD-0008 foreshadowed (its closing note that
     later features in this family cross the author-nothing boundary "under the spawned
     ADR, when they put judgment in the loop"); it is the one generative affordance in
@@ -245,12 +259,17 @@ confirm-and-apply action under the operator's session. The browser Citations tab
 list when the PRD moves to `Implemented`. All tests replay recorded
 Open Library / Internet Archive responses — no live network in tests (ADR-0009).*
 
-- [ ] A book citation carrying an ISBN resolves to its Open Library edition/work and
-      (when present) its Internet Archive scan through a **side-effect-free** read
-      (Books/Read API, **not** `/isbn/{isbn}.json`), verified over a replayed
-      `/api/books` fixture; a resolution **miss issues no import/write** (asserted by
-      the mock client seeing only the read endpoint), and a citation with **no**
-      resolvable identifier stays `skipped` with the refined reason.
+- [ ] A book citation carrying an ISBN resolves to its Open Library edition/work
+      through a **side-effect-free catalog lookup** (`/api/books` or direct OLID record
+      read, **not** the Read API and **not** `/isbn/{isbn}.json`), verified over a
+      replayed `/api/books` fixture; a catalog resolution **miss issues no
+      import/write** (asserted by the mock client seeing only the read endpoint), and a
+      citation with **no** resolvable identifier stays `skipped` with the refined
+      reason.
+- [ ] Read API availability is checked only **after** catalog resolution: an existing
+      edition with an empty Read API `items` list remains an enrichable catalog record
+      and degrades to `SourceUnavailable` for Layer 2, verified by paired `/api/books`
+      and Read API fixtures.
 - [ ] A resolved book with a searchable scan never grounds against a
       Read-API `similar` match: only exact-edition scans enter Layer 2, and a
       similar-edition-only response is reported `SourceUnavailable` with the
@@ -278,10 +297,11 @@ Open Library / Internet Archive responses — no live network in tests (ADR-0009
       **structured** fields are each populated **verbatim** from a named source
       (Open Library / Citoid / Wikidata), verified by a renderer test over replayed
       fixtures; a record already complete yields **no** proposal.
-- [ ] A **synthesized description** is proposed **only** when a rich structured
-      context (a linked Wikidata item + Open Library/Citoid facts) is present, shows
-      the sources it drew from, and is withheld when that context is absent, verified
-      by fixtures for both the rich-context and sparse-context cases.
+- [ ] A **synthesized description** is proposed **only** when rich book-level structured
+      context (a linked work/edition/book Wikidata item + Open Library/Citoid facts) is
+      present, shows the sources it drew from, and is withheld when that context is
+      absent; an author-only Wikidata QID yields **no** description proposal, verified
+      by fixtures for rich-context, sparse-context, and author-only cases.
 - [ ] Confirming applies **exactly the proposed field change** to Open Library under
       the operator's **own per-operator session** with the edit comment, verified by a
       mock-write-path test; **no** write occurs without a confirmation bound to that
@@ -303,9 +323,10 @@ Open Library / Internet Archive responses — no live network in tests (ADR-0009
 - *Let the model write a description from its own open-ended knowledge.* Rejected:
   open-ended generation violates the anti-fabrication posture (ADR-0007). The
   admitted form (resolved Q3) is narrower — a description **synthesized only from an
-  assembled, sourced structured context** (a linked Wikidata item + Open Library/
-  Citoid facts), constrained to those facts and shown with its provenance, and only
-  when that context is rich enough. Subjects and other structured fields are always
+  assembled, sourced book-level structured context** (a linked work/edition/book
+  Wikidata item + Open Library/Citoid facts), constrained to those facts and shown
+  with its provenance, and only when that context is rich enough. Author-only Wikidata
+  context is explicitly insufficient. Subjects and other structured fields are always
   relayed verbatim, never authored.
 - *Never propose a description at all (structured fields only).* Considered and not
   taken: it is the strictest reading of PRD-0008, but it leaves the single most
@@ -351,9 +372,10 @@ Open Library / Internet Archive responses — no live network in tests (ADR-0009
   identifier sync/cleanup. Mitigation: this lane must **not** re-do author-level
   Wikidata sync OL already owns — it targets **edition-level, source-derived fields**
   (ISBN-13 alongside ISBN-10, page count, subjects, cover, and the source-grounded
-  description) that the existing sync does not cover. Pulling a linked Wikidata item as
-  *description context* (Q3) is consistent with OL already ingesting Wikidata author
-  data, not a parallel pipeline. Author-biography enrichment is explicitly out of scope
+  description) that the existing sync does not cover. Pulling a linked work/edition/book
+  Wikidata item as *description context* (Q3) is deliberately distinct from using an
+  author item; author QIDs stay display/provenance-only in this PRD. Author-biography
+  enrichment is explicitly out of scope
   (OL's own integration handles it). Sibling note: the Wikidata write direction
   (PRD-0011 / ADR-0017) records the same de-duplication and the FRBR work/edition
   sourcing rule.
@@ -399,8 +421,9 @@ they remain open to reviewer reaction until acceptance.
    count, publisher, subjects, cover, source link) are **relayed verbatim** from a
    named source (Open Library / Citoid / the scan / Wikidata) and never authored. A
    **description** *may* be **model-synthesized, but only from a rich assembled
-   sourced context** — in practice a linked **Wikidata** item plus Open Library/
-   Citoid facts — constrained to those facts and shown with provenance; where that
+   sourced book-level context** — in practice a linked work/edition/book **Wikidata**
+   item plus Open Library/Citoid facts — constrained to those facts and shown with
+   provenance. Author-only Wikidata context is insufficient; where the rich book-level
    context is absent, no description is proposed. This adds Wikidata as a secondary
    structured authority (Layer 1) and is the one deliberate crossing of PRD-0008's
    author-nothing line.

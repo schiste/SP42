@@ -73,11 +73,7 @@ mod tests {
     use super::probe_source;
     use crate::BodyUsabilityReason;
 
-    fn response(status: u16, body: &str) -> HttpResponse {
-        response_with_ct(status, body, "text/plain; charset=utf-8")
-    }
-
-    fn response_with_ct(status: u16, body: &str, content_type: &str) -> HttpResponse {
+    fn response_with_content_type(status: u16, content_type: &str, body: &str) -> HttpResponse {
         let mut headers = BTreeMap::new();
         headers.insert("content-type".to_owned(), content_type.to_owned());
         HttpResponse {
@@ -85,6 +81,10 @@ mod tests {
             headers,
             body: body.as_bytes().to_vec(),
         }
+    }
+
+    fn response(status: u16, body: &str) -> HttpResponse {
+        response_with_content_type(status, "text/plain; charset=utf-8", body)
     }
 
     // ~400 chars of trigger-free prose that clears the short-body floor and the usability gate.
@@ -131,16 +131,32 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn reachable_pdf_is_not_extractable_via_full_gate() {
+    async fn reachable_pdf_uses_the_full_verification_gate() {
         // A PDF served as application/pdf clears the text-shape gate (its bytes read as prose) but
         // the full usability gate rejects it as PdfBody — matching what verify_claim would return.
         // This is exactly the disagreement the probe must not have with the verification path.
-        let body = format!("%PDF-1.7\n{CLEAN_BODY}");
-        let client = StubHttpClient::new([Ok(response_with_ct(200, &body, "application/pdf"))]);
-        let result = probe_source(&client, "https://example.org/paper.pdf").await;
+        let client = StubHttpClient::new([Ok(response_with_content_type(
+            200,
+            "application/pdf",
+            CLEAN_BODY,
+        ))]);
+        let result = probe_source(&client, "https://example.org/source.pdf").await;
         assert!(result.reachable);
         assert!(!result.extractable);
         assert_eq!(result.unusable_reason, Some(BodyUsabilityReason::PdfBody));
+        assert!(result.human_readable_hint);
+    }
+
+    #[tokio::test]
+    async fn reachable_viewer_shell_host_uses_the_full_verification_gate() {
+        let client = StubHttpClient::new([Ok(response(200, CLEAN_BODY))]);
+        let result = probe_source(&client, "https://books.google.com/books?id=abc").await;
+        assert!(result.reachable);
+        assert!(!result.extractable);
+        assert_eq!(
+            result.unusable_reason,
+            Some(BodyUsabilityReason::ViewerShell)
+        );
         assert!(result.human_readable_hint);
     }
 

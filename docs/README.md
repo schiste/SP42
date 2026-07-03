@@ -19,6 +19,10 @@ Capabilities built on top of the platform.
   reviewer actions, multi-operator coordination). → [docs/domains/patrolling/](domains/patrolling/README.md)
 - **References / citation verification** — incoming; no crate yet. Lives as a PRD
   plus ADR-0007–0009. → [docs/domains/references/](domains/references/README.md)
+- **Wikidata** — incoming; no crate yet. Making Wikidata a first-class target
+  (entity read/diff + patrol) and a referenced source/sink of facts. Lives as
+  PRD-0011, spawning platform ADR-0015 and continuing ADR-0014.
+  → [docs/domains/wikidata/](domains/wikidata/README.md)
 
 → [docs/domains/](domains/README.md)
 

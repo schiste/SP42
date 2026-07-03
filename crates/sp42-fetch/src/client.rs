@@ -114,7 +114,9 @@ fn base_builder(user_agent: &str, guard_literals: bool) -> reqwest::ClientBuilde
         // resolver guard does not run for literals). DNS-name hops are validated
         // by the resolver at connect.
         .redirect(reqwest::redirect::Policy::custom(move |attempt| {
-            if attempt.previous().len() >= MAX_REDIRECTS {
+            // reqwest includes the initial URL in `previous()`, so the fifth
+            // configured redirect hop reaches this callback with len() == 5.
+            if attempt.previous().len() > MAX_REDIRECTS {
                 return attempt.error(format!("exceeded {MAX_REDIRECTS} redirects"));
             }
             if guard_literals && host_is_blocked_literal(attempt.url()) {
@@ -331,6 +333,16 @@ mod tests {
         addr
     }
 
+    fn spawn_redirect_to(target: SocketAddr) -> SocketAddr {
+        spawn_sequenced_server(vec![
+            format!(
+                "HTTP/1.1 302 Found\r\nLocation: http://127.0.0.1:{}/\r\nContent-Length: 0\r\n\r\n",
+                target.port()
+            )
+            .into_bytes(),
+        ])
+    }
+
     /// A client over a pass-through (no SSRF guard) reqwest client that resolves
     /// `host` to a loopback `addr` — for exercising the transport mechanics
     /// (retry, caps) against a loopback server.
@@ -409,6 +421,46 @@ mod tests {
             .expect("escape hatch must follow a redirect to a private literal");
         assert_eq!(response.status, 200);
         assert_eq!(response.body, b"ok");
+    }
+
+    #[tokio::test]
+    async fn follows_the_configured_fifth_redirect_hop() {
+        let destination = spawn_sequenced_server(vec![
+            b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok".to_vec(),
+        ]);
+        let hop4 = spawn_redirect_to(destination);
+        let hop3 = spawn_redirect_to(hop4);
+        let hop2 = spawn_redirect_to(hop3);
+        let hop1 = spawn_redirect_to(hop2);
+        let start = spawn_redirect_to(hop1);
+
+        let client = super::build_source_client("test-agent", true).expect("build");
+        let response = client
+            .execute(get(&format!("http://127.0.0.1:{}/", start.port())))
+            .await
+            .expect("the configured fifth redirect hop should be allowed");
+
+        assert_eq!(response.status, 200);
+        assert_eq!(response.body, b"ok");
+    }
+
+    #[tokio::test]
+    async fn rejects_redirects_beyond_the_configured_cap() {
+        let destination = spawn_sequenced_server(vec![
+            b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok".to_vec(),
+        ]);
+        let hop5 = spawn_redirect_to(destination);
+        let hop4 = spawn_redirect_to(hop5);
+        let hop3 = spawn_redirect_to(hop4);
+        let hop2 = spawn_redirect_to(hop3);
+        let hop1 = spawn_redirect_to(hop2);
+        let start = spawn_redirect_to(hop1);
+
+        let client = super::build_source_client("test-agent", true).expect("build");
+        client
+            .execute(get(&format!("http://127.0.0.1:{}/", start.port())))
+            .await
+            .expect_err("the sixth redirect hop should exceed the cap");
     }
 
     #[tokio::test]

@@ -67,8 +67,9 @@ it is platform; the workflows are thin domain policy.
   classified added / removed / changed. Statements are diffed at **full depth**
   (resolved Q4) — main property/value **plus qualifiers, rank, and references** —
   so an edit that touches only a qualifier, flips a rank, or strips a reference is
-  never rendered as a no-op (the SP42 honesty invariant: a real change is never shown
-  as unchanged). A reusable platform mechanism paralleling the wikitext
+  never rendered as a no-op. Unmodeled raw/entity-level deltas surface as explicit
+  unknown changes rather than disappearing, which is the SP42 honesty invariant for
+  the review contract. A reusable platform mechanism paralleling the wikitext
   `diff_engine`/`media_diff`, but for entities.
 - **Content-model routing + capability gating.** Keyed on the revision's
   `content_model` (`wikibase-item` vs `wikitext`), the platform routes to the entity
@@ -117,25 +118,27 @@ it is platform; the workflows are thin domain policy.
 - **Citation → Wikidata facts — the immediate follow-on to the read MVP (resolved
   Q5).** When a citation is added to article X, scan the cited source for facts about
   X and propose them as **referenced Wikidata statements** on X's item — each a
-  property/value pair carrying the citation as its reference. This is the anti-fabrication gate (ADR-0007) in its most constrained
-  form: a statement is offered only when the fact is verbatim-locatable in the
-  source, and it lands only on operator confirmation (ADR-0010), attributed to the
-  operator's own account. Structured triples are *safer* than the free-text
-  description crossing in PRD-0009 — there is no prose to synthesize, only a sourced
-  triple. Governed by ADR-0017, and the exact inverse of PR #103's
-  `verify_wikidata_statement`: #103 *verifies* an existing statement against its
-  reference, this *proposes* a new statement carrying one — the same statement + P854
-  model, two directions of one loop.
+  property/value pair carrying the citation as a structured reference snak set. This is
+  the anti-fabrication gate (ADR-0007) in its most constrained form: a statement is
+  offered only when the fact is verbatim-locatable in the source, and it lands only on
+  operator confirmation (ADR-0010), attributed to the operator's own account. Structured
+  triples are *safer* than the free-text description crossing in PRD-0009 — there is no
+  prose to synthesize, only a sourced triple. Governed by ADR-0017. For URL citations,
+  this is the exact inverse of PR #103's `verify_wikidata_statement`: #103 *verifies*
+  an existing statement against its P854 reference, while this *proposes* a new
+  statement carrying P854. Book and other non-URL citations use the same statement model
+  with richer reference snaks rather than forcing every source through P854.
 - **Wikidata → sources (follows citation→facts).** Mine the references already
   attached to Wikidata's statements about X to surface additional candidate sources
   for a claim under review, feeding the existing citation-verification and
   bare-URL-repair flows. Read-only — a smaller delta on the read module, sequenced
-  second only because Q5 prioritized the write capability. **This reuses the
-  statement/P854-reference reading that PR #103 (PRD-0010) already built** in
+  second only because Q5 prioritized the write capability. **This reuses the structured
+  statement/reference reading that PR #103 (PRD-0010) already seeded** in
   `verify_wikidata_statement` — promoted to platform per ADR-0016 — rather than a new
-  read path; the references it harvests are the same ones #103 reads. (The official
-  read-only Wikimedia-DE Wikidata MCP, which #103's PRD notes, is an alternative
-  external read source for statements/references and the P31/P279 hierarchy.)
+  read path; #103 consumes P854 URL references as one case, while this mining lane can
+  inspect the full reference snak set. (The official read-only Wikimedia-DE Wikidata MCP,
+  which #103's PRD notes, is an alternative external read source for
+  statements/references and the P31/P279 hierarchy.)
 
 Everything reuses the same substrate: the platform read module reads entities; the
 workflows are thin domain policy; every write is operator-confirmed, sourced, and
@@ -156,8 +159,9 @@ The write-lane use cases carry their own DoD in their follow-on PRDs.*
       added·removed·changed) at **full statement depth — property, value, qualifiers,
       rank, and references** — verified over replayed entity-revision fixtures; an
       edit touching **only** a qualifier, rank, or reference renders as a change and
-      **never as a no-op**, and a missing parent (first revision) degrades gracefully
-      rather than erroring.
+      **never as a no-op**, unmodeled/raw entity deltas render as an explicit unknown
+      change instead of disappearing, and a missing parent (first revision) degrades
+      gracefully rather than erroring.
 - [ ] The patrol/diff view renders a Wikidata change as a **human-readable entity
       diff, not raw JSON**, verified by a renderer test.
 - [ ] Content-model routing selects the entity path for `wikibase-item` and the

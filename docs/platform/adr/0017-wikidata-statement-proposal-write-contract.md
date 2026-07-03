@@ -37,7 +37,9 @@ it relays a sourced triple.
    - the **target entity id** and its observed **`lastrevid`** (the drift baseline,
      replacing `baserevid`);
    - the **structured statement** — property, value, qualifiers, rank — and its
-     **reference** (the citation);
+     **reference snak set** (the citation): URL citations use P854 as one supported
+     snak, while book citations may require non-URL reference snaks such as "stated in"
+     (P248), page(s), edition/item, or identifier properties;
    - the **ADR-0007 grounding** that justifies the fact (the verbatim source passage +
      source hash).
    Confirm replays exactly that payload; nothing is written during proposal generation.
@@ -50,10 +52,10 @@ it relays a sourced triple.
    SP42.
 
 3. **Structured triples, not prose — the safest crossing.** Unlike PRD-0009's
-   synthesized description, a statement is property + value + reference with **no free
-   text to fabricate**. A proposal is offered **only** when the fact is verbatim-grounded
-   in the source (ADR-0007); an ungrounded fact is a **structured decline**, not a thin
-   or invented statement (ADR-0010 Decision 3).
+   synthesized description, a statement is property + value + structured reference
+   snaks with **no free text to fabricate**. A proposal is offered **only** when the fact
+   is verbatim-grounded in the source (ADR-0007); an ungrounded fact is a **structured
+   decline**, not a thin or invented statement (ADR-0010 Decision 3).
 
 4. **Per-operator Wikidata write auth.** The write lands under the operator's **own**
    Wikidata session, attributed and reversible — mirroring the per-operator MediaWiki/
@@ -101,20 +103,22 @@ it relays a sourced triple.
 - **ADR-0016 (entity read):** consumed to observe `lastrevid` and current statements
   for the drift baseline and the before/after render — including the shared
   statement/reference parser promoted from PR #103.
-- **PRD-0010 / PR #103 (`verify_wikidata_statement`):** the exact inverse of this
-  contract. #103 *verifies* an existing statement against its P854 reference; this ADR
-  *proposes* a new statement carrying that reference. They are two ends of one loop —
-  a statement this lane writes is precisely what #103's verb would later verify — and
-  they share the statement/reference model (ADR-0016) and the ADR-0007 grounding gate,
-  so the "fact → referenced statement" and "statement → verified reference" directions
-  never diverge in how a statement or its P854 reference is represented.
+- **PRD-0010 / PR #103 (`verify_wikidata_statement`):** the URL-reference subset of
+  this contract. #103 *verifies* an existing statement against its P854 reference; this
+  ADR *proposes* a new statement carrying a structured reference snak set, with P854 as
+  the URL-citation case. They are two ends of one loop when the source is URL-based — a
+  statement this lane writes with P854 is precisely what #103's verb would later verify
+  — and they share the statement/reference model (ADR-0016) and the ADR-0007 grounding
+  gate, so the "fact → referenced statement" and "statement → verified reference"
+  directions never diverge for P854 while still allowing richer non-URL references.
 - **Existing Open Library ↔ Wikidata data flows (do not duplicate):** OL and Wikidata
   already sync — the P648 "Open Library ID" property links the two, OL runs an official
   Wikidata Integration (pulling author bios/photos/awards *from* Wikidata and pushing OL
   IDs *to* it) and publishes a Wikidata dump, and `cdrini/openlibrary-wikidata-bot` does
   identifier sync/cleanup. SP42 must **not** rebuild identifier sync. Its distinct value
-  is the layer none of that provides: a *grounded, referenced* statement (P854 +
-  ADR-0007 verbatim passage) proposed from a source SP42 actually fetched and verified.
+  is the layer none of that provides: a *grounded, referenced* statement (structured
+  reference snaks + ADR-0007 verbatim passage) proposed from a source SP42 actually
+  fetched and verified.
   That directly answers the standing WikiProject complaint that *most bots add
   statements without reliable sources* — every statement this lane proposes carries
   one. Same positioning as PRD-0010 vs. the official Wikidata MCP: we are the

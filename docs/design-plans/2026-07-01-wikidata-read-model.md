@@ -47,6 +47,9 @@ pub struct Entity {
     pub aliases: BTreeMap<Lang, Vec<String>>,
     pub statements: BTreeMap<PropertyId, Vec<Statement>>,
     pub sitelinks: BTreeMap<String, Sitelink>,     // wiki dbname -> sitelink
+    /// Canonical whole-entity JSON, retained so unmodeled top-level changes still
+    /// surface as `UnknownEntityChange` instead of being rendered as no-op.
+    pub raw: serde_json::Value,
 }
 
 pub struct Statement {
@@ -56,8 +59,8 @@ pub struct Statement {
     pub qualifiers: Vec<Snak>,
     pub rank: StatementRank,                       // Preferred | Normal | Deprecated
     pub references: Vec<Reference>,
-    /// Canonical JSON of the statement, retained so change detection is exact even for
-    /// datatypes we don't richly model (the "never a no-op" invariant, ADR-0016).
+    /// Canonical JSON of the statement, retained so statement change detection is exact
+    /// even for datatypes we don't richly model (ADR-0016).
     pub raw: serde_json::Value,
 }
 
@@ -83,7 +86,8 @@ pub enum WikibaseValue {
 pub enum StatementRank { Preferred, Normal, Deprecated }
 
 impl Reference {
-    /// P854 "reference URL" snaks. (This is #103's `extract_ref_url`, typed and plural.)
+    /// P854 "reference URL" snaks. This preserves #103's URL-reference behavior; other
+    /// consumers inspect `snaks` directly for non-URL references such as P248/P304.
     pub fn urls(&self) -> impl Iterator<Item = &str>;
 }
 impl Entity {
@@ -136,6 +140,14 @@ pub struct EntityDiff {
     pub aliases:      Vec<AliasChange>,
     pub sitelinks:    Vec<SitelinkChange>,
     pub statements:   Vec<StatementChange>,
+    pub unknown:      Vec<UnknownEntityChange>,
+}
+
+pub struct UnknownEntityChange {
+    /// JSON pointer or top-level bucket when the parser does not model the field yet.
+    pub path: String,
+    pub before_hash: Option<String>,
+    pub after_hash: Option<String>,
 }
 
 pub enum StatementChange {
@@ -147,8 +159,9 @@ pub enum StatementChange {
 /// qualifier / rank / reference is never a no-op." Computed from `Statement.raw` equality.
 pub struct StatementChangeParts { pub value: bool, pub qualifiers: bool, pub rank: bool, pub references: bool }
 
-/// `old = None` = first revision (everything Added). Change detection uses `raw` equality,
-/// so unknown datatypes still register as changes.
+/// `old = None` = first revision (everything Added). Statement change detection uses
+/// `Statement.raw` equality, so unknown datatypes still register as statement changes.
+/// Whole-entity raw comparison populates `unknown` for unmodeled top-level/entity fields.
 pub fn diff_entities(old: Option<&Entity>, new: &Entity) -> EntityDiff;
 ```
 
@@ -162,7 +175,7 @@ pub struct StatementRef { pub entity: EntityId, pub property: PropertyId, pub st
 pub struct StatementProposal {
     pub entity: EntityId,
     pub base_revid: u64,           // drift baseline == Entity.last_revid at propose time
-    pub statement: Statement,      // property + value + qualifiers + rank + the citation reference
+    pub statement: Statement,      // property + value + qualifiers + rank + structured reference snaks
     pub grounding: Grounding,      // ADR-0007: verbatim source passage + source hash for the fact
 }
 ```
@@ -177,22 +190,24 @@ the shared model. Nothing in PRD-0010's DoD changes.
 | `get_json` + `Special:EntityData` URL | `build_entity_request(id, None)` + `parse_entity` |
 | `parse_statement` → `ParsedStatement` | `parse_entity` + `Entity::statement(&StatementRef)` |
 | `render_value` (Value poking) | `WikibaseValue` + `render_value` (typed) |
-| `extract_ref_url` (first P854) | `Statement.references` → `Reference::urls()` |
+| `extract_ref_url` (first P854) | `Statement.references` → `Reference::urls()` for #103; `Reference.snaks` for richer references |
 | `label_of`, `labels_url` | `Labels::get`, `build_label_request` |
 | `claim_rendered = format!(...)` | `render_statement_claim` |
 | `StatementRef` (defined in `sp42-mcp`) | promoted here; `sp42-mcp` re-exports it |
 
-Post-convergence, the verb body is: `build_entity_request` → `parse_entity` →
+Post-convergence, the #103 verb body is: `build_entity_request` → `parse_entity` →
 `Entity::statement` → `render_statement_claim` → `Reference::urls()` (P854) →
-`verify_claim`. Same three fetches, same abstention on no-P854, same tests.
+`verify_claim`. Same three fetches, same abstention on no-P854, same tests. Other
+consumers use the same `Reference` model but can inspect the full snak set.
 
 ## What patrol / the write lane add (the extension delta #103 didn't need)
 
 All additive; #103's verb simply ignores them:
 
-- **Qualifiers, rank, sitelinks, aliases, descriptions, `Statement.raw`** — #103 only
-  needed mainsnak value + P854; the diff needs the rest and the raw form for the
-  no-op invariant.
+- **Qualifiers, rank, sitelinks, aliases, descriptions, `Statement.raw`, and
+  `Entity.raw`/`UnknownEntityChange`** — #103 only needed mainsnak value + P854; the
+  diff needs the rest so modeled changes are classified and unmodeled raw deltas do not
+  disappear.
 - **`EntityDiff` / `ContentDiff` / `diff_entities`** — patrol only.
 - **`build_entity_request(id, Some(rev))`** — parent-revision read for a diff; #103
   reads only `None` (current).

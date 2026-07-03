@@ -47,11 +47,14 @@ patrolling domain consumes it now, and the citation↔Wikidata workflows will to
 2. **Entity revision read — reuse and promote the entity/statement parser from
    PR #103.** PR #103's `verify_wikidata_statement` (`sp42-mcp/src/wikidata.rs`)
    already reads entity JSON (from the keyless `Special:EntityData/{id}.json`
-   endpoint) and parses statements, labels, item-values, and P854 references. That
-   parsing/rendering logic is exactly what `EntityDiff` and the write lane (ADR-0017)
-   also need, so this ADR **promotes it out of the `sp42-mcp` shell into platform** and
-   reuses it — #103 was simply its first consumer, and the reuse-by-design rule puts a
-   twice-used mechanism in platform, not a shell. The diff fetch retrieves the change's
+   endpoint) and parses statements, labels, item-values, and references. Its first
+   consumer reads P854 URL references; the shared model keeps the full reference snak
+   set so book and non-URL references do not get flattened into that P854-only case.
+   That parsing/rendering logic is exactly what `EntityDiff` and the write lane
+   (ADR-0017) also need, so this ADR **promotes it out of the `sp42-mcp` shell into
+   platform** and reuses it — #103 was simply its first consumer, and the
+   reuse-by-design rule puts a twice-used mechanism in platform, not a shell. The diff
+   fetch retrieves the change's
    revision **and its parent**: the Action API `prop=revisions&rvslots=main&rvprop=ids|content|contentmodel`
    returns both revisions' entity JSON in one call and carries `contentmodel` for
    Decision 1, while `Special:EntityData/{id}.json?revision={rev}` (the endpoint #103
@@ -66,11 +69,13 @@ patrolling domain consumes it now, and the citation↔Wikidata workflows will to
    extension of it.** It diffs two entity revisions into classified changes over
    labels, descriptions, aliases, sitelinks, and statements; **statements at full
    depth** — main property/value, qualifiers, rank, and references — each
-   added / removed / changed (PRD-0011 Q4). The parser guarantees the **honesty
-   invariant**: any byte-level difference between the two entities surfaces as at least
-   one classified change, so an edit touching only a qualifier, rank, or reference is
-   never rendered as a no-op. A missing parent (first revision) yields an all-added
-   diff, not an error.
+   added / removed / changed (PRD-0011 Q4). The parser/differ guarantees the
+   **honesty invariant** over the review contract: every change in modeled
+   review-relevant fields surfaces as a classified change, and any unmodeled
+   top-level/raw entity delta surfaces as an explicit `UnknownEntityChange`/raw-hash
+   change instead of being silently dropped. In particular, an edit touching only a
+   qualifier, rank, or reference is never rendered as a no-op. A missing parent (first
+   revision) yields an all-added diff, not an error.
 
 4. **Content-model routing via a `ContentDiff` sum.** Diff consumers (the
    `sp42-reporting` renderer, routes, shells) receive a
@@ -112,7 +117,9 @@ patrolling domain consumes it now, and the citation↔Wikidata workflows will to
 
 - **PRD-0010 / PR #103 (citation-verification MCP surface):** #103 ships the *first*
   Wikidata read in the codebase — `verify_wikidata_statement` reads an entity and its
-  P854 reference and verifies the statement via the existing `verify_claim` pipeline.
+  P854 URL reference, then verifies the statement via the existing `verify_claim`
+  pipeline. P854 is that verb's URL-reference case, not the whole platform reference
+  model.
   This ADR does **not** compete with it: it **promotes #103's entity/statement parser
   to platform** (Decision 2) so the MCP verb, the patrol entity diff, and the write
   lane (ADR-0017) share one Wikidata read model instead of drifting into two. #103's

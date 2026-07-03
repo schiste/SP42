@@ -130,6 +130,13 @@ records **only from identifiers it already trusts**:
   refined so the report distinguishes "no identifier to resolve" from "resolved but
   nothing found." No fabricated matches, consistent with how the URL path treats
   unresolvable sources.
+- **Grounding requires an exact edition scan.** If the Read API response marks a
+  volume as only a `similar` match (a scan of another edition of the same work),
+  SP42 may surface that fact to the operator as context, but it does **not** feed
+  the scan into Layer 2 as the cited book's source body. For grounding, page
+  checks, and `not_supported` conclusions, a similar-edition-only response
+  degrades to `SourceUnavailable` with a refined "similar edition only" reason;
+  SP42 never verifies a page-specific ISBN citation against a different edition.
 - **Wikidata is a secondary structured authority.** When the Open Library record (or
   its work/author) carries a Wikidata link — or one is reachable via a shared
   identifier — SP42 may pull the linked Wikidata item as *additional sourced
@@ -152,12 +159,14 @@ When resolution yields an Internet Archive scan with searchable full text:
   **scanned** page the passage was actually found on, so a page mismatch surfaces to
   the operator rather than causing a false `not_supported`.
 - The **anti-fabrication grounding gate is unchanged** (ADR-0007): a `supported`
-  verdict must carry a passage **verbatim-located in the fetched bytes** — here, the
-  returned snippet. The snippet is content-hashed and stored under the ADR-0009
-  snapshot/replay discipline, so verdicts replay deterministically. Grounding on the
-  snippet (rather than a full-book OCR download) is deliberate: **snippet search
-  typically works even for lending-restricted / in-copyright scans**, so SP42 can
-  ground a passage without needing to borrow the book.
+  or `partial` verdict must carry a passage **verbatim-located in the fetched
+  bytes** — here, the returned snippet. `not_supported` is a no-quote verdict
+  grounded by fetched-source provenance and the search outcome, not by a
+  fabricated "supporting" passage. The snippet is content-hashed and stored under
+  the ADR-0009 snapshot/replay discipline, so verdicts replay deterministically.
+  Grounding on the snippet (rather than a full-book OCR download) is deliberate:
+  **snippet search typically works even for lending-restricted / in-copyright
+  scans**, so SP42 can ground a passage without needing to borrow the book.
 - The finding records a **deep link to the scanned page** (Internet Archive book
   URLs support page anchors + search highlighting) so the operator can jump to the
   page that supports — or contradicts — the claim.
@@ -242,10 +251,16 @@ Open Library / Internet Archive responses — no live network in tests (ADR-0009
       `/api/books` fixture; a resolution **miss issues no import/write** (asserted by
       the mock client seeing only the read endpoint), and a citation with **no**
       resolvable identifier stays `skipped` with the refined reason.
-- [ ] A resolved book with a searchable scan produces a `supported` / `partial` /
-      `not_supported` verdict whose supporting passage is **verbatim-located in the
-      returned search-inside snippet**, verified by a replayed search-inside fixture;
-      the ADR-0007 grounding gate rejects a passage not present in the snippet.
+- [ ] A resolved book with a searchable scan never grounds against a
+      Read-API `similar` match: only exact-edition scans enter Layer 2, and a
+      similar-edition-only response is reported `SourceUnavailable` with the
+      refined reason, verified by a replayed Read API fixture.
+- [ ] A resolved book with a searchable exact-edition scan may produce a
+      `supported` / `partial` / `not_supported` verdict, but only `supported` and
+      `partial` require a supporting passage **verbatim-located in the returned
+      search-inside snippet**, verified by a replayed search-inside fixture; the
+      ADR-0007 grounding gate rejects a passage not present in the snippet, and a
+      `not_supported` verdict is never required to fabricate one.
 - [ ] A citation with `|page=` searches that page first and **falls back to a
       whole-book search** when it misses; the finding reports the **scanned** page the
       passage was found on, verified by fixtures for both the page-hit and the

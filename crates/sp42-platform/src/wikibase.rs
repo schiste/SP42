@@ -1063,6 +1063,13 @@ pub enum StatementChange {
         /// Which parts moved.
         parts: StatementChangeParts,
     },
+    /// The statements for a property were reordered without content changes.
+    /// Surfaced explicitly so a pure reorder is never a no-op (the honesty
+    /// invariant) — statement order is reviewable content on Wikidata.
+    Reordered {
+        /// The property whose statement order changed.
+        property: String,
+    },
 }
 
 /// A change to an unmodeled top-level entity field, surfaced by key so the
@@ -1134,6 +1141,12 @@ pub fn collect_label_ids(diff: &EntityDiff) -> Vec<String> {
                 collect_statement(before);
                 collect_statement(after);
             }
+            StatementChange::Reordered { .. } => {}
+        }
+    }
+    for change in &diff.statements {
+        if let StatementChange::Reordered { property } = change {
+            ids.insert(property.clone());
         }
     }
     ids.into_iter().collect()
@@ -1158,17 +1171,318 @@ pub enum ContentDiff {
     },
 }
 
-/// The content-diff route's wire payload: the routed diff plus best-effort
-/// resolved labels, so a renderer prints "educated at → University of X"
-/// rather than raw `P…`/`Q…` ids without its own label round-trips. `labels`
-/// is empty when resolution failed or the diff is a text diff.
+/// How a rendered entity change row classifies, for badge/tone display.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum EntityChangeKind {
+    /// Present only after the edit.
+    Added,
+    /// Present only before the edit.
+    Removed,
+    /// Present on both sides with different content.
+    Changed,
+}
+
+/// One pre-rendered entity change row: everything a review surface needs,
+/// with labels already resolved (raw ids where resolution failed).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ContentDiffReport {
-    /// The content-model-routed diff.
-    pub diff: ContentDiff,
-    /// Resolved labels by entity/property id, best-effort.
-    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    pub labels: BTreeMap<String, String>,
+pub struct EntityChangeRowReport {
+    /// The change classification (badge/tone).
+    pub kind: EntityChangeKind,
+    /// The fully rendered row text.
+    pub text: String,
+}
+
+/// One titled section of rendered entity change rows (Labels, Statements, …).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EntityDiffSectionReport {
+    /// The section title.
+    pub title: String,
+    /// The rendered rows, in diff order.
+    pub rows: Vec<EntityChangeRowReport>,
+}
+
+/// The rendered entity diff a review surface consumes: flat, pre-rendered
+/// sections in the ADR-0011 "the report is the contract" discipline. The
+/// full-depth [`EntityDiff`] stays server/domain-side where the honesty
+/// invariant needs it; shipping only rendered rows keeps the browser's
+/// deserialize surface (and the wasm bundle) small.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EntityDiffReport {
+    /// The rendered sections; empty when the diff records no changes.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub sections: Vec<EntityDiffSectionReport>,
+}
+
+impl EntityDiffReport {
+    /// Whether the report carries any rendered change.
+    #[must_use]
+    pub fn has_changes(&self) -> bool {
+        !self.sections.is_empty()
+    }
+}
+
+/// The content-diff route's wire payload, routed by content model: wikitext
+/// keeps the existing structured text diff; entity revisions carry the
+/// pre-rendered [`EntityDiffReport`].
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum ContentDiffReport {
+    /// A line/char text diff (the existing path, byte-for-byte untouched).
+    Text {
+        /// The structured text diff.
+        diff: StructuredDiff,
+    },
+    /// A rendered entity diff.
+    Entity {
+        /// The rendered entity diff report.
+        diff: EntityDiffReport,
+    },
+}
+
+fn optional_term(value: Option<&String>) -> String {
+    value.map_or_else(
+        || "(none)".to_owned(),
+        |value| format!("\u{201c}{value}\u{201d}"),
+    )
+}
+
+fn term_row(change: &TermChange) -> EntityChangeRowReport {
+    let kind = match (&change.before, &change.after) {
+        (None, Some(_)) => EntityChangeKind::Added,
+        (Some(_), None) => EntityChangeKind::Removed,
+        _ => EntityChangeKind::Changed,
+    };
+    EntityChangeRowReport {
+        kind,
+        text: format!(
+            "{}: {} \u{2192} {}",
+            change.language,
+            optional_term(change.before.as_ref()),
+            optional_term(change.after.as_ref())
+        ),
+    }
+}
+
+fn labeled<'ids>(labels: &'ids BTreeMap<String, String>, id: &'ids str) -> &'ids str {
+    labels.get(id).map_or(id, String::as_str)
+}
+
+fn statement_value_text(
+    labels: &BTreeMap<String, String>,
+    statement: &WikibaseStatement,
+) -> String {
+    let display = render_snak_value(&statement.value);
+    match display.item {
+        Some(item) => labeled(labels, &item).to_owned(),
+        None => display.text,
+    }
+}
+
+fn statement_row_text(labels: &BTreeMap<String, String>, statement: &WikibaseStatement) -> String {
+    format!(
+        "{}: {}",
+        labeled(labels, &statement.property),
+        statement_value_text(labels, statement)
+    )
+}
+
+fn snak_list_text(labels: &BTreeMap<String, String>, snaks: &[WikibaseSnak]) -> String {
+    let rendered: Vec<String> = snaks
+        .iter()
+        .map(|snak| {
+            let display = render_snak_value(snak);
+            let value = display
+                .item
+                .as_deref()
+                .map_or(display.text.clone(), |item| {
+                    labeled(labels, item).to_owned()
+                });
+            format!("{}: {}", labeled(labels, &snak.property), value)
+        })
+        .collect();
+    format!("[{}]", rendered.join("; "))
+}
+
+const fn rank_text(rank: StatementRank) -> &'static str {
+    match rank {
+        StatementRank::Preferred => "preferred",
+        StatementRank::Normal => "normal",
+        StatementRank::Deprecated => "deprecated",
+    }
+}
+
+fn references_text(labels: &BTreeMap<String, String>, references: &[WikibaseReference]) -> String {
+    let rendered: Vec<String> = references
+        .iter()
+        .map(|reference| snak_list_text(labels, &reference.snaks))
+        .collect();
+    format!("[{}]", rendered.join("; "))
+}
+
+/// The changed-subpart deltas for a `Changed` statement row: reviewers must
+/// see *what* moved in a qualifier/rank/reference-only edit, not just that
+/// something did.
+fn changed_part_details(
+    labels: &BTreeMap<String, String>,
+    before: &WikibaseStatement,
+    after: &WikibaseStatement,
+    parts: StatementChangeParts,
+) -> Vec<String> {
+    let mut details = Vec::new();
+    if parts.qualifiers {
+        details.push(format!(
+            "qualifiers {} \u{2192} {}",
+            snak_list_text(labels, &before.qualifiers),
+            snak_list_text(labels, &after.qualifiers)
+        ));
+    }
+    if parts.rank {
+        details.push(format!(
+            "rank {} \u{2192} {}",
+            rank_text(before.rank),
+            rank_text(after.rank)
+        ));
+    }
+    if parts.references {
+        details.push(format!(
+            "references {} \u{2192} {}",
+            references_text(labels, &before.references),
+            references_text(labels, &after.references)
+        ));
+    }
+    if parts.other {
+        details.push("other statement fields changed".to_owned());
+    }
+    details
+}
+
+fn statement_row(
+    labels: &BTreeMap<String, String>,
+    change: &StatementChange,
+) -> EntityChangeRowReport {
+    match change {
+        StatementChange::Added { statement } => EntityChangeRowReport {
+            kind: EntityChangeKind::Added,
+            text: statement_row_text(labels, statement),
+        },
+        StatementChange::Removed { statement } => EntityChangeRowReport {
+            kind: EntityChangeKind::Removed,
+            text: statement_row_text(labels, statement),
+        },
+        StatementChange::Changed {
+            before,
+            after,
+            parts,
+        } => {
+            let core = format!(
+                "{}: {} \u{2192} {}",
+                labeled(labels, &after.property),
+                statement_value_text(labels, before),
+                statement_value_text(labels, after),
+            );
+            let details = changed_part_details(labels, before, after, *parts);
+            let text = if details.is_empty() {
+                core
+            } else {
+                format!("{core} ({})", details.join("; "))
+            };
+            EntityChangeRowReport {
+                kind: EntityChangeKind::Changed,
+                text,
+            }
+        }
+        StatementChange::Reordered { property } => EntityChangeRowReport {
+            kind: EntityChangeKind::Changed,
+            text: format!("{}: statement order changed", labeled(labels, property)),
+        },
+    }
+}
+
+fn report_section(
+    title: &str,
+    rows: Vec<EntityChangeRowReport>,
+) -> Option<EntityDiffSectionReport> {
+    (!rows.is_empty()).then(|| EntityDiffSectionReport {
+        title: title.to_owned(),
+        rows,
+    })
+}
+
+/// Render a full-depth [`EntityDiff`] into the flat, pre-rendered report a
+/// review surface consumes, substituting resolved `labels` (raw ids where
+/// resolution failed). Pure and host-testable — this is the single renderer
+/// every shell shares, so entity rows read identically everywhere.
+#[must_use]
+pub fn render_entity_diff_report(
+    diff: &EntityDiff,
+    labels: &BTreeMap<String, String>,
+) -> EntityDiffReport {
+    let sections = [
+        report_section("Labels", diff.labels.iter().map(term_row).collect()),
+        report_section(
+            "Descriptions",
+            diff.descriptions.iter().map(term_row).collect(),
+        ),
+        report_section(
+            "Aliases",
+            diff.aliases
+                .iter()
+                .map(|change| EntityChangeRowReport {
+                    kind: EntityChangeKind::Changed,
+                    text: format!(
+                        "{}: [{}] \u{2192} [{}]",
+                        change.language,
+                        change.before.join(", "),
+                        change.after.join(", ")
+                    ),
+                })
+                .collect(),
+        ),
+        report_section(
+            "Sitelinks",
+            diff.sitelinks
+                .iter()
+                .map(|change| {
+                    let kind = match (&change.before, &change.after) {
+                        (None, Some(_)) => EntityChangeKind::Added,
+                        (Some(_), None) => EntityChangeKind::Removed,
+                        _ => EntityChangeKind::Changed,
+                    };
+                    EntityChangeRowReport {
+                        kind,
+                        text: format!(
+                            "{}: {} \u{2192} {}",
+                            change.site,
+                            optional_term(change.before.as_ref()),
+                            optional_term(change.after.as_ref())
+                        ),
+                    }
+                })
+                .collect(),
+        ),
+        report_section(
+            "Statements",
+            diff.statements
+                .iter()
+                .map(|change| statement_row(labels, change))
+                .collect(),
+        ),
+        report_section(
+            "Other fields",
+            diff.other
+                .iter()
+                .map(|change| EntityChangeRowReport {
+                    kind: EntityChangeKind::Changed,
+                    text: format!("{} changed", change.key),
+                })
+                .collect(),
+        ),
+    ]
+    .into_iter()
+    .flatten()
+    .collect();
+    EntityDiffReport { sections }
 }
 
 fn diff_term_maps(
@@ -1204,8 +1518,8 @@ fn diff_statement_lists(
     after: &[WikibaseStatement],
     changes: &mut Vec<StatementChange>,
 ) {
-    let _ = property;
     let mut consumed_after = vec![false; after.len()];
+    let mut matched_positions = Vec::new();
 
     for old in before {
         // Pair by GUID first; a statement kept across the edit keeps its id.
@@ -1216,6 +1530,7 @@ fn diff_statement_lists(
         });
         if let Some(index) = paired {
             consumed_after[index] = true;
+            matched_positions.push(index);
             let new = &after[index];
             if old.raw != new.raw {
                 changes.push(StatementChange::Changed {
@@ -1233,6 +1548,7 @@ fn diff_statement_lists(
             (!consumed_after[index] && new.raw == old.raw).then_some(index)
         }) {
             consumed_after[index] = true;
+            matched_positions.push(index);
             continue;
         }
         changes.push(StatementChange::Removed {
@@ -1246,6 +1562,15 @@ fn diff_statement_lists(
                 statement: Box::new(new.clone()),
             });
         }
+    }
+
+    // Matched statements landing out of order is a real, reviewable edit
+    // (statement order is content on Wikidata): surface it explicitly rather
+    // than letting a pure reorder render as no changes.
+    if matched_positions.windows(2).any(|pair| pair[0] > pair[1]) {
+        changes.push(StatementChange::Reordered {
+            property: property.to_owned(),
+        });
     }
 }
 
@@ -1832,6 +2157,106 @@ mod tests {
             super::route_content_diff(Some("wikibase-item"), Some("not json"), &new_entity),
             super::ContentDiff::Text { .. }
         ));
+    }
+
+    #[test]
+    fn pure_statement_reorders_are_never_no_ops() {
+        let one = json!({
+            "id": "Q42$s1",
+            "mainsnak": {"snaktype": "value", "property": "P800", "datavalue": {"type": "string", "value": "a"}}
+        });
+        let two = json!({
+            "id": "Q42$s2",
+            "mainsnak": {"snaktype": "value", "property": "P800", "datavalue": {"type": "string", "value": "b"}}
+        });
+        let old_doc =
+            json!({"id": "Q42", "claims": {"P800": [one.clone(), two.clone()]}}).to_string();
+        let new_doc = json!({"id": "Q42", "claims": {"P800": [two, one]}}).to_string();
+        let old = parse_entity("Q42", old_doc.as_bytes()).expect("old parses");
+        let new = parse_entity("Q42", new_doc.as_bytes()).expect("new parses");
+
+        let diff = diff_entities(Some(&old), &new);
+        assert!(diff.has_changes(), "a pure reorder must not be a no-op");
+        assert_eq!(
+            diff.statements,
+            vec![StatementChange::Reordered {
+                property: "P800".to_string()
+            }]
+        );
+    }
+
+    #[test]
+    fn renders_entity_diff_reports_with_labels_and_subpart_details() {
+        use std::collections::BTreeMap;
+
+        let base = json!({
+            "id": "Q42$s1",
+            "rank": "normal",
+            "mainsnak": {"snaktype": "value", "property": "P800", "datavalue": {"type": "string", "value": "v"}}
+        });
+        let mut tweaked = base.clone();
+        tweaked["rank"] = json!("preferred");
+        tweaked["references"] =
+            json!([{"snaks": {"P854": [{"datavalue": {"value": "https://ref.example/"}}]}}]);
+
+        let old = entity_with_statement(&base);
+        let new = entity_with_statement(&tweaked);
+        let diff = diff_entities(Some(&old), &new);
+
+        let labels = BTreeMap::from([("P800".to_string(), "notable work".to_string())]);
+        let report = super::render_entity_diff_report(&diff, &labels);
+        assert!(report.has_changes());
+        assert_eq!(report.sections.len(), 1);
+        assert_eq!(report.sections[0].title, "Statements");
+        let row = &report.sections[0].rows[0];
+        assert_eq!(row.kind, super::EntityChangeKind::Changed);
+        assert!(row.text.starts_with("notable work: v \u{2192} v ("));
+        assert!(
+            row.text.contains("rank normal \u{2192} preferred"),
+            "rank delta must be visible: {}",
+            row.text
+        );
+        assert!(
+            row.text.contains("https://ref.example/"),
+            "reference delta must be visible: {}",
+            row.text
+        );
+
+        // Empty diff → empty report; unresolved ids render raw.
+        assert!(
+            !super::render_entity_diff_report(&super::EntityDiff::default(), &labels).has_changes()
+        );
+        let unlabeled = super::render_entity_diff_report(&diff, &BTreeMap::new());
+        assert!(unlabeled.sections[0].rows[0].text.starts_with("P800:"));
+    }
+
+    #[test]
+    fn content_diff_report_wire_round_trips_both_arms() {
+        let entity = super::ContentDiffReport::Entity {
+            diff: super::EntityDiffReport {
+                sections: vec![super::EntityDiffSectionReport {
+                    title: "Statements".to_string(),
+                    rows: vec![super::EntityChangeRowReport {
+                        kind: super::EntityChangeKind::Added,
+                        text: "notable work: v".to_string(),
+                    }],
+                }],
+            },
+        };
+        let encoded = serde_json::to_string(&entity).expect("serializes");
+        assert!(encoded.contains(r#""kind":"entity""#));
+        let decoded: super::ContentDiffReport =
+            serde_json::from_str(&encoded).expect("deserializes");
+        assert_eq!(decoded, entity);
+
+        let text = super::ContentDiffReport::Text {
+            diff: crate::diff_engine::diff_lines("a", "b"),
+        };
+        let encoded = serde_json::to_string(&text).expect("serializes");
+        assert!(encoded.contains(r#""kind":"text""#));
+        let decoded: super::ContentDiffReport =
+            serde_json::from_str(&encoded).expect("deserializes");
+        assert_eq!(decoded, text);
     }
 
     #[test]

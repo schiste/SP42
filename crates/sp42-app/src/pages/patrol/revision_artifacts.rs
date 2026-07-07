@@ -2,8 +2,8 @@ use std::collections::HashMap;
 
 use leptos::prelude::*;
 use sp42_core::{
-    ContentDiff, ContentDiffReport, MediaDiffReport, QueuedEdit, SessionActionExecutionRequest,
-    SessionActionKind, StructuredDiff,
+    ContentDiffReport, EntityDiffReport, MediaDiffReport, QueuedEdit,
+    SessionActionExecutionRequest, SessionActionKind, StructuredDiff,
 };
 use sp42_patrol::LiveOperatorView;
 
@@ -18,12 +18,12 @@ pub(in crate::pages::patrol) struct RevisionArtifactController {
     pub(in crate::pages::patrol) set_diff_loading: WriteSignal<bool>,
     pub(in crate::pages::patrol) current_diff: ReadSignal<Option<StructuredDiff>>,
     set_current_diff: WriteSignal<Option<StructuredDiff>>,
-    pub(in crate::pages::patrol) current_entity_diff: ReadSignal<Option<ContentDiffReport>>,
-    set_current_entity_diff: WriteSignal<Option<ContentDiffReport>>,
+    pub(in crate::pages::patrol) current_entity_diff: ReadSignal<Option<EntityDiffReport>>,
+    set_current_entity_diff: WriteSignal<Option<EntityDiffReport>>,
     diff_cache: ReadSignal<HashMap<u64, StructuredDiff>>,
     set_diff_cache: WriteSignal<HashMap<u64, StructuredDiff>>,
-    entity_diff_cache: ReadSignal<HashMap<u64, ContentDiffReport>>,
-    set_entity_diff_cache: WriteSignal<HashMap<u64, ContentDiffReport>>,
+    entity_diff_cache: ReadSignal<HashMap<u64, EntityDiffReport>>,
+    set_entity_diff_cache: WriteSignal<HashMap<u64, EntityDiffReport>>,
     pub(in crate::pages::patrol) media_diff_loading: ReadSignal<bool>,
     set_media_diff_loading: WriteSignal<bool>,
     pub(in crate::pages::patrol) current_media_diff: ReadSignal<Option<MediaDiffReport>>,
@@ -50,10 +50,10 @@ pub(super) struct RevisionArtifactEffectsInput {
 pub(super) fn create_revision_artifact_controller() -> RevisionArtifactController {
     let (diff_loading, set_diff_loading) = signal(false);
     let (current_diff, set_current_diff) = signal(None::<StructuredDiff>);
-    let (current_entity_diff, set_current_entity_diff) = signal(None::<ContentDiffReport>);
+    let (current_entity_diff, set_current_entity_diff) = signal(None::<EntityDiffReport>);
     let (diff_cache, set_diff_cache) = signal(HashMap::<u64, StructuredDiff>::new());
     let (entity_diff_cache, set_entity_diff_cache) =
-        signal(HashMap::<u64, ContentDiffReport>::new());
+        signal(HashMap::<u64, EntityDiffReport>::new());
     let (media_diff_loading, set_media_diff_loading) = signal(false);
     let (current_media_diff, set_current_media_diff) = signal(None::<MediaDiffReport>);
     let (media_diff_cache, set_media_diff_cache) = signal(HashMap::<u64, MediaDiffReport>::new());
@@ -136,22 +136,20 @@ fn apply_content_diff(
     report: Option<ContentDiffReport>,
 ) {
     match report {
-        Some(report) => match report.diff {
-            ContentDiff::Text { diff } => {
-                let mut cache = artifacts.diff_cache.get_untracked();
-                cache.insert(rev_id, diff.clone());
-                artifacts.set_diff_cache.set(cache);
-                artifacts.set_current_diff.set(Some(diff));
-                artifacts.set_current_entity_diff.set(None);
-            }
-            ContentDiff::Entity { .. } => {
-                let mut cache = artifacts.entity_diff_cache.get_untracked();
-                cache.insert(rev_id, report.clone());
-                artifacts.set_entity_diff_cache.set(cache);
-                artifacts.set_current_entity_diff.set(Some(report));
-                artifacts.set_current_diff.set(None);
-            }
-        },
+        Some(ContentDiffReport::Text { diff }) => {
+            let mut cache = artifacts.diff_cache.get_untracked();
+            cache.insert(rev_id, diff.clone());
+            artifacts.set_diff_cache.set(cache);
+            artifacts.set_current_diff.set(Some(diff));
+            artifacts.set_current_entity_diff.set(None);
+        }
+        Some(ContentDiffReport::Entity { diff }) => {
+            let mut cache = artifacts.entity_diff_cache.get_untracked();
+            cache.insert(rev_id, diff.clone());
+            artifacts.set_entity_diff_cache.set(cache);
+            artifacts.set_current_entity_diff.set(Some(diff));
+            artifacts.set_current_diff.set(None);
+        }
         None => {
             artifacts.set_current_diff.set(None);
             artifacts.set_current_entity_diff.set(None);
@@ -182,19 +180,18 @@ pub(in crate::pages::patrol) fn prefetch_queue_diffs(
             if old_rev_id == 0 {
                 continue;
             }
-            if let Ok(Some(report)) = fetch_content_diff(&prefetch_wiki, rev_id, old_rev_id).await {
-                match report.diff {
-                    ContentDiff::Text { diff } => {
-                        let mut cache = artifacts.diff_cache.get_untracked();
-                        cache.insert(rev_id, diff);
-                        artifacts.set_diff_cache.set(cache);
-                    }
-                    ContentDiff::Entity { .. } => {
-                        let mut cache = artifacts.entity_diff_cache.get_untracked();
-                        cache.insert(rev_id, report);
-                        artifacts.set_entity_diff_cache.set(cache);
-                    }
+            match fetch_content_diff(&prefetch_wiki, rev_id, old_rev_id).await {
+                Ok(Some(ContentDiffReport::Text { diff })) => {
+                    let mut cache = artifacts.diff_cache.get_untracked();
+                    cache.insert(rev_id, diff);
+                    artifacts.set_diff_cache.set(cache);
                 }
+                Ok(Some(ContentDiffReport::Entity { diff })) => {
+                    let mut cache = artifacts.entity_diff_cache.get_untracked();
+                    cache.insert(rev_id, diff);
+                    artifacts.set_entity_diff_cache.set(cache);
+                }
+                Ok(None) | Err(_) => {}
             }
         }
     });

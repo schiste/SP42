@@ -9,7 +9,7 @@ use axum::{
 use sp42_core::{
     ContentDiff, ContentDiffReport, QueuedEdit, RenderedHunkPreview, RenderedHunkSide,
     RevisionContent, StructuredDiff, WikiConfig, build_media_diff, collect_label_ids, diff_lines,
-    parse_labels, parse_revision_contents, route_content_diff,
+    parse_labels, parse_revision_contents, render_entity_diff_report, route_content_diff,
 };
 use tracing::warn;
 
@@ -191,11 +191,8 @@ pub(crate) async fn fetch_revision_content_diff_by_ids(
         .await
         .map(|artifacts| {
             artifacts.map(|artifacts| {
-                artifacts.content_diff.unwrap_or(ContentDiffReport {
-                    diff: ContentDiff::Text {
-                        diff: artifacts.diff,
-                    },
-                    labels: BTreeMap::new(),
+                artifacts.content_diff.unwrap_or(ContentDiffReport::Text {
+                    diff: artifacts.diff,
                 })
             })
         })
@@ -318,9 +315,8 @@ async fn revision_artifacts_for_pair(
     );
     let content_diff = if let ContentDiff::Entity { ref diff } = routed {
         let labels = resolve_entity_labels(&state.http_client, access_token, config, diff).await;
-        Some(ContentDiffReport {
-            diff: routed.clone(),
-            labels,
+        Some(ContentDiffReport::Entity {
+            diff: render_entity_diff_report(diff, &labels),
         })
     } else {
         None

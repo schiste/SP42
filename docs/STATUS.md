@@ -82,9 +82,17 @@ PWA packaging and offline installability are now effectively complete for local 
   `verify_wikidata_statement`, which now consumes it), a full-depth
   `EntityDiff` with the never-a-no-op honesty invariant, the `ContentDiff`
   routing sum, per-revision content-model classification/capabilities, and an
-  additive `EditEvent.content_model`. The patrol-surface wiring (revision
-  fetch carrying `rvprop=contentmodel`, entity-diff rendering in the review
-  UI) is the next slice (PRD-0011 MVP).
+  additive `EditEvent.content_model`. The patrol surface is wired end to end
+  (PRD-0011 MVP read path): the server revision fetch carries
+  `rvprop=contentmodel` and serves a content-model-routed
+  `/operator/content-diff` route (entity pairs carry an `EntityDiff` with
+  labels resolved server-side in one batched `wbgetentities` call;
+  media-reference extraction is not invoked for entity content), and the
+  browser diff pane renders entity revisions through an `EntityDiffViewer`
+  (classified label/description/alias/sitelink/statement change rows) while
+  wikitext revisions keep the existing viewer unchanged. Remaining for the
+  MVP: bot-filtered Wikidata queue defaults, scoring gate-off at the queue
+  level, and the `testwikidatawiki` action acceptance gate.
 
 ## Current Verification
 

@@ -476,6 +476,116 @@ pub fn parse_entity(entity_id: &str, body: &[u8]) -> Result<WikibaseEntity, Wiki
     Ok(parse_entity_object(entity_id, entity))
 }
 
+/// Parse a bare entity body whose own `id` field is authoritative — the
+/// `prop=revisions` slot-content case, where no id was requested up front.
+///
+/// # Errors
+///
+/// Returns [`WikibaseError::Json`] for non-JSON bodies and
+/// [`WikibaseError::InvalidEntity`] when the body carries no `id`.
+pub fn parse_entity_content(body: &[u8]) -> Result<WikibaseEntity, WikibaseError> {
+    let entity = parse_entity("", body)?;
+    if entity.id.is_empty() {
+        return Err(WikibaseError::InvalidEntity {
+            message: "entity content carries no id".to_string(),
+        });
+    }
+    Ok(entity)
+}
+
+/// One revision's main-slot content, as returned by the Action API
+/// `prop=revisions&rvslots=main&rvprop=ids|content|contentmodel` read — the
+/// diff fetch ADR-0016 Decision 2 names (both revisions in one call, with the
+/// content model Decision 1 routes on).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RevisionContent {
+    /// The main-slot content (wikitext, entity JSON, …).
+    pub content: String,
+    /// The revision's content model, when the payload carries one.
+    pub content_model: Option<String>,
+}
+
+/// Parse an Action API `prop=revisions` response (formatversion 2) into
+/// per-revision main-slot contents keyed by revision id. Revisions without
+/// content (deleted/suppressed) are omitted, matching how the existing
+/// text-pair fetch treats them.
+///
+/// # Errors
+///
+/// Returns [`WikibaseError::Json`] for non-JSON bodies and
+/// [`WikibaseError::InvalidEntity`] when the payload has no `query.pages`.
+pub fn parse_revision_contents(
+    body: &[u8],
+) -> Result<BTreeMap<u64, RevisionContent>, WikibaseError> {
+    let parsed: Value = serde_json::from_slice(body)?;
+    let pages = parsed
+        .get("query")
+        .and_then(|value| value.get("pages"))
+        .and_then(Value::as_array)
+        .ok_or_else(|| WikibaseError::InvalidEntity {
+            message: "revision payload does not contain query.pages".to_string(),
+        })?;
+
+    let mut contents = BTreeMap::new();
+    for page in pages {
+        let Some(revisions) = page.get("revisions").and_then(Value::as_array) else {
+            continue;
+        };
+        for revision in revisions {
+            let Some(rev_id) = revision.get("revid").and_then(Value::as_u64) else {
+                continue;
+            };
+            let main = revision.get("slots").and_then(|slots| slots.get("main"));
+            let Some(content) = main
+                .and_then(|main| main.get("content"))
+                .and_then(Value::as_str)
+            else {
+                continue;
+            };
+            let content_model = main
+                .and_then(|main| main.get("contentmodel"))
+                .and_then(Value::as_str)
+                .map(str::to_owned);
+            contents.insert(
+                rev_id,
+                RevisionContent {
+                    content: content.to_owned(),
+                    content_model,
+                },
+            );
+        }
+    }
+    Ok(contents)
+}
+
+/// Route a revision pair to the content-model-appropriate diff (ADR-0016
+/// Decision 4): Wikibase entity content parses and diffs structurally;
+/// everything else — wikitext, unknown or other models, and entity content
+/// that fails to parse — takes the existing text diff, degrading honestly
+/// rather than erroring. `before` is `None` for a first revision.
+#[must_use]
+pub fn route_content_diff(
+    content_model: Option<&str>,
+    before: Option<&str>,
+    after: &str,
+) -> ContentDiff {
+    if classify_content_model(content_model) == ContentModelClass::WikibaseEntity
+        && let Ok(new_entity) = parse_entity_content(after.as_bytes())
+    {
+        let old_entity = before.and_then(|body| parse_entity_content(body.as_bytes()).ok());
+        // A `before` that exists but does not parse must not silently become
+        // an all-added diff; fall back to the text path instead.
+        if before.is_none() || old_entity.is_some() {
+            return ContentDiff::Entity {
+                diff: diff_entities(old_entity.as_ref(), &new_entity),
+            };
+        }
+    }
+    ContentDiff::Text {
+        diff: crate::diff_engine::diff_lines(before.unwrap_or(""), after),
+    }
+}
+
 fn locate_entity_object<'doc>(
     entity_id: &str,
     doc: &'doc Value,
@@ -1560,6 +1670,74 @@ mod tests {
                 .iter()
                 .any(|change| matches!(change, StatementChange::Added { .. }))
         );
+    }
+
+    #[test]
+    fn parses_revision_contents_with_content_models() {
+        let body = json!({
+            "query": {
+                "pages": [{
+                    "pageid": 1,
+                    "revisions": [
+                        {"revid": 10, "slots": {"main": {"contentmodel": "wikibase-item", "content": "{\"id\":\"Q42\"}"}}},
+                        {"revid": 11, "slots": {"main": {"content": "plain text, no model"}}},
+                        {"revid": 12, "slots": {"main": {}}}
+                    ]
+                }]
+            }
+        })
+        .to_string();
+        let contents = super::parse_revision_contents(body.as_bytes()).expect("revisions parse");
+        assert_eq!(contents.len(), 2); // revid 12 has no content and is omitted
+        assert_eq!(
+            contents[&10].content_model.as_deref(),
+            Some("wikibase-item")
+        );
+        assert_eq!(contents[&11].content_model, None);
+
+        assert!(super::parse_revision_contents(b"{}").is_err());
+        assert!(super::parse_revision_contents(b"not json").is_err());
+    }
+
+    #[test]
+    fn routes_entity_content_to_entity_diffs_and_everything_else_to_text() {
+        let old_entity = json!({"id": "Q42", "labels": {"en": {"value": "Old"}}}).to_string();
+        let new_entity = json!({"id": "Q42", "labels": {"en": {"value": "New"}}}).to_string();
+
+        // Entity content model with parseable bodies → structured diff.
+        let diff = super::route_content_diff(Some("wikibase-item"), Some(&old_entity), &new_entity);
+        let super::ContentDiff::Entity { diff } = diff else {
+            panic!("entity content should route to the entity diff");
+        };
+        assert_eq!(diff.labels.len(), 1);
+
+        // First revision → all-added entity diff, not an error.
+        assert!(matches!(
+            super::route_content_diff(Some("wikibase-item"), None, &new_entity),
+            super::ContentDiff::Entity { .. }
+        ));
+
+        // Wikitext and unknown models → the text path.
+        assert!(matches!(
+            super::route_content_diff(Some("wikitext"), Some("a"), "b"),
+            super::ContentDiff::Text { .. }
+        ));
+        assert!(matches!(
+            super::route_content_diff(None, Some("a"), "b"),
+            super::ContentDiff::Text { .. }
+        ));
+
+        // Entity model whose content does not parse → honest text fallback,
+        // including when only the `before` side is broken (never a fabricated
+        // all-added entity diff).
+        assert!(matches!(
+            super::route_content_diff(Some("wikibase-item"), Some(&old_entity), "not json"),
+            super::ContentDiff::Text { .. }
+        ));
+        assert!(matches!(
+            super::route_content_diff(Some("wikibase-item"), Some("not json"), &new_entity),
+            super::ContentDiff::Text { .. }
+        ));
     }
 
     #[test]

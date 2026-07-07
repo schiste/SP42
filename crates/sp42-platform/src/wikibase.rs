@@ -431,6 +431,12 @@ impl WikibaseLabels {
     pub fn get(&self, id: &str) -> Option<&str> {
         self.0.get(id).map(String::as_str)
     }
+
+    /// The resolved labels as an id → label map.
+    #[must_use]
+    pub fn into_map(self) -> BTreeMap<String, String> {
+        self.0
+    }
 }
 
 /// Parse a `wbgetentities` labels response for one language.
@@ -1081,6 +1087,36 @@ impl EntityDiff {
     }
 }
 
+/// The entity/property ids a renderer wants human-readable labels for:
+/// statement and qualifier property ids plus item-valued main snaks, across
+/// every statement change in the diff. Deduplicated and ordered; feed to
+/// [`build_label_request`] (best-effort — a failed lookup renders raw ids).
+#[must_use]
+pub fn collect_label_ids(diff: &EntityDiff) -> Vec<String> {
+    let mut ids = std::collections::BTreeSet::new();
+    let mut collect_statement = |statement: &WikibaseStatement| {
+        ids.insert(statement.property.clone());
+        for snak in &statement.qualifiers {
+            ids.insert(snak.property.clone());
+        }
+        if let WikibaseSnakKind::Value(WikibaseValue::EntityId(id)) = &statement.value.kind {
+            ids.insert(id.clone());
+        }
+    };
+    for change in &diff.statements {
+        match change {
+            StatementChange::Added { statement } | StatementChange::Removed { statement } => {
+                collect_statement(statement);
+            }
+            StatementChange::Changed { before, after, .. } => {
+                collect_statement(before);
+                collect_statement(after);
+            }
+        }
+    }
+    ids.into_iter().collect()
+}
+
 /// The content-model-routed diff a review surface consumes (ADR-0016
 /// Decision 4): wikitext (and unknown/other models, with honest degradation)
 /// renders through the existing [`StructuredDiff`]; Wikibase entities render
@@ -1098,6 +1134,19 @@ pub enum ContentDiff {
         /// The structured entity diff.
         diff: EntityDiff,
     },
+}
+
+/// The content-diff route's wire payload: the routed diff plus best-effort
+/// resolved labels, so a renderer prints "educated at → University of X"
+/// rather than raw `P…`/`Q…` ids without its own label round-trips. `labels`
+/// is empty when resolution failed or the diff is a text diff.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ContentDiffReport {
+    /// The content-model-routed diff.
+    pub diff: ContentDiff,
+    /// Resolved labels by entity/property id, best-effort.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub labels: BTreeMap<String, String>,
 }
 
 fn diff_term_maps(

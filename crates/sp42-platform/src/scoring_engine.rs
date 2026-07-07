@@ -615,6 +615,7 @@ mod tests {
 
     fn sample_event() -> EditEvent {
         EditEvent {
+            content_model: None,
             wiki_id: "frwiki".to_string(),
             title: "Exemple".to_string(),
             namespace: 0,

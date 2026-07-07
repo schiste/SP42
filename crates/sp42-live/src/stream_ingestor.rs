@@ -101,6 +101,7 @@ impl StreamIngestor {
         });
 
         Ok(Some(EditEvent {
+            content_model: None,
             wiki_id: raw.wiki,
             title: raw.title,
             namespace: raw.namespace,

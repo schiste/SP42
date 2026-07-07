@@ -76,6 +76,15 @@ PWA packaging and offline installability are now effectively complete for local 
   (text/markdown/json), defaulting to the latest revision. `frwiki`, `enwiki`,
   and `testwiki` are registered. The browser Citations tab that renders the same
   report is in review (PR #81).
+- the shared Wikidata entity read model (ADR-0016) is implemented as the
+  platform `wikibase` module: endpoint-agnostic entity/statement parsing,
+  label lookup and claim rendering (promoted from `sp42-mcp`'s
+  `verify_wikidata_statement`, which now consumes it), a full-depth
+  `EntityDiff` with the never-a-no-op honesty invariant, the `ContentDiff`
+  routing sum, per-revision content-model classification/capabilities, and an
+  additive `EditEvent.content_model`. The patrol-surface wiring (revision
+  fetch carrying `rvprop=contentmodel`, entity-diff rendering in the review
+  UI) is the next slice (PRD-0011 MVP).
 
 ## Current Verification
 

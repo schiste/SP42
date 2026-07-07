@@ -231,6 +231,7 @@ pub fn parse_recent_changes_response(
         }
 
         events.push(EditEvent {
+            content_model: None,
             wiki_id: config.wiki_id.clone(),
             title: change.title,
             namespace: change.namespace,

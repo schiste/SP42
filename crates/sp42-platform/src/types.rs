@@ -99,6 +99,14 @@ pub struct EditEvent {
     pub byte_delta: i32,
     #[serde(default)]
     pub is_patrolled: FlagState,
+    /// The revision's content model (`wikitext`, `wikibase-item`, …), when
+    /// known. Ingestion sources (recentchanges, `EventStreams`) do not carry
+    /// it, so it is `None` until a revision-content read supplies it; all
+    /// content-model routing keys on this value, never the wiki id
+    /// (ADR-0016 Decision 1). Additive and serde-back-compatible: old
+    /// snapshots deserialize to `None` and `None` serializes to nothing.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub content_model: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

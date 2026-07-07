@@ -106,6 +106,7 @@ fn stream_event_to_queued_edit(event: &StreamEvent) -> QueuedEdit {
 
     QueuedEdit {
         event: EditEvent {
+            content_model: None,
             wiki_id: event.wiki.clone(),
             title: event.title.clone(),
             namespace: event.namespace,

@@ -5,7 +5,7 @@ use crate::citation::page::PageVerificationRequest;
 use crate::citation::prompts::ClaimContext;
 use crate::citation::segment::{Sentence, segment_sentences};
 use crate::citation::verify::CitationVerificationRequest;
-use crate::wikitext_editor::ParsoidBlock;
+use crate::wikitext_editor::{BookIdentifier, ParsoidBlock};
 
 /// Maximum preceding in-block sentences carried as context.
 const MAX_PRECEDING: usize = 3;
@@ -37,8 +37,13 @@ pub struct CitationUseSite {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SkippedReason {
-    /// The ref carries no extractable URL (book/ISBN/offline source).
+    /// The ref carries no extractable URL **and no book identifier** — there
+    /// is nothing to fetch and nothing to resolve (offline/unidentified source).
     NonUrlSource,
+    /// The ref carries no URL but does carry a validated book identifier
+    /// (ISBN/OCLC/LCCN/OLID); Open Library catalog resolution (PRD-0009
+    /// Layer 1, ADR-0018) is the path that consumes it.
+    BookSource,
 }
 
 /// A ref that was intentionally not verified.
@@ -47,6 +52,11 @@ pub struct SkippedRef {
     pub ref_id: String,
     pub reason: SkippedReason,
     pub block_ordinal: usize,
+    /// Validated book identifiers carried by the ref's cite templates, in
+    /// template order — populated with [`SkippedReason::BookSource`] so the
+    /// report can show *which* book was left unresolved.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub book_identifiers: Vec<BookIdentifier>,
 }
 
 /// A block (or ref) that could not be processed.
@@ -65,8 +75,10 @@ pub struct ExtractOutcome {
 }
 
 /// Extract every URL-bearing citation use-site from a page's blocks.
-/// Non-URL refs are recorded in `skipped`; blocks that yield no usable claim
-/// go to `failures`. Document order is preserved across the page.
+/// Non-URL refs are recorded in `skipped` — with the skip reason and the
+/// ref's validated book identifiers distinguishing "nothing to resolve" from
+/// "a book awaiting catalog resolution" (PRD-0009). Blocks that yield no
+/// usable claim go to `failures`. Document order is preserved across the page.
 #[must_use]
 pub fn extract_use_sites(
     blocks: &[ParsoidBlock],
@@ -81,10 +93,21 @@ pub fn extract_use_sites(
         let sentences = segment_sentences(&block.text);
         for r in &block.refs {
             if r.sources.is_empty() {
+                let book_identifiers: Vec<BookIdentifier> = r
+                    .book_sources
+                    .iter()
+                    .flat_map(|book| book.identifiers.iter().cloned())
+                    .collect();
+                let reason = if book_identifiers.is_empty() {
+                    SkippedReason::NonUrlSource
+                } else {
+                    SkippedReason::BookSource
+                };
                 skipped.push(SkippedRef {
                     ref_id: r.ref_id.clone(),
-                    reason: SkippedReason::NonUrlSource,
+                    reason,
                     block_ordinal: block.block_ordinal,
+                    book_identifiers,
                 });
                 continue;
             }
@@ -210,6 +233,7 @@ mod tests {
                     archive_urls: vec![],
                 })
                 .collect(),
+            book_sources: vec![],
             ref_text: "[1]".into(),
             named: false,
             is_bare_url_ref: false,
@@ -224,6 +248,7 @@ mod tests {
                 url: url(primary),
                 archive_urls: archives.iter().map(|u| url(u)).collect(),
             }],
+            book_sources: vec![],
             ref_text: "[1]".into(),
             named: false,
             is_bare_url_ref: false,
@@ -291,6 +316,42 @@ mod tests {
         assert!(out.use_sites.is_empty());
         assert_eq!(out.skipped.len(), 1);
         assert_eq!(out.skipped[0].reason, SkippedReason::NonUrlSource);
+        assert!(out.skipped[0].book_identifiers.is_empty());
+    }
+
+    #[test]
+    fn book_identifier_ref_is_skipped_with_the_refined_reason() {
+        // A url-less ref that carries a validated ISBN is distinguishable from
+        // a plain non-URL source: the report can say which book went unresolved.
+        let mut r = bref(10, &[]);
+        r.book_sources = vec![crate::wikitext_editor::BookSource {
+            identifiers: vec![BookIdentifier::Isbn("9780140328721".to_string())],
+            cited_page: Some("42".to_string()),
+        }];
+        let b = block("Cats purr.", vec![r]);
+        let out = extract_use_sites(&[b], &page());
+        assert!(out.use_sites.is_empty());
+        assert_eq!(out.skipped.len(), 1);
+        assert_eq!(out.skipped[0].reason, SkippedReason::BookSource);
+        assert_eq!(
+            out.skipped[0].book_identifiers,
+            vec![BookIdentifier::Isbn("9780140328721".to_string())]
+        );
+    }
+
+    #[test]
+    fn url_bearing_ref_with_book_identifiers_still_verifies_as_url() {
+        // url= wins: the ref produces a use-site; the book identifiers ride
+        // along on the BlockRef without changing the URL verification path.
+        let mut r = bref(10, &["https://a.test"]);
+        r.book_sources = vec![crate::wikitext_editor::BookSource {
+            identifiers: vec![BookIdentifier::Isbn("9780140328721".to_string())],
+            cited_page: None,
+        }];
+        let b = block("Cats purr.", vec![r]);
+        let out = extract_use_sites(&[b], &page());
+        assert_eq!(out.use_sites.len(), 1);
+        assert!(out.skipped.is_empty());
     }
 
     #[test]

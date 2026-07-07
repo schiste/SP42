@@ -15,8 +15,8 @@
 use parsoid::prelude::*;
 use parsoid::{Client, ImmutableWikicode};
 use sp42_platform::{
-    BlockKind, BlockRef, CitedSource, ParsoidBlock, WikiConfig, WikitextEditorError,
-    WikitextPageRef,
+    BlockKind, BlockRef, BookIdentifier, BookSource, CitedSource, ParsoidBlock, WikiConfig,
+    WikitextEditorError, WikitextPageRef,
 };
 use std::collections::HashMap;
 
@@ -99,14 +99,15 @@ pub fn blocks_from_revision(
 ) -> Result<Vec<ParsoidBlock>, WikitextEditorError> {
     let code = Wikicode::new(revision.html());
 
-    // Map Reference.id() -> cited sources (primary URL + archive fallbacks),
-    // read structurally from cite templates and bare ExtLinks inside each reference's contents.
-    let mut ref_sources: HashMap<String, Vec<CitedSource>> = HashMap::new();
+    // Map Reference.id() -> cited sources (primary URL + archive fallbacks) and
+    // book identifiers (PRD-0009), read structurally from cite templates and
+    // bare ExtLinks inside each reference's contents.
+    let mut ref_sources: HashMap<String, RefSources> = HashMap::new();
     // Parallel to `ref_sources`: whether each reference's whole rendered content is a single bare
     // URL (a bare-URL-repair target). Keyed the same way so `collect_block` can stamp it per marker.
     let mut ref_bare: HashMap<String, bool> = HashMap::new();
     for reference in code.filter_references() {
-        ref_sources.insert(reference.id(), urls_in_reference(&reference));
+        ref_sources.insert(reference.id(), sources_in_reference(&reference));
         ref_bare.insert(reference.id(), reference_is_bare_url(&reference));
     }
 
@@ -130,7 +131,7 @@ fn reference_is_bare_url(reference: &Reference) -> bool {
 /// Recursive walker — emit blocks, don't recurse into a block once emitted.
 fn walk(
     node: &impl WikinodeIterator,
-    ref_sources: &HashMap<String, Vec<CitedSource>>,
+    ref_sources: &HashMap<String, RefSources>,
     ref_bare: &HashMap<String, bool>,
     blocks: &mut Vec<ParsoidBlock>,
     ordinal: &mut usize,
@@ -161,7 +162,7 @@ fn build_block(
     node: &Wikinode,
     kind: BlockKind,
     ordinal: usize,
-    ref_sources: &HashMap<String, Vec<CitedSource>>,
+    ref_sources: &HashMap<String, RefSources>,
     ref_bare: &HashMap<String, bool>,
 ) -> ParsoidBlock {
     let mut text = String::new();
@@ -190,7 +191,7 @@ fn collect_block(
     node: &impl WikinodeIterator,
     text: &mut String,
     refs: &mut Vec<BlockRef>,
-    ref_sources: &HashMap<String, Vec<CitedSource>>,
+    ref_sources: &HashMap<String, RefSources>,
     ref_bare: &HashMap<String, bool>,
 ) {
     for child in node.children() {
@@ -202,7 +203,8 @@ fn collect_block(
             refs.push(BlockRef {
                 offset: text.len(),
                 ref_id: ref_link.id(),
-                sources,
+                sources: sources.cited,
+                book_sources: sources.books,
                 ref_text: child.text_contents(),
                 named: ref_link.name().ok().flatten().is_some(),
                 is_bare_url_ref: ref_bare.get(&reference_id).copied().unwrap_or(false),
@@ -220,14 +222,26 @@ fn collect_block(
     }
 }
 
+/// Everything one reference cites, split by kind (PRD-0009 Layer 1).
+#[derive(Debug, Default, Clone)]
+struct RefSources {
+    /// Fetchable sources: primary URL + archive fallbacks.
+    cited: Vec<CitedSource>,
+    /// Book identifiers from cite templates, independent of any URL.
+    books: Vec<BookSource>,
+}
+
 /// Cited source extraction from a reference's contents.
 /// Returns one `CitedSource` per cite-template (primary url + archive fallbacks),
 /// plus `CitedSource` entries for *literal* bare `ExtLink`s not already present in
 /// templates. Preserves document order: template-derived sources first, then
-/// bare-ExtLink sources.
-fn urls_in_reference(reference: &Reference) -> Vec<CitedSource> {
+/// bare-ExtLink sources. Alongside, each cite template carrying a validated book
+/// identifier (`isbn`/`oclc`/`lccn`/`ol`) yields one `BookSource`, whether or not
+/// it also carries a URL (ADR-0018 Decision 1).
+fn sources_in_reference(reference: &Reference) -> RefSources {
     let contents = reference.contents();
     let mut sources = Vec::new();
+    let mut books = Vec::new();
     let mut seen_urls = std::collections::HashSet::new();
 
     // Cite-template params via data-mw. The transclusion `data-mw` is carried on
@@ -245,7 +259,7 @@ fn urls_in_reference(reference: &Reference) -> Vec<CitedSource> {
         if let Some(element) = span.as_node().as_element() {
             let attributes = element.attributes.borrow();
             if let Some(data_mw) = attributes.get("data-mw") {
-                push_template_sources(data_mw, &mut sources, &mut seen_urls);
+                push_template_sources(data_mw, &mut sources, &mut books, &mut seen_urls);
             }
             if let Some(about) = attributes.get("about") {
                 transclusion_abouts.insert(about.to_string());
@@ -272,7 +286,10 @@ fn urls_in_reference(reference: &Reference) -> Vec<CitedSource> {
         }
     }
 
-    sources
+    RefSources {
+        cited: sources,
+        books,
+    }
 }
 
 /// True if `node` (or any ancestor) belongs to a transclusion group, i.e. carries
@@ -330,9 +347,12 @@ const URL_PARAM_ALIASES: &[&str] = &[
 /// builds one `CitedSource` with that url as primary and
 /// `archive-url`/`archiveurl` as fallbacks.
 /// Appends to sources and updates `seen_urls` with all URLs (primary + archives).
+/// Independently, each part carrying a validated book identifier appends one
+/// `BookSource` to `books` — a template with `isbn=` but no `url=` still counts.
 fn push_template_sources(
     data_mw: &str,
     sources: &mut Vec<CitedSource>,
+    books: &mut Vec<BookSource>,
     seen_urls: &mut std::collections::HashSet<String>,
 ) {
     let Ok(value) = serde_json::from_str::<serde_json::Value>(data_mw) else {
@@ -345,6 +365,13 @@ fn push_template_sources(
         let Some(params) = part.pointer("/template/params") else {
             continue;
         };
+
+        // Book identifiers are extracted before (and regardless of) the URL
+        // gate below: a URL-less {{cite book}} is exactly the case PRD-0009
+        // exists for, and a template with both url= and isbn= yields both.
+        if let Some(book) = template_book_source(params) {
+            books.push(book);
+        }
 
         // Extract the primary url. CS1/CS2 cite templates carry the fetchable
         // source in `url=` or, for chapter/section-level refs, in a URL-valued
@@ -384,6 +411,44 @@ fn push_template_sources(
             archive_urls,
         });
     }
+}
+
+/// Read a template part's book identifiers (`isbn`/`oclc`/`lccn`/`ol`, with
+/// their uppercase aliases) and cited page (`page`/`p`/`pages`/`pp`), each
+/// validated/normalized by the `BookIdentifier` constructors. `None` when no
+/// parameter yields a valid identifier — an invalid ISBN is "no identifier",
+/// never a guess (ADR-0018 Decision 1).
+fn template_book_source(params: &serde_json::Value) -> Option<BookSource> {
+    type Constructor = fn(&str) -> Option<BookIdentifier>;
+
+    let param = |keys: &[&str]| {
+        keys.iter().find_map(|key| {
+            params
+                .pointer(&format!("/{key}/wt"))
+                .and_then(|v| v.as_str())
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+        })
+    };
+
+    let schemes: [(&[&str], Constructor); 4] = [
+        (&["isbn", "ISBN"], BookIdentifier::isbn),
+        (&["oclc", "OCLC"], BookIdentifier::oclc),
+        (&["lccn", "LCCN"], BookIdentifier::lccn),
+        (&["ol", "OL"], BookIdentifier::olid),
+    ];
+    let identifiers: Vec<BookIdentifier> = schemes
+        .iter()
+        .filter_map(|(keys, constructor)| param(keys).and_then(constructor))
+        .collect();
+    if identifiers.is_empty() {
+        return None;
+    }
+
+    Some(BookSource {
+        identifiers,
+        cited_page: param(&["page", "p", "pages", "pp"]).map(ToString::to_string),
+    })
 }
 
 #[cfg(test)]
@@ -648,8 +713,9 @@ mod tests {
         let data_mw = r#"{"parts":[{"template":{"target":{"wt":"cite web","href":"./Template:Cite_web"},"params":{"url":{"wt":"https://example.org/article"},"archive-url":{"wt":"https://web.archive.org/web/20240101/example.org/article"},"title":{"wt":"Example Article"}},"i":0}}]}"#;
 
         let mut sources = Vec::new();
+        let mut books = Vec::new();
         let mut seen_urls = std::collections::HashSet::new();
-        super::push_template_sources(data_mw, &mut sources, &mut seen_urls);
+        super::push_template_sources(data_mw, &mut sources, &mut books, &mut seen_urls);
 
         // Should extract exactly one CitedSource with primary URL and one archive URL.
         assert_eq!(
@@ -684,8 +750,9 @@ mod tests {
         let data_mw = r#"{"parts":[{"template":{"target":{"wt":"cite web","href":"./Template:Cite_web"},"params":{"url":{"wt":"https://example.org"},"archive-url":{"wt":"https://web.archive.org/web/20240101/example.org"},"archiveurl":{"wt":"https://archive.is/example.org"},"title":{"wt":"Example"}},"i":0}}]}"#;
 
         let mut sources = Vec::new();
+        let mut books = Vec::new();
         let mut seen_urls = std::collections::HashSet::new();
-        super::push_template_sources(data_mw, &mut sources, &mut seen_urls);
+        super::push_template_sources(data_mw, &mut sources, &mut books, &mut seen_urls);
 
         assert_eq!(sources.len(), 1);
         assert_eq!(sources[0].archive_urls.len(), 2);
@@ -707,8 +774,9 @@ mod tests {
         let data_mw = r#"{"parts":[{"template":{"target":{"wt":"cite","href":"./Template:Cite"},"params":{"archive-url":{"wt":"https://archive.org/web/example"},"title":{"wt":"No URL"}},"i":0}}]}"#;
 
         let mut sources = Vec::new();
+        let mut books = Vec::new();
         let mut seen_urls = std::collections::HashSet::new();
-        super::push_template_sources(data_mw, &mut sources, &mut seen_urls);
+        super::push_template_sources(data_mw, &mut sources, &mut books, &mut seen_urls);
 
         // Should extract nothing.
         assert!(
@@ -719,6 +787,7 @@ mod tests {
             seen_urls.is_empty(),
             "archive URL without primary should not be recorded"
         );
+        assert!(books.is_empty(), "no identifier params, no book source");
     }
 
     #[test]
@@ -727,8 +796,9 @@ mod tests {
         // `url=`) must still yield a citable source, not be dropped as non-URL.
         let data_mw = r#"{"parts":[{"template":{"target":{"wt":"cite book"},"params":{"chapter-url":{"wt":"https://example.org/chapter"},"title":{"wt":"A Book"}},"i":0}}]}"#;
         let mut sources = Vec::new();
+        let mut books = Vec::new();
         let mut seen_urls = std::collections::HashSet::new();
-        super::push_template_sources(data_mw, &mut sources, &mut seen_urls);
+        super::push_template_sources(data_mw, &mut sources, &mut books, &mut seen_urls);
         assert_eq!(sources.len(), 1, "chapter-url should produce one source");
         assert_eq!(sources[0].url.as_str(), "https://example.org/chapter");
     }
@@ -750,9 +820,97 @@ mod tests {
         // When both `url=` and an alias are present, `url=` wins as primary.
         let data_mw = r#"{"parts":[{"template":{"target":{"wt":"cite book"},"params":{"url":{"wt":"https://example.org/main"},"chapter-url":{"wt":"https://example.org/chapter"}},"i":0}}]}"#;
         let mut sources = Vec::new();
+        let mut books = Vec::new();
         let mut seen_urls = std::collections::HashSet::new();
-        super::push_template_sources(data_mw, &mut sources, &mut seen_urls);
+        super::push_template_sources(data_mw, &mut sources, &mut books, &mut seen_urls);
         assert_eq!(sources.len(), 1);
         assert_eq!(sources[0].url.as_str(), "https://example.org/main");
+    }
+
+    #[test]
+    fn url_less_cite_book_yields_a_book_source_not_a_cited_source() {
+        // The PRD-0009 case: {{cite book |isbn=… |page=…}} with no url= must
+        // yield a validated book identifier instead of nothing.
+        let data_mw = r#"{"parts":[{"template":{"target":{"wt":"cite book","href":"./Template:Cite_book"},"params":{"isbn":{"wt":"978-0-14-032872-1"},"title":{"wt":"Matilda"},"page":{"wt":"42"}},"i":0}}]}"#;
+        let mut sources = Vec::new();
+        let mut books = Vec::new();
+        let mut seen_urls = std::collections::HashSet::new();
+        super::push_template_sources(data_mw, &mut sources, &mut books, &mut seen_urls);
+
+        assert!(sources.is_empty(), "no url param, no cited source");
+        assert_eq!(books.len(), 1, "isbn param should yield one book source");
+        assert_eq!(
+            books[0].identifiers,
+            vec![BookIdentifier::Isbn("9780140328721".to_string())]
+        );
+        assert_eq!(books[0].cited_page.as_deref(), Some("42"));
+    }
+
+    #[test]
+    fn cite_book_with_url_and_isbn_yields_both_kinds() {
+        let data_mw = r#"{"parts":[{"template":{"target":{"wt":"cite book"},"params":{"url":{"wt":"https://example.org/book"},"isbn":{"wt":"9780140328721"},"oclc":{"wt":"ocm12345678"}},"i":0}}]}"#;
+        let mut sources = Vec::new();
+        let mut books = Vec::new();
+        let mut seen_urls = std::collections::HashSet::new();
+        super::push_template_sources(data_mw, &mut sources, &mut books, &mut seen_urls);
+
+        assert_eq!(sources.len(), 1);
+        assert_eq!(sources[0].url.as_str(), "https://example.org/book");
+        assert_eq!(books.len(), 1);
+        assert_eq!(
+            books[0].identifiers,
+            vec![
+                BookIdentifier::Isbn("9780140328721".to_string()),
+                BookIdentifier::Oclc("12345678".to_string()),
+            ]
+        );
+        assert_eq!(books[0].cited_page, None);
+    }
+
+    #[test]
+    fn invalid_identifier_values_yield_no_book_source() {
+        // A garbled ISBN (bad checksum) and an author OLID are "no identifier",
+        // never sent upstream (ADR-0018 Decision 1).
+        let data_mw = r#"{"parts":[{"template":{"target":{"wt":"cite book"},"params":{"isbn":{"wt":"978-0-14-032872-2"},"ol":{"wt":"23919A"},"title":{"wt":"Garbled"}},"i":0}}]}"#;
+        let mut sources = Vec::new();
+        let mut books = Vec::new();
+        let mut seen_urls = std::collections::HashSet::new();
+        super::push_template_sources(data_mw, &mut sources, &mut books, &mut seen_urls);
+        assert!(sources.is_empty());
+        assert!(
+            books.is_empty(),
+            "invalid values must not become identifiers"
+        );
+    }
+
+    #[test]
+    fn blocks_from_revision_carries_book_sources_onto_the_ref() {
+        // End-to-end through the DOM pass: a reference whose contents hold a
+        // url-less cite book lands on the BlockRef as a book source with empty
+        // cited sources (the extract layer then refines the skip reason).
+        let html = "<html><body>\
+<section data-mw-section-id=\"1\">\n\
+<p>Cats purr.<sup about=\"#mwt1\" class=\"mw-ref reference\" id=\"cite_ref-book_1-0\" rel=\"dc:references\" typeof=\"mw:Extension/ref\" data-mw='{\"name\":\"ref\",\"attrs\":{\"name\":\"book\"},\"body\":{\"id\":\"mw-reference-text-cite_note-book-1\"}}'><a href=\"#cite_note-book-1\"><span class=\"mw-reflink-text\">[1]</span></a></sup></p>\n\
+<div class=\"mw-references-wrap\" typeof=\"mw:Extension/references\" about=\"#mwt-refs\" data-mw='{\"name\":\"references\",\"attrs\":{},\"autoGenerated\":true}'>\n\
+<ol class=\"mw-references references\"><li about=\"#cite_note-book-1\" id=\"cite_note-book-1\"><span rel=\"mw:referencedBy\"><a href=\"#cite_ref-book_1-0\">↑</a></span> <span id=\"mw-reference-text-cite_note-book-1\" class=\"mw-reference-text\"><span about=\"#mwt5\" typeof=\"mw:Transclusion\" data-mw='{\"parts\":[{\"template\":{\"target\":{\"wt\":\"cite book\",\"href\":\"./Template:Cite_book\"},\"params\":{\"isbn\":{\"wt\":\"978-0-14-032872-1\"},\"title\":{\"wt\":\"Matilda\"},\"page\":{\"wt\":\"42\"}},\"i\":0}}]}'>Dahl, Roald. Matilda. p. 42.</span></span></li></ol>\n\
+</div>\n\
+</section></body></html>";
+        let revision = ImmutableWikicode::new(html);
+        let blocks = blocks_from_revision(&revision).expect("blocks");
+        let block = blocks
+            .iter()
+            .find(|b| !b.refs.is_empty())
+            .expect("a block with the ref");
+        let r = &block.refs[0];
+        assert!(
+            r.sources.is_empty(),
+            "url-less cite book has no cited source"
+        );
+        assert_eq!(r.book_sources.len(), 1);
+        assert_eq!(
+            r.book_sources[0].identifiers,
+            vec![BookIdentifier::Isbn("9780140328721".to_string())]
+        );
+        assert_eq!(r.book_sources[0].cited_page.as_deref(), Some("42"));
     }
 }

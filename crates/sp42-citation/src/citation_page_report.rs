@@ -104,8 +104,19 @@ fn skipped_section(report: &PageVerificationReport) -> ReportSection {
             .skipped
             .iter()
             .map(|skipped| {
+                let identifiers = if skipped.book_identifiers.is_empty() {
+                    String::new()
+                } else {
+                    let joined = skipped
+                        .book_identifiers
+                        .iter()
+                        .map(ToString::to_string)
+                        .collect::<Vec<_>>()
+                        .join(",");
+                    format!(" identifiers={joined}")
+                };
                 format!(
-                    "ref={} reason={:?} block={}",
+                    "ref={} reason={:?} block={}{identifiers}",
                     skipped.ref_id, skipped.reason, skipped.block_ordinal
                 )
             })
@@ -282,19 +293,30 @@ mod tests {
             title: "Museum".to_string(),
             // Out of document order on purpose: render must sort by ordinal.
             findings: vec![unreachable, supported],
-            skipped: vec![SkippedRef {
-                ref_id: "cite_book".to_string(),
-                reason: SkippedReason::NonUrlSource,
-                block_ordinal: 4,
-            }],
+            skipped: vec![
+                SkippedRef {
+                    ref_id: "cite_book".to_string(),
+                    reason: SkippedReason::NonUrlSource,
+                    block_ordinal: 4,
+                    book_identifiers: vec![],
+                },
+                SkippedRef {
+                    ref_id: "cite_isbn".to_string(),
+                    reason: SkippedReason::BookSource,
+                    block_ordinal: 5,
+                    book_identifiers: vec![crate::BookIdentifier::Isbn(
+                        "9780140328721".to_string(),
+                    )],
+                },
+            ],
             extraction_failures: vec![BlockFailure {
                 block_ordinal: 7,
                 reason: "no claim sentence".to_string(),
             }],
             stats: PageVerificationStats {
-                refs_seen: 3,
+                refs_seen: 4,
                 use_sites_verified: 2,
-                skipped: 1,
+                skipped: 2,
                 extraction_failures: 1,
                 supported: 1,
                 partial: 0,
@@ -336,6 +358,9 @@ mod tests {
         assert!(text.contains("Page citation report"));
         assert!(text.contains("[Skipped] available=true"));
         assert!(text.contains("ref=cite_book reason=NonUrlSource block=4"));
+        assert!(
+            text.contains("ref=cite_isbn reason=BookSource block=5 identifiers=isbn:9780140328721")
+        );
         assert!(text.contains("block=7 reason=no claim sentence"));
 
         let markdown = render_page_verification_markdown(&report);

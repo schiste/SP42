@@ -38,6 +38,11 @@ pub use citation::extract::{
     BlockFailure, CitationUseSite, ExtractOutcome, SkippedReason, SkippedRef, extract_use_sites,
 };
 pub use citation::locate_quote::{FuzzyLocate, locate_quote, locate_quote_fuzzy};
+pub use citation::openlibrary::{
+    OPEN_LIBRARY_BOOKS_API, OPEN_LIBRARY_READ_API_BASE, OpenLibraryEdition, ScanAvailability,
+    ScanItem, bibkey, build_catalog_lookup_request, build_scan_availability_request,
+    parse_catalog_lookup, parse_scan_availability,
+};
 pub use citation::page::{
     PageVerificationReport, PageVerificationRequest, PageVerificationStats, verify_page,
 };

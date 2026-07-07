@@ -252,6 +252,7 @@ mod tests {
                     url: url.parse().expect("url parses"),
                     archive_urls: vec![],
                 }],
+                book_sources: vec![],
                 ref_text: "Example".to_owned(),
                 named: false,
             }],

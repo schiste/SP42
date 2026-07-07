@@ -60,6 +60,7 @@ pub mod traits;
 pub mod types;
 pub mod user_analyzer;
 pub mod wiki_storage;
+pub mod wikibase;
 pub mod wikitext_editor;
 
 pub use action_contracts::{
@@ -172,6 +173,16 @@ pub use wiki_storage::{
     build_wiki_storage_plan, load_wiki_storage_document, parse_wiki_storage_document_response,
     parse_wiki_storage_payload_envelope, render_wiki_storage_document_page,
     render_wiki_storage_index_page, resolve_wiki_storage_document, save_wiki_storage_document,
+};
+pub use wikibase::{
+    AliasChange, ContentDiff, ContentModelCapabilities, ContentModelClass, EntityDiff,
+    REFERENCE_URL_PROPERTY, SitelinkChange, StatementChange, StatementChangeParts, StatementRank,
+    TermChange, UnknownEntityChange, ValueDisplay, WIKIBASE_ITEM_CONTENT_MODEL,
+    WIKIBASE_PROPERTY_CONTENT_MODEL, WIKITEXT_CONTENT_MODEL, WikibaseEntity, WikibaseError,
+    WikibaseLabels, WikibaseReference, WikibaseSnak, WikibaseSnakKind, WikibaseStatement,
+    WikibaseValue, build_entity_request, build_label_request, classify_content_model,
+    derive_content_model_capabilities, diff_entities, parse_entity, parse_labels,
+    render_snak_value, render_statement_claim,
 };
 pub use wikitext_editor::{
     BlockKind, BlockRef, CitedSource, ParsoidBlock, ScriptedEditorInvocation,

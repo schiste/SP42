@@ -147,6 +147,15 @@ jobs:
         uses: Swatinem/rust-cache@v2
       - name: Install Tauri Linux system deps
         run: |
+          # Runner-preinstalled third-party apt repos (packages.microsoft.com,
+          # Google Chrome) are not needed for the GTK deps below and their
+          # signing/availability hiccups fail `apt-get update` for the whole
+          # job — drop them so only Ubuntu's own archives gate this step.
+          sudo rm -f /etc/apt/sources.list.d/microsoft-prod.list \
+            /etc/apt/sources.list.d/azure-cli.sources \
+            /etc/apt/sources.list.d/azure-cli.list \
+            /etc/apt/sources.list.d/google-chrome.list \
+            /etc/apt/sources.list.d/google-chrome.sources
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev

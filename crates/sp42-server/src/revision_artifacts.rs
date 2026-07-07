@@ -313,7 +313,7 @@ async fn revision_artifacts_for_pair(
     // contract — while entity pairs additionally carry the structured diff.
     let routed = route_content_diff(
         after.content_model.as_deref(),
-        Some(&before.content),
+        before.as_ref().map(|before| before.content.as_str()),
         &after.content,
     );
     let content_diff = if let ContentDiff::Entity { ref diff } = routed {
@@ -326,13 +326,14 @@ async fn revision_artifacts_for_pair(
         None
     };
 
-    let diff = diff_lines(&before.content, &after.content);
+    let before_content = before.map(|before| before.content).unwrap_or_default();
+    let diff = diff_lines(&before_content, &after.content);
     // Media-reference extraction is a wikitext-only signal; it is not invoked
     // for entity content (ADR-0016 Decision 5).
     let media_diff = if content_diff.is_some() {
         None
     } else {
-        let mut report = build_media_diff(&before.content, &after.content);
+        let mut report = build_media_diff(&before_content, &after.content);
         if report.has_changes() {
             populate_media_preview_urls(config, &mut report);
             Some(report)
@@ -358,23 +359,42 @@ async fn revision_artifacts_for_pair(
     Ok(Some(artifacts))
 }
 
+/// Fetch the revision pair for a diff. `before` is `None` only for a first
+/// revision of **entity** content (`old_rev_id == 0`), which routes to the
+/// all-added entity diff (ADR-0016 Decision 3); a first wikitext revision
+/// keeps today's behavior (no artifacts), and a nonzero-but-missing parent
+/// (deleted/suppressed) also stays `None` overall rather than being passed
+/// off as a first revision.
 async fn fetch_revision_content_pair(
     client: &reqwest::Client,
     access_token: &str,
     config: &WikiConfig,
     rev_id: u64,
     old_rev_id: u64,
-) -> Result<Option<(RevisionContent, RevisionContent)>, String> {
-    let mut revisions =
-        fetch_revision_contents(client, access_token, config, &[old_rev_id, rev_id]).await?;
-    let Some(before) = revisions.remove(&old_rev_id) else {
-        return Ok(None);
+) -> Result<Option<(Option<RevisionContent>, RevisionContent)>, String> {
+    let requested: Vec<u64> = if old_rev_id == 0 {
+        vec![rev_id]
+    } else {
+        vec![old_rev_id, rev_id]
     };
+    let mut revisions = fetch_revision_contents(client, access_token, config, &requested).await?;
     let Some(after) = revisions.remove(&rev_id) else {
         return Ok(None);
     };
+    if old_rev_id == 0 {
+        let first_entity_revision =
+            sp42_core::classify_content_model(after.content_model.as_deref())
+                == sp42_core::ContentModelClass::WikibaseEntity;
+        if first_entity_revision {
+            return Ok(Some((None, after)));
+        }
+        return Ok(None);
+    }
+    let Some(before) = revisions.remove(&old_rev_id) else {
+        return Ok(None);
+    };
 
-    Ok(Some((before, after)))
+    Ok(Some((Some(before), after)))
 }
 
 /// Resolve labels for the ids an entity diff renders, best-effort: a failed

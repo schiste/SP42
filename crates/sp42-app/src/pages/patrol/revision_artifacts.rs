@@ -88,6 +88,21 @@ pub(in crate::pages::patrol) fn cache_initial_artifacts(
     view: &LiveOperatorView,
     artifacts: RevisionArtifactController,
 ) {
+    // The initial payload's diff is the server's text diff. For an entity
+    // revision that is raw JSON, not the review surface — do not seed it, so
+    // the selection effect cache-misses and fetches the content diff instead
+    // (ADR-0016 routing on the client edge).
+    let selected_is_entity = view
+        .selected_index
+        .and_then(|index| view.queue.get(index))
+        .is_some_and(|edit| {
+            sp42_core::derive_content_model_capabilities(edit.event.content_model.as_deref())
+                .entity_diff
+        });
+    if selected_is_entity {
+        return;
+    }
+
     if let (Some(diff), Some(selected_index)) = (&view.diff, view.selected_index) {
         if let Some(edit) = view.queue.get(selected_index) {
             let mut cache = artifacts.diff_cache.get_untracked();

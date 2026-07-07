@@ -1014,8 +1014,9 @@ pub struct SitelinkChange {
 
 /// Which parts of a changed statement moved — what powers "an edit touching
 /// only a qualifier, rank, or reference is never a no-op".
-#[allow(clippy::struct_excessive_bools)]
-// https://github.com/schiste/SP42/pull/119 — five independent change flags, not a state machine; two-variant enums would only rename `bool`.
+// Five independent change flags, not a state machine (reviewed in PR #119);
+// two-variant enums here would only rename `bool`.
+#[allow(clippy::struct_excessive_bools)] // PR #119
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct StatementChangeParts {
     /// The main value changed.

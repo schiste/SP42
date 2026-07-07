@@ -36,6 +36,20 @@ pub fn score_edit_with_context(
         });
     }
 
+    // Entity content: the wikitext heuristics and revertrisk context do not
+    // apply (ADR-0016 Decisions 5/7) — a uniform base score with no signal
+    // contributions keeps entity queues chronological over the bot-filtered
+    // stream (PRD-0011 Q3) instead of ranking on signals that misread
+    // entity JSON.
+    if crate::wikibase::derive_content_model_capabilities(event.content_model.as_deref())
+        .entity_diff
+    {
+        return Ok(CompositeScore {
+            total: config.base_score.clamp(0, config.max_score),
+            contributions: Vec::new(),
+        });
+    }
+
     let mut total = config.base_score;
     let mut contributions = Vec::new();
     apply_primary_edit_signals(event, config, context, &mut total, &mut contributions);
@@ -612,6 +626,28 @@ mod tests {
         WarningLevel,
     };
     use proptest::prelude::*;
+
+    #[test]
+    fn entity_content_scores_uniform_base_with_no_signals() {
+        // A vandalism-shaped event (anonymous editor, mass removal): scored
+        // on wikitext, uniform base score on entity content (ADR-0016
+        // Decisions 5/7 — heuristics and revertrisk do not apply, so entity
+        // queues stay chronological, PRD-0011 Q3).
+        let config = ScoringConfig::default();
+        let mut event = sample_event();
+        event.performer = EditorIdentity::Anonymous {
+            label: "192.0.2.1".to_string(),
+        };
+        event.byte_delta = -12_000;
+
+        let wikitext_score = score_edit(&event, &config).expect("wikitext event scores");
+        assert!(!wikitext_score.contributions.is_empty());
+
+        event.content_model = Some("wikibase-item".to_string());
+        let entity_score = score_edit(&event, &config).expect("entity event scores");
+        assert_eq!(entity_score.total, config.base_score);
+        assert!(entity_score.contributions.is_empty());
+    }
 
     fn sample_event() -> EditEvent {
         EditEvent {

@@ -7,13 +7,15 @@ use std::str::FromStr;
 use serde::Deserialize;
 
 use sp42_platform::errors::StreamIngestorError;
-use sp42_platform::{EditEvent, EditorIdentity, WikiConfig};
+use sp42_platform::{EditEvent, EditorIdentity, WikiConfig, default_namespace_content_model};
+use url::Url;
 
 const SUPPORTED_CHANGE_TYPES: [&str; 2] = ["edit", "new"];
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StreamIngestor {
     wiki_id: String,
+    api_url: Url,
     namespace_allowlist: BTreeSet<i32>,
     ignore_bots: bool,
     ignore_minor: bool,
@@ -47,6 +49,7 @@ impl StreamIngestor {
     pub fn with_options(config: &WikiConfig, options: StreamIngestorOptions) -> Self {
         Self {
             wiki_id: config.wiki_id.clone(),
+            api_url: config.api_url.clone(),
             namespace_allowlist: config.namespace_allowlist.iter().copied().collect(),
             ignore_bots: options.ignore_bots,
             ignore_minor: options.ignore_minor,
@@ -101,7 +104,8 @@ impl StreamIngestor {
         });
 
         Ok(Some(EditEvent {
-            content_model: None,
+            content_model: default_namespace_content_model(&self.api_url, raw.namespace)
+                .map(str::to_owned),
             wiki_id: raw.wiki,
             title: raw.title,
             namespace: raw.namespace,

@@ -90,9 +90,16 @@ PWA packaging and offline installability are now effectively complete for local 
   media-reference extraction is not invoked for entity content), and the
   browser diff pane renders entity revisions through an `EntityDiffViewer`
   (classified label/description/alias/sitelink/statement change rows) while
-  wikitext revisions keep the existing viewer unchanged. Remaining for the
-  MVP: bot-filtered Wikidata queue defaults, scoring gate-off at the queue
-  level, and the `testwikidatawiki` action acceptance gate.
+  wikitext revisions keep the existing viewer unchanged. The queue-level
+  gates are in place: ingestion seeds `EditEvent.content_model` from the
+  site's per-namespace defaults (Wikidata ns 0/120 → item/property; talk
+  pages stay wikitext), entity events score a uniform base with no wikitext
+  heuristics — so Wikidata queues order chronologically over the
+  bot-excluded-by-default stream — and no LiftWing revertrisk request is
+  built for entity content. Reviewer patrol/rollback on `testwikidatawiki`
+  is covered by a mock-write-path test; the **live** action acceptance gate
+  on test.wikidata.org remains a manual dogfood step to record in the
+  closing PR (PRD-0011).
 
 ## Current Verification
 

@@ -119,6 +119,28 @@ pub struct ContentModelCapabilities {
     pub entity_diff: bool,
 }
 
+/// The per-namespace *default* content model for a site, mirroring
+/// `MediaWiki`'s own namespace configuration (`$wgNamespaceContentModels`):
+/// on Wikidata, the main namespace holds items and namespace 120 holds
+/// properties. This seeds `EditEvent.content_model` at ingestion — the
+/// change feeds carry no content model — and routing still keys on the
+/// per-revision value it seeds, so a Wikidata talk-page edit stays wikitext
+/// (`None` here = the wiki's ordinary default). Scoped to the wikidata.org
+/// family; other Wikibase hosts can be added as they are supported.
+#[must_use]
+pub fn default_namespace_content_model(api_url: &Url, namespace: i32) -> Option<&'static str> {
+    let host = api_url.host_str()?;
+    let is_wikidata = host == "wikidata.org" || host.ends_with(".wikidata.org");
+    if !is_wikidata {
+        return None;
+    }
+    match namespace {
+        0 => Some(WIKIBASE_ITEM_CONTENT_MODEL),
+        120 => Some(WIKIBASE_PROPERTY_CONTENT_MODEL),
+        _ => None,
+    }
+}
+
 /// Derive the content-model capability axis for a revision.
 #[must_use]
 pub fn derive_content_model_capabilities(content_model: Option<&str>) -> ContentModelCapabilities {
@@ -1425,6 +1447,29 @@ mod tests {
             ContentModelClass::Other
         );
         assert_eq!(classify_content_model(None), ContentModelClass::Unknown);
+    }
+
+    #[test]
+    fn namespace_defaults_seed_entity_content_models_for_wikidata_only() {
+        let wikidata: Url = "https://www.wikidata.org/w/api.php".parse().expect("url");
+        let test_wikidata: Url = "https://test.wikidata.org/w/api.php".parse().expect("url");
+        let frwiki: Url = "https://fr.wikipedia.org/w/api.php".parse().expect("url");
+
+        assert_eq!(
+            super::default_namespace_content_model(&wikidata, 0),
+            Some("wikibase-item")
+        );
+        assert_eq!(
+            super::default_namespace_content_model(&wikidata, 120),
+            Some("wikibase-property")
+        );
+        // Talk pages keep the ordinary (wikitext) default.
+        assert_eq!(super::default_namespace_content_model(&wikidata, 1), None);
+        assert_eq!(
+            super::default_namespace_content_model(&test_wikidata, 0),
+            Some("wikibase-item")
+        );
+        assert_eq!(super::default_namespace_content_model(&frwiki, 0), None);
     }
 
     #[test]

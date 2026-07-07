@@ -231,7 +231,11 @@ pub fn parse_recent_changes_response(
         }
 
         events.push(EditEvent {
-            content_model: None,
+            content_model: sp42_platform::default_namespace_content_model(
+                &config.api_url,
+                change.namespace,
+            )
+            .map(str::to_owned),
             wiki_id: config.wiki_id.clone(),
             title: change.title,
             namespace: change.namespace,
@@ -473,6 +477,54 @@ mod tests {
     };
     use crate::test_fixtures::fixture_wiki_config;
     use sp42_types::{HttpResponse, StubHttpClient};
+
+    #[test]
+    fn wikidatawiki_recentchanges_seed_entity_content_models_and_exclude_bots() {
+        // PRD-0011 MVP: the Wikidata queue reads recentchanges with bots
+        // excluded (the default) and each main-namespace event carries the
+        // wikibase-item content model the scoring/diff gates key on.
+        let mut config = fixture_wiki_config();
+        config.wiki_id = "wikidatawiki".to_string();
+        config.api_url = "https://www.wikidata.org/w/api.php"
+            .parse()
+            .expect("valid url");
+        config.namespace_allowlist = vec![0, 1];
+
+        let query = RecentChangesQuery::initial(10, false);
+        let request = build_recent_changes_request(&config, &query).expect("request should build");
+        assert!(
+            request.url.as_str().contains("rcshow=%21bot"),
+            "bots are excluded by default"
+        );
+
+        let body = br#"{"query":{"recentchanges":[
+            {"type":"edit","ns":0,"title":"Q42","revid":11,"old_revid":10,"user":"Alice",
+             "timestamp":"2026-07-01T00:00:00Z","newlen":120,"oldlen":100},
+            {"type":"edit","ns":1,"title":"Talk:Q42","revid":13,"old_revid":12,"user":"Bob",
+             "timestamp":"2026-07-01T00:01:00Z","newlen":80,"oldlen":70}
+        ]}}"#;
+        let batch = parse_recent_changes_response(
+            &config,
+            &HttpResponse {
+                status: 200,
+                headers: BTreeMap::new(),
+                body: body.to_vec(),
+            },
+            &query,
+        )
+        .expect("batch should parse");
+
+        assert_eq!(batch.events.len(), 2);
+        assert_eq!(
+            batch.events[0].content_model.as_deref(),
+            Some("wikibase-item"),
+            "main-namespace Wikidata events carry the item content model"
+        );
+        assert_eq!(
+            batch.events[1].content_model, None,
+            "talk-page events keep the wikitext default"
+        );
+    }
 
     #[test]
     fn builds_recentchanges_request() {

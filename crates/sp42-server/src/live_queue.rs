@@ -438,7 +438,12 @@ pub(crate) async fn load_selected_review_state(
             liftwing_probability: None,
         })
     });
-    let liftwing_risk = if let Some(item) = selected {
+    // Revertrisk is Wikipedia-trained; for entity content no LiftWing
+    // request is built and no score is synthesized (ADR-0016 Decision 7).
+    let liftwing_risk = if let Some(item) = selected
+        && sp42_core::derive_content_model_capabilities(item.event.content_model.as_deref())
+            .revertrisk_scoring
+    {
         execute_liftwing_score(
             &BearerHttpClient::new(state.http_client.clone(), access_token.to_string()),
             config,

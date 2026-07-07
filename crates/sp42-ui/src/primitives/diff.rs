@@ -699,3 +699,85 @@ impl RenderedHighlightTone {
         }
     }
 }
+
+/// The entity-diff review surface container (ADR-0016 / PRD-0011).
+pub struct EntityDiffPanelProps {
+    children: Children,
+}
+
+impl EntityDiffPanelProps {
+    #[must_use]
+    pub fn new(children: Children) -> Self {
+        Self { children }
+    }
+}
+
+#[must_use]
+pub fn entity_diff_panel(props: EntityDiffPanelProps) -> impl IntoView {
+    let children = props.children;
+
+    view! { <div class="sp42-entity-diff">{children()}</div> }
+}
+
+pub use entity_diff_panel as EntityDiffPanel;
+
+/// One titled section of classified entity changes (Labels, Statements, …).
+pub struct EntityDiffSectionProps {
+    title: String,
+    children: Children,
+}
+
+impl EntityDiffSectionProps {
+    #[must_use]
+    pub fn new(title: impl Into<String>, children: Children) -> Self {
+        Self {
+            title: title.into(),
+            children,
+        }
+    }
+}
+
+#[must_use]
+pub fn entity_diff_section(props: EntityDiffSectionProps) -> impl IntoView {
+    let children = props.children;
+
+    view! {
+        <section class="sp42-entity-diff-section">
+            <h3>{props.title}</h3>
+            <ul class="sp42-entity-diff-rows">{children()}</ul>
+        </section>
+    }
+}
+
+pub use entity_diff_section as EntityDiffSection;
+
+/// One classified entity change row: a badge (+ / − / ~) toned like the text
+/// diff, followed by the rendered change text.
+pub struct EntityChangeRowProps {
+    tone: DiffTone,
+    badge: String,
+    text: String,
+}
+
+impl EntityChangeRowProps {
+    #[must_use]
+    pub fn new(tone: DiffTone, badge: impl Into<String>, text: impl Into<String>) -> Self {
+        Self {
+            tone,
+            badge: badge.into(),
+            text: text.into(),
+        }
+    }
+}
+
+#[must_use]
+pub fn entity_change_row(props: EntityChangeRowProps) -> impl IntoView {
+    view! {
+        <li class=format!("sp42-entity-diff-row {}", props.tone.class_name())>
+            <span class="sp42-entity-diff-badge">{props.badge}</span>
+            {props.text}
+        </li>
+    }
+}
+
+pub use entity_change_row as EntityChangeRow;

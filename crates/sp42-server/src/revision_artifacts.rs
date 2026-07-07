@@ -328,11 +328,14 @@ async fn revision_artifacts_for_pair(
 
     let before_content = before.map(|before| before.content).unwrap_or_default();
     let diff = diff_lines(&before_content, &after.content);
-    // Media-reference extraction is a wikitext-only signal; it is not invoked
-    // for entity content (ADR-0016 Decision 5).
-    let media_diff = if content_diff.is_some() {
-        None
-    } else {
+    // Media-reference extraction is a wikitext-only signal; the gate keys on
+    // the content model itself, not on whether the entity parse succeeded —
+    // malformed entity JSON must not fall through to wikitext extraction
+    // (ADR-0016 Decision 5).
+    let wikitext_signals =
+        sp42_core::derive_content_model_capabilities(after.content_model.as_deref())
+            .wikitext_signals;
+    let media_diff = if wikitext_signals {
         let mut report = build_media_diff(&before_content, &after.content);
         if report.has_changes() {
             populate_media_preview_urls(config, &mut report);
@@ -340,6 +343,8 @@ async fn revision_artifacts_for_pair(
         } else {
             None
         }
+    } else {
+        None
     };
     let artifacts = RevisionArtifacts {
         diff,

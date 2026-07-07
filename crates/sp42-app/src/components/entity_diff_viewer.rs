@@ -11,7 +11,11 @@ use sp42_core::{
     AliasChange, ContentDiffReport, EntityDiff, SitelinkChange, StatementChange,
     StatementChangeParts, TermChange, WikibaseStatement, render_snak_value,
 };
-use sp42_ui::{DiffTone, DiffViewerShell, DiffViewerShellProps};
+use sp42_ui::{
+    DiffState, DiffStateProps, DiffTone, DiffViewerShell, DiffViewerShellProps, EntityChangeRow,
+    EntityChangeRowProps, EntityDiffPanel, EntityDiffPanelProps, EntityDiffSection,
+    EntityDiffSectionProps,
+};
 
 use super::ui_children;
 
@@ -70,24 +74,16 @@ fn section(title: &'static str, rows: Vec<AnyView>) -> Option<AnyView> {
         return None;
     }
     Some(
-        view! {
-            <section class="sp42-entity-diff-section">
-                <h3>{title}</h3>
-                <ul class="sp42-entity-diff-rows">{rows}</ul>
-            </section>
-        }
+        EntityDiffSection(EntityDiffSectionProps::new(
+            title,
+            ui_children(move || rows.into_any()),
+        ))
         .into_any(),
     )
 }
 
 fn change_row(tone: DiffTone, badge: &'static str, text: String) -> AnyView {
-    view! {
-        <li class=format!("sp42-entity-diff-row {}", tone.class_name())>
-            <span class="sp42-entity-diff-badge">{badge}</span>
-            {text}
-        </li>
-    }
-    .into_any()
+    EntityChangeRow(EntityChangeRowProps::new(tone, badge, text)).into_any()
 }
 
 fn term_rows(changes: &[TermChange]) -> Vec<AnyView> {
@@ -216,22 +212,30 @@ pub fn EntityDiffViewer(report: ContentDiffReport) -> impl IntoView {
             entity_diff_sections(&report, diff)
         }
         sp42_core::ContentDiff::Entity { .. } => {
-            vec![
-                view! { <p class="sp42-entity-diff-empty">"No entity changes detected."</p> }
-                    .into_any(),
-            ]
+            return DiffState(DiffStateProps::new(
+                "Entity diff viewer",
+                "No entity changes detected.",
+            ))
+            .into_any();
         }
         // A text report reaching this component is a routing bug upstream;
         // say so instead of rendering nothing.
         sp42_core::ContentDiff::Text { .. } => {
-            vec![
-                view! { <p class="sp42-entity-diff-empty">"This revision is not an entity revision."</p> }
-                    .into_any(),
-            ]
+            return DiffState(DiffStateProps::new(
+                "Entity diff viewer",
+                "This revision is not an entity revision.",
+            ))
+            .into_any();
         }
     };
     DiffViewerShell(DiffViewerShellProps::new(
         "Entity diff viewer",
-        ui_children(move || view! { <div class="sp42-entity-diff">{body}</div> }.into_any()),
+        ui_children(move || {
+            EntityDiffPanel(EntityDiffPanelProps::new(ui_children(move || {
+                body.into_any()
+            })))
+            .into_any()
+        }),
     ))
+    .into_any()
 }

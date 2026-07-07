@@ -4,7 +4,7 @@
 //! This module owns the platform half of the Wikidata read path — the typed
 //! entity/statement model, the endpoint-agnostic entity parser, the label
 //! lookup and statement→claim rendering promoted from `sp42-mcp`'s
-//! `verify_wikidata_statement` (PR #103, its first consumer), the full-depth
+//! `verify_wikidata_statement` (PR 103, its first consumer), the full-depth
 //! [`EntityDiff`], and the [`ContentDiff`] sum that routes review surfaces by a
 //! revision's content model. Everything here is pure: request *builders* return
 //! [`HttpRequest`] values and *parsers* consume bytes, so shells inject the
@@ -323,7 +323,7 @@ impl WikibaseEntity {
     /// Select a statement by property, and optionally by statement GUID.
     ///
     /// Without a GUID the first statement for the property is returned — the
-    /// selection rule `verify_wikidata_statement` (PR #103) established.
+    /// selection rule `verify_wikidata_statement` (PR 103) established.
     #[must_use]
     pub fn statement(
         &self,
@@ -1568,7 +1568,7 @@ mod tests {
     #[test]
     fn parses_bare_entity_objects_and_sparse_snaks() {
         // A bare entity object (the prop=revisions slot shape), with the
-        // sparse reference shape #103's fixtures use: no snaktype, no inner
+        // sparse reference shape PR 103's fixtures use: no snaktype, no inner
         // property, no datavalue type.
         let bare = json!({
             "id": "Q1",

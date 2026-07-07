@@ -20,8 +20,14 @@ dist="${1:-target/dist/sp42-app}"
 # lands the optimized bundle at ~3.0 MiB raw / ~744 KiB gzip. Raise the ceilings
 # to that plus ~256 KiB raw headroom; ratchet back DOWN as the bundle shrinks
 # (e.g. moving inline styles to CSS), never up without a recorded decision.
+# Recorded decision (PR #119): the Wikidata entity-diff review surface
+# (ADR-0016 wikibase read model types on the wire + the EntityDiffViewer)
+# lands the optimized bundle at ~3.18 MiB raw / ~860 KiB gzip. Raise the gzip
+# ceiling to 896 KiB (~36 KiB headroom, matching the raw ceiling's slack);
+# ratchet back DOWN as the bundle shrinks, never up without a recorded
+# decision.
 max_raw="${SP42_WASM_MAX_RAW_BYTES:-3407872}"   # 3328 KiB
-max_gz="${SP42_WASM_MAX_GZIP_BYTES:-851968}"    # 832 KiB
+max_gz="${SP42_WASM_MAX_GZIP_BYTES:-917504}"    # 896 KiB
 
 wasm=""
 for f in "$dist"/*.wasm; do

@@ -27,7 +27,8 @@ use serde_json::Value;
 use url::Url;
 
 use crate::types::{HttpMethod, HttpRequest};
-use crate::wikitext_editor::BookIdentifier;
+use crate::wikitext_editor::{BookIdentifier, BookSource};
+use sp42_types::HttpClient;
 
 /// The side-effect-free Books API catalog lookup (ADR-0018 Decision 2).
 pub const OPEN_LIBRARY_BOOKS_API: &str = "https://openlibrary.org/api/books";
@@ -296,16 +297,182 @@ pub fn parse_scan_availability(body: &[u8]) -> Option<ScanAvailability> {
     Some(availability)
 }
 
+/// Outcome of resolving one book source against the Open Library catalog.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case", tag = "kind")]
+pub enum BookResolutionOutcome {
+    /// A catalog record was found under one of the ref's identifiers.
+    Resolved {
+        /// The identifier that keyed the successful catalog lookup.
+        identifier: BookIdentifier,
+        edition: Box<OpenLibraryEdition>,
+        /// Scan availability for the resolved identifier. `None` means the
+        /// availability lookup itself failed (unknown); an empty
+        /// [`ScanAvailability`] means "record exists, no usable scan".
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        scan: Option<ScanAvailability>,
+    },
+    /// Every identifier was looked up cleanly and none has a catalog record.
+    /// Never a create (ADR-0018 Decision 2).
+    NotFound,
+    /// A lookup failed in transport before a clean answer; whether a record
+    /// exists is unknown, which is different from `NotFound`.
+    LookupFailed { message: String },
+}
+
+/// One book citation's Layer-1 resolution, with page provenance
+/// (PRD-0009): which ref named the book, what identifiers it carried, and
+/// what the catalog said.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BookResolution {
+    /// The skipped ref this resolution belongs to.
+    pub ref_id: String,
+    pub block_ordinal: usize,
+    /// The identifiers the ref carried, in template order (what was tried).
+    pub identifiers: Vec<BookIdentifier>,
+    /// Verbatim cited page from the template, for the future search-inside
+    /// pass (ADR-0018 Decision 4).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cited_page: Option<String>,
+    pub outcome: BookResolutionOutcome,
+}
+
+/// Resolve one book source: try its identifiers in template order against the
+/// Books API; on the first catalog hit, additionally look up scan
+/// availability. Strictly read-only and best-effort — the only endpoints
+/// addressed are the two builders above, a miss issues no import or retry
+/// against a write path, and any transport failure degrades to
+/// [`BookResolutionOutcome::LookupFailed`] rather than an error.
+pub async fn resolve_book_source<C>(client: &C, book: &BookSource) -> BookResolutionOutcome
+where
+    C: HttpClient + ?Sized,
+{
+    let mut failure: Option<String> = None;
+    for identifier in &book.identifiers {
+        let response = match client
+            .execute(build_catalog_lookup_request(identifier))
+            .await
+        {
+            Ok(response) => response,
+            Err(error) => {
+                failure.get_or_insert_with(|| error.to_string());
+                continue;
+            }
+        };
+        if !(200..300).contains(&response.status) {
+            failure.get_or_insert_with(|| format!("catalog lookup returned {}", response.status));
+            continue;
+        }
+        // An unparseable 2xx body is a failure, not a miss: "NotFound" is
+        // reserved for a clean catalog answer with no record under our bibkey.
+        if serde_json::from_slice::<Value>(&response.body).is_err() {
+            failure.get_or_insert_with(|| "catalog lookup body was not JSON".to_string());
+            continue;
+        }
+        if let Some(edition) = parse_catalog_lookup(identifier, &response.body) {
+            let scan = fetch_scan_availability(client, identifier).await;
+            return BookResolutionOutcome::Resolved {
+                identifier: identifier.clone(),
+                edition: Box::new(edition),
+                scan,
+            };
+        }
+        // A clean miss under this identifier — try the next one.
+    }
+    match failure {
+        Some(message) => BookResolutionOutcome::LookupFailed { message },
+        None => BookResolutionOutcome::NotFound,
+    }
+}
+
+/// Best-effort Read API availability check; any failure yields `None`
+/// (availability unknown — never blocks or fails the resolution).
+async fn fetch_scan_availability<C>(
+    client: &C,
+    identifier: &BookIdentifier,
+) -> Option<ScanAvailability>
+where
+    C: HttpClient + ?Sized,
+{
+    let response = client
+        .execute(build_scan_availability_request(identifier))
+        .await
+        .ok()?;
+    if !(200..300).contains(&response.status) {
+        return None;
+    }
+    parse_scan_availability(&response.body)
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
-        BookIdentifier, ScanAvailability, bibkey, build_catalog_lookup_request,
-        build_scan_availability_request, parse_catalog_lookup, parse_scan_availability,
+        BookIdentifier, BookResolutionOutcome, BookSource, HttpClient, ScanAvailability, bibkey,
+        build_catalog_lookup_request, build_scan_availability_request, parse_catalog_lookup,
+        parse_scan_availability, resolve_book_source,
     };
-    use crate::types::HttpMethod;
+    use crate::errors::HttpClientError;
+    use crate::types::{HttpMethod, HttpRequest, HttpResponse};
+    use futures::executor::block_on;
+    use sp42_types::StubHttpClient;
+    use std::collections::VecDeque;
+    use std::sync::Mutex;
 
     fn isbn() -> BookIdentifier {
         BookIdentifier::isbn("978-0-14-032872-1").expect("valid isbn")
+    }
+
+    fn book(identifiers: Vec<BookIdentifier>) -> BookSource {
+        BookSource {
+            identifiers,
+            cited_page: Some("42".to_string()),
+        }
+    }
+
+    fn ok(body: &str) -> HttpResponse {
+        HttpResponse {
+            status: 200,
+            headers: std::collections::BTreeMap::new(),
+            body: body.as_bytes().to_vec(),
+        }
+    }
+
+    const CATALOG_HIT: &str =
+        r#"{"ISBN:9780140328721": {"key": "/books/OL7826547M", "title": "Matilda"}}"#;
+    const READ_API_EXACT: &str = r#"{"items": [{"match": "exact", "status": "full access", "itemURL": "https://archive.org/details/matilda00dahl"}]}"#;
+
+    /// A stub that also records every requested URL, so tests can assert the
+    /// resolve lane addresses only the two read endpoints (ADR-0018 Decision 2).
+    struct RecordingHttpClient {
+        urls: Mutex<Vec<String>>,
+        responses: Mutex<VecDeque<Result<HttpResponse, HttpClientError>>>,
+    }
+
+    impl RecordingHttpClient {
+        fn new<I>(responses: I) -> Self
+        where
+            I: IntoIterator<Item = Result<HttpResponse, HttpClientError>>,
+        {
+            Self {
+                urls: Mutex::new(Vec::new()),
+                responses: Mutex::new(responses.into_iter().collect()),
+            }
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl HttpClient for RecordingHttpClient {
+        async fn execute(&self, request: HttpRequest) -> Result<HttpResponse, HttpClientError> {
+            self.urls
+                .lock()
+                .expect("urls lock")
+                .push(request.url.to_string());
+            self.responses
+                .lock()
+                .expect("responses lock")
+                .pop_front()
+                .expect("a queued response for every request")
+        }
     }
 
     #[test]
@@ -455,5 +622,134 @@ mod tests {
         );
         // Garbage does not parse.
         assert!(parse_scan_availability(b"<html>error</html>").is_none());
+    }
+
+    #[test]
+    fn resolve_hit_returns_edition_and_scan() {
+        let client = StubHttpClient::new(vec![Ok(ok(CATALOG_HIT)), Ok(ok(READ_API_EXACT))]);
+        let outcome = block_on(resolve_book_source(&client, &book(vec![isbn()])));
+        let BookResolutionOutcome::Resolved {
+            identifier,
+            edition,
+            scan,
+        } = outcome
+        else {
+            panic!("expected Resolved, got {outcome:?}");
+        };
+        assert_eq!(identifier, isbn());
+        assert_eq!(edition.title.as_deref(), Some("Matilda"));
+        let scan = scan.expect("availability was looked up");
+        assert_eq!(scan.exact.len(), 1);
+        assert!(scan.groundable_scan().is_some());
+    }
+
+    #[test]
+    fn resolve_tries_identifiers_in_order_until_a_hit() {
+        // ISBN misses cleanly; OCLC hits. The resolved identifier records
+        // which key actually found the record.
+        let oclc = BookIdentifier::oclc("12345678").expect("valid oclc");
+        let oclc_hit = r#"{"OCLC:12345678": {"title": "Matilda"}}"#;
+        let client = StubHttpClient::new(vec![
+            Ok(ok("{}")),
+            Ok(ok(oclc_hit)),
+            Ok(ok(r#"{"items": []}"#)),
+        ]);
+        let outcome = block_on(resolve_book_source(
+            &client,
+            &book(vec![isbn(), oclc.clone()]),
+        ));
+        let BookResolutionOutcome::Resolved {
+            identifier, scan, ..
+        } = outcome
+        else {
+            panic!("expected Resolved, got {outcome:?}");
+        };
+        assert_eq!(identifier, oclc);
+        // Empty items = record exists, no usable scan (not unknown).
+        assert_eq!(scan, Some(ScanAvailability::default()));
+    }
+
+    #[test]
+    fn resolve_clean_miss_is_not_found() {
+        let client = StubHttpClient::new(vec![Ok(ok("{}"))]);
+        let outcome = block_on(resolve_book_source(&client, &book(vec![isbn()])));
+        assert_eq!(outcome, BookResolutionOutcome::NotFound);
+    }
+
+    #[test]
+    fn resolve_transport_failure_is_lookup_failed_not_not_found() {
+        // A failed lookup means "unknown", which must not masquerade as a
+        // clean catalog miss.
+        let client = StubHttpClient::new(vec![Err(HttpClientError::InvalidResponse {
+            message: "connection reset".to_string(),
+        })]);
+        let outcome = block_on(resolve_book_source(&client, &book(vec![isbn()])));
+        let BookResolutionOutcome::LookupFailed { message } = outcome else {
+            panic!("expected LookupFailed, got {outcome:?}");
+        };
+        assert!(message.contains("connection reset"));
+    }
+
+    #[test]
+    fn resolve_non_2xx_catalog_answer_is_lookup_failed() {
+        let client = StubHttpClient::new(vec![Ok(HttpResponse {
+            status: 503,
+            headers: std::collections::BTreeMap::new(),
+            body: Vec::new(),
+        })]);
+        let outcome = block_on(resolve_book_source(&client, &book(vec![isbn()])));
+        let BookResolutionOutcome::LookupFailed { message } = outcome else {
+            panic!("expected LookupFailed, got {outcome:?}");
+        };
+        assert!(message.contains("503"));
+    }
+
+    #[test]
+    fn resolve_scan_availability_failure_degrades_to_unknown() {
+        // The catalog hit stands even when the availability check fails; the
+        // scan is simply unknown (None), not absent (Some(empty)).
+        let client = StubHttpClient::new(vec![
+            Ok(ok(CATALOG_HIT)),
+            Err(HttpClientError::InvalidResponse {
+                message: "read api down".to_string(),
+            }),
+        ]);
+        let outcome = block_on(resolve_book_source(&client, &book(vec![isbn()])));
+        let BookResolutionOutcome::Resolved { scan, .. } = outcome else {
+            panic!("expected Resolved, got {outcome:?}");
+        };
+        assert_eq!(scan, None);
+    }
+
+    #[test]
+    fn resolve_addresses_only_the_read_endpoints() {
+        // The PRD-0009 DoD assertion: a full resolve (hit) and a miss both
+        // address only /api/books and /api/volumes/brief — never the
+        // import-on-miss /isbn/{isbn}.json path, and no write follows a miss.
+        let client = RecordingHttpClient::new(vec![
+            Ok(ok("{}")),        // isbn: clean miss
+            Ok(ok(CATALOG_HIT)), // (second book) isbn: hit
+            Ok(ok(READ_API_EXACT)),
+        ]);
+        let miss = block_on(resolve_book_source(&client, &book(vec![isbn()])));
+        assert_eq!(miss, BookResolutionOutcome::NotFound);
+        let hit = block_on(resolve_book_source(&client, &book(vec![isbn()])));
+        assert!(matches!(hit, BookResolutionOutcome::Resolved { .. }));
+
+        let urls = client.urls.lock().expect("urls lock");
+        assert_eq!(urls.len(), 3, "miss issues exactly one read, no follow-up");
+        for url in urls.iter() {
+            assert!(
+                url.starts_with("https://openlibrary.org/api/books?")
+                    || url.starts_with("https://openlibrary.org/api/volumes/brief/"),
+                "unexpected endpoint addressed: {url}"
+            );
+            // The import path sits at the site root (`openlibrary.org/isbn/…`),
+            // distinct from the Read API's `/api/volumes/brief/isbn/…` segment.
+            assert!(
+                !url.starts_with("https://openlibrary.org/isbn/"),
+                "import path must never be hit: {url}"
+            );
+        }
     }
 }

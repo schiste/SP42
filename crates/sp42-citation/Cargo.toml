@@ -23,4 +23,5 @@ sp42-reporting = { path = "../sp42-reporting" }
 sp42-types = { path = "../sp42-types" }
 
 [dev-dependencies]
+async-trait.workspace = true
 proptest = "1.9.0"

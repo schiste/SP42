@@ -39,21 +39,32 @@ ordinary-account lane is a **form contract that is not a published API**.
 
 ## Decision
 
-### 1. Two apply lanes, selected by derived capability — never configured by hand
+### 1. Two apply lanes, selected by the server's own answer — no knob, no probe
 
-- **Form lane (default).** The apply executes as the website edit form does:
-  `GET /books/OL…M/edit` (or `/works/OL…W/edit`), parse the form, replay its
-  fields with the single confirmed field changed and `_comment` set, `POST`
-  back. This is the lane every ordinary operator account has today.
-- **REST lane (privileged).** When the operator's account is a member of
-  `/usergroup/api`, the apply is a `PUT /books/OL…M.json` of the full current
-  record with the confirmed field changed and `_comment` attached — the
-  officially recommended machine lane, structurally cleaner than form replay.
-- **Capability is derived, not declared:** SP42 reads the public
-  `/usergroup/api.json` membership list and checks the operator's key — a
-  write-free probe. Members get the REST lane; everyone else gets the form
-  lane. There is no configuration knob to force a lane, so a misconfiguration
-  can never route a write through a path the account cannot use.
+- **Form lane (universal).** The apply executes as the website edit form
+  does: `GET /books/OL…M/edit` (or `/works/OL…W/edit`), parse the form,
+  replay its fields with the single confirmed field changed and `_comment`
+  set, `POST` back. This is the lane every ordinary operator account has
+  today.
+- **REST lane (privileged).** For an account in the API usergroup, the apply
+  is a `PUT /books/OL…M.json` of the full current record with the confirmed
+  field changed and `_comment` attached — the officially recommended machine
+  lane, structurally cleaner than form replay.
+- **Lane selection is the server's own answer, cached per session.** An
+  apply attempts the REST lane first. Infogami's `can_write()` refuses a
+  non-member with a 403 **before any processing** (verified in the permission
+  code), so the refusal is a side-effect-free capability answer straight from
+  the only authoritative source. On a 403 the *same* apply falls back to the
+  form lane and the operator's session caches "form lane"; a member's first
+  `PUT` simply succeeds and caches "REST lane". Members never pay an extra
+  request; non-members pay one refused request per login session; and there
+  is no state that can be *wrong* — a stale cache in either direction is
+  benign (the form lane works for every account, and a revoked REST lane
+  403s into the same fallback and re-caches). The 403 handler is the
+  permanent correctness mechanism; the cache is only an optimization on top
+  of it. There is no configuration knob and no reading of the
+  `/usergroup/api.json` membership list on the write path (see Alternatives
+  for both rejections).
 
 ### 2. Per-operator session via S3-key login; no shared identity, ever
 
@@ -83,7 +94,9 @@ discipline itself:
 - **Apply:** immediately before writing, SP42 re-reads the record. If
   `revision` moved since the proposal, the apply **refuses** and offers
   re-proposal against the current record. Only an unmoved revision proceeds
-  to the lane's submit. This is `baserevid`-by-hand: weaker than a server-side
+  to the lane's submit. A REST→form fallback within one apply (Decision 1)
+  **re-runs the drift re-read** before the form submit — the refusal window
+  restarts with the lane. This is `baserevid`-by-hand: weaker than a server-side
   conditional write (a race in the read→submit window is possible), and
   accepted as such — the window is milliseconds, the stakes are a wiki-model
   record with full history/revert, and the alternative is no ordinary-account
@@ -109,6 +122,12 @@ promise. Accordingly:
   refuses, reports "form contract changed; enrichment is proposal-only until
   the adapter is updated", and *never* submits a best-guess POST. A wrong
   write to a public catalog is strictly worse than no write.
+- After a form submit, the adapter **reads the record back**
+  (`/books/OL…M.json`) and verifies the confirmed field now holds the
+  proposed value, recording the new revision in the audit entry. A read-back
+  that shows anything else — the field unchanged, or a different value — is
+  surfaced loudly as an apply failure (and, if other fields moved, as a
+  suspected adapter defect), never silently logged as success.
 - Adapter behavior is covered by fixture-replay tests (recorded form HTML +
   submit responses; ADR-0009 discipline, no live network in tests), with the
   fixtures refreshed by the enablement spike (Decision 6).
@@ -145,9 +164,11 @@ the enabling PR (this is the PRD-0009 DoD item made operational):
    contact channel — the same channel as an API-usergroup request. If they
    object or require a different path, the lane stays disabled (the PRD-0008
    frwiki-gate posture).
-3. **Capability report:** the operator-facing capability panel shows which
-   lane (if any) the operator's session has, and an operator with no session
-   or no usable lane sees proposal-only output with zero write affordances.
+3. **Capability report:** the operator-facing capability panel shows the
+   Open Library session state and the lane the session has discovered
+   ("undecided — determined at first apply" before any write), and an
+   operator with no session sees proposal-only output with zero write
+   affordances.
 
 Until the gate passes, everything above exists as mechanism + tests only.
 
@@ -155,8 +176,8 @@ Until the gate passes, everything above exists as mechanism + tests only.
 
 - Every ordinary operator gets a real apply path (the form lane) without
   asking Open Library for anything; operators who obtain API-usergroup
-  membership transparently upgrade to the cleaner REST lane. No third
-  configuration state exists.
+  membership transparently use the cleaner REST lane from their first apply.
+  No lane configuration exists at all, so no lane configuration can be wrong.
 - SP42 takes on a template-coupled adapter with a standing maintenance
   liability: upstream form changes turn the write lane off (fail-closed)
   until the adapter is updated. This is the deliberate price of writing as an
@@ -177,6 +198,20 @@ Until the gate passes, everything above exists as mechanism + tests only.
 
 ## Alternatives considered
 
+- **Derive the lane by reading `/usergroup/api.json`** (this ADR's first
+  draft). Rejected in review: it adds a second unofficial contract to
+  maintain and mirrors server permission internals (the api ∪ admin union in
+  `can_write()`) that can drift silently, while guarding against a failure —
+  routing a write through a lane the account cannot use — that is already
+  benign (a clean pre-mutation 403). The server's own refusal is the only
+  answer that cannot go stale.
+- **An operator-set lane configuration knob.** Considered in review:
+  maximally transparent and avoids even the one refused request, but it adds
+  a knob, an operator-facing concept ("are you in the API usergroup?"), and
+  a "config says REST, server says 403" error path — all of which the
+  403-fallback deletes rather than documents. The 403 handler must exist
+  regardless (permissions can be revoked upstream), and once it exists the
+  knob buys nothing.
 - **REST lane only (require API-usergroup membership).** Cleanest contract,
   but it makes enrichment unusable for every ordinary operator and turns a
   courtesy process into a hard onboarding dependency. Rejected as the sole

@@ -115,9 +115,12 @@ human-paced by construction.
    refuse-on-drift (re-read `revision` before apply). This is exactly the
    "controlled browser/form-backed submit path" PRD-0009 reserved.
 2. **Privileged lane — REST `PUT` with `_comment`** for operators whose
-   account is in `/usergroup/api` (capability derived by reading
-   `/usergroup/api.json`, no probe write): cleaner JSON contract, the
-   officially recommended machine lane.
+   account is in `/usergroup/api`: cleaner JSON contract, the officially
+   recommended machine lane. (As adopted, ADR-0019 selects the lane from the
+   server's own pre-mutation 403 answer with per-session caching, rather
+   than reading the `/usergroup/api.json` membership list — the list read
+   remains a valid display-only capability hint, but the write path never
+   depends on it.)
 
 Both lanes keep Layer 3 proposal-only until the ADR lands and the form-lane
 spike (below) passes.

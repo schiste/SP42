@@ -153,12 +153,19 @@ promise. Accordingly:
 Layer 3 remains **proposal-only** until all of the following are recorded in
 the enabling PR (this is the PRD-0009 DoD item made operational):
 
-1. **Live form spike (one-time, manual, a test account):** confirm the form
-   lane's minimal single-field edit end-to-end against production — the exact
-   field set the form requires, `_comment` visible in the record's history,
-   and the observed behavior of a stale `v` submit (merge vs overwrite),
-   which calibrates how paranoid the drift refusal must stay. Record the
-   target record, before/after, and the resulting revision.
+1. **Live form spike (one-time, manual, a test account), in two phases.**
+   No local Open Library instance is assumed at any point.
+   **(a) Zero-write form capture:** log in and `GET` a real edition edit
+   form under the session cookie (a read-only request); commit the captured
+   HTML as the adapter's fixture and make `parse_edit_form`/`fill_edit_form`
+   pass against it, replacing the synthetic contract-v0 fixture. This
+   validates the field-naming contract with no write anywhere.
+   **(b) The single write:** the minimal single-field edit end-to-end
+   against production — the exact field set the submit requires, `_comment`
+   visible in the record's history, and the observed behavior of a stale `v`
+   submit (merge vs overwrite), which calibrates how paranoid the drift
+   refusal must stay. Record the target record, before/after, and the
+   resulting revision.
 2. **Upstream courtesy:** Open Library's team has been told what SP42 does
    (assisted, operator-confirmed, one field at a time) via their documented
    contact channel — the same channel as an API-usergroup request. If they

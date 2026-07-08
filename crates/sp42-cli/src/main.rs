@@ -915,6 +915,7 @@ fn prefetched_from_body(text: String) -> FetchedSource {
         status: 200,
         content_type: "text/plain".to_string(),
         raw_html: None,
+        book_snippet: false,
     }
 }
 
@@ -1584,6 +1585,7 @@ mod verify_tests {
             claim: String::new(),
             preceding_context: Vec::new(),
             archive_of: None,
+            book_scan: None,
             schema_version: 1,
         }
     }

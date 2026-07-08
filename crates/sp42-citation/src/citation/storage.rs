@@ -355,6 +355,7 @@ mod tests {
             claim: String::new(),
             preceding_context: Vec::new(),
             archive_of: None,
+            book_scan: None,
             schema_version: crate::citation::verify::SCHEMA_VERSION,
         }
     }

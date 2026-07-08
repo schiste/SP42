@@ -24,6 +24,7 @@ pub mod openlibrary;
 pub mod page;
 pub mod parsing;
 pub mod prompts;
+pub mod search_inside;
 pub mod segment;
 pub mod source_fetch;
 pub mod storage;

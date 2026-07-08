@@ -293,6 +293,7 @@ mod tests {
             claim: "claim".to_string(),
             preceding_context: Vec::new(),
             archive_of: None,
+            book_scan: None,
             schema_version: 1,
         }
     }

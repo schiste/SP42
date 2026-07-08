@@ -250,8 +250,23 @@ fn finding_line(finding: &CitationFinding) -> String {
         None => String::new(),
     };
 
+    let book = finding.book_scan.as_ref().map_or_else(String::new, |scan| {
+        use std::fmt::Write as _;
+        let mut extra = format!(" scan={}", scan.ocaid);
+        if let Some(page) = scan.scanned_page {
+            let _ = write!(extra, " scanned_page={page}");
+        }
+        if let Some(cited) = &scan.cited_page {
+            let _ = write!(extra, " cited_page={cited}");
+        }
+        if let Some(note) = &scan.note {
+            let _ = write!(extra, " note=\"{note}\"");
+        }
+        extra
+    });
+
     format!(
-        "#{ordinal} ref={ref_id} {verdict}{status} url={url}{archive} claim=\"{claim}\"",
+        "#{ordinal} ref={ref_id} {verdict}{status} url={url}{archive}{book} claim=\"{claim}\"",
         ordinal = finding.use_site_ordinal,
         verdict = format_verdict(finding.verdict),
         url = finding.provenance.url,
@@ -349,6 +364,7 @@ mod tests {
             claim: claim.to_string(),
             preceding_context: Vec::new(),
             archive_of: None,
+            book_scan: None,
             schema_version: 1,
         }
     }
@@ -496,6 +512,22 @@ mod tests {
             "ref=cite_isbn block=5 resolved=isbn:9780140328721 title=\"Matilda\" \
              authors=\"Roald Dahl\" url=https://openlibrary.org/books/OL7826547M/Matilda \
              scan=exact"
+        ));
+    }
+
+    #[test]
+    fn finding_line_shows_book_scan_details() {
+        let mut report = sample_report();
+        report.findings[0].book_scan = Some(crate::BookScanProvenance {
+            ocaid: "matilda00dahl".to_string(),
+            scanned_page: Some(32),
+            cited_page: Some("42".to_string()),
+            note: Some("cited page had no match; whole-book search".to_string()),
+        });
+        let text = render_page_verification_text(&report);
+        assert!(text.contains(
+            "scan=matilda00dahl scanned_page=32 cited_page=42 \
+             note=\"cited page had no match; whole-book search\""
         ));
     }
 

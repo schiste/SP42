@@ -57,9 +57,10 @@ Yes, and it is two distinct systems:
   `/works/OL…W.json` / `/books/OL…M.json` by record id); the Read API is an
   availability view over readable/borrowable volumes, not the catalog lookup.
   Records are editable by logged-in Open Library users, but the machine apply path is
-  **not assumed here**: the documented REST save `PUT` path is internal/localhost-only,
-  and `/api/import` is an import surface that requires the appropriate production
-  privileges. The enrichment lane therefore requires a separate Open Library
+  **not assumed here**: the REST save `PUT` path works against production but is
+  usergroup-gated (writes require membership in the API/admin usergroups; an ordinary
+  account gets 403 — see the 2026-07-08 apply-path research note), and `/api/import`
+  is an import surface that requires the appropriate production privileges. The enrichment lane therefore requires a separate Open Library
   apply-contract ADR before writes are enabled. (The `/isbn/{isbn}.json` path is *not*
   purely read-only — it
   is documented under *Import by ISBN* and can import-on-miss — so the resolve lane
@@ -244,8 +245,9 @@ Open Library record and SP42 holds **sourced** values that record is missing:
   path before writes are enabled: either a supported API path for operators with the
   required Open Library privileges/API usergroup, or a controlled browser/form-backed
   submit path that preserves SP42's exact proposal, confirmation, edit comment, and
-  drift checks. The generic REST save `PUT` path is **not** assumed, because Open
-  Library documents it as internal/localhost-only; `/api/import` remains out of scope
+  drift checks. The generic REST save `PUT` path is **not** assumed, because production gates it
+  on the API usergroup (an ordinary operator account gets 403; see the 2026-07-08
+  apply-path research note); `/api/import` remains out of scope
   for enriching existing records. If no supported apply path is available, Layer 3
   remains proposal-only and produces no Open Library write. Any enabled write is still
   under the operator's own per-operator Open Library identity, never a shared/baked-in
@@ -424,8 +426,8 @@ Open Library / Internet Archive responses — no live network in tests (ADR-0009
   rubber-stamp, which is the reason its provenance is shown inline.
 - **Credential and capability handling for Open Library.** The write lane needs the
   operator's Open Library identity (resolved Q1: per-operator, never a shared/baked-in
-  key) **and** a supported apply capability. A normal account session alone may not be
-  enough for machine writes: Open Library's documented REST save path is internal, and
+  key) **and** a supported apply capability. A normal account session alone is not
+  enough for machine writes: the REST save path requires API-usergroup membership, and
   import-style API writes require the appropriate privileges. Mitigation: the apply ADR
   must prove the chosen production path and capability gate; an operator without that
   path sees proposal-only output (the read-only Resolve/Ground lanes still work).
@@ -487,8 +489,9 @@ they remain open to reviewer reaction until acceptance.
    transfers, but its **mechanism** is MediaWiki-specific (`WikitextNodeLocator` +
    `replacement_wikitext` + `baserevid` + wiki session/CSRF) and does **not** map to a
    field-level Open Library JSON change guarded by the OL record's own revision under an
-   OL identity. The ADR must also pick a supported apply path; Open Library's documented
-   REST save `PUT` is internal/localhost-only, and `/api/import` is out of scope here. If
+   OL identity. The ADR must also pick a supported apply path; Open Library's
+   REST save `PUT` is usergroup-gated in production (not usable by an ordinary
+   operator account), and `/api/import` is out of scope here. If
    no supported production apply path exists, Layer 3 stays proposal-only. **Not "reuse
    ADR-0010 as-is."** This matches the header's "a second ADR … against a non-wiki
    target."

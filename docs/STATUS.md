@@ -110,3 +110,6 @@ The workspace is currently kept green with:
 - README/STATUS drift checks in CI
 - `bash scripts/local-operator-smoke.sh` for the local operator flow
 - targeted multi-user coordination validation inside the local operator smoke path
+- `bash scripts/openlibrary-contract-smoke.sh` for the live Open Library /
+  Internet Archive read-contract check (manual, network-touching, never CI;
+  asserts exactly the response fields the PRD-0009 parsers read)

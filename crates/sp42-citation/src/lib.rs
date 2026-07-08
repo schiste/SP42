@@ -39,9 +39,10 @@ pub use citation::extract::{
 };
 pub use citation::locate_quote::{FuzzyLocate, locate_quote, locate_quote_fuzzy};
 pub use citation::openlibrary::{
-    OPEN_LIBRARY_BOOKS_API, OPEN_LIBRARY_READ_API_BASE, OpenLibraryEdition, ScanAvailability,
-    ScanItem, bibkey, build_catalog_lookup_request, build_scan_availability_request,
-    parse_catalog_lookup, parse_scan_availability,
+    BookResolution, BookResolutionOutcome, OPEN_LIBRARY_BOOKS_API, OPEN_LIBRARY_READ_API_BASE,
+    OpenLibraryEdition, ScanAvailability, ScanItem, bibkey, build_catalog_lookup_request,
+    build_scan_availability_request, parse_catalog_lookup, parse_scan_availability,
+    resolve_book_source,
 };
 pub use citation::page::{
     PageVerificationReport, PageVerificationRequest, PageVerificationStats, ReverifyFindingRequest,

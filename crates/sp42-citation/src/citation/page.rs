@@ -2,12 +2,14 @@
 
 use crate::citation::concurrency::map_with_concurrency;
 use crate::citation::extract::{BlockFailure, CitationUseSite, ExtractOutcome, SkippedRef};
+use crate::citation::openlibrary::{BookResolution, BookResolutionOutcome, resolve_book_source};
 use crate::citation::verdict::{CitationVerdict, SupportLevel};
 use crate::citation::verify::{
     CitationFinding, FetchedSource, SourceUnavailableReason, VerificationOutcome, VerifyOptions,
     fetch_source, verify_citation_use_site,
 };
 use crate::errors::CitationVerificationError;
+use crate::wikitext_editor::BookSource;
 use sp42_types::{Clock, HttpClient, ModelClient, ModelRef};
 use std::collections::{HashMap, HashSet};
 
@@ -161,6 +163,17 @@ pub struct PageVerificationStats {
     /// Of `source_unavailable`: fetched 2xx but unreadable (PDF/JS/wrong page) — a
     /// tool limitation, the citation may be fine.
     pub source_unavailable_unusable: usize,
+    /// Book citations resolved to an Open Library record (PRD-0009 Layer 1).
+    #[serde(default)]
+    pub books_resolved: usize,
+    /// Book citations whose identifiers were all looked up cleanly with no
+    /// catalog record found.
+    #[serde(default)]
+    pub books_not_found: usize,
+    /// Book citations whose catalog lookup failed in transport (existence
+    /// unknown — distinct from `books_not_found`).
+    #[serde(default)]
+    pub book_lookups_failed: usize,
 }
 
 /// Read-only result of verifying every URL-bearing citation on a page.
@@ -172,6 +185,10 @@ pub struct PageVerificationReport {
     pub findings: Vec<CitationFinding>,
     pub skipped: Vec<SkippedRef>,
     pub extraction_failures: Vec<BlockFailure>,
+    /// Open Library resolutions for the skipped book refs (PRD-0009 Layer 1),
+    /// one entry per book source, in skip order.
+    #[serde(default)]
+    pub book_resolutions: Vec<BookResolution>,
     pub stats: PageVerificationStats,
 }
 
@@ -310,6 +327,7 @@ fn tally_stats(
     findings: &[CitationFinding],
     skipped: usize,
     extraction_failures: usize,
+    book_resolutions: &[BookResolution],
 ) -> PageVerificationStats {
     let mut stats = PageVerificationStats {
         refs_seen,
@@ -318,6 +336,13 @@ fn tally_stats(
         extraction_failures,
         ..PageVerificationStats::default()
     };
+    for resolution in book_resolutions {
+        match &resolution.outcome {
+            BookResolutionOutcome::Resolved { .. } => stats.books_resolved += 1,
+            BookResolutionOutcome::NotFound => stats.books_not_found += 1,
+            BookResolutionOutcome::LookupFailed { .. } => stats.book_lookups_failed += 1,
+        }
+    }
     for f in findings {
         match f.verdict {
             CitationVerdict::Judged(SupportLevel::Supported) => stats.supported += 1,
@@ -338,6 +363,43 @@ fn tally_stats(
         }
     }
     stats
+}
+
+/// Resolve the skipped refs' book sources against Open Library (PRD-0009
+/// Layer 1). Read-only and best-effort: a failure becomes a `LookupFailed`
+/// entry, never a page error. Concurrency stays low out of REST politeness
+/// (ADR-0015 sizes third-party REST fan-out at <= 3).
+async fn resolve_book_citations<C>(
+    fetch_client: &C,
+    skipped: &[SkippedRef],
+    page_concurrency: usize,
+) -> Vec<BookResolution>
+where
+    C: HttpClient + ?Sized,
+{
+    let inputs: Vec<(String, usize, BookSource)> = skipped
+        .iter()
+        .flat_map(|s| {
+            s.book_sources
+                .iter()
+                .map(|book| (s.ref_id.clone(), s.block_ordinal, book.clone()))
+        })
+        .collect();
+    map_with_concurrency(
+        inputs,
+        page_concurrency.clamp(1, 3),
+        |(ref_id, block_ordinal, book), _| async move {
+            let outcome = resolve_book_source(fetch_client, &book).await;
+            BookResolution {
+                ref_id,
+                block_ordinal,
+                identifiers: book.identifiers,
+                cited_page: book.cited_page,
+                outcome,
+            }
+        },
+    )
+    .await
 }
 
 /// Verify every use-site in `extract` against its source. Fetches each distinct
@@ -478,12 +540,16 @@ where
         }
     }
 
-    // 3. Stats.
+    // 3. Resolve book citations against Open Library (PRD-0009 Layer 1).
+    let book_resolutions = resolve_book_citations(fetch_client, &skipped, page_concurrency).await;
+
+    // 4. Stats.
     let stats = tally_stats(
         refs_seen,
         &findings,
         skipped.len(),
         extraction_failures.len(),
+        &book_resolutions,
     );
 
     PageVerificationReport {
@@ -493,6 +559,7 @@ where
         findings,
         skipped,
         extraction_failures,
+        book_resolutions,
         stats,
     }
 }
@@ -745,6 +812,137 @@ mod orchestrator_tests {
             )
             .is_none()
         );
+    }
+
+    #[test]
+    fn book_ref_is_resolved_against_open_library() {
+        use crate::citation::extract::SkippedReason;
+        use crate::citation::openlibrary::BookResolutionOutcome;
+        use crate::wikitext_editor::{BookIdentifier, BookSource};
+        use futures::executor::block_on;
+
+        // One url-less book ref, no URL use-sites: the only network traffic is
+        // the catalog lookup and the availability check, in that order.
+        let b = ParsoidBlock {
+            text: "Cats purr.".into(),
+            refs: vec![BlockRef {
+                offset: 10,
+                ref_id: "cite_book".into(),
+                sources: vec![],
+                book_sources: vec![BookSource {
+                    identifiers: vec![
+                        BookIdentifier::isbn("978-0-14-032872-1").expect("valid isbn"),
+                    ],
+                    cited_page: Some("42".to_string()),
+                }],
+                ref_text: "[1]".into(),
+                named: false,
+            }],
+            block_kind: BlockKind::Paragraph,
+            block_ordinal: 0,
+        };
+        let extract = extract_use_sites(&[b], &page());
+        assert_eq!(extract.skipped[0].reason, SkippedReason::BookSource);
+
+        let http = StubHttpClient::new([
+            Ok(HttpResponse {
+                status: 200,
+                headers: std::collections::BTreeMap::new(),
+                body: br#"{"ISBN:9780140328721": {"title": "Matilda", "url": "https://openlibrary.org/books/OL7826547M/Matilda"}}"#.to_vec(),
+            }),
+            Ok(HttpResponse {
+                status: 200,
+                headers: std::collections::BTreeMap::new(),
+                body: br#"{"items": [{"match": "exact", "status": "full access", "itemURL": "https://archive.org/details/matilda00dahl"}]}"#.to_vec(),
+            }),
+        ]);
+        // No use-sites → no model calls.
+        let model = StubModelClient::new([]);
+        let report = block_on(verify_page(
+            &http,
+            &model,
+            &FixedClock::new(0),
+            &[model_ref()],
+            &page(),
+            extract,
+            VerifyOptions::default(),
+            1,
+        ));
+
+        assert!(report.findings.is_empty());
+        assert_eq!(report.skipped.len(), 1);
+        assert_eq!(report.book_resolutions.len(), 1);
+        let resolution = &report.book_resolutions[0];
+        assert_eq!(resolution.ref_id, "cite_book");
+        assert_eq!(resolution.cited_page.as_deref(), Some("42"));
+        let BookResolutionOutcome::Resolved { edition, scan, .. } = &resolution.outcome else {
+            panic!("expected Resolved, got {:?}", resolution.outcome);
+        };
+        assert_eq!(edition.title.as_deref(), Some("Matilda"));
+        assert!(
+            scan.as_ref()
+                .expect("availability checked")
+                .groundable_scan()
+                .is_some()
+        );
+        assert_eq!(report.stats.books_resolved, 1);
+        assert_eq!(report.stats.books_not_found, 0);
+        assert_eq!(report.stats.book_lookups_failed, 0);
+        // The ref still has no verdict: resolution refines the skip, it does
+        // not invent a verification outcome (grounding is Layer 2).
+        assert_eq!(report.stats.skipped, 1);
+    }
+
+    #[test]
+    fn book_lookup_failure_never_fails_the_page() {
+        use crate::citation::openlibrary::BookResolutionOutcome;
+        use crate::wikitext_editor::{BookIdentifier, BookSource};
+        use futures::executor::block_on;
+        use sp42_types::HttpClientError;
+
+        let b = ParsoidBlock {
+            text: "Cats purr.".into(),
+            refs: vec![BlockRef {
+                offset: 10,
+                ref_id: "cite_book".into(),
+                sources: vec![],
+                book_sources: vec![BookSource {
+                    identifiers: vec![
+                        BookIdentifier::isbn("978-0-14-032872-1").expect("valid isbn"),
+                    ],
+                    cited_page: None,
+                }],
+                ref_text: "[1]".into(),
+                named: false,
+            }],
+            block_kind: BlockKind::Paragraph,
+            block_ordinal: 0,
+        };
+        let extract = extract_use_sites(&[b], &page());
+        let http = StubHttpClient::new([Err(HttpClientError::Transport {
+            message: "openlibrary unreachable".to_string(),
+        })]);
+        let model = StubModelClient::new([]);
+        let report = block_on(verify_page(
+            &http,
+            &model,
+            &FixedClock::new(0),
+            &[model_ref()],
+            &page(),
+            extract,
+            VerifyOptions::default(),
+            1,
+        ));
+        assert_eq!(report.book_resolutions.len(), 1);
+        assert!(matches!(
+            report.book_resolutions[0].outcome,
+            BookResolutionOutcome::LookupFailed { .. }
+        ));
+        assert_eq!(report.stats.book_lookups_failed, 1);
+        // The failure stays inside the books lane: no extraction failure, no
+        // finding, and the skip entry is untouched.
+        assert!(report.extraction_failures.is_empty());
+        assert_eq!(report.stats.skipped, 1);
     }
 
     #[test]
@@ -1263,10 +1461,32 @@ mod tests {
             findings: Vec::new(),
             skipped: Vec::new(),
             extraction_failures: Vec::new(),
+            book_resolutions: Vec::new(),
             stats: PageVerificationStats::default(),
         };
         let json = serde_json::to_string(&report).expect("serialize");
         let back: PageVerificationReport = serde_json::from_str(&json).expect("deserialize");
         assert_eq!(report, back);
+    }
+
+    #[test]
+    fn report_without_book_fields_still_deserializes() {
+        // A report produced before the book-resolution slice (no
+        // `book_resolutions`, no book stats) must keep deserializing.
+        let json = r#"{
+            "wiki_id": "frwiki", "rev_id": 42, "title": "Exemple",
+            "findings": [], "skipped": [], "extraction_failures": [],
+            "stats": {
+                "refs_seen": 0, "use_sites_verified": 0, "skipped": 0,
+                "extraction_failures": 0, "supported": 0, "partial": 0,
+                "not_supported": 0, "source_unavailable": 0,
+                "source_unavailable_unreachable": 0,
+                "source_unavailable_unusable": 0
+            }
+        }"#;
+        let report: PageVerificationReport =
+            serde_json::from_str(json).expect("older report deserializes");
+        assert!(report.book_resolutions.is_empty());
+        assert_eq!(report.stats.books_resolved, 0);
     }
 }

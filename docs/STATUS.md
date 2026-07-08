@@ -76,12 +76,14 @@ PWA packaging and offline installability are now effectively complete for local 
   (text/markdown/json), defaulting to the latest revision. `frwiki`, `enwiki`,
   and `testwiki` are registered. The browser Citations tab that renders the same
   report is in review (PR #81).
-- book-citation grounding (PRD-0009, ADR-0018) has its first read-only slice:
+- book-citation grounding (PRD-0009, ADR-0018) has its read-only resolve lane:
   validated book identifiers (ISBN/OCLC/LCCN/OLID) are extracted from cite-template
   `data-mw`, the page report distinguishes "book identifier present" from plain
-  non-URL refs, and a side-effect-free Open Library resolve module exists (Books
-  API catalog lookup + Read API exact-vs-similar scan availability); wiring
-  resolution into the verify path is the next slice
+  non-URL refs, and `verify-page` now resolves each book ref through the
+  side-effect-free Open Library lookups (Books API catalog + Read API
+  exact-vs-similar scan availability), rendering a Books report section with
+  resolved records, honest misses, and scan status; search-inside grounding
+  (Layer 2) is the next slice
 
 ## Current Verification
 

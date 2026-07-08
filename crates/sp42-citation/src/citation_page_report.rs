@@ -8,8 +8,8 @@
 //! the transform is a free function here (no inherent method — orphan rule).
 
 use crate::{
-    CitationFinding, CitationVerdict, GroundingStatus, PageVerificationReport,
-    SourceUnavailableReason, SupportLevel,
+    BookResolution, BookResolutionOutcome, CitationFinding, CitationVerdict, GroundingStatus,
+    PageVerificationReport, ScanAvailability, SourceUnavailableReason, SupportLevel,
 };
 
 use crate::report_document::{
@@ -57,12 +57,20 @@ pub fn page_verification_report_to_document(report: &PageVerificationReport) -> 
             stats.skipped, stats.extraction_failures
         ),
     ];
+    let mut lead_lines = lead_lines;
+    if !report.book_resolutions.is_empty() {
+        lead_lines.push(format!(
+            "books: resolved={} not_found={} lookup_failed={}",
+            stats.books_resolved, stats.books_not_found, stats.book_lookups_failed
+        ));
+    }
 
     ReportDocument::new("Page citation report")
         .with_lead_lines(lead_lines)
         .with_sections(vec![
             findings_section(report),
             skipped_section(report),
+            books_section(report),
             extraction_failures_section(report),
         ])
 }
@@ -104,11 +112,11 @@ fn skipped_section(report: &PageVerificationReport) -> ReportSection {
             .skipped
             .iter()
             .map(|skipped| {
-                let identifiers = if skipped.book_identifiers.is_empty() {
+                let book_identifiers = skipped.book_identifiers();
+                let identifiers = if book_identifiers.is_empty() {
                     String::new()
                 } else {
-                    let joined = skipped
-                        .book_identifiers
+                    let joined = book_identifiers
                         .iter()
                         .map(ToString::to_string)
                         .collect::<Vec<_>>()
@@ -121,6 +129,82 @@ fn skipped_section(report: &PageVerificationReport) -> ReportSection {
                 )
             })
             .collect(),
+    }
+}
+
+/// The Open Library resolutions for the page's book citations (PRD-0009
+/// Layer 1): what each skipped book ref resolved to, or an honest miss.
+fn books_section(report: &PageVerificationReport) -> ReportSection {
+    if report.book_resolutions.is_empty() {
+        return ReportSection {
+            name: "Books".to_string(),
+            available: false,
+            summary_lines: vec!["none".to_string()],
+        };
+    }
+
+    ReportSection {
+        name: "Books".to_string(),
+        available: true,
+        summary_lines: report.book_resolutions.iter().map(book_line).collect(),
+    }
+}
+
+fn book_line(resolution: &BookResolution) -> String {
+    let identifiers = resolution
+        .identifiers
+        .iter()
+        .map(ToString::to_string)
+        .collect::<Vec<_>>()
+        .join(",");
+    let base = format!(
+        "ref={} block={}",
+        resolution.ref_id, resolution.block_ordinal
+    );
+    match &resolution.outcome {
+        BookResolutionOutcome::Resolved {
+            identifier,
+            edition,
+            scan,
+        } => {
+            let title = edition
+                .title
+                .as_deref()
+                .map(|t| format!(" title=\"{t}\""))
+                .unwrap_or_default();
+            let authors = if edition.authors.is_empty() {
+                String::new()
+            } else {
+                format!(" authors=\"{}\"", edition.authors.join(", "))
+            };
+            let url = edition
+                .record_url
+                .as_deref()
+                .map(|u| format!(" url={u}"))
+                .unwrap_or_default();
+            format!(
+                "{base} resolved={identifier}{title}{authors}{url} scan={scan}",
+                scan = scan_label(scan.as_ref())
+            )
+        }
+        BookResolutionOutcome::NotFound => {
+            format!("{base} not_found identifiers={identifiers}")
+        }
+        BookResolutionOutcome::LookupFailed { message } => {
+            format!("{base} lookup_failed identifiers={identifiers} error={message}")
+        }
+    }
+}
+
+/// One word for the scan-availability outcome: `exact` may feed grounding,
+/// `similar_only` must not (different edition), `none` is a record with no
+/// usable scan, `unknown` means the availability lookup itself failed.
+fn scan_label(scan: Option<&ScanAvailability>) -> &'static str {
+    match scan {
+        None => "unknown",
+        Some(availability) if availability.groundable_scan().is_some() => "exact",
+        Some(availability) if !availability.similar.is_empty() => "similar_only",
+        Some(_) => "none",
     }
 }
 
@@ -270,8 +354,9 @@ mod tests {
         }
     }
 
-    #[test]
-    fn renders_stats_findings_skipped_and_failures() {
+    /// A report exercising every section: findings out of order, two skipped
+    /// refs (one a book), a resolved book, and an extraction failure.
+    fn sample_report() -> PageVerificationReport {
         let supported = base_finding(
             0,
             "cite_1",
@@ -288,7 +373,7 @@ mod tests {
         unreachable.grounding_status = GroundingStatus::NotApplicable;
         unreachable.source_unavailable_reason = Some(SourceUnavailableReason::Unreachable);
 
-        let report = PageVerificationReport {
+        PageVerificationReport {
             wiki_id: "enwiki".to_string(),
             rev_id: 12345,
             title: "Museum".to_string(),
@@ -299,20 +384,46 @@ mod tests {
                     ref_id: "cite_book".to_string(),
                     reason: SkippedReason::NonUrlSource,
                     block_ordinal: 4,
-                    book_identifiers: vec![],
+                    book_sources: vec![],
                 },
                 SkippedRef {
                     ref_id: "cite_isbn".to_string(),
                     reason: SkippedReason::BookSource,
                     block_ordinal: 5,
-                    book_identifiers: vec![crate::BookIdentifier::Isbn(
-                        "9780140328721".to_string(),
-                    )],
+                    book_sources: vec![crate::BookSource {
+                        identifiers: vec![crate::BookIdentifier::Isbn("9780140328721".to_string())],
+                        cited_page: Some("42".to_string()),
+                    }],
                 },
             ],
             extraction_failures: vec![BlockFailure {
                 block_ordinal: 7,
                 reason: "no claim sentence".to_string(),
+            }],
+            book_resolutions: vec![crate::BookResolution {
+                ref_id: "cite_isbn".to_string(),
+                block_ordinal: 5,
+                identifiers: vec![crate::BookIdentifier::Isbn("9780140328721".to_string())],
+                cited_page: Some("42".to_string()),
+                outcome: crate::BookResolutionOutcome::Resolved {
+                    identifier: crate::BookIdentifier::Isbn("9780140328721".to_string()),
+                    edition: Box::new(crate::OpenLibraryEdition {
+                        title: Some("Matilda".to_string()),
+                        authors: vec!["Roald Dahl".to_string()],
+                        record_url: Some(
+                            "https://openlibrary.org/books/OL7826547M/Matilda".to_string(),
+                        ),
+                        ..crate::OpenLibraryEdition::default()
+                    }),
+                    scan: Some(crate::ScanAvailability {
+                        exact: vec![crate::ScanItem {
+                            status: "full access".to_string(),
+                            item_url: "https://archive.org/details/matilda00dahl".to_string(),
+                            ol_edition_id: None,
+                        }],
+                        similar: vec![],
+                    }),
+                },
             }],
             stats: PageVerificationStats {
                 refs_seen: 4,
@@ -325,9 +436,16 @@ mod tests {
                 source_unavailable: 1,
                 source_unavailable_unreachable: 1,
                 source_unavailable_unusable: 0,
+                books_resolved: 1,
+                books_not_found: 0,
+                book_lookups_failed: 0,
             },
-        };
+        }
+    }
 
+    #[test]
+    fn renders_stats_findings_skipped_and_failures() {
+        let report = sample_report();
         let document = page_verification_report_to_document(&report);
         assert_eq!(document.title, "Page citation report");
         assert!(
@@ -370,6 +488,48 @@ mod tests {
     }
 
     #[test]
+    fn renders_books_section_with_resolution_and_scan() {
+        let report = sample_report();
+        let text = render_page_verification_text(&report);
+        assert!(text.contains("books: resolved=1 not_found=0 lookup_failed=0"));
+        assert!(text.contains("[Books] available=true"));
+        assert!(text.contains(
+            "ref=cite_isbn block=5 resolved=isbn:9780140328721 title=\"Matilda\" \
+             authors=\"Roald Dahl\" url=https://openlibrary.org/books/OL7826547M/Matilda \
+             scan=exact"
+        ));
+    }
+
+    #[test]
+    fn book_line_reports_misses_and_failures_distinctly() {
+        let mut report = sample_report();
+        report.book_resolutions = vec![
+            crate::BookResolution {
+                ref_id: "cite_isbn".to_string(),
+                block_ordinal: 5,
+                identifiers: vec![crate::BookIdentifier::Isbn("9780140328721".to_string())],
+                cited_page: None,
+                outcome: crate::BookResolutionOutcome::NotFound,
+            },
+            crate::BookResolution {
+                ref_id: "cite_lccn".to_string(),
+                block_ordinal: 6,
+                identifiers: vec![crate::BookIdentifier::Lccn("n78890351".to_string())],
+                cited_page: None,
+                outcome: crate::BookResolutionOutcome::LookupFailed {
+                    message: "openlibrary unreachable".to_string(),
+                },
+            },
+        ];
+        let text = render_page_verification_text(&report);
+        assert!(text.contains("ref=cite_isbn block=5 not_found identifiers=isbn:9780140328721"));
+        assert!(text.contains(
+            "ref=cite_lccn block=6 lookup_failed identifiers=lccn:n78890351 \
+             error=openlibrary unreachable"
+        ));
+    }
+
+    #[test]
     fn empty_report_marks_sections_unavailable() {
         let report = PageVerificationReport {
             wiki_id: "enwiki".to_string(),
@@ -378,6 +538,7 @@ mod tests {
             findings: Vec::new(),
             skipped: Vec::new(),
             extraction_failures: Vec::new(),
+            book_resolutions: Vec::new(),
             stats: PageVerificationStats::default(),
         };
 
@@ -413,6 +574,7 @@ mod tests {
             findings: vec![unusable, archived],
             skipped: Vec::new(),
             extraction_failures: Vec::new(),
+            book_resolutions: Vec::new(),
             stats: PageVerificationStats::default(),
         };
 
@@ -434,6 +596,7 @@ mod tests {
             findings: vec![finding],
             skipped: Vec::new(),
             extraction_failures: Vec::new(),
+            book_resolutions: Vec::new(),
             stats: PageVerificationStats::default(),
         };
 

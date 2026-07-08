@@ -5,7 +5,7 @@ use crate::citation::page::PageVerificationRequest;
 use crate::citation::prompts::ClaimContext;
 use crate::citation::segment::{Sentence, segment_sentences};
 use crate::citation::verify::CitationVerificationRequest;
-use crate::wikitext_editor::{BookIdentifier, ParsoidBlock};
+use crate::wikitext_editor::{BookIdentifier, BookSource, ParsoidBlock};
 
 /// Maximum preceding in-block sentences carried as context.
 const MAX_PRECEDING: usize = 3;
@@ -52,11 +52,24 @@ pub struct SkippedRef {
     pub ref_id: String,
     pub reason: SkippedReason,
     pub block_ordinal: usize,
-    /// Validated book identifiers carried by the ref's cite templates, in
-    /// template order — populated with [`SkippedReason::BookSource`] so the
-    /// report can show *which* book was left unresolved.
+    /// The ref's book sources (validated identifiers + cited page, one per
+    /// cite template) — populated with [`SkippedReason::BookSource`]. The page
+    /// orchestrator resolves these against Open Library (PRD-0009 Layer 1)
+    /// and the report shows *which* book the ref names.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub book_identifiers: Vec<BookIdentifier>,
+    pub book_sources: Vec<BookSource>,
+}
+
+impl SkippedRef {
+    /// All validated identifiers across the ref's book sources, in template
+    /// order — the flattened view the skipped-section renderer prints.
+    #[must_use]
+    pub fn book_identifiers(&self) -> Vec<&BookIdentifier> {
+        self.book_sources
+            .iter()
+            .flat_map(|book| book.identifiers.iter())
+            .collect()
+    }
 }
 
 /// A block (or ref) that could not be processed.
@@ -93,12 +106,10 @@ pub fn extract_use_sites(
         let sentences = segment_sentences(&block.text);
         for r in &block.refs {
             if r.sources.is_empty() {
-                let book_identifiers: Vec<BookIdentifier> = r
-                    .book_sources
-                    .iter()
-                    .flat_map(|book| book.identifiers.iter().cloned())
-                    .collect();
-                let reason = if book_identifiers.is_empty() {
+                // Book sources carry at least one validated identifier by
+                // construction, so their presence is the "book identifier
+                // present" signal.
+                let reason = if r.book_sources.is_empty() {
                     SkippedReason::NonUrlSource
                 } else {
                     SkippedReason::BookSource
@@ -107,7 +118,7 @@ pub fn extract_use_sites(
                     ref_id: r.ref_id.clone(),
                     reason,
                     block_ordinal: block.block_ordinal,
-                    book_identifiers,
+                    book_sources: r.book_sources.clone(),
                 });
                 continue;
             }
@@ -316,7 +327,7 @@ mod tests {
         assert!(out.use_sites.is_empty());
         assert_eq!(out.skipped.len(), 1);
         assert_eq!(out.skipped[0].reason, SkippedReason::NonUrlSource);
-        assert!(out.skipped[0].book_identifiers.is_empty());
+        assert!(out.skipped[0].book_sources.is_empty());
     }
 
     #[test]
@@ -334,8 +345,12 @@ mod tests {
         assert_eq!(out.skipped.len(), 1);
         assert_eq!(out.skipped[0].reason, SkippedReason::BookSource);
         assert_eq!(
-            out.skipped[0].book_identifiers,
-            vec![BookIdentifier::Isbn("9780140328721".to_string())]
+            out.skipped[0].book_identifiers(),
+            vec![&BookIdentifier::Isbn("9780140328721".to_string())]
+        );
+        assert_eq!(
+            out.skipped[0].book_sources[0].cited_page.as_deref(),
+            Some("42")
         );
     }
 

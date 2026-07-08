@@ -182,8 +182,19 @@ fn book_line(resolution: &BookResolution) -> String {
                 .as_deref()
                 .map(|u| format!(" url={u}"))
                 .unwrap_or_default();
+            let propose = if resolution.enrichment_candidates.is_empty() {
+                String::new()
+            } else {
+                let joined = resolution
+                    .enrichment_candidates
+                    .iter()
+                    .map(|candidate| format!("{}:{}", candidate.field, candidate.proposed))
+                    .collect::<Vec<_>>()
+                    .join(",");
+                format!(" propose={joined}")
+            };
             format!(
-                "{base} resolved={identifier}{title}{authors}{url} scan={scan}",
+                "{base} resolved={identifier}{title}{authors}{url} scan={scan}{propose}",
                 scan = scan_label(scan.as_ref())
             )
         }
@@ -440,6 +451,11 @@ mod tests {
                         similar: vec![],
                     }),
                 },
+                enrichment_candidates: vec![crate::EnrichmentCandidate {
+                    field: "isbn_13".to_string(),
+                    proposed: "9780140328721".to_string(),
+                    source: "derived from ISBN-10 0140328726 (record)".to_string(),
+                }],
             }],
             stats: PageVerificationStats {
                 refs_seen: 4,
@@ -512,7 +528,7 @@ mod tests {
         assert!(text.contains(
             "ref=cite_isbn block=5 resolved=isbn:9780140328721 title=\"Matilda\" \
              authors=\"Roald Dahl\" url=https://openlibrary.org/books/OL7826547M/Matilda \
-             scan=exact"
+             scan=exact propose=isbn_13:9780140328721"
         ));
     }
 
@@ -542,6 +558,7 @@ mod tests {
                 identifiers: vec![crate::BookIdentifier::Isbn("9780140328721".to_string())],
                 cited_page: None,
                 outcome: crate::BookResolutionOutcome::NotFound,
+                enrichment_candidates: vec![],
             },
             crate::BookResolution {
                 ref_id: "cite_lccn".to_string(),
@@ -551,6 +568,7 @@ mod tests {
                 outcome: crate::BookResolutionOutcome::LookupFailed {
                     message: "openlibrary unreachable".to_string(),
                 },
+                enrichment_candidates: vec![],
             },
         ];
         let text = render_page_verification_text(&report);

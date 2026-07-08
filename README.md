@@ -11,6 +11,9 @@ SP42 is currently alpha software. The repository is public and buildable, but it
 - A CLI and desktop shell that reuse the same core contracts
 - A localhost server for coordination, debug surfaces, and the local development auth bridge
 
+<img width="1920" height="991" alt="Screenshot 2026-07-02 at 09 44 41" src="https://github.com/user-attachments/assets/411286b2-d41c-44c4-a67b-19f93be8eebc" />
+
+
 ## Current Status
 
 - Local and offline development is substantially implemented
@@ -36,6 +39,7 @@ them. The crates group along that seam.
 Platform layers (shared, domain-agnostic):
 
 - `crates/sp42-types`: transport contracts and storage/HTTP/clock abstractions
+- `crates/sp42-fetch`: guarded read-only HTTP fetch edge (SSRF-guarded DNS resolver, redirect/size caps, Retry-After retry loop, Wikimedia UA) shared by the CLI and server source fetches
 - `crates/sp42-coordination`: multi-operator collaboration protocol and room state
 - `crates/sp42-wiki`: wiki config parsing, registry/default selection, and capability profiles
 - `crates/sp42-server`: localhost HTTP/WebSocket server, auth bridge, and routing

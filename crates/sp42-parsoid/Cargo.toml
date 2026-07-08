@@ -1,0 +1,15 @@
+[package]
+name = "sp42-parsoid"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+parsoid.workspace = true
+serde_json.workspace = true
+sp42-platform = { path = "../sp42-platform" }
+url.workspace = true

@@ -812,7 +812,12 @@ pub struct FetchedSource {
 
 /// Fetch a source body (read-only GET), extracting text from HTML and recovering past a
 /// surviving Wayback banner. A non-2xx/3xx yields empty text (→ `SourceUnavailable`).
-pub(crate) async fn fetch_source<C>(
+///
+/// # Errors
+///
+/// Returns [`CitationVerificationError::InvalidRequest`] if `source_url` does not parse, or
+/// [`CitationVerificationError::InvalidResponse`] if the injected client's request fails.
+pub async fn fetch_source<C>(
     client: &C,
     source_url: &str,
 ) -> Result<FetchedSource, CitationVerificationError>

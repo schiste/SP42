@@ -7,8 +7,11 @@ members = [
     "crates/sp42-core",
     "crates/sp42-devtools",
     "crates/sp42-desktop",
+    "crates/sp42-fetch",
     "crates/sp42-inference",
     "crates/sp42-live",
+    "crates/sp42-mcp",
+    "crates/sp42-parsoid",
     "crates/sp42-patrol",
     "crates/sp42-platform",
     "crates/sp42-reporting",
@@ -33,6 +36,7 @@ clap = { version = "4.6.1", features = ["derive"] }
 base64 = "0.22.1"
 futures = "0.3.31"
 gloo-net = "0.6.0"
+ip_network = "0.4.1"
 js-sys = "0.3.82"
 leptos = { version = "0.8.14", default-features = false, features = ["csr"] }
 parsoid = "0.10.1"

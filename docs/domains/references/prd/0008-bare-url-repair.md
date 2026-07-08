@@ -42,9 +42,9 @@ It deliberately excludes adjacent concerns:
 - **How the edit is carried out** — node addressing, anti-drift anchors, and
   lossless re-serialization are **ADR-0003** (implemented). This PRD relies on
   that mechanism; it does not re-specify it.
-- **Archive enrichment** — attaching archive snapshots is PRD-0010 (issue
-  #29). A proposed citation here carries only what the live page's metadata
-  supports.
+- **Archive enrichment** — attaching archive snapshots is a future archive
+  enrichment PRD (issue #29). A proposed citation here carries only what the
+  live page's metadata supports.
 - **Identity and capability gating** — which operators may edit is PRD-0005;
   the repair disposition follows the same gating as the existing inline-edit
   disposition (PRD-0004).
@@ -242,10 +242,10 @@ not close — see Changelog.*
   mapping with high variance in usefulness, for exactly the cases where the
   rest of the metadata is usually junk. The MVP declines instead (Resolved
   question 2).
-- *Enrich the proposal with an archive snapshot in the same edit.* Deferred to
-  PRD-0010 (issue #29): archive discovery has its own external-service risk
-  and its own frwiki template-practice question; coupling it here would couple
-  the failure modes too.
+- *Enrich the proposal with an archive snapshot in the same edit.* Deferred to a
+  future archive enrichment PRD (issue #29): archive discovery has its own
+  external-service risk and its own frwiki template-practice question; coupling
+  it here would couple the failure modes too.
 
 ## Risks
 

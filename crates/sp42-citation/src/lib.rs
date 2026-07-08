@@ -27,7 +27,9 @@ pub use bare_url_repair::{
     BareUrlReference, bare_url_references, citoid_language, classify_bare_url,
     iso_date_from_epoch_ms, render_bare_url_citation,
 };
-pub use citation::body_classifier::{BodyUsability, BodyUsabilityReason, classify_body_usability};
+pub use citation::body_classifier::{
+    BodyUsability, BodyUsabilityReason, classify_body_usability, classify_source_usability,
+};
 pub use citation::citoid::{
     CitoidMetadata, build_citoid_header, build_citoid_request, parse_citoid_response,
 };
@@ -52,17 +54,16 @@ pub use citation::storage::{
     load_verdict, store_snapshot, store_verdict,
 };
 pub use citation::urls::{
-    PageTarget, ResolvedUrl, build_article_html_url, check_fetchable_source_url, is_archive_url,
-    is_valid_wiki_code, parse_page_target, parse_revision_from_etag, resolve_citation_url,
-    rewrite_wayback_url,
+    PageTarget, ResolvedUrl, build_article_html_url, is_archive_url, is_valid_wiki_code,
+    parse_page_target, parse_revision_from_etag, resolve_citation_url, rewrite_wayback_url,
 };
 pub use citation::verdict::{CitationFindingKind, CitationVerdict, SupportLevel, Verdict};
 pub use citation::verify::{
     CitationFinding, CitationVerificationRequest, FetchedSource, GroundingAssertion,
     GroundingStatus, LocatedPassage, ModelVerdict, ModelVote, SourceProvenance,
     SourceUnavailableReason, VerificationOutcome, VerifyModelInputs, VerifyOptions,
-    assemble_citation_finding, build_model_votes, execute_citation_verify, is_groundable_support,
-    sha256_hex, verify_citation_use_site,
+    assemble_citation_finding, build_model_votes, execute_citation_verify, fetch_source,
+    is_groundable_support, sha256_hex, verify_citation_use_site,
 };
 pub use citation::voting::{BinaryVote, NClassVote, PanelAgreement, binary_vote, n_class_vote};
 pub use citation_finding::{

@@ -33,7 +33,6 @@ use crate::action_routes::{
 use crate::config_for_state_wiki;
 use crate::http_errors::{forbidden_error, unauthorized_error};
 use crate::runtime_adapters::BearerHttpClient;
-use crate::runtime_adapters::PlainHttpClient;
 use crate::session_runtime::{current_session_snapshot, validate_csrf_header};
 use crate::state::AppState;
 
@@ -320,12 +319,13 @@ pub(crate) async fn post_verify_page(
         )
     })?;
 
-    let http_client = PlainHttpClient::new().map_err(|error| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(serde_json::json!({ "error": error })),
-        )
-    })?;
+    let http_client =
+        sp42_fetch::source_client_from_env(sp42_core::branding::USER_AGENT).map_err(|error| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({ "error": error })),
+            )
+        })?;
 
     // `rev_id == 0` means "latest": resolve it to a concrete revision before
     // verifying, so the report records the exact revision that was checked. Use the
@@ -395,6 +395,40 @@ pub(crate) async fn post_verify_page(
     Ok(Json(report))
 }
 
+/// The per-request inference and fetch clients the reverify route wires up.
+type ReverifyClients = (
+    Vec<sp42_types::ModelRef>,
+    sp42_inference::GenaiModelClient,
+    sp42_fetch::GuardedHttpClient,
+);
+
+/// Build the per-request model panel, model client, and SSRF-guarded source-fetch client for the
+/// reverify route, mapping construction failures to the same `503`/`500` responses `verify-page`
+/// uses. Extracted so `post_citation_reverify` stays within the function-length budget.
+fn reverify_inference_clients()
+-> Result<ReverifyClients, (StatusCode, Json<serde_json::Value>)> {
+    let panel = sp42_inference::panel_from_env().map_err(|error| {
+        (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(serde_json::json!({ "error": error })),
+        )
+    })?;
+    let model_client = sp42_inference::client_from_env().map_err(|error| {
+        (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(serde_json::json!({ "error": error })),
+        )
+    })?;
+    let http_client =
+        sp42_fetch::source_client_from_env(sp42_core::branding::USER_AGENT).map_err(|error| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({ "error": error })),
+            )
+        })?;
+    Ok((panel, model_client, http_client))
+}
+
 /// Re-verify one finding in place (PRD-0014): operator-triggered only, never
 /// automatic. Re-extracts the page's use-sites against the *current* article
 /// state and re-runs `verify_one_use_site` (unchanged — same primitive
@@ -426,24 +460,7 @@ pub(crate) async fn post_citation_reverify(
         ));
     }
 
-    let panel = sp42_inference::panel_from_env().map_err(|error| {
-        (
-            StatusCode::SERVICE_UNAVAILABLE,
-            Json(serde_json::json!({ "error": error })),
-        )
-    })?;
-    let model_client = sp42_inference::client_from_env().map_err(|error| {
-        (
-            StatusCode::SERVICE_UNAVAILABLE,
-            Json(serde_json::json!({ "error": error })),
-        )
-    })?;
-    let http_client = PlainHttpClient::new().map_err(|error| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(serde_json::json!({ "error": error })),
-        )
-    })?;
+    let (panel, model_client, http_client) = reverify_inference_clients()?;
 
     if payload.rev_id == 0 {
         let wiki_client =

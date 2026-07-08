@@ -65,7 +65,8 @@ enforced by the build + layer check rather than by trust.
 ## Target taxonomy (summary; full mapping in the migration plan)
 - **Platform:** `sp42-types`, `sp42-platform` (ex-`sp42-core` mechanisms + reusable
   primitives), `sp42-coordination`, `sp42-wiki`, `sp42-live` (live ingestion),
-  `sp42-reporting` (reporting framework), `sp42-inference` (LLM adapter, ADR-0006).
+  `sp42-reporting` (reporting framework), `sp42-inference` (LLM adapter, ADR-0006),
+  `sp42-fetch` (guarded read-only HTTP fetch edge, ADR-0015).
 - **Domains:** `patrolling/sp42-patrol` (scoring policy, evaluation, review workbench,
   patrol reports, queue policy); `references/sp42-citation` (all citation kept
   together; reusable citation primitives flagged for later promotion — #69–#73).

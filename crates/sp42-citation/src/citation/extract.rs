@@ -41,8 +41,10 @@ pub enum SkippedReason {
     /// is nothing to fetch and nothing to resolve (offline/unidentified source).
     NonUrlSource,
     /// The ref carries no URL but does carry a validated book identifier
-    /// (ISBN/OCLC/LCCN/OLID); Open Library catalog resolution (PRD-0009
-    /// Layer 1, ADR-0018) is the path that consumes it.
+    /// (ISBN/OCLC/LCCN/OLID) that did **not** resolve to an Open Library
+    /// record (catalog miss or failed lookup) — assigned by the page
+    /// orchestrator after resolution (PRD-0009 Layer 1, ADR-0018). A resolved
+    /// book ref becomes a finding instead (Layer 2).
     BookSource,
 }
 
@@ -72,6 +74,26 @@ impl SkippedRef {
     }
 }
 
+/// One book-citation use-site (PRD-0009): a claim sentence attached to a
+/// url-less ref that carries validated book identifiers. The page
+/// orchestrator resolves it against Open Library and — when an exact-edition
+/// scan exists — grounds the claim in the scan's search-inside snippets
+/// (Layer 2), so it is a claim-bearing unit exactly like [`CitationUseSite`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BookUseSite {
+    /// Document-order index across the page (shared with URL use-sites).
+    pub use_site_ordinal: u32,
+    pub block_ordinal: usize,
+    /// The originating ref's marker id, for provenance.
+    pub ref_id: String,
+    /// The claim sentence the ref attaches to.
+    pub claim: String,
+    /// Article title + preceding sentences passed alongside the claim.
+    pub context: ClaimContext,
+    /// The book named by this use-site (identifiers + cited page).
+    pub book: BookSource,
+}
+
 /// A block (or ref) that could not be processed.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct BlockFailure {
@@ -83,21 +105,28 @@ pub struct BlockFailure {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ExtractOutcome {
     pub use_sites: Vec<CitationUseSite>,
+    /// Book-citation use-sites (PRD-0009): url-less refs with validated
+    /// identifiers, carrying the claim they attach to. NOT in `skipped` —
+    /// whether one ends as a finding or a refined skip is decided by the page
+    /// orchestrator after Open Library resolution.
+    pub book_use_sites: Vec<BookUseSite>,
     pub skipped: Vec<SkippedRef>,
     pub failures: Vec<BlockFailure>,
 }
 
-/// Extract every URL-bearing citation use-site from a page's blocks.
-/// Non-URL refs are recorded in `skipped` — with the skip reason and the
-/// ref's validated book identifiers distinguishing "nothing to resolve" from
-/// "a book awaiting catalog resolution" (PRD-0009). Blocks that yield no
-/// usable claim go to `failures`. Document order is preserved across the page.
+/// Extract every claim-bearing citation use-site from a page's blocks: one
+/// [`CitationUseSite`] per URL source and one [`BookUseSite`] per book source
+/// on a url-less ref (PRD-0009). A ref with neither an extractable URL nor a
+/// validated book identifier is recorded in `skipped`; refs that yield no
+/// usable claim go to `failures`. Document order is preserved across the page
+/// and ordinals are shared across both use-site kinds.
 #[must_use]
 pub fn extract_use_sites(
     blocks: &[ParsoidBlock],
     page: &PageVerificationRequest,
 ) -> ExtractOutcome {
     let mut use_sites = Vec::new();
+    let mut book_use_sites = Vec::new();
     let mut skipped = Vec::new();
     let mut failures = Vec::new();
     let mut ordinal: u32 = 0;
@@ -105,20 +134,13 @@ pub fn extract_use_sites(
     for block in blocks {
         let sentences = segment_sentences(&block.text);
         for r in &block.refs {
-            if r.sources.is_empty() {
-                // Book sources carry at least one validated identifier by
-                // construction, so their presence is the "book identifier
-                // present" signal.
-                let reason = if r.book_sources.is_empty() {
-                    SkippedReason::NonUrlSource
-                } else {
-                    SkippedReason::BookSource
-                };
+            if r.sources.is_empty() && r.book_sources.is_empty() {
+                // Nothing fetchable and nothing to resolve.
                 skipped.push(SkippedRef {
                     ref_id: r.ref_id.clone(),
-                    reason,
+                    reason: SkippedReason::NonUrlSource,
                     block_ordinal: block.block_ordinal,
-                    book_sources: r.book_sources.clone(),
+                    book_sources: Vec::new(),
                 });
                 continue;
             }
@@ -150,6 +172,24 @@ pub fn extract_use_sites(
                 preceding_sentences: preceding,
             };
 
+            // A ref with URL sources rides the URL verification path; its
+            // book identifiers stay on the BlockRef for future enrichment.
+            // Only a url-less ref becomes a book use-site (PRD-0009).
+            if r.sources.is_empty() {
+                for book in &r.book_sources {
+                    book_use_sites.push(BookUseSite {
+                        use_site_ordinal: ordinal,
+                        block_ordinal: block.block_ordinal,
+                        ref_id: r.ref_id.clone(),
+                        claim: claim.clone(),
+                        context: context.clone(),
+                        book: book.clone(),
+                    });
+                    ordinal += 1;
+                }
+                continue;
+            }
+
             for source in &r.sources {
                 use_sites.push(CitationUseSite {
                     use_site_ordinal: ordinal,
@@ -173,6 +213,7 @@ pub fn extract_use_sites(
 
     ExtractOutcome {
         use_sites,
+        book_use_sites,
         skipped,
         failures,
     }
@@ -331,9 +372,9 @@ mod tests {
     }
 
     #[test]
-    fn book_identifier_ref_is_skipped_with_the_refined_reason() {
-        // A url-less ref that carries a validated ISBN is distinguishable from
-        // a plain non-URL source: the report can say which book went unresolved.
+    fn book_identifier_ref_becomes_a_book_use_site_with_the_claim() {
+        // A url-less ref carrying a validated ISBN is a claim-bearing unit:
+        // it gets the same sentence attach as a URL ref, ready for Layer 2.
         let mut r = bref(10, &[]);
         r.book_sources = vec![crate::wikitext_editor::BookSource {
             identifiers: vec![BookIdentifier::Isbn("9780140328721".to_string())],
@@ -342,22 +383,49 @@ mod tests {
         let b = block("Cats purr.", vec![r]);
         let out = extract_use_sites(&[b], &page());
         assert!(out.use_sites.is_empty());
-        assert_eq!(out.skipped.len(), 1);
-        assert_eq!(out.skipped[0].reason, SkippedReason::BookSource);
+        assert!(out.skipped.is_empty(), "book refs are use-sites, not skips");
+        assert_eq!(out.book_use_sites.len(), 1);
+        let site = &out.book_use_sites[0];
+        assert_eq!(site.claim, "Cats purr.");
+        assert_eq!(site.context.article_title, "Cats");
         assert_eq!(
-            out.skipped[0].book_identifiers(),
-            vec![&BookIdentifier::Isbn("9780140328721".to_string())]
+            site.book.identifiers,
+            vec![BookIdentifier::Isbn("9780140328721".to_string())]
         );
-        assert_eq!(
-            out.skipped[0].book_sources[0].cited_page.as_deref(),
-            Some("42")
-        );
+        assert_eq!(site.book.cited_page.as_deref(), Some("42"));
+    }
+
+    #[test]
+    fn book_use_sites_share_the_ordinal_sequence_with_url_use_sites() {
+        let mut book_ref = bref(10, &[]);
+        book_ref.book_sources = vec![crate::wikitext_editor::BookSource {
+            identifiers: vec![BookIdentifier::Isbn("9780140328721".to_string())],
+            cited_page: None,
+        }];
+        let url_ref = bref(22, &["https://a.test"]);
+        let b = block("Cats purr. Cats sleep.", vec![book_ref, url_ref]);
+        let out = extract_use_sites(&[b], &page());
+        assert_eq!(out.book_use_sites[0].use_site_ordinal, 0);
+        assert_eq!(out.use_sites[0].use_site_ordinal, 1);
+    }
+
+    #[test]
+    fn book_ref_with_empty_claim_is_a_failure_like_the_url_path() {
+        let mut r = bref(0, &[]);
+        r.book_sources = vec![crate::wikitext_editor::BookSource {
+            identifiers: vec![BookIdentifier::Isbn("9780140328721".to_string())],
+            cited_page: None,
+        }];
+        let b = block("   ", vec![r]);
+        let out = extract_use_sites(&[b], &page());
+        assert!(out.book_use_sites.is_empty());
+        assert_eq!(out.failures.len(), 1);
     }
 
     #[test]
     fn url_bearing_ref_with_book_identifiers_still_verifies_as_url() {
-        // url= wins: the ref produces a use-site; the book identifiers ride
-        // along on the BlockRef without changing the URL verification path.
+        // url= wins: the ref produces a URL use-site; the book identifiers
+        // ride along on the BlockRef without spawning a book use-site.
         let mut r = bref(10, &["https://a.test"]);
         r.book_sources = vec![crate::wikitext_editor::BookSource {
             identifiers: vec![BookIdentifier::Isbn("9780140328721".to_string())],
@@ -366,6 +434,7 @@ mod tests {
         let b = block("Cats purr.", vec![r]);
         let out = extract_use_sites(&[b], &page());
         assert_eq!(out.use_sites.len(), 1);
+        assert!(out.book_use_sites.is_empty());
         assert!(out.skipped.is_empty());
     }
 

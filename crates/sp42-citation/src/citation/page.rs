@@ -1,15 +1,25 @@
 //! Page-level verification: request, orchestrator output report, and stats.
 
+use crate::citation::citoid::CitoidMetadata;
 use crate::citation::concurrency::map_with_concurrency;
-use crate::citation::extract::{BlockFailure, CitationUseSite, ExtractOutcome, SkippedRef};
-use crate::citation::openlibrary::{BookResolution, BookResolutionOutcome, resolve_book_source};
+use crate::citation::extract::{
+    BlockFailure, BookUseSite, CitationUseSite, ExtractOutcome, SkippedReason, SkippedRef,
+};
+use crate::citation::openlibrary::{
+    BookResolution, BookResolutionOutcome, OpenLibraryEdition, build_catalog_lookup_request,
+    resolve_book_source,
+};
+use crate::citation::search_inside::{
+    BookGroundingPreparation, extract_ocaid, prepare_book_grounding, scan_deep_link,
+};
 use crate::citation::verdict::{CitationVerdict, SupportLevel};
 use crate::citation::verify::{
-    CitationFinding, FetchedSource, SourceUnavailableReason, VerificationOutcome, VerifyOptions,
-    fetch_source, verify_citation_use_site,
+    BookScanProvenance, CitationFinding, CitationVerificationRequest, FetchedSource,
+    SourceProvenance, SourceUnavailableReason, VerificationOutcome, VerifyOptions,
+    book_scan_unavailable_outcome, book_searched_not_supported_outcome, fetch_source, sha256_hex,
+    verify_citation_use_site,
 };
 use crate::errors::CitationVerificationError;
-use crate::wikitext_editor::BookSource;
 use sp42_types::{Clock, HttpClient, ModelClient, ModelRef};
 use std::collections::{HashMap, HashSet};
 
@@ -365,41 +375,401 @@ fn tally_stats(
     stats
 }
 
-/// Resolve the skipped refs' book sources against Open Library (PRD-0009
-/// Layer 1). Read-only and best-effort: a failure becomes a `LookupFailed`
-/// entry, never a page error. Concurrency stays low out of REST politeness
-/// (ADR-0015 sizes third-party REST fan-out at <= 3).
-async fn resolve_book_citations<C>(
+/// What one book use-site produced besides its [`BookResolution`]: a finding
+/// (resolved book, grounded or honestly `SourceUnavailable`), the refined skip
+/// (identifier present, no catalog record / failed lookup), or a verify error.
+enum BookVerdict {
+    Finding(Box<CitationFinding>),
+    Skip(SkippedRef),
+    Failure(BlockFailure),
+}
+
+/// The finding-side provenance URL for a resolved book: the human-facing Open
+/// Library record when the edition names one, else the catalog lookup itself.
+fn book_record_url(edition: &OpenLibraryEdition, resolution: &BookResolution) -> url::Url {
+    edition
+        .record_url
+        .as_deref()
+        .and_then(|record| record.parse().ok())
+        .unwrap_or_else(|| {
+            let identifier = resolution
+                .identifiers
+                .first()
+                .expect("book sources carry at least one identifier by construction");
+            build_catalog_lookup_request(identifier).url
+        })
+}
+
+/// A no-model book finding (unavailable / searched-and-nothing-found), with
+/// the ref/claim/context provenance stamped like `verify_one_use_site` does.
+#[allow(clippy::too_many_arguments)] // https://github.com/schiste/SP42 distinct named provenance inputs, same trade-off as verify_citation_use_site
+fn book_no_model_finding(
+    site: &BookUseSite,
+    url: url::Url,
+    content_hash: String,
+    http_status: u16,
+    clock: &dyn Clock,
+    not_supported: bool,
+    book_scan: Option<BookScanProvenance>,
+) -> CitationFinding {
+    let provenance = SourceProvenance {
+        url,
+        content_hash,
+        fetched_at: clock.now_ms(),
+        http_status: Some(http_status),
+    };
+    let outcome = if not_supported {
+        book_searched_not_supported_outcome(&provenance, site.use_site_ordinal)
+    } else {
+        book_scan_unavailable_outcome(&provenance, site.use_site_ordinal)
+    };
+    let mut finding = outcome.finding;
+    finding.ref_id.clone_from(&site.ref_id);
+    finding.claim.clone_from(&site.claim);
+    finding
+        .preceding_context
+        .clone_from(&site.context.preceding_sentences);
+    finding.book_scan = book_scan;
+    finding
+}
+
+/// Judge one book claim against its assembled snippet body: the existing
+/// verifier runs over the snippets (scoped short-body bypass), the resolved
+/// record rides the metadata sidecar as prompt context (context only, never
+/// grounded), and the finding gains the book-scan provenance — including the
+/// **scanned** page the passage was actually found on, so a pagination
+/// mismatch surfaces instead of a false `not_supported` (PRD-0009 Q5).
+#[allow(clippy::too_many_arguments)] // https://github.com/schiste/SP42 injected edges + site, same trade-off as verify_citation_use_site
+async fn judge_book_snippets<C, M>(
     fetch_client: &C,
-    skipped: &[SkippedRef],
+    model_client: &M,
+    clock: &dyn Clock,
+    panel: &[ModelRef],
+    page: &PageVerificationRequest,
+    site: &BookUseSite,
+    edition: &OpenLibraryEdition,
+    ocaid: &str,
+    options: &VerifyOptions,
+    body: &crate::citation::search_inside::BookSnippetBody,
+) -> BookVerdict
+where
+    C: HttpClient + ?Sized,
+    M: ModelClient + ?Sized,
+{
+    let source_url: url::Url = scan_deep_link(ocaid, body.page_of_passage(None), &body.query)
+        .parse()
+        .unwrap_or_else(|_| {
+            format!("https://archive.org/details/{ocaid}")
+                .parse()
+                .expect("archive details url parses")
+        });
+    let request = CitationVerificationRequest {
+        wiki_id: page.wiki_id.clone(),
+        rev_id: page.rev_id,
+        title: page.title.clone(),
+        claim: site.claim.clone(),
+        source_url,
+    };
+    let mut opts = options.clone();
+    opts.include_metadata = false;
+    // The resolved record is legitimate prompt context (context only, never
+    // grounded) — reuse the metadata sidecar slot.
+    opts.metadata_sidecar = Some(CitoidMetadata {
+        publication: (!edition.publishers.is_empty()).then(|| edition.publishers.join(", ")),
+        published: edition.publish_date.clone(),
+        author: (!edition.authors.is_empty()).then(|| edition.authors.join(", ")),
+        title: edition.title.clone(),
+        url: request.source_url.to_string(),
+    });
+    opts.prefetched = Some(FetchedSource {
+        text: body.text.clone(),
+        status: 200,
+        content_type: "text/plain".to_string(),
+        raw_html: None,
+        book_snippet: true,
+    });
+    match verify_citation_use_site(
+        fetch_client,
+        model_client,
+        clock,
+        panel,
+        &request,
+        Some(&site.context),
+        site.use_site_ordinal,
+        opts,
+    )
+    .await
+    {
+        Ok(outcome) => {
+            let mut finding = outcome.finding;
+            finding.ref_id.clone_from(&site.ref_id);
+            finding.claim.clone_from(&site.claim);
+            finding
+                .preceding_context
+                .clone_from(&site.context.preceding_sentences);
+            let scanned_page =
+                body.page_of_passage(finding.passage.as_ref().map(|p| p.quote.as_str()));
+            finding.book_scan = Some(BookScanProvenance {
+                ocaid: ocaid.to_string(),
+                scanned_page,
+                cited_page: site.book.cited_page.clone(),
+                note: (!body.cited_page_hit && site.book.cited_page.is_some())
+                    .then(|| "cited page had no match; whole-book search".to_string()),
+            });
+            BookVerdict::Finding(Box::new(finding))
+        }
+        Err(error) => BookVerdict::Failure(BlockFailure {
+            block_ordinal: site.block_ordinal,
+            reason: format!("book verify failed for {}: {error}", site.ref_id),
+        }),
+    }
+}
+
+/// Ground and judge one resolved book claim against its exact-edition scan:
+/// search-inside snippets become the source body for the existing verifier
+/// (with the scoped short-body bypass), and every degraded outcome maps onto
+/// the ADR-0007 split (`SourceUnavailable` vs `not_supported`).
+#[allow(clippy::too_many_arguments)] // https://github.com/schiste/SP42 injected edges + site, same trade-off as verify_citation_use_site
+async fn ground_resolved_book<C, M>(
+    fetch_client: &C,
+    model_client: &M,
+    clock: &dyn Clock,
+    panel: &[ModelRef],
+    page: &PageVerificationRequest,
+    site: &BookUseSite,
+    edition: &OpenLibraryEdition,
+    ocaid: &str,
+    options: &VerifyOptions,
+) -> BookVerdict
+where
+    C: HttpClient + ?Sized,
+    M: ModelClient + ?Sized,
+{
+    let preparation = prepare_book_grounding(
+        fetch_client,
+        ocaid,
+        &site.claim,
+        site.book.cited_page.as_deref(),
+    )
+    .await;
+    let scan_url = |page_number: Option<u32>, query: &str| -> url::Url {
+        scan_deep_link(ocaid, page_number, query)
+            .parse()
+            .unwrap_or_else(|_| {
+                format!("https://archive.org/details/{ocaid}")
+                    .parse()
+                    .expect("archive details url parses")
+            })
+    };
+    match preparation {
+        BookGroundingPreparation::Body(body) => {
+            judge_book_snippets(
+                fetch_client,
+                model_client,
+                clock,
+                panel,
+                page,
+                site,
+                edition,
+                ocaid,
+                options,
+                &body,
+            )
+            .await
+        }
+        BookGroundingPreparation::NoMatches {
+            response_hash,
+            deep_link,
+        } => {
+            let url = deep_link
+                .parse()
+                .unwrap_or_else(|_| scan_url(None, &site.claim));
+            let book_scan = Some(BookScanProvenance {
+                ocaid: ocaid.to_string(),
+                scanned_page: None,
+                cited_page: site.book.cited_page.clone(),
+                note: Some("searched, no matching passage".to_string()),
+            });
+            BookVerdict::Finding(Box::new(book_no_model_finding(
+                site,
+                url,
+                response_hash,
+                200,
+                clock,
+                true,
+                book_scan,
+            )))
+        }
+        BookGroundingPreparation::NoUsableBody { detail } => {
+            let book_scan = Some(BookScanProvenance {
+                ocaid: ocaid.to_string(),
+                scanned_page: None,
+                cited_page: site.book.cited_page.clone(),
+                note: Some(detail.to_string()),
+            });
+            BookVerdict::Finding(Box::new(book_no_model_finding(
+                site,
+                scan_url(None, &site.claim),
+                sha256_hex(b""),
+                200,
+                clock,
+                false,
+                book_scan,
+            )))
+        }
+        BookGroundingPreparation::Unreachable { message } => {
+            let book_scan = Some(BookScanProvenance {
+                ocaid: ocaid.to_string(),
+                scanned_page: None,
+                cited_page: site.book.cited_page.clone(),
+                note: Some(message),
+            });
+            BookVerdict::Finding(Box::new(book_no_model_finding(
+                site,
+                scan_url(None, &site.claim),
+                sha256_hex(b""),
+                0,
+                clock,
+                false,
+                book_scan,
+            )))
+        }
+    }
+}
+
+/// Resolve and judge one book use-site (PRD-0009 Layers 1+2): Open Library
+/// resolution always yields a [`BookResolution`] for the report; the verdict
+/// side is a finding for a resolved book (grounded when an exact-edition scan
+/// is searchable, honest `SourceUnavailable` otherwise) or the refined skip
+/// when no catalog record was found.
+async fn verify_book_use_site<C, M>(
+    fetch_client: &C,
+    model_client: &M,
+    clock: &dyn Clock,
+    panel: &[ModelRef],
+    page: &PageVerificationRequest,
+    site: BookUseSite,
+    options: &VerifyOptions,
+) -> (BookResolution, BookVerdict)
+where
+    C: HttpClient + ?Sized,
+    M: ModelClient + ?Sized,
+{
+    let outcome = resolve_book_source(fetch_client, &site.book).await;
+    let resolution = BookResolution {
+        ref_id: site.ref_id.clone(),
+        block_ordinal: site.block_ordinal,
+        identifiers: site.book.identifiers.clone(),
+        cited_page: site.book.cited_page.clone(),
+        outcome,
+    };
+
+    let verdict = match &resolution.outcome {
+        BookResolutionOutcome::Resolved { edition, scan, .. } => {
+            let groundable_ocaid = scan
+                .as_ref()
+                .and_then(|availability| availability.groundable_scan())
+                .and_then(|item| extract_ocaid(&item.item_url));
+            if let Some(ocaid) = groundable_ocaid {
+                ground_resolved_book(
+                    fetch_client,
+                    model_client,
+                    clock,
+                    panel,
+                    page,
+                    &site,
+                    edition,
+                    &ocaid,
+                    options,
+                )
+                .await
+            } else {
+                // Resolved, but no exact-edition scan (similar-only, none, or
+                // availability unknown): grounding degrades to
+                // `SourceUnavailable` (ADR-0018 Decision 3); the Books section
+                // carries the scan state.
+                BookVerdict::Finding(Box::new(book_no_model_finding(
+                    &site,
+                    book_record_url(edition, &resolution),
+                    sha256_hex(b""),
+                    200,
+                    clock,
+                    false,
+                    None,
+                )))
+            }
+        }
+        BookResolutionOutcome::NotFound | BookResolutionOutcome::LookupFailed { .. } => {
+            BookVerdict::Skip(SkippedRef {
+                ref_id: site.ref_id.clone(),
+                reason: SkippedReason::BookSource,
+                block_ordinal: site.block_ordinal,
+                book_sources: vec![site.book.clone()],
+            })
+        }
+    };
+    (resolution, verdict)
+}
+
+/// Prefetch each distinct source URL once, into the shared body cache the
+/// use-site fan-out reads — but cap the retained bytes so a citation-heavy
+/// page can't OOM the server. Fetches run in concurrency-sized chunks and
+/// *caching* stops once retained bodies reach `MAX_PREFETCH_CACHE_BYTES`; any
+/// URL past the budget is simply not prefetched, so `verify_one_use_site`
+/// lazily (re)fetches it on demand (un-deduped). Peak retained ≈ budget +
+/// `page_concurrency` * source cap. A proper evict-after-last-use fix is
+/// tracked in SP42#59. A transport error inserts a sentinel (empty text,
+/// status 0) so no use-site re-fetches; the empty-text path routes to
+/// `SourceUnavailable` via the body-usability gate.
+async fn prefetch_bodies<C>(
+    fetch_client: &C,
+    use_sites: &[crate::citation::extract::CitationUseSite],
     page_concurrency: usize,
-) -> Vec<BookResolution>
+) -> HashMap<String, FetchedSource>
 where
     C: HttpClient + ?Sized,
 {
-    let inputs: Vec<(String, usize, BookSource)> = skipped
-        .iter()
-        .flat_map(|s| {
-            s.book_sources
-                .iter()
-                .map(|book| (s.ref_id.clone(), s.block_ordinal, book.clone()))
+    let mut distinct: Vec<String> = Vec::new();
+    for us in use_sites {
+        let u = us.request.source_url.to_string();
+        if !distinct.contains(&u) {
+            distinct.push(u);
+        }
+    }
+    let mut bodies: HashMap<String, FetchedSource> = HashMap::new();
+    let mut retained_bytes: usize = 0;
+    let mut budget_hit = false;
+    for chunk in distinct.chunks(page_concurrency) {
+        if retained_bytes >= MAX_PREFETCH_CACHE_BYTES {
+            budget_hit = true;
+            break;
+        }
+        let fetched = map_with_concurrency(chunk.to_vec(), page_concurrency, |url, _| async move {
+            (url.clone(), fetch_source(fetch_client, &url).await)
         })
-        .collect();
-    map_with_concurrency(
-        inputs,
-        page_concurrency.clamp(1, 3),
-        |(ref_id, block_ordinal, book), _| async move {
-            let outcome = resolve_book_source(fetch_client, &book).await;
-            BookResolution {
-                ref_id,
-                block_ordinal,
-                identifiers: book.identifiers,
-                cited_page: book.cited_page,
-                outcome,
-            }
-        },
-    )
-    .await
+        .await;
+        for (url, result) in fetched {
+            let source = result.unwrap_or_else(|_| FetchedSource {
+                text: String::new(),
+                status: 0,
+                content_type: String::new(),
+                raw_html: None,
+                book_snippet: false,
+            });
+            retained_bytes += prefetch_retained_bytes(&source);
+            bodies.insert(url, source);
+        }
+    }
+    if budget_hit {
+        tracing::warn!(
+            distinct_sources = distinct.len(),
+            cached_sources = bodies.len(),
+            retained_bytes,
+            "verify_page source-body cache hit its byte budget; remaining sources will be \
+             re-fetched per use-site (un-deduped) to bound memory"
+        );
+    }
+    bodies
 }
 
 /// Verify every use-site in `extract` against its source. Fetches each distinct
@@ -435,14 +805,19 @@ where
 {
     let ExtractOutcome {
         use_sites,
+        book_use_sites,
         skipped,
         failures,
     } = extract;
-    // refs_seen = every ref we encountered: those that became use-sites (count by distinct ref_id,
-    // since extract_use_sites emits one use-site per source URL), those skipped (non-URL),
-    // and those that failed extraction.
-    let distinct_use_site_refs: HashSet<&str> =
-        use_sites.iter().map(|u| u.ref_id.as_str()).collect();
+    let mut skipped = skipped;
+    // refs_seen = every ref we encountered: those that became use-sites (count by distinct
+    // ref_id across URL and book use-sites, since extract emits one use-site per source),
+    // those skipped (non-URL, no identifier), and those that failed extraction.
+    let distinct_use_site_refs: HashSet<&str> = use_sites
+        .iter()
+        .map(|u| u.ref_id.as_str())
+        .chain(book_use_sites.iter().map(|b| b.ref_id.as_str()))
+        .collect();
     let refs_seen = distinct_use_site_refs.len() + skipped.len() + failures.len();
 
     // Pre-bind shared refs OUTSIDE the closures so the spawned futures capture
@@ -453,63 +828,11 @@ where
     let clock: &dyn Clock = clock;
     let panel: &[ModelRef] = panel;
 
-    // 1. Dedupe: distinct source URLs, fetched once each.
-    let mut distinct: Vec<String> = Vec::new();
-    for us in &use_sites {
-        let u = us.request.source_url.to_string();
-        if !distinct.contains(&u) {
-            distinct.push(u);
-        }
-    }
+    // 1. Prefetch each distinct source URL once, into a shared body cache.
     // Page-level concurrency: distinct fetches in flight. The per-use-site panel
     // concurrency stays `options.concurrency` (applied inside verify_one_use_site).
     let page_concurrency = page_concurrency.max(1);
-    // Prefetch the distinct bodies once each and share them — but cap the retained bytes so a
-    // citation-heavy page can't OOM the server. We fetch in concurrency-sized chunks and stop
-    // *caching* once retained bodies reach `MAX_PREFETCH_CACHE_BYTES`; any URL past the budget
-    // is simply not prefetched, so `verify_one_use_site` lazily (re)fetches it on demand
-    // (un-deduped). Peak retained ≈ budget + `page_concurrency` * source cap. A proper
-    // evict-after-last-use fix is tracked in SP42#59.
-    let mut bodies: HashMap<String, FetchedSource> = HashMap::new();
-    let mut retained_bytes: usize = 0;
-    let mut budget_hit = false;
-    for chunk in distinct.chunks(page_concurrency) {
-        if retained_bytes >= MAX_PREFETCH_CACHE_BYTES {
-            budget_hit = true;
-            break;
-        }
-        let fetched = map_with_concurrency(chunk.to_vec(), page_concurrency, |url, _| async move {
-            (url.clone(), fetch_source(fetch_client, &url).await)
-        })
-        .await;
-        for (url, result) in fetched {
-            let source = match result {
-                Ok(source) => source,
-                Err(_) => {
-                    // Transport error: insert a sentinel (empty text, status 0) so no use-site
-                    // re-fetches. The empty-text path routes to SourceUnavailable via the
-                    // body-usability gate (body_classifier.rs).
-                    FetchedSource {
-                        text: String::new(),
-                        status: 0,
-                        content_type: String::new(),
-                        raw_html: None,
-                    }
-                }
-            };
-            retained_bytes += prefetch_retained_bytes(&source);
-            bodies.insert(url, source);
-        }
-    }
-    if budget_hit {
-        tracing::warn!(
-            distinct_sources = distinct.len(),
-            cached_sources = bodies.len(),
-            retained_bytes,
-            "verify_page source-body cache hit its byte budget; remaining sources will be \
-             re-fetched per use-site (un-deduped) to bound memory"
-        );
-    }
+    let bodies = prefetch_bodies(fetch_client, &use_sites, page_concurrency).await;
 
     // 2. Fan verify over use-sites, sharing the prefetched body.
     // Every distinct URL is now in `bodies` (including sentinel entries for failed fetches),
@@ -540,8 +863,35 @@ where
         }
     }
 
-    // 3. Resolve book citations against Open Library (PRD-0009 Layer 1).
-    let book_resolutions = resolve_book_citations(fetch_client, &skipped, page_concurrency).await;
+    // 3. Book citations (PRD-0009 Layers 1+2): resolve each against Open
+    // Library, ground resolved books in their exact-edition scan's
+    // search-inside snippets, and refine the skip for unresolved ones.
+    // Read-only against two third-party hosts; concurrency stays low out of
+    // REST politeness (ADR-0015 sizes third-party REST fan-out at <= 3).
+    let page_ref = page;
+    let book_options = &options;
+    let book_results =
+        map_with_concurrency(book_use_sites, page_concurrency.clamp(1, 3), |site, _| {
+            verify_book_use_site(
+                fetch_client,
+                model_client,
+                clock,
+                panel,
+                page_ref,
+                site,
+                book_options,
+            )
+        })
+        .await;
+    let mut book_resolutions = Vec::new();
+    for (resolution, verdict) in book_results {
+        book_resolutions.push(resolution);
+        match verdict {
+            BookVerdict::Finding(finding) => findings.push(*finding),
+            BookVerdict::Skip(skip) => skipped.push(skip),
+            BookVerdict::Failure(failure) => extraction_failures.push(failure),
+        }
+    }
 
     // 4. Stats.
     let stats = tally_stats(
@@ -751,6 +1101,7 @@ mod orchestrator_tests {
                     offset: 6,
                     ref_id: "early".into(),
                     sources: vec![source("https://s.test/early")],
+                    book_sources: vec![],
                     ref_text: "[1]".into(),
                     named: false,
                     is_bare_url_ref: false,
@@ -759,6 +1110,7 @@ mod orchestrator_tests {
                     offset: 17,
                     ref_id: "rX".into(),
                     sources: vec![source("https://s.test/a"), source("https://s.test/b")],
+                    book_sources: vec![],
                     ref_text: "[2]".into(),
                     named: false,
                     is_bare_url_ref: false,
@@ -814,49 +1166,135 @@ mod orchestrator_tests {
         );
     }
 
-    #[test]
-    fn book_ref_is_resolved_against_open_library() {
-        use crate::citation::extract::SkippedReason;
-        use crate::citation::openlibrary::BookResolutionOutcome;
+    fn book_block(cited_page: Option<&str>) -> ParsoidBlock {
         use crate::wikitext_editor::{BookIdentifier, BookSource};
-        use futures::executor::block_on;
-
-        // One url-less book ref, no URL use-sites: the only network traffic is
-        // the catalog lookup and the availability check, in that order.
-        let b = ParsoidBlock {
-            text: "Cats purr.".into(),
+        ParsoidBlock {
+            text: "Matilda longed for her parents to be good and loving.".into(),
             refs: vec![BlockRef {
-                offset: 10,
+                offset: 54,
                 ref_id: "cite_book".into(),
                 sources: vec![],
                 book_sources: vec![BookSource {
                     identifiers: vec![
                         BookIdentifier::isbn("978-0-14-032872-1").expect("valid isbn"),
                     ],
-                    cited_page: Some("42".to_string()),
+                    cited_page: cited_page.map(ToString::to_string),
                 }],
                 ref_text: "[1]".into(),
                 named: false,
             }],
             block_kind: BlockKind::Paragraph,
             block_ordinal: 0,
-        };
-        let extract = extract_use_sites(&[b], &page());
-        assert_eq!(extract.skipped[0].reason, SkippedReason::BookSource);
+        }
+    }
+
+    fn response(body: &str) -> HttpResponse {
+        HttpResponse {
+            status: 200,
+            headers: std::collections::BTreeMap::new(),
+            body: body.as_bytes().to_vec(),
+        }
+    }
+
+    #[test]
+    fn book_ref_is_resolved_grounded_and_judged() {
+        use crate::citation::openlibrary::BookResolutionOutcome;
+        use futures::executor::block_on;
+
+        // One url-less book ref, no URL use-sites. The whole chain over the
+        // stub, in order: catalog lookup → Read API (exact scan) → item
+        // metadata → search-inside → model panel over the snippet body.
+        let extract = extract_use_sites(&[book_block(Some("42"))], &page());
+        assert!(extract.skipped.is_empty());
+        assert_eq!(extract.book_use_sites.len(), 1);
 
         let http = StubHttpClient::new([
-            Ok(HttpResponse {
-                status: 200,
-                headers: std::collections::BTreeMap::new(),
-                body: br#"{"ISBN:9780140328721": {"title": "Matilda", "url": "https://openlibrary.org/books/OL7826547M/Matilda"}}"#.to_vec(),
-            }),
-            Ok(HttpResponse {
-                status: 200,
-                headers: std::collections::BTreeMap::new(),
-                body: br#"{"items": [{"match": "exact", "status": "full access", "itemURL": "https://archive.org/details/matilda00dahl"}]}"#.to_vec(),
-            }),
+            Ok(response(
+                r#"{"ISBN:9780140328721": {"title": "Matilda", "url": "https://openlibrary.org/books/OL7826547M/Matilda", "authors": [{"name": "Roald Dahl"}]}}"#,
+            )),
+            Ok(response(
+                r#"{"items": [{"match": "exact", "status": "full access", "itemURL": "https://archive.org/details/matilda00dahl"}]}"#,
+            )),
+            Ok(response(
+                r#"{"server": "ia800300.us.archive.org", "dir": "/12/items/matilda00dahl", "metadata": {"mediatype": "texts"}}"#,
+            )),
+            Ok(response(
+                r#"{"indexed": true, "matches": [{"text": "Matilda longed for her {{{parents}}} to be good and loving.", "par": [{"page": 42}]}]}"#,
+            )),
         ]);
-        // No use-sites → no model calls.
+        // Panel size 1, repair off: exactly one model call over the snippet.
+        let model = StubModelClient::new([Ok(completion(
+            r#"{"verdict":"SUPPORTED","quote":"good and loving"}"#,
+        ))]);
+        let options = VerifyOptions {
+            repair_turn: false,
+            concurrency: 1,
+            ..VerifyOptions::default()
+        };
+        let report = block_on(verify_page(
+            &http,
+            &model,
+            &FixedClock::new(0),
+            &[model_ref()],
+            &page(),
+            extract,
+            options,
+            1,
+        ));
+
+        // The book ref produced a real grounded finding, not a skip.
+        assert!(report.skipped.is_empty());
+        assert_eq!(report.findings.len(), 1);
+        let finding = &report.findings[0];
+        assert_eq!(finding.ref_id, "cite_book");
+        assert_eq!(
+            finding.verdict,
+            crate::CitationVerdict::Judged(crate::SupportLevel::Supported)
+        );
+        assert_eq!(finding.grounding_status, crate::GroundingStatus::Located);
+        let scan = finding.book_scan.as_ref().expect("book-scan provenance");
+        assert_eq!(scan.ocaid, "matilda00dahl");
+        assert_eq!(scan.scanned_page, Some(42));
+        assert_eq!(scan.cited_page.as_deref(), Some("42"));
+        assert!(
+            finding
+                .provenance
+                .url
+                .as_str()
+                .starts_with("https://archive.org/details/matilda00dahl/page/42"),
+            "deep link should anchor the scanned page: {}",
+            finding.provenance.url
+        );
+
+        // The resolution record still feeds the Books section.
+        assert_eq!(report.book_resolutions.len(), 1);
+        let BookResolutionOutcome::Resolved { edition, .. } = &report.book_resolutions[0].outcome
+        else {
+            panic!("expected Resolved");
+        };
+        assert_eq!(edition.title.as_deref(), Some("Matilda"));
+        assert_eq!(report.stats.books_resolved, 1);
+        assert_eq!(report.stats.supported, 1);
+        assert_eq!(report.stats.skipped, 0);
+        assert_eq!(report.stats.refs_seen, 1);
+    }
+
+    #[test]
+    fn indexed_scan_with_no_snippets_is_not_supported_never_unavailable() {
+        use futures::executor::block_on;
+
+        let extract = extract_use_sites(&[book_block(None)], &page());
+        let http = StubHttpClient::new([
+            Ok(response(r#"{"ISBN:9780140328721": {"title": "Matilda"}}"#)),
+            Ok(response(
+                r#"{"items": [{"match": "exact", "status": "full access", "itemURL": "https://archive.org/details/matilda00dahl"}]}"#,
+            )),
+            Ok(response(
+                r#"{"server": "ia800300.us.archive.org", "dir": "/12/items/matilda00dahl", "metadata": {"mediatype": "texts"}}"#,
+            )),
+            Ok(response(r#"{"indexed": true, "matches": []}"#)),
+        ]);
+        // Zero snippets → deterministic not_supported, no model call.
         let model = StubModelClient::new([]);
         let report = block_on(verify_page(
             &http,
@@ -868,57 +1306,74 @@ mod orchestrator_tests {
             VerifyOptions::default(),
             1,
         ));
-
-        assert!(report.findings.is_empty());
-        assert_eq!(report.skipped.len(), 1);
-        assert_eq!(report.book_resolutions.len(), 1);
-        let resolution = &report.book_resolutions[0];
-        assert_eq!(resolution.ref_id, "cite_book");
-        assert_eq!(resolution.cited_page.as_deref(), Some("42"));
-        let BookResolutionOutcome::Resolved { edition, scan, .. } = &resolution.outcome else {
-            panic!("expected Resolved, got {:?}", resolution.outcome);
-        };
-        assert_eq!(edition.title.as_deref(), Some("Matilda"));
-        assert!(
-            scan.as_ref()
-                .expect("availability checked")
-                .groundable_scan()
-                .is_some()
+        assert_eq!(report.findings.len(), 1);
+        let finding = &report.findings[0];
+        assert_eq!(
+            finding.verdict,
+            crate::CitationVerdict::Judged(crate::SupportLevel::NotSupported)
         );
+        assert_eq!(finding.source_unavailable_reason, None);
+        assert_eq!(
+            finding
+                .book_scan
+                .as_ref()
+                .expect("book scan provenance")
+                .note
+                .as_deref(),
+            Some("searched, no matching passage")
+        );
+        assert_eq!(report.stats.not_supported, 1);
+        assert_eq!(report.stats.source_unavailable, 0);
+    }
+
+    #[test]
+    fn similar_only_scan_degrades_to_source_unavailable() {
+        use futures::executor::block_on;
+
+        let extract = extract_use_sites(&[book_block(None)], &page());
+        let http = StubHttpClient::new([
+            Ok(response(
+                r#"{"ISBN:9780140328721": {"title": "Matilda", "url": "https://openlibrary.org/books/OL7826547M/Matilda"}}"#,
+            )),
+            Ok(response(
+                r#"{"items": [{"match": "similar", "status": "lendable", "itemURL": "https://archive.org/details/other-edition"}]}"#,
+            )),
+        ]);
+        let model = StubModelClient::new([]);
+        let report = block_on(verify_page(
+            &http,
+            &model,
+            &FixedClock::new(0),
+            &[model_ref()],
+            &page(),
+            extract,
+            VerifyOptions::default(),
+            1,
+        ));
+        // Never verified against a different edition: honest SourceUnavailable,
+        // pointing the operator at the resolved record.
+        assert_eq!(report.findings.len(), 1);
+        let finding = &report.findings[0];
+        assert_eq!(finding.verdict, crate::CitationVerdict::SourceUnavailable);
+        assert_eq!(
+            finding.source_unavailable_reason,
+            Some(crate::SourceUnavailableReason::Unusable)
+        );
+        assert_eq!(
+            finding.provenance.url.as_str(),
+            "https://openlibrary.org/books/OL7826547M/Matilda"
+        );
+        assert_eq!(report.stats.source_unavailable_unusable, 1);
         assert_eq!(report.stats.books_resolved, 1);
-        assert_eq!(report.stats.books_not_found, 0);
-        assert_eq!(report.stats.book_lookups_failed, 0);
-        // The ref still has no verdict: resolution refines the skip, it does
-        // not invent a verification outcome (grounding is Layer 2).
-        assert_eq!(report.stats.skipped, 1);
     }
 
     #[test]
     fn book_lookup_failure_never_fails_the_page() {
         use crate::citation::openlibrary::BookResolutionOutcome;
-        use crate::wikitext_editor::{BookIdentifier, BookSource};
         use futures::executor::block_on;
         use sp42_types::HttpClientError;
 
-        let b = ParsoidBlock {
-            text: "Cats purr.".into(),
-            refs: vec![BlockRef {
-                offset: 10,
-                ref_id: "cite_book".into(),
-                sources: vec![],
-                book_sources: vec![BookSource {
-                    identifiers: vec![
-                        BookIdentifier::isbn("978-0-14-032872-1").expect("valid isbn"),
-                    ],
-                    cited_page: None,
-                }],
-                ref_text: "[1]".into(),
-                named: false,
-            }],
-            block_kind: BlockKind::Paragraph,
-            block_ordinal: 0,
-        };
-        let extract = extract_use_sites(&[b], &page());
+        let extract = extract_use_sites(&[book_block(None)], &page());
         let http = StubHttpClient::new([Err(HttpClientError::Transport {
             message: "openlibrary unreachable".to_string(),
         })]);
@@ -940,8 +1395,14 @@ mod orchestrator_tests {
         ));
         assert_eq!(report.stats.book_lookups_failed, 1);
         // The failure stays inside the books lane: no extraction failure, no
-        // finding, and the skip entry is untouched.
+        // finding, and the ref lands in skipped with the refined reason.
         assert!(report.extraction_failures.is_empty());
+        assert!(report.findings.is_empty());
+        assert_eq!(report.skipped.len(), 1);
+        assert_eq!(
+            report.skipped[0].reason,
+            crate::citation::extract::SkippedReason::BookSource
+        );
         assert_eq!(report.stats.skipped, 1);
     }
 
@@ -1423,6 +1884,7 @@ mod tests {
             status: 200,
             content_type: "text/html".to_string(),
             raw_html: Some("x".repeat(100)),
+            book_snippet: false,
         };
         assert_eq!(prefetch_retained_bytes(&html_heavy), 3 + 100);
 
@@ -1432,6 +1894,7 @@ mod tests {
             status: 200,
             content_type: String::new(),
             raw_html: None,
+            book_snippet: false,
         };
         assert_eq!(prefetch_retained_bytes(&text_only), 5);
     }

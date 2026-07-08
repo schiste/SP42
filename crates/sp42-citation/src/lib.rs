@@ -35,7 +35,8 @@ pub use citation::citoid::{
 };
 pub use citation::concurrency::map_with_concurrency;
 pub use citation::extract::{
-    BlockFailure, CitationUseSite, ExtractOutcome, SkippedReason, SkippedRef, extract_use_sites,
+    BlockFailure, BookUseSite, CitationUseSite, ExtractOutcome, SkippedReason, SkippedRef,
+    extract_use_sites,
 };
 pub use citation::locate_quote::{FuzzyLocate, locate_quote, locate_quote_fuzzy};
 pub use citation::openlibrary::{
@@ -54,6 +55,12 @@ pub use citation::parsing::{
 };
 pub use citation::prompts::ClaimContext;
 pub use citation::prompts::{build_repair_prompt, build_verify_prompt};
+pub use citation::search_inside::{
+    ARCHIVE_METADATA_BASE, BookGroundingPreparation, BookSnippetBody, ItemLocation,
+    SearchInsideMatch, SearchInsideResult, build_item_metadata_request,
+    build_search_inside_request, extract_ocaid, parse_item_metadata, parse_search_inside,
+    prepare_book_grounding, scan_deep_link, search_query,
+};
 pub use citation::segment::{Sentence, segment_sentences};
 pub use citation::source_fetch::{html_to_text, looks_like_html, recover_wayback_body};
 pub use citation::storage::{
@@ -66,11 +73,12 @@ pub use citation::urls::{
 };
 pub use citation::verdict::{CitationFindingKind, CitationVerdict, SupportLevel, Verdict};
 pub use citation::verify::{
-    CitationFinding, CitationVerificationRequest, FetchedSource, GroundingAssertion,
-    GroundingStatus, LocatedPassage, ModelVerdict, ModelVote, SourceProvenance,
+    BookScanProvenance, CitationFinding, CitationVerificationRequest, FetchedSource,
+    GroundingAssertion, GroundingStatus, LocatedPassage, ModelVerdict, ModelVote, SourceProvenance,
     SourceUnavailableReason, VerificationOutcome, VerifyModelInputs, VerifyOptions,
-    assemble_citation_finding, build_model_votes, execute_citation_verify, fetch_source,
-    is_groundable_support, sha256_hex, verify_citation_use_site,
+    assemble_citation_finding, book_scan_unavailable_outcome, book_searched_not_supported_outcome,
+    build_model_votes, execute_citation_verify, fetch_source, is_groundable_support, sha256_hex,
+    verify_citation_use_site,
 };
 pub use citation::voting::{BinaryVote, NClassVote, PanelAgreement, binary_vote, n_class_vote};
 pub use citation_finding::{

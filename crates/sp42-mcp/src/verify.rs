@@ -58,6 +58,7 @@ where
             // usability gate's structured-paywall check (grounding uses `text`).
             content_type: "text/plain".to_owned(),
             raw_html: None,
+            book_snippet: false,
         });
     }
     let outcome = verify_citation_use_site(

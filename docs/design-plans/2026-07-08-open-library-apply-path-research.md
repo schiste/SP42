@@ -2,9 +2,9 @@
 
 **Date:** 2026-07-08
 **Author:** Luis Villa (researched by Claude Code)
-**Status:** Research note — feeds the future Open Library apply-contract ADR
-(PRD-0009 resolved Q6(b)). No write code exists or is enabled; Layers 1–2
-(ADR-0018) are unaffected.
+**Status:** Research note — the findings ADR-0019 (Open Library apply
+contract, PRD-0009 resolved Q6(b)) is drafted from. No write code exists or
+is enabled; Layers 1–2 (ADR-0018) are unaffected.
 
 ## The question
 
@@ -105,8 +105,8 @@ human-paced by construction.
 
 ## Implication for the apply-contract ADR
 
-The ADR can now be drafted with a **two-lane apply contract**, both
-per-operator:
+*(Adopted: ADR-0019 records this contract.)* The ADR can be drafted with a
+**two-lane apply contract**, both per-operator:
 
 1. **Default lane — authenticated form POST** (`/books/OL…M/edit`): works for
    every ordinary operator account today. SP42 renders the proposal, the

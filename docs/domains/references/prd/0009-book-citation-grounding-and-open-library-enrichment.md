@@ -12,9 +12,9 @@ Draft until it lands or is descoped.
 **Discussion:** design conversation 2026-07-01 (Internet Archive editable book
 metadata → SP42 integration); no tracking issue yet.
 **Spawned ADRs:** ADR-0024 (Open Library / Internet Archive read contract:
-resolve + full-text grounding). If the enrichment lane ships, a second ADR
-reusing ADR-0010's propose/confirm apply discipline against a non-wiki target
-is still expected.
+resolve + full-text grounding) and ADR-0025 (Open Library apply contract —
+ADR-0010's propose/confirm discipline against the non-wiki target, two apply
+lanes behind an enablement gate).
 
 ## Scope boundary
 

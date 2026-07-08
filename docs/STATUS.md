@@ -86,8 +86,10 @@ PWA packaging and offline installability are now effectively complete for local 
   bypass), cited-page-first with whole-book fallback, page-anchored deep links,
   and the honest `not_supported` vs `SourceUnavailable` split; unresolved books
   stay skipped with a refined reason and a Books report section shows every
-  resolution; the enrichment lane (Layer 3) awaits the Open Library
-  apply-contract ADR
+  resolution; the enrichment lane (Layer 3) has its
+  apply contract drafted (ADR-0019: form-lane + REST-lane applies behind a
+  derived capability, client-side refuse-on-drift, write lane disabled until
+  its enablement gate) and awaits implementation
 
 ## Current Verification
 

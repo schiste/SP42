@@ -34,6 +34,10 @@ pub use citation::citoid::{
     CitoidMetadata, build_citoid_header, build_citoid_request, parse_citoid_response,
 };
 pub use citation::concurrency::map_with_concurrency;
+pub use citation::enrich::{
+    EnrichmentCandidate, EnrichmentProposal, OpenLibraryRecord, enrichment_candidates,
+    isbn10_from_isbn13, isbn13_from_isbn10, parse_record, propose_from_candidate,
+};
 pub use citation::extract::{
     BlockFailure, BookUseSite, CitationUseSite, ExtractOutcome, SkippedReason, SkippedRef,
     extract_use_sites,
@@ -44,6 +48,13 @@ pub use citation::openlibrary::{
     OpenLibraryEdition, ScanAvailability, ScanItem, bibkey, build_catalog_lookup_request,
     build_scan_availability_request, parse_catalog_lookup, parse_scan_availability,
     resolve_book_source,
+};
+pub use citation::openlibrary_apply::{
+    ApplyLane, ApplyOutcome, ENRICHMENT_WRITE_LANE_ENABLED, EditForm, OPEN_LIBRARY_ORIGIN,
+    OpenLibrarySession, apply_proposal_to_record, build_edit_form_request,
+    build_form_submit_request, build_login_request, build_record_request, build_rest_apply_request,
+    execute_enrichment_apply, fill_edit_form, form_field_name, form_submit_succeeded,
+    parse_edit_form, parse_login_response, verify_applied,
 };
 pub use citation::page::{
     PageVerificationReport, PageVerificationRequest, PageVerificationStats, verify_page,

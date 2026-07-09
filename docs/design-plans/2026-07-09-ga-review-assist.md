@@ -156,6 +156,57 @@ a piece above when it lands, and none blocks the first sequencing step:
 - **ADR-0016 / PRs #119–#120** (Wikidata entity read path) — the read module
   the harvest lanes and the promotion-badge proposal build on.
 
+## External-ecosystem notes (fuzheado/Wikipedia-AI-Skills, surveyed 2026-07-09)
+
+The 47-skill [Wikipedia-AI-Skills](https://github.com/fuzheado/Wikipedia-AI-Skills)
+repo PRD-0010 cites was surveyed for GA prior art. Findings:
+
+- **No GA/DYK/FA review skill exists** — the assessment domain is greenfield.
+  The likeliest first external consumer of a GA-assist MCP surface now has a
+  concrete shape: a fuzheado-style skill encoding the GA *process* (review-page
+  mechanics, templates, hold etiquette) that calls SP42 for the grounded
+  *judgment* — their `wikipedia-reference-verifiability` skill checks only
+  citation URL-presence, exactly the support-verification gap PRD-0010 names.
+- **LiftWing `articlequality` is a candidate informational pre-screen.** Their
+  `wikimedia-ml-services` skill points at the article-quality model family
+  (predicts Stub→FA class; a reference-quality sibling exists). Unlike
+  revertrisk-on-Wikidata (gated off as unfit, PRD-0011), this model is
+  Wikipedia-trained *for* article-level quality, so surfacing its class
+  estimate as nomination triage — a score, never a verdict — fits the shipped
+  LiftWing posture in patrol. Candidate report arm, unsequenced.
+- **Their `wikipedia-en-article-audit` skill was studied in depth**; takeaways:
+  - *The PRD-0010 verdict mapping lands on a real schema.* Their sentence
+    verdicts are `confirmed / contradicted / npov_or / unverifiable / mixed` —
+    PRD-0010's documented mapping (`Supported→confirmed`,
+    `NotSupported→contradicted|unverifiable`, `Partial→mixed`) fits cleanly,
+    and `npov_or` is precisely the verdict SP42 refuses to emit. Any
+    machine-readable GA-report arm should ship SP42's own vocabulary plus that
+    mapping, never a fabricated NPOV verdict.
+  - *A hold is a work order; their task-graph pattern fits it.* They compile
+    findings into a prioritized, dependency-aware task DAG (p0 factual, p1
+    structural/citation, p2 polish; citation tasks depend on their sentence's
+    rewrite; assessment updates only after substantive fixes — the same
+    insight as our re-verify-after-fixes loop). A future machine-readable
+    appendix arm could emit findings as such a work order for the nominator —
+    with the SP42 twist that tasks reference findings and PRD-0014 repair
+    affordances, never SP42-authored `newText` (their tasks carry authored
+    replacement text; ours must not).
+  - *BLP spotlight at intake.* Their pipeline screens BLP articles first and
+    applies a stricter regime. A cheap BLP-applicability flag on the GA report
+    (P31/P570 via the ADR-0016 read module — the `is_blp` check PRD-0010 keeps
+    on its roadmap) would let the appendix mark BLP nominations for the
+    reviewer's heightened sourcing scrutiny.
+  - *Derived artifacts, one direction.* Their human-readable `analysis.md` is
+    generated from the structured outputs and never hand-edited — independent
+    convergence on the report-is-the-contract discipline: the wikitext
+    appendix is a pure renderer output over `PageVerificationReport` +
+    `StabilitySignal`, never a source of truth.
+  - *Independent convergence on audit/edit separation.* Their hard rule — "one
+    agent audits, a different agent edits… with explicit user confirmation" —
+    is ADR-0010/ADR-0011's read-only-report + operator-confirm split arrived
+    at independently; useful external validation that the posture matches how
+    the agent-builder ecosystem already wants to consume this.
+
 ## Non-goals
 
 - Assessing prose quality, original research, breadth, or neutrality.

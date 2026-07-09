@@ -67,13 +67,24 @@ evidence *for* a review, not a review.
    `Talk:Article/GAn`, findings addressable by `ref_id` — alongside the
    existing structured/CLI rendering. Wording stays evidential ("12 of 14 URL
    citations verified supported; 2 dead links: …"), never "criterion 2: pass."
-4. **Posting (optional), via ADR-0010.** The review subpage is an ordinary
-   MediaWiki page, so posting the appendix is a propose/confirm apply under the
-   operator's own account — preview shown, exact-text confirm, refuse-on-drift.
-   SP42 never posts autonomously and never signs an assessment.
+   PRD-0014's framing carries over verbatim: a `NotSupported` finding means the
+   claim and source *disagree*, not that the citation is the wrong side — the
+   appendix must not phrase mismatches as citation failures, or it steers
+   nominators toward fixing citations when the article text is what drifted.
+4. **Posting (optional), under ADR-0010's discipline.** The review subpage is
+   an ordinary MediaWiki page, but appending an evidence section is an
+   **insert-at-position**, not a node replacement — ADR-0010's shipped
+   mechanism does replace/modify only. Posting therefore depends on the
+   ADR-0003 insertion extension (spawned by PRD-0012; generalized as the
+   guarded-edit pipeline's `Insert` op in the PRD-0013 design plan), and — for
+   the CLI/MCP shells this sketch assumes — on ADR-0018's `WikimediaTokenSource`
+   seam for edit authority outside a browser session. Same confirm posture
+   regardless: preview shown, exact-text confirm, refuse-on-drift; SP42 never
+   posts autonomously and never signs an assessment.
 5. **The hold loop.** GA reviews usually hold ~7 days for fixes. The re-run
-   against the post-fix revision should be incremental: ADR-0011's committed
-   "re-verify one use-site" fast-follow means only touched citations re-verify,
+   against the post-fix revision should be incremental: PRD-0014's Re-verify
+   route (the single-use-site re-check ADR-0011 committed to as a fast-follow;
+   implemented on the PR #109 branch) means only touched citations re-verify,
    and the second report diffs against the first ("3 previously-dead links now
    archived; 1 not_supported unchanged"). Design the report contract with
    run-to-run comparability in mind from the start.
@@ -121,6 +132,29 @@ evidence *for* a review, not a review.
 
 Deliberately unsequenced: `assess_reliability` (PRD-0010 roadmap), breadth
 context via sitelinks (speculative), GAN queue ingestion (convenience).
+
+## In-flight dependencies (as of 2026-07-09)
+
+Three citation PRDs and two Wikidata PRs are open but not merged; each unlocks
+a piece above when it lands, and none blocks the first sequencing step:
+
+- **PRD-0014 / PR #109** (browser action row + Re-verify) — satisfies the hold
+  loop's re-verify dependency, and makes GA findings actionable in the
+  Citations tab (fix citation / fix text / flag with `{{Failed verification}}`
+  — the flag templates are a second, in-article channel for GA findings that
+  outlives the review page).
+- **PRD-0012** (citation insertion, Discussion) — the repair path for the
+  unsourced-claim class of criterion-2b findings during the hold; its spawned
+  ADR-0003 insertion extension is what the appendix-posting step anchors on.
+  Its atomizer (compound sentence → co-reference-resolved atoms) is the
+  "Molecular Facts" decomposition ADR-0011 deferred — a future quality
+  tailwind for verify-page on GA-caliber prose, not a dependency.
+- **PRD-0013 + ADR-0018 / PR #106** (MCP write surface + token seam) — the
+  guarded-edit pipeline and non-server edit authority the posting step needs
+  from CLI/MCP shells; also makes the whole GA evidence run drivable by an
+  external agent over MCP.
+- **ADR-0016 / PRs #119–#120** (Wikidata entity read path) — the read module
+  the harvest lanes and the promotion-badge proposal build on.
 
 ## Non-goals
 

@@ -6,9 +6,13 @@
 **State:** Draft
 **Discussion:** design conversation 2026-07-09 (extending SP42 toward Good-article
 assessment); no tracking issue yet.
-**Spawned ADRs:** none yet. If accepted, expect one thin ADR covering the
-page-history read contract (revision list + tags + summaries as a platform fetch
-edge) and the `StabilitySignal` report contract.
+**Spawned ADRs:** none yet. If accepted, expect one thin **platform** ADR
+pinning the resolved-Q2 placement: the page-history fetch edge (revision list +
+tags + summaries), the revert-chain reducer, and the talk-activity sensor as
+platform mechanisms (pure builders/parsers over the `HttpClient` trait), with
+the `StabilitySignal` contract in `sp42-core` (Constitution Art. 9.1, the
+`PageVerificationReport` precedent) and triage/vocabulary policy left to the
+assessment domain.
 
 ## Scope boundary
 

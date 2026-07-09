@@ -22,5 +22,7 @@ PRD-0009), not re-specified here.
 
 ## Architecture Decision Records
 
-None yet. PRD-0015 expects a thin ADR for the page-history read contract and the
-`StabilitySignal` report contract if accepted.
+None yet. If accepted, PRD-0015 expects a thin platform ADR pinning its
+mechanism/contract placement (history fetch edge, revert-chain reducer, and
+talk-activity sensor in platform; `StabilitySignal` in `sp42-core`; policy in
+this domain).

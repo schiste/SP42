@@ -405,8 +405,7 @@ type ReverifyClients = (
 /// Build the per-request model panel, model client, and SSRF-guarded source-fetch client for the
 /// reverify route, mapping construction failures to the same `503`/`500` responses `verify-page`
 /// uses. Extracted so `post_citation_reverify` stays within the function-length budget.
-fn reverify_inference_clients()
--> Result<ReverifyClients, (StatusCode, Json<serde_json::Value>)> {
+fn reverify_inference_clients() -> Result<ReverifyClients, (StatusCode, Json<serde_json::Value>)> {
     let panel = sp42_inference::panel_from_env().map_err(|error| {
         (
             StatusCode::SERVICE_UNAVAILABLE,

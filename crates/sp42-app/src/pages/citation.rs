@@ -17,9 +17,9 @@ use sp42_ui::{
     InventoryShellProps, Link, LinkProps, MetaText, MetaTextProps, PageShell, PageShellProps,
     PanelGrid, PanelGridProps, RawReportDisclosure, RawReportDisclosureProps, ResultCard,
     ResultCardHeader, ResultCardHeaderProps, ResultCardProps, ResultDisclosure,
-    ResultDisclosureProps, ResultList, ResultListProps, Select, SelectOption, SelectProps,
-    StatusBadge, StatusBadgeProps, StatusRegion, StatusRegionProps, Text, TextElement, TextInput,
-    TextInputProps, TextProps, TextWeight, Tone, Width,
+    ResultDisclosureProps, ResultList, ResultListProps, Select, SelectOption, SelectProps, Stack,
+    StackProps, StatusBadge, StatusBadgeProps, StatusRegion, StatusRegionProps, Text, TextElement,
+    TextInput, TextInputProps, TextProps, TextWeight, Tone, Width,
 };
 
 use crate::components::style::wiki_base_url;
@@ -541,8 +541,8 @@ fn FindingActionRow(
     let reason_textarea_id = format!("sp42-citation-reason-{ordinal}");
     let concern_select_id = format!("sp42-citation-concern-{ordinal}");
 
-    view! {
-        <div class="sp42-citation-action-row">
+    Stack(StackProps::new(ui_children(move || {
+        view! {
             {
                 let wiki_id = wiki_id.clone();
                 let title = title.clone();
@@ -765,8 +765,8 @@ fn FindingActionRow(
                         let concern_select_for_confirm = concern_select_id.clone();
                         let reason_textarea_id = reason_textarea_id.clone();
                         let reason_id_for_confirm = reason_textarea_id.clone();
-                        view! {
-                            <div class="sp42-citation-flag-panel">
+                        Stack(StackProps::new(ui_children(move || {
+                            view! {
                                 {Field(FieldProps::new(
                                     "Concern kind",
                                     ui_children(move || {
@@ -877,16 +877,18 @@ fn FindingActionRow(
                                     }
                                         .into_any()
                                 })))}
-                            </div>
-                        }
+                            }
+                            .into_any()
+                        })).with_gap(Gap::Small))
                             .into_any()
                     }
                     OpenPanel::None => ().into_any(),
                 }
                 }
             }
-        </div>
-    }
+        }
+        .into_any()
+    })).with_gap(Gap::Small))
 }
 
 /// "Fix citation" (PRD-0014): routes to PRD-0008's bare-URL repair replace
@@ -907,8 +909,8 @@ fn FixCitationPanel(
 
     match route {
         FixCitationRoute::Insert => {
-            view! {
-                <div class="sp42-citation-fix-panel">
+            Stack(StackProps::new(ui_children(move || {
+                view! {
                     {MetaText(MetaTextProps::new(ui_children(|| {
                         view! {
                             "Citation insertion (PRD-0012) hasn't shipped yet, so Fix citation can't propose a citation for this unsourced claim. Use Edit article text or Flag citation instead."
@@ -921,8 +923,9 @@ fn FixCitationPanel(
                             .with_density(Density::Compact)
                             .on_click(move |_| on_close()),
                     )}
-                </div>
-            }
+                }
+                .into_any()
+            })).with_gap(Gap::Small))
             .into_any()
         }
         FixCitationRoute::Replace => {
@@ -1003,8 +1006,8 @@ fn FixCitationPanel(
                 });
             };
 
-            view! {
-                <div class="sp42-citation-fix-panel">
+            Stack(StackProps::new(ui_children(move || {
+                view! {
                     {move || {
                         if loading.get() {
                             return MetaText(MetaTextProps::new(ui_children(|| {
@@ -1046,8 +1049,9 @@ fn FixCitationPanel(
                             .with_density(Density::Compact)
                             .on_click(move |_| on_close()),
                     )}
-                </div>
-            }
+                }
+                .into_any()
+            })).with_gap(Gap::Small))
             .into_any()
         }
     }
@@ -1274,7 +1278,7 @@ fn input_value(_ev: &leptos::ev::Event) -> String {
     String::new()
 }
 
-/// Reads a `<textarea id=...>`'s current DOM value on demand (e.g. a Save
+/// Reads a textarea element's current DOM value by id on demand (e.g. a Save
 /// click), rather than tracking every keystroke through a signal — mirrors
 /// the patrol rail's `DiffEditPanel` save handler (`diff_viewer.rs`).
 #[cfg(target_arch = "wasm32")]
@@ -1294,7 +1298,7 @@ fn textarea_value(_id: &str) -> String {
     String::new()
 }
 
-/// Reads a `<select id=...>`'s current DOM value on demand, same rationale as
+/// Reads a select element's current DOM value by id on demand, same rationale as
 /// `textarea_value`. `None` when the element isn't found (not yet mounted).
 #[cfg(target_arch = "wasm32")]
 fn select_value(id: &str) -> Option<String> {

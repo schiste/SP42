@@ -1,7 +1,7 @@
 //! Page-level verification: request, orchestrator output report, and stats.
 
 use crate::citation::concurrency::map_with_concurrency;
-use crate::citation::extract::{BlockFailure, ExtractOutcome, SkippedRef};
+use crate::citation::extract::{BlockFailure, CitationUseSite, ExtractOutcome, SkippedRef};
 use crate::citation::verdict::{CitationVerdict, SupportLevel};
 use crate::citation::verify::{
     CitationFinding, FetchedSource, SourceUnavailableReason, VerificationOutcome, VerifyOptions,
@@ -49,14 +49,88 @@ pub struct ReverifyFindingRequest {
     #[serde(default)]
     pub rev_id: u64,
     pub ref_id: String,
-    /// The finding's document-order use-site position. A single `ref_id` can
-    /// yield multiple use-sites (a reference bundling several source URLs), so
-    /// matching on `ref_id` alone re-verifies whichever use-site extraction
-    /// happens to emit first — the wrong source for any but the first card.
-    /// When set, the use-site is selected by ordinal; `None` falls back to the
-    /// first `ref_id` match (back-compatible with pre-PRD-0014 callers).
+    /// The finding's cited source URL — the **stable** cross-revision use-site
+    /// identity. A single `ref_id` can bundle several source URLs, and re-verify
+    /// runs against the *latest* revision, where the page-global `use_site_ordinal`
+    /// has shifted if any earlier citation changed. Matching on `(ref_id, source_url)`
+    /// re-verifies the citation the operator was looking at regardless of position.
+    /// This is `finding.archive_of.unwrap_or(finding.provenance.url)` — the original
+    /// cited URL, equal to the use-site's `request.source_url`. Preferred over
+    /// `use_site_ordinal` when both are present.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_url: Option<String>,
+    /// The finding's document-order use-site position — a positional fallback used
+    /// only when `source_url` is absent (a ref bundling several URLs, disambiguated
+    /// by ordinal within a single revision). `None` falls back to the first `ref_id`
+    /// match (back-compatible with pre-PRD-0014 callers).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub use_site_ordinal: Option<u32>,
+}
+
+/// Select the use-site a re-verify request targets from the freshly-extracted
+/// use-sites of the current revision.
+///
+/// Preference order, most stable first:
+/// 1. `(ref_id, source_url)` — the citation the operator selected, matched by its
+///    cited URL, so it survives the page-global `use_site_ordinal` shifting when an
+///    earlier citation changes between the report's revision and the current one.
+/// 2. `(ref_id, use_site_ordinal)` — a positional fallback for a multi-source ref
+///    within a single revision, when the caller sent no `source_url`.
+/// 3. First `ref_id` match — back-compatible with callers that send neither.
+///
+/// Returns `None` when nothing matches (the ref was removed, or its cited URL
+/// changed), which the route surfaces as `ref-not-found`.
+#[must_use]
+pub fn select_reverify_use_site(
+    use_sites: Vec<CitationUseSite>,
+    ref_id: &str,
+    source_url: Option<&str>,
+    use_site_ordinal: Option<u32>,
+) -> Option<CitationUseSite> {
+    use_sites.into_iter().find(|use_site| {
+        use_site.ref_id == ref_id
+            && match (source_url, use_site_ordinal) {
+                (Some(url), _) => use_site.request.source_url.as_str() == url,
+                (None, Some(ordinal)) => use_site.use_site_ordinal == ordinal,
+                (None, None) => true,
+            }
+    })
+}
+
+/// Apply a re-verified finding back into the page report: replace the finding for
+/// `(ref_id, use_site_ordinal)` with `fresh` and recompute the verdict tallies so the
+/// report's stats (and the grouped-by-verdict sections a browser renders from it) stay
+/// consistent — a `NotSupported` finding that re-verifies to `Supported` moves to the
+/// Supported section and both counts update, instead of lingering under the old header.
+///
+/// `refs_seen`, `skipped`, and `extraction_failures` are unchanged: re-verify replaces a
+/// verdict for an existing use-site, it never adds or removes a ref. The fresh finding's
+/// identity/position (`ref_id`, `use_site_ordinal`) is preserved from the slot it replaces
+/// (the fresh verdict came from the latest revision, whose ordinal may differ). Returns
+/// `true` when a matching finding was found and replaced.
+pub fn apply_reverified_finding(
+    report: &mut PageVerificationReport,
+    ref_id: &str,
+    use_site_ordinal: u32,
+    mut fresh: CitationFinding,
+) -> bool {
+    let Some(slot) = report
+        .findings
+        .iter_mut()
+        .find(|finding| finding.ref_id == ref_id && finding.use_site_ordinal == use_site_ordinal)
+    else {
+        return false;
+    };
+    fresh.ref_id.clone_from(&slot.ref_id);
+    fresh.use_site_ordinal = slot.use_site_ordinal;
+    *slot = fresh;
+    report.stats = tally_stats(
+        report.stats.refs_seen,
+        &report.findings,
+        report.stats.skipped,
+        report.stats.extraction_failures,
+    );
+    true
 }
 
 /// Result of re-verifying one finding: the fresh finding, replacing the
@@ -216,6 +290,7 @@ where
     // against. (`archive_of` is stamped inside try_archive_fallback.)
     let outcome = outcome.map(|mut o| {
         o.finding.ref_id.clone_from(&us.ref_id);
+        o.finding.is_bare_url_ref = us.is_bare_url_ref;
         o.finding.claim.clone_from(&us.request.claim);
         o.finding
             .preceding_context
@@ -427,8 +502,117 @@ mod orchestrator_tests {
     use super::*;
     use crate::citation::body_classifier::BodyUsabilityReason;
     use crate::citation::extract::extract_use_sites;
+    use crate::citation::verdict::CitationFindingKind;
+    use crate::citation::verify::{GroundingAssertion, GroundingStatus, SourceProvenance};
+    use crate::citation::voting::PanelAgreement;
     use crate::wikitext_editor::{BlockKind, BlockRef, ParsoidBlock};
     use sp42_types::{FixedClock, HttpResponse, StubHttpClient, StubModelClient};
+
+    /// A minimal finding fixture: only `ref_id`, `use_site_ordinal`, and `verdict` matter for the
+    /// re-group logic; the rest carry inert defaults.
+    fn mk_finding(ref_id: &str, ordinal: u32, verdict: CitationVerdict) -> CitationFinding {
+        CitationFinding {
+            kind: CitationFindingKind::CitationVerdict,
+            verdict,
+            grounding_status: GroundingStatus::Located,
+            source_unavailable_reason: None,
+            unusable_reason: None,
+            agreement: PanelAgreement::new(3, 3),
+            passage: None,
+            provenance: SourceProvenance {
+                url: url::Url::parse("https://s.test/x").unwrap(),
+                content_hash: "h".into(),
+                fetched_at: 0,
+                http_status: Some(200),
+            },
+            source_excerpt: None,
+            metadata: None,
+            grounding: GroundingAssertion::SourceFetched {
+                source_hash: "h".into(),
+            },
+            use_site_ordinal: ordinal,
+            ref_id: ref_id.into(),
+            claim: "A claim.".into(),
+            preceding_context: Vec::new(),
+            archive_of: None,
+            is_bare_url_ref: false,
+            schema_version: crate::citation::verify::SCHEMA_VERSION,
+        }
+    }
+
+    #[test]
+    fn apply_reverified_finding_moves_verdict_and_updates_tallies() {
+        let judged = |level| CitationVerdict::Judged(level);
+        let mut report = PageVerificationReport {
+            wiki_id: "enwiki".into(),
+            title: "Cats".into(),
+            rev_id: 1,
+            findings: vec![
+                mk_finding("r1", 0, judged(SupportLevel::NotSupported)),
+                mk_finding("r2", 1, judged(SupportLevel::Supported)),
+            ],
+            skipped: Vec::new(),
+            extraction_failures: Vec::new(),
+            stats: tally_stats(
+                2,
+                &[
+                    mk_finding("r1", 0, judged(SupportLevel::NotSupported)),
+                    mk_finding("r2", 1, judged(SupportLevel::Supported)),
+                ],
+                0,
+                0,
+            ),
+        };
+        assert_eq!(report.stats.not_supported, 1);
+        assert_eq!(report.stats.supported, 1);
+
+        // r1 re-verifies from NotSupported to Supported.
+        let replaced = apply_reverified_finding(
+            &mut report,
+            "r1",
+            0,
+            mk_finding("r1", 0, judged(SupportLevel::Supported)),
+        );
+        assert!(replaced);
+        // The finding now reads Supported, and the tallies moved with it.
+        let r1 = report.findings.iter().find(|f| f.ref_id == "r1").unwrap();
+        assert_eq!(r1.verdict, judged(SupportLevel::Supported));
+        assert_eq!(report.stats.not_supported, 0);
+        assert_eq!(report.stats.supported, 2);
+        assert_eq!(
+            report.stats.refs_seen, 2,
+            "refs_seen is preserved across a re-verify"
+        );
+    }
+
+    #[test]
+    fn apply_reverified_finding_is_a_noop_when_the_use_site_is_gone() {
+        let mut report = PageVerificationReport {
+            wiki_id: "enwiki".into(),
+            title: "Cats".into(),
+            rev_id: 1,
+            findings: vec![mk_finding(
+                "r1",
+                0,
+                CitationVerdict::Judged(SupportLevel::Partial),
+            )],
+            skipped: Vec::new(),
+            extraction_failures: Vec::new(),
+            stats: PageVerificationStats::default(),
+        };
+        let replaced = apply_reverified_finding(
+            &mut report,
+            "r1",
+            9, // wrong ordinal
+            mk_finding("r1", 9, CitationVerdict::Judged(SupportLevel::Supported)),
+        );
+        assert!(!replaced);
+        assert_eq!(
+            report.findings[0].verdict,
+            CitationVerdict::Judged(SupportLevel::Partial),
+            "an unmatched re-verify leaves the report untouched"
+        );
+    }
 
     fn page() -> PageVerificationRequest {
         PageVerificationRequest {
@@ -463,6 +647,7 @@ mod orchestrator_tests {
                     }],
                     ref_text: "[1]".into(),
                     named: false,
+                    is_bare_url_ref: false,
                 },
                 BlockRef {
                     offset: 22,
@@ -473,12 +658,91 @@ mod orchestrator_tests {
                     }],
                     ref_text: "[2]".into(),
                     named: false,
+                    is_bare_url_ref: false,
                 },
             ],
             block_kind: BlockKind::Paragraph,
             block_ordinal: 0,
         };
         extract_use_sites(&[b], &page())
+    }
+
+    // A page where an EARLIER citation precedes a two-source ref `rX`, so `rX`'s two use-sites
+    // carry *shifted* page-global ordinals (1 and 2, not 0 and 1) — the exact drift a re-verify
+    // against a later revision hits when a citation was inserted ahead of the card's ref.
+    fn shifted_page_use_sites() -> Vec<CitationUseSite> {
+        let source = |u: &str| crate::wikitext_editor::CitedSource {
+            url: url::Url::parse(u).unwrap(),
+            archive_urls: vec![],
+        };
+        let b = ParsoidBlock {
+            text: "Intro. Cats purr.".into(),
+            refs: vec![
+                BlockRef {
+                    offset: 6,
+                    ref_id: "early".into(),
+                    sources: vec![source("https://s.test/early")],
+                    ref_text: "[1]".into(),
+                    named: false,
+                    is_bare_url_ref: false,
+                },
+                BlockRef {
+                    offset: 17,
+                    ref_id: "rX".into(),
+                    sources: vec![source("https://s.test/a"), source("https://s.test/b")],
+                    ref_text: "[2]".into(),
+                    named: false,
+                    is_bare_url_ref: false,
+                },
+            ],
+            block_kind: BlockKind::Paragraph,
+            block_ordinal: 0,
+        };
+        extract_use_sites(&[b], &page()).use_sites
+    }
+
+    #[test]
+    fn reverify_matches_stable_source_url_across_ordinal_shift() {
+        // `rX`'s /b source is at page-global ordinal 2 here; the operator's card recorded ordinal 1
+        // from the old report (before the earlier citation was inserted). `source_url` must win so
+        // re-verify targets /b, not the /a source now sitting at ordinal 1.
+        let picked = select_reverify_use_site(
+            shifted_page_use_sites(),
+            "rX",
+            Some("https://s.test/b"),
+            Some(1),
+        )
+        .expect("the /b use-site is found by (ref_id, source_url)");
+        assert_eq!(picked.ref_id, "rX");
+        assert_eq!(picked.request.source_url.as_str(), "https://s.test/b");
+    }
+
+    #[test]
+    fn reverify_ordinal_is_only_a_fallback_when_no_source_url() {
+        // With no source_url, ordinal 1 (page-global) is rX's /a source (early ref took ordinal 0).
+        let picked = select_reverify_use_site(shifted_page_use_sites(), "rX", None, Some(1))
+            .expect("ordinal 1 matches");
+        assert_eq!(picked.request.source_url.as_str(), "https://s.test/a");
+    }
+
+    #[test]
+    fn reverify_first_ref_match_when_neither_given() {
+        let picked = select_reverify_use_site(shifted_page_use_sites(), "rX", None, None)
+            .expect("first rX use-site");
+        assert_eq!(picked.request.source_url.as_str(), "https://s.test/a");
+    }
+
+    #[test]
+    fn reverify_absent_source_url_is_not_found() {
+        assert!(
+            select_reverify_use_site(
+                shifted_page_use_sites(),
+                "rX",
+                Some("https://s.test/gone"),
+                Some(1)
+            )
+            .is_none()
+        );
     }
 
     #[test]
@@ -601,6 +865,7 @@ mod orchestrator_tests {
                 ],
                 ref_text: "[1]".into(),
                 named: false,
+                is_bare_url_ref: false,
             }],
             block_kind: BlockKind::Paragraph,
             block_ordinal: 0,
@@ -669,6 +934,7 @@ mod orchestrator_tests {
                 }],
                 ref_text: "[1]".into(),
                 named: false,
+                is_bare_url_ref: false,
             }],
             block_kind: BlockKind::Paragraph,
             block_ordinal: 0,
@@ -759,6 +1025,7 @@ reject it as too short, allowing the verification process to proceed normally."
                 }],
                 ref_text: "[1]".into(),
                 named: false,
+                is_bare_url_ref: false,
             }],
             block_kind: BlockKind::Paragraph,
             block_ordinal: 0,
@@ -818,6 +1085,7 @@ reject it as too short, allowing the verification process to proceed normally."
                 }],
                 ref_text: "[1]".into(),
                 named: false,
+                is_bare_url_ref: false,
             }],
             block_kind: BlockKind::Paragraph,
             block_ordinal: 0,
@@ -884,6 +1152,7 @@ archive is fetched, the queue will be empty and the test will fail, proving the 
                 }],
                 ref_text: "[1]".into(),
                 named: false,
+                is_bare_url_ref: false,
             }],
             block_kind: BlockKind::Paragraph,
             block_ordinal: 0,

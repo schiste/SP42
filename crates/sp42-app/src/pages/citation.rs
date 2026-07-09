@@ -6,7 +6,8 @@ use sp42_citation::{
 use sp42_core::{
     BareUrlApplyRequest, CitationConcernKind, CitationFinding, CitationVerdict, CitoidMetadata,
     DevAuthBootstrapRequest, GroundingStatus, PageVerificationReport, ReverifyFindingRequest,
-    SessionActionExecutionRequest, SessionActionKind, SupportLevel, parse_page_target,
+    SessionActionExecutionRequest, SessionActionKind, SupportLevel, apply_reverified_finding,
+    parse_page_target,
 };
 use sp42_reporting::ReportSection;
 use sp42_ui::{
@@ -32,6 +33,16 @@ use crate::platform::citation::{
 };
 use crate::platform::config::{is_local_deployment, selected_wiki_id};
 
+/// A re-verify result to fold into the page report: the card's stable identity
+/// (`ref_id`, `use_site_ordinal`) plus its freshly re-verified finding.
+type ReverifyTarget = (String, u32, CitationFinding);
+
+/// Context handle the action row uses to fold a re-verify result into the page-level report, so a
+/// verdict change regroups the card (and updates the section counts/colors) rather than only
+/// refreshing the card in place. Provided by [`CitationSurface`].
+#[derive(Clone, Copy)]
+struct ReverifyApply(Callback<ReverifyTarget>);
+
 #[component]
 pub fn CitationSurface() -> impl IntoView {
     let (wiki_id, set_wiki_id) = signal(selected_wiki_id());
@@ -40,6 +51,22 @@ pub fn CitationSurface() -> impl IntoView {
     let (report, set_report) = signal(None::<PageVerificationReport>);
     let (load_error, set_load_error) = signal(None::<String>);
     let (loading, set_loading) = signal(false);
+
+    // Re-verify updates the page report (not just the card's local signal), so a finding whose
+    // verdict changes regroups under the correct section and the tallies/colors update. Provided as
+    // context so the deeply-nested action row can reach it without threading a prop through every
+    // section/card. The tuple is (ref_id, use_site_ordinal, fresh finding) — the card's stable
+    // identity plus its re-verified verdict.
+    let apply_reverify: ReverifyApply = ReverifyApply(Callback::new(
+        move |(ref_id, ordinal, fresh): ReverifyTarget| {
+            set_report.update(|maybe| {
+                if let Some(current) = maybe.as_mut() {
+                    apply_reverified_finding(current, &ref_id, ordinal, fresh);
+                }
+            });
+        },
+    ));
+    provide_context(apply_reverify);
 
     let load_action = Action::new_local(move |_: &()| {
         let wiki = wiki_id.get_untracked();
@@ -445,19 +472,28 @@ enum OpenPanel {
 }
 
 /// Which flow "Fix citation" routes to (PRD-0014, Resolved question 1):
-/// repair (PRD-0008) when the finding traces to an existing `<ref>`, insert
-/// (PRD-0012) when it doesn't — a use-site with no ref to replace.
+/// - `Insert` (PRD-0012): no ref to replace — an unsourced claim.
+/// - `Replace` (PRD-0008): the finding's own ref is a **bare URL**, so bare-URL
+///   repair applies to it.
+/// - `AlreadyFormatted`: the finding traces to an existing ref that is already a
+///   formatted citation (not a bare URL). Bare-URL repair does not apply — and
+///   crucially, we must not offer it, because matching a repair proposal by the
+///   shared source URL could otherwise apply *another* bare ref's repair to this
+///   formatted citation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum FixCitationRoute {
     Replace,
     Insert,
+    AlreadyFormatted,
 }
 
-fn fix_citation_route(ref_id: &str) -> FixCitationRoute {
-    if ref_id.is_empty() {
+fn fix_citation_route(finding: &CitationFinding) -> FixCitationRoute {
+    if finding.ref_id.is_empty() {
         FixCitationRoute::Insert
-    } else {
+    } else if finding.is_bare_url_ref {
         FixCitationRoute::Replace
+    } else {
+        FixCitationRoute::AlreadyFormatted
     }
 }
 
@@ -531,6 +567,10 @@ fn FindingActionRow(
     let (open, set_open) = signal(OpenPanel::None);
     let (status, set_status) = signal(String::new());
     let (busy, set_busy) = signal(false);
+    // Present when rendered inside the page (always, in practice); absent only in an isolated
+    // component render. When present, Re-verify folds its result into the page report so the card
+    // regroups; when absent, we fall back to refreshing the card's local signal in place.
+    let reverify_apply = use_context::<ReverifyApply>();
     // The revision subsequent Edit/Fix/Flag actions from this row anchor to. Seeded with the
     // report's revision, but a successful Re-verify (which runs against the *latest* revision)
     // advances it to the revision actually verified — otherwise a later confirmed action would
@@ -607,13 +647,31 @@ fn FindingActionRow(
                                         );
                                         return;
                                     }
+                                    // The card's stable identity in the page report, used to fold
+                                    // the fresh verdict back in (and regroup) on success.
+                                    let apply_ref_id = current.ref_id.clone();
+                                    let apply_ordinal = current.use_site_ordinal;
                                     let request = ReverifyFindingRequest {
                                         wiki_id: wiki_id.clone(),
                                         title: title.clone(),
                                         rev_id: 0,
                                         ref_id,
-                                        // Pin the exact use-site so a ref with several source URLs
-                                        // re-verifies this card's source, not the first extracted.
+                                        // The stable cross-revision key: the original cited URL
+                                        // (`archive_of` when verified via an archive, else the
+                                        // fetched provenance URL — both equal the use-site's
+                                        // `request.source_url`). Re-verify runs against the latest
+                                        // revision, where the page-global ordinal may have shifted,
+                                        // so match on the URL, not the position.
+                                        source_url: Some(
+                                            current
+                                                .archive_of
+                                                .as_ref()
+                                                .map_or_else(
+                                                    || current.provenance.url.to_string(),
+                                                    ToString::to_string,
+                                                ),
+                                        ),
+                                        // Positional fallback for older servers only.
                                         use_site_ordinal: Some(current.use_site_ordinal),
                                     };
                                     set_busy.set(true);
@@ -625,7 +683,18 @@ fn FindingActionRow(
                                                 // Advance the baserevid for later actions to the
                                                 // revision we actually verified against.
                                                 set_base_rev_id.set(response.rev_id);
-                                                finding.set(response.finding);
+                                                // Fold the fresh verdict into the page report so the
+                                                // card regroups under its new section (counts/colors
+                                                // update too); fall back to the local card signal if
+                                                // there's no page context.
+                                                match reverify_apply {
+                                                    Some(apply) => apply.0.run((
+                                                        apply_ref_id.clone(),
+                                                        apply_ordinal,
+                                                        response.finding,
+                                                    )),
+                                                    None => finding.set(response.finding),
+                                                }
                                                 set_status.set("Re-verified.".to_string());
                                             }
                                             Err(error) => set_status.set(format!("Re-verify error: {error}")),
@@ -904,10 +973,29 @@ fn FixCitationPanel(
     on_close: impl Fn() + Send + Sync + 'static,
     set_status: WriteSignal<String>,
 ) -> impl IntoView {
-    let ref_id = finding.get_untracked().ref_id.clone();
-    let route = fix_citation_route(&ref_id);
+    let route = fix_citation_route(&finding.get_untracked());
 
     match route {
+        FixCitationRoute::AlreadyFormatted => {
+            Stack(StackProps::new(ui_children(move || {
+                view! {
+                    {MetaText(MetaTextProps::new(ui_children(|| {
+                        view! {
+                            "This citation is already a formatted reference, not a bare URL, so bare-URL repair doesn't apply to it. Use Edit article text or Flag citation instead."
+                        }
+                            .into_any()
+                    })))}
+                    {Button(
+                        ButtonProps::new("Close")
+                            .with_surface(ButtonSurface::Ghost)
+                            .with_density(Density::Compact)
+                            .on_click(move |_| on_close()),
+                    )}
+                }
+                .into_any()
+            })).with_gap(Gap::Small))
+            .into_any()
+        }
         FixCitationRoute::Insert => {
             Stack(StackProps::new(ui_children(move || {
                 view! {
@@ -933,7 +1021,14 @@ fn FixCitationPanel(
             let (preview, set_preview) = signal(None::<(String, String)>);
             let (loading, set_loading) = signal(true);
             let (busy, set_busy) = signal(false);
-            let source_url = finding.get_untracked().provenance.url.to_string();
+            // The original cited URL (the bare URL on the page), not the archive it may have been
+            // verified through — that's what the bare-URL proposals are keyed by.
+            let source_url = {
+                let f = finding.get_untracked();
+                f.archive_of
+                    .as_ref()
+                    .map_or_else(|| f.provenance.url.to_string(), ToString::to_string)
+            };
 
             let wiki_for_load = wiki_id.clone();
             let title_for_load = title.clone();
@@ -1352,6 +1447,7 @@ mod action_row_tests {
             claim: "The article claims 6% growth.".to_string(),
             preceding_context: Vec::new(),
             archive_of: None,
+            is_bare_url_ref: false,
             schema_version: 1,
         }
     }
@@ -1406,16 +1502,31 @@ mod action_row_tests {
     }
 
     #[test]
-    fn fix_citation_routes_to_replace_when_ref_id_present() {
-        // PRD-0014 DoD: "'Fix citation' routes to the replace action when
-        // finding.ref_id is non-empty ... verified by tests over both
-        // finding shapes."
-        assert_eq!(fix_citation_route("cite_note-1"), FixCitationRoute::Replace);
+    fn fix_citation_routes_to_replace_only_for_a_bare_url_ref() {
+        // PRD-0014 DoD + the ref-identity fix: "Fix citation" routes to bare-URL repair
+        // only when the finding's OWN ref is a bare URL, so a proposal matched by the
+        // shared source URL can't apply another (bare) ref's repair to this citation.
+        let mut f = finding(CitationVerdict::Judged(SupportLevel::Partial));
+        f.ref_id = "cite_note-1".to_string();
+        f.is_bare_url_ref = true;
+        assert_eq!(fix_citation_route(&f), FixCitationRoute::Replace);
+    }
+
+    #[test]
+    fn fix_citation_does_not_offer_repair_for_a_formatted_ref() {
+        // The finding's ref is already a formatted citation (not a bare URL). Even if
+        // another bare ref cites the same URL, bare-URL repair must not be offered here.
+        let mut f = finding(CitationVerdict::Judged(SupportLevel::Partial));
+        f.ref_id = "cite_note-1".to_string();
+        f.is_bare_url_ref = false;
+        assert_eq!(fix_citation_route(&f), FixCitationRoute::AlreadyFormatted);
     }
 
     #[test]
     fn fix_citation_routes_to_insert_when_ref_id_empty() {
-        assert_eq!(fix_citation_route(""), FixCitationRoute::Insert);
+        let mut f = finding(CitationVerdict::Judged(SupportLevel::Partial));
+        f.ref_id = String::new();
+        assert_eq!(fix_citation_route(&f), FixCitationRoute::Insert);
     }
 
     #[test]

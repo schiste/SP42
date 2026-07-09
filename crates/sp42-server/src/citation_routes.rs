@@ -484,25 +484,28 @@ pub(crate) async fn post_citation_reverify(
         rev_id: payload.rev_id,
     };
     let extract = extract_use_sites(&blocks, &page_request);
-    // A ref can carry several use-sites (a citation template bundling multiple source URLs), so
-    // matching on `ref_id` alone would re-verify whichever use-site emits first. When the caller
-    // pins the document-order ordinal, select that exact use-site; otherwise fall back to the first
-    // ref match (back-compatible with callers that don't send an ordinal).
-    let Some(use_site) = extract.use_sites.into_iter().find(|use_site| {
-        use_site.ref_id == payload.ref_id
-            && payload
-                .use_site_ordinal
-                .is_none_or(|ordinal| use_site.use_site_ordinal == ordinal)
-    }) else {
+    // Select by the stable `(ref_id, source_url)` key so re-verify targets the citation the
+    // operator selected even though it runs against the latest revision, where the page-global
+    // ordinal has shifted if any earlier citation changed (falls back to ordinal, then first ref).
+    let Some(use_site) = sp42_core::select_reverify_use_site(
+        extract.use_sites,
+        &payload.ref_id,
+        payload.source_url.as_deref(),
+        payload.use_site_ordinal,
+    ) else {
         return Err((
             StatusCode::NOT_FOUND,
             Json(serde_json::json!({
-                "error": match payload.use_site_ordinal {
-                    Some(ordinal) => format!(
+                "error": match (payload.source_url.as_deref(), payload.use_site_ordinal) {
+                    (Some(url), _) => format!(
+                        "ref {} (source {}) was not found on the current revision of {}",
+                        payload.ref_id, url, payload.title
+                    ),
+                    (None, Some(ordinal)) => format!(
                         "ref {} (use-site {}) was not found on the current revision of {}",
                         payload.ref_id, ordinal, payload.title
                     ),
-                    None => format!(
+                    (None, None) => format!(
                         "ref {} was not found on the current revision of {}",
                         payload.ref_id, payload.title
                     ),

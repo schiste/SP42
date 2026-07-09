@@ -17,8 +17,9 @@ assessment domain.
 ## Scope boundary
 
 This PRD owns **an article-level stability evidence signal**: given an article and
-a pinned revision, SP42 gathers and interprets the evidence a reviewer needs to
-judge whether the article is *stable* — the shape of
+the head revision observed at run time (the `rev_id` that anchors the evidence
+window and makes the run reproducible), SP42 gathers and interprets the evidence
+a reviewer needs to judge whether the article is *stable* — the shape of
 [Good article criterion 5](https://en.wikipedia.org/wiki/Wikipedia:Good_article_criteria)
 ("does not change significantly from day to day because of an ongoing edit war or
 content dispute"). It is the first assessment-domain capability; how it slots into

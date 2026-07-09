@@ -5,8 +5,8 @@
 operator workflow
 **Governs the *how* for:** no new ADR yet; composes ADR-0010 (propose/confirm),
 ADR-0011 (article-level verification), PRD-0009 (book grounding / Open Library
-enrichment), PRD-0011 + ADR-0016/0017 (Wikidata), PRD-0012 (stability signal).
-User-facing intent for the stability piece is PRD-0012; this sketch names the
+enrichment), PRD-0011 + ADR-0016/0017 (Wikidata), PRD-0015 (stability signal).
+User-facing intent for the stability piece is PRD-0015; this sketch names the
 end-to-end GA workflow the pieces converge on.
 
 ## Why this exists
@@ -41,7 +41,7 @@ whole thing. The assessment domain (`docs/domains/assessment/`) is its home.
 | 2d copyvio / plagiarism | *extension*: claim↔source overlap signal | future; verifier already holds both texts |
 | 3 broad coverage | none (human); Wikidata/sitelink *context* at most, later | ADR-0016 read module, speculative |
 | 4 neutrality | none (human; PRD-0010 records the no-NPOV-verdict posture) | — |
-| 5 stability | evidence + gated interpretation | **PRD-0012** |
+| 5 stability | evidence + gated interpretation | **PRD-0015** |
 | 6a media licensing | deterministic license/rationale relay | future PRD; `media_diff` extraction + an `imageinfo` fetch edge |
 | 6b media relevance/captions | caption *presence* only; suitability human | same future PRD |
 
@@ -59,7 +59,7 @@ evidence *for* a review, not a review.
    - *Citations:* `verify-page` over the pinned revision (ADR-0011) — verdict +
      located quote per use-site, dead-vs-unusable split, archive fallbacks,
      skips first-class. Book citations flow through PRD-0009 resolve/ground.
-   - *Stability:* the PRD-0012 two-layer signal, keyed to the nomination
+   - *Stability:* the PRD-0015 two-layer signal, keyed to the nomination
      timestamp.
    - *(as they land)* media-licensing relay (6a) and the MoS/layout lint flags.
 3. **GA-shaped rendering.** The report renders as a wikitext evidence appendix
@@ -93,7 +93,7 @@ evidence *for* a review, not a review.
 ## Posture invariants (bounding the whole feature)
 
 - **Evidence, not verdicts.** No criterion pass/fail, no NPOV/OR/breadth
-  judgment, categorical vocabularies only where interpretation runs (PRD-0012).
+  judgment, categorical vocabularies only where interpretation runs (PRD-0015).
 - **Grounded or absent.** Anything interpretive cites verbatim-locatable
   evidence (ADR-0007 discipline) or abstains.
 - **Honesty arms are first-class.** Skips, extraction failures, truncation, and
@@ -109,7 +109,7 @@ evidence *for* a review, not a review.
 1. **GA report renderer** over the existing `PageVerificationReport` — pure
    composition, no new fetches; immediately useful pasted by hand. Smallest
    honest MVP.
-2. **PRD-0012 stability signal** (Layer A first, Layer B behind it).
+2. **PRD-0015 stability signal** (Layer A first, Layer B behind it).
 3. **Media-licensing relay (6a)** — one `imageinfo`/file-page fetch edge plus
    deterministic checks; its own thin PRD.
 4. **Hold-loop incremental re-run** — rides ADR-0011's single-use-site

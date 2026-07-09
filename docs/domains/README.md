@@ -36,7 +36,7 @@ PRD-0011, spawning platform ADR-0015 and continuing ADR-0014.
 Assisting per-article quality assessments, starting with Good-article review:
 grounded evidence against the assessable criteria (citation support, stability,
 media licensing, structural lint), rendered for the reviewer, with judgments and
-pass/fail staying human. No crate yet; specified as PRD-0012 plus the GA-workflow
+pass/fail staying human. No crate yet; specified as PRD-0015 plus the GA-workflow
 design sketch, consuming the references domain's verification path (ADR-0011).
 
 → [assessment/](assessment/README.md)

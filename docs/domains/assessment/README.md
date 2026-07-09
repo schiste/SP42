@@ -16,11 +16,11 @@ PRD-0009), not re-specified here.
 
 ## Product Requirements
 
-- [PRD-0012 — Article stability signal](prd/0012-article-stability-signal.md) —
+- [PRD-0015 — Article stability signal](prd/0015-article-stability-signal.md) —
   two-layer stability evidence (deterministic sensor/gate + panel interpretation
   of the ambiguous middle), shaped for GA criterion 5
 
 ## Architecture Decision Records
 
-None yet. PRD-0012 expects a thin ADR for the page-history read contract and the
+None yet. PRD-0015 expects a thin ADR for the page-history read contract and the
 `StabilitySignal` report contract if accepted.

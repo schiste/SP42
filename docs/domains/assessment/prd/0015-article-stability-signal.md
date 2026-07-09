@@ -1,4 +1,4 @@
-# PRD-0012: Article stability signal
+# PRD-0015: Article stability signal
 
 **Drafter:** Claude Code
 **Editor:** Luis Villa

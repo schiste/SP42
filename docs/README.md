@@ -24,7 +24,7 @@ Capabilities built on top of the platform.
   PRD-0011, spawning platform ADR-0015 and continuing ADR-0014.
   → [docs/domains/wikidata/](domains/wikidata/README.md)
 - **Assessment** — incoming; no crate yet. Evidence-assembly for per-article
-  quality assessments, starting with Good-article review. Lives as PRD-0012 plus
+  quality assessments, starting with Good-article review. Lives as PRD-0015 plus
   a GA-workflow design sketch.
   → [docs/domains/assessment/](domains/assessment/README.md)
 

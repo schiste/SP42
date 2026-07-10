@@ -9,11 +9,10 @@
 
 **Implementation note (2026-07-10):** The capability shipped (the
 `sp42-citation` verification tree: verify, panel voting/agreement, snapshot
-storage, CLI surface; ADR-0006–0009 merged in PR #24), but the DoD items
-below have not been individually bound to their closing tests/observables, so
-per `docs/process/prd-protocol.md` the PRD cannot claim `Implemented` yet.
-Mapping the DoD (or converting this to an as-built characterization) is the
-remaining step.
+storage, CLI surface; ADR-0006–0009 merged in PR #24). The DoD has been
+audited against the test suite — see *DoD bindings* below: 3 of 8 items fully
+bound, 5 partial. Remaining before `Implemented`: the coverage gaps in #134
+and the anti-fabrication wording decision in #133.
 
 ## Problem
 
@@ -120,6 +119,25 @@ CI-green. The criteria below are specific to this feature:
       absence), and source — in the default human format, a machine-readable JSON
       format, and a terse verdict-only format — verified by a CLI integration test
       against a recorded source snapshot.
+
+### DoD bindings (2026-07-10)
+
+Audit of each DoD item against the test suite (all cited tests pass;
+`cargo test -p sp42-citation -p sp42-mcp`, 282 tests, plus `sp42-server`/
+`sp42-cli` suites in CI). Boxes above stay unchecked until every clause of an
+item is bound; remaining gaps are tracked in #134, and item 3's wording
+decision in #133.
+
+| # | Item | Verdict | Binding / gap |
+|---|------|---------|---------------|
+| 1 | Categorical verdict, no numeric confidence | PARTIAL | Categorical set fully bound: `citation/verdict.rs` (`verdict_wire_round_trips_all_four_values`, `unknown_wire_string_is_rejected`, `abstention_never_serializes_as_a_support_level`). Gap: "no numeric confidence surfaced" is structural (`PanelAgreement::fraction` is computed, never serialized) but unasserted (#134). |
+| 2 | Panel vote + measured agreement | BOUND | `citation/voting.rs` (`unanimous_panel_has_full_agreement`, `clear_plurality_wins_with_measured_fraction`, `tie_never_resolves_up_to_supported`); surfaced via `sp42-cli` `renders_human_verdict_block`; e2e `verify.rs::end_to_end_supported_outcome_with_votes`. Agreement is computed from votes by construction. |
+| 3 | Never *supported* without verbatim passage | PARTIAL | Property tests bind the shipped invariant: `verify.rs` (`fabricated_support_is_never_groundable` proptest, `fabricated_multi_token_quote_never_grounds_fuzzily`, `end_to_end_fabricated_quote_is_unverified_not_groundable`). Gap: they assert never-*groundable*-support (ADR-0007 two-axis), not the literal "never yields supported" — the verdict is surfaced and gated, not suppressed. Wording decision: #133. |
+| 4 | Unfetchable source → *source unavailable* | BOUND | `verify.rs::end_to_end_unreachable_source_is_source_unavailable_with_no_model_call` (404 → `SourceUnavailable`, no model call); plus PDF/paywall/short-body variants (`pdf_source_is_unusable_with_no_model_call`, `law360_paywall_stub_short_circuits_no_partial`, `end_to_end_all_model_failures_surface_source_unavailable`). |
+| 5 | No wiki writes from verification | PARTIAL | Zero-write assertions exist only on the propose/apply path (`sp42-server` `bare_url_apply_*_refuses_with_zero_writes`). The verify path has no write capability wired in, but no test asserts a verification run issues zero writes (#134). |
+| 6 | Deterministic replay over same snapshot | BOUND | `citation/storage.rs::replay_is_deterministic_over_the_same_snapshot_and_votes` (identical finding, verdict, agreement); `verify.rs::prefetched_source_skips_http_fetch`. |
+| 7 | Observable: source + passage (or absence) + verdict | PARTIAL | Each piece tested: `build_source_excerpt` windows (`long_body_windows_around_the_located_quote`), passage+verdict renders (`citation_page_report.rs::renders_stats_findings_skipped_and_failures`, CLI `renders_human_verdict_block`). Gap: no single end-to-end assertion that one observable carries all three, and no surface shows the fetched-source excerpt (#134). |
+| 8 | CLI accepts article/revision/citation/ad-hoc | PARTIAL | Ad-hoc mode bound (`parses_ad_hoc_verify_flags`, `verdict_only_flag_is_recognized`, human/JSON/verdict-only renders). Gap: article/revision/single-citation CLI modes are unimplemented ("await the article parser" — whole-article verification shipped server-side via `post_verify_page` instead), and no CLI integration test against a recorded snapshot exists. Amend-or-implement decision + test: #134. |
 
 ## Alternatives
 

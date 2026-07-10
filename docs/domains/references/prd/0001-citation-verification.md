@@ -7,6 +7,14 @@
 **Discussion:** <PR link>
 **Spawned ADRs:** ADR-0006, ADR-0007, ADR-0008, ADR-0009 (see below)
 
+**Implementation note (2026-07-10):** The capability shipped (the
+`sp42-citation` verification tree: verify, panel voting/agreement, snapshot
+storage, CLI surface; ADR-0006–0009 merged in PR #24), but the DoD items
+below have not been individually bound to their closing tests/observables, so
+per `docs/process/prd-protocol.md` the PRD cannot claim `Implemented` yet.
+Mapping the DoD (or converting this to an as-built characterization) is the
+remaining step.
+
 ## Problem
 
 When an operator reviews a revision that adds or changes a citation, there is no

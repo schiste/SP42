@@ -1,6 +1,6 @@
 # ADR-0007: Citation verification verdict and anti-fabrication semantics
 
-**Status:** Proposed
+**Status:** Accepted
 **Date:** 2026-06-07
 **Author:** Luis Villa
 

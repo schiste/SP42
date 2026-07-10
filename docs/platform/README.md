@@ -1,9 +1,11 @@
 # Platform
 
 Shared abstraction layers that domains consume. Platform code lives in
-`crates/sp42-types`, `sp42-coordination`, `sp42-wiki`, `sp42-server`,
-`sp42-devtools`, the shared half of `sp42-core` (contracts, runtime, scoring
-engine), and `xtask`.
+`crates/sp42-types`, `sp42-platform` (contracts, runtime, scoring engine),
+`sp42-coordination`, `sp42-wiki`, `sp42-live`, `sp42-reporting`,
+`sp42-inference`, `sp42-fetch`, and `sp42-parsoid`. The authoritative layer
+map is in `scripts/check-layering.sh`, drawn in
+[architecture.md](architecture.md).
 
 ## Operational docs
 

@@ -7,6 +7,12 @@
 Spawned by PRD-0011 (Wikidata as a first-class SP42 target). This ADR owns the
 **read** mechanism; the entity **write** contract is ADR-0017.
 
+**Implementation note (2026-07-10):** Not yet implemented in platform. Only the
+`sp42-mcp` `verify_wikidata_statement` verb reads entity JSON today, ad hoc via
+`Special:EntityData`; `EntityDiff`, per-revision content-model routing, and the
+capability gating this ADR specifies do not exist in the code. The working
+design is `docs/design-plans/2026-07-01-wikidata-read-model.md`.
+
 ## Context
 
 SP42 already resolves any Wikimedia project (ADR-0014): `wikidatawiki` and

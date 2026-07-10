@@ -143,9 +143,9 @@ Layer A triages the article into three outcomes:
    attention spike exist and no deterministic rule explains them. Only this
    slice pays for Layer B.
 
-**Policy knobs.** The design carries five numeric knobs — the talk-activity
-threshold, the attention-spike threshold, the bundle size cap, the usefulness
-floor, and the evidence window — all sitting **upstream of interpretation**:
+**Policy knobs.** The design carries four numeric knobs — the talk-activity
+threshold, the attention-spike threshold, the bundle size cap (the evidence
+budget), and the evidence window — all sitting **upstream of interpretation**:
 they allocate attention (what is gathered, what is interpreted, how it is
 packaged) and never themselves state anything about the article. Their failure
 directions are asymmetric, and the two triage thresholds have a dangerous one:
@@ -228,11 +228,15 @@ itself evidence: the same two editors recurring across three chains over six
 weeks is the signature of a sustained dispute, and per-chain calls structurally
 cannot see that pattern (nor cleanly partition talk threads that relate to
 several chains). Cost also scales with nominations rather than with churn. The
-bundle is size-capped with **disclosed truncation**; per-chain sharding is not a
-rival design but the fallback for when fitting under the cap would truncate away
-so much evidence that the bundle stops being representative (a usefulness floor —
-a policy knob alongside the cap) — used with its cross-chain blindness stated in
-the report. Whether
+bundle is size-capped — the cap *is* the **evidence budget**: the panel context
+and inference cost one Layer B call may consume. **In the MVP the bundle either
+fits or Layer B declines to run**: an oversized pool is reported as exactly that
+(Layer B not run: evidence oversized), with Layer A's facts delivered in full —
+no sampling, no truncation, no sharding, nothing silently degraded. The
+candidate mitigations — truncation, evidence sampling, per-chain sharding (with
+its cross-chain blindness) — are deliberately deferred until the alpha corpus
+shows how often real articles overflow and where panel attention actually
+degrades; choosing one on paper would be guessing. Whether
 attention dilution on large bundles is real at our evidence sizes is exactly
 what the alpha-era PRD-0007 fixtures measure; the choice is benchmark-revisable.
 
@@ -246,12 +250,12 @@ phase markers and the marker inventory (Layer A, facts), then the panel
 characterizations, each with its cited evidence (Layer B, interpretation), when
 Layer B ran. The report always records the triage outcome: which outcome
 Layer A reached, which sensors fired, and — whenever Layer B did **not** run —
-why not (quiet; covered by graduated deterministic rules; or, later, an
-unattended run's Layer-A-only policy), so a facts-only report is honest on its
-face rather than reading as a full run that found nothing. It records its
-window bounds and phase timestamps for replay. The rendering never uses
-pass/fail wording for criterion 5. When the evidence pool was truncated (very
-large talk archives), the truncation is disclosed in the report, not silent.
+why not (quiet; covered by graduated deterministic rules; evidence oversized;
+or, later, an unattended run's Layer-A-only policy), so a facts-only report is
+honest on its face rather than reading as a full run that found nothing. It
+records its window bounds and phase timestamps for replay. The rendering never
+uses pass/fail wording for criterion 5. An oversized evidence pool surfaces as
+the disclosed reason Layer B declined — never as a silently reduced bundle.
 
 ### The improvement loop
 
@@ -328,10 +332,11 @@ recorded MediaWiki responses — no live network (ADR-0009 discipline).*
       renderer test.
 - [ ] Every Layer B run persists a replayable snapshot suitable for the PRD-0007
       harness, verified by asserting the snapshot round-trips byte-identically.
-- [ ] Evidence-pool truncation (oversized talk archives) is disclosed in the
-      report, verified by an oversized fixture; when the usefulness floor forces
-      per-chain sharding instead, the report states the resulting cross-chain
-      blindness, verified by a floor-triggering fixture.
+- [ ] An evidence pool exceeding the bundle cap causes Layer B to **decline**
+      with an explicit evidence-oversized reason recorded in the report —
+      Layer A facts delivered in full, and no truncated or sampled bundle sent
+      to the panel — verified by an oversized fixture asserting the mock
+      `ModelClient` is never invoked.
 - [ ] Sensors firing under a graduated deterministic rule (e.g. every revert's
       summary cites vandalism policy) triage as **unambiguous-benign**: reported
       clean with the mechanical explanation and **zero** model-inference calls,
@@ -402,9 +407,13 @@ recorded MediaWiki responses — no live network (ADR-0009 discipline).*
   Mitigation: grounded excerpts the operator can check, the categorical (not
   free-text) vocabulary, `Unclear` as a first-class outcome, and the human owning
   the criterion judgment.
-- **Large talk archives blow the evidence budget.** Mitigation: scope to the
-  current talk page plus recent archives, sample beyond that, and disclose
-  truncation in the report.
+- **Large talk archives overflow the evidence budget** (the Layer B bundle
+  cap: panel context and inference cost). MVP mitigation is **transparent
+  failure**: Layer B declines with an explicit evidence-oversized reason and
+  Layer A's facts are delivered in full, so the failure is visible and
+  countable rather than papered over. Which mitigation to adopt — truncation,
+  sampling, per-chain sharding — is chosen experimentally from the alpha
+  corpus, not on paper.
 - **Operator habituation / over-trust.** Mitigation: evidence-forward rendering
   (facts before interpretation), no pass/fail wording, low-agreement surfacing.
 - **Wrong evidence window.** Too short misses slow-burn disputes; too long
@@ -459,8 +468,10 @@ acceptance.
    expectation); the additive-evolution rule in the body is what makes that a
    planned amendment rather than a contract break.
 4. **Panel evidence packaging.** Resolved: **one bundle per article**, size-
-   capped with disclosed truncation; per-chain sharding demoted to the overflow
-   strategy (cross-chain blindness stated in the report when used). Cross-chain
-   patterns — the same participants recurring across chains — are themselves
-   evidence an article-level question needs, and per-chain calls cannot
-   recover them. Benchmark-revisable via the alpha-era PRD-0007 corpus.
+   capped by the evidence budget, and **fits-or-declines in the MVP** (the
+   Editor's call during review: fail transparently and pick mitigations
+   experimentally rather than choose truncation/sampling/sharding on paper).
+   Cross-chain patterns — the same participants recurring across chains — are
+   themselves evidence an article-level question needs, and per-chain calls
+   cannot recover them, which is why sharding is a deferred mitigation rather
+   than the design. Benchmark-revisable via the alpha-era PRD-0007 corpus.

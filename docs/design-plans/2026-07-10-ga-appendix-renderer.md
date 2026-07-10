@@ -102,10 +102,13 @@ clippy).
    wording invariants (incl. `Unlocated` rendering as unconfirmed support and
    a no-raw-contract-identifiers scan), nowiki escaping over a
    malicious-quote fixture, determinism with a pinned timestamp.
-2. **CLI surface.** `OutputFormat::GaAppendix` accepted by `verify-page` —
-   with an explicit `#[value(name = "ga-appendix")]`, because the enum's
-   existing `#[value(rename_all = "lowercase")]` would otherwise expose
-   `gaappendix` and break the advertised flag and the CLI tests; new
+2. **CLI surface.** A **command-local page-report format enum** (Text | Json
+   | Markdown | GaAppendix, the last with an explicit
+   `#[value(name = "ga-appendix")]` against lowercase `rename_all`) for
+   `verify-page` and `render-report` only — **not** a variant on the shared
+   `OutputFormat`, which is flattened into `verify`, `bare-url preview`, and
+   `preview` too and would advertise `--format ga-appendix` on commands that
+   cannot produce an appendix; new
    `render-report` subcommand taking a saved report JSON (and later the
    stability snapshot) — pure, asserts no bridge/session/network. Legacy-argv
    rewriting untouched. Round-trip test: saved fixture → identical appendix

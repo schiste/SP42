@@ -76,6 +76,12 @@ the design sketch, and a machine-readable task-graph arm is roadmap there too.
 - 2026-07-10 (Codex review, round 5): unreadable-source lines render the
   specific reader-facing `unusable_reason` when present — the field is a
   report disclosure, so dropping it violated the every-disclosure rule.
+- 2026-07-10 (Codex review, round 6): the archive-backed unconfirmed-support
+  collision resolved — within `Supported`, grounding exactness partitions and
+  `archive_of` annotates, so the grounding caveat wins the bucket and the
+  repair handle renders wherever the finding lands; and the sketch's CLI
+  phase moved `ga-appendix` off the shared `OutputFormat` (flattened into
+  unrelated commands) onto a command-local page-report format enum.
 
 ## Scope boundary
 
@@ -177,13 +183,18 @@ may not know the numbering:
      claim–source disagreement is the worse failure. Verdict partitions the
      sublists; grounding annotates. Every finding appears in exactly one
      sublist.
-  2. *Recovered via archive* — findings whose claim was **supported** through
-     an archive fallback: the live URL is dead and `archive_of` is the repair
-     handle — "update the citation to the archive." Pulled out of the
-     supported list because they are actionable. (The contract stamps
-     `archive_of` on any non-unavailable archive verdict, including archive-
-     backed `Partial`/`NotSupported` — those stay in the disagreements bucket
-     and carry the same repair handle there.)
+  2. *Recovered via archive* — findings whose claim was **supported with an
+     exactly-located quote** through an archive fallback: the live URL is
+     dead and `archive_of` is the repair handle — "update the citation to
+     the archive." Pulled out of the supported list because they are
+     actionable. Two adjacent cases land elsewhere, each keeping the repair
+     handle on its line: archive-backed `Partial`/`NotSupported` stay in the
+     disagreements bucket, and an archive-backed `Supported` whose grounding
+     is non-exact goes to unconfirmed supports — **the grounding caveat wins
+     the bucket**, because filing it under "recovered" would overstate the
+     evidence, while `archive_of` is an annotation that renders anywhere.
+     Within `Supported`, grounding exactness partitions; `archive_of`
+     annotates.
   3. *Dead links (unrecovered)* — unreachable sources no archive rescued.
      The report preserves no archive candidates for these (candidate archive
      URLs live on the extractor's use-site and are not copied into findings),
@@ -340,7 +351,10 @@ is pure).*
       by renderer tests over all four verdict×status combinations.
 - [ ] An archive-backed disagreement (`Partial`/`NotSupported` carrying
       `archive_of`) renders in the disagreements bucket **with** its repair
-      handle, verified by a renderer test.
+      handle, and an archive-backed `Supported` with non-exact grounding
+      renders in the unconfirmed-supports sublist **with** its repair handle
+      (never in recovered-via-archive, never twice), verified by renderer
+      tests over both combinations.
 - [ ] A no-quote `NotSupported` finding renders the no-passage wording and
       never a quote, with `source_excerpt` (when present) labeled as context
       rather than evidence, verified by a renderer test.

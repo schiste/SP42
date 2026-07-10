@@ -20,6 +20,7 @@ pub mod bare_url_repair;
 pub mod citation;
 pub mod citation_finding;
 pub mod citation_page_report;
+pub mod evidence_link;
 
 pub use bare_url_repair::{
     BareUrlApplyRequest, BareUrlApplyResponse, BareUrlDeclineReason, BareUrlDeclined,
@@ -72,3 +73,4 @@ pub use citation_page_report::{
     page_verification_report_to_document, render_page_verification_markdown,
     render_page_verification_text,
 };
+pub use evidence_link::{EvidenceLink, EvidenceLinkKind, EvidenceLinks, build_evidence_links};

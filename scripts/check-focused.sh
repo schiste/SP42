@@ -23,12 +23,25 @@ if ! command -v "$TRUNK_BIN" >/dev/null 2>&1; then
 fi
 mkdir -p "$SP42_APP_DIST_DIR"
 
+# Every host-testable workspace crate. sp42-app is wasm-only (covered by the
+# trunk build below). When adding a crate to the workspace, add it here too —
+# a crate missing from this list can be broken by a dependency change without
+# the local loop noticing (that is how sp42-mcp's tests broke silently when
+# BlockRef gained a field).
+FOCUSED_CRATES=(
+  -p sp42-core -p sp42-platform -p sp42-types
+  -p sp42-patrol -p sp42-citation
+  -p sp42-coordination -p sp42-wiki -p sp42-live -p sp42-reporting
+  -p sp42-inference -p sp42-fetch -p sp42-parsoid
+  -p sp42-server -p sp42-cli -p sp42-devtools -p sp42-desktop -p sp42-mcp -p sp42-ui
+)
+
 run_step "focused cargo check" \
-  "$CARGO_BIN" check -p sp42-core -p sp42-server -p sp42-cli -p sp42-devtools -p sp42-desktop -p sp42-reporting -p sp42-coordination -p sp42-wiki -p sp42-live -p sp42-types
+  "$CARGO_BIN" check "${FOCUSED_CRATES[@]}"
 
 run_step "focused cargo test" \
   env RUST_TEST_THREADS="${RUST_TEST_THREADS:-1}" \
-  "$CARGO_BIN" test -p sp42-core -p sp42-server -p sp42-cli -p sp42-devtools -p sp42-desktop -p sp42-reporting -p sp42-coordination -p sp42-wiki -p sp42-live -p sp42-types
+  "$CARGO_BIN" test "${FOCUSED_CRATES[@]}"
 
 run_step "focused trunk build" \
   "$TRUNK_BIN" build --config Trunk.toml

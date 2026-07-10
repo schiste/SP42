@@ -231,6 +231,12 @@ pub enum WikibaseValue {
         amount: String,
         /// The unit entity URI; `None` for the dimensionless unit `"1"`.
         unit: Option<String>,
+        /// The lower uncertainty bound, when the payload carries one.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        lower_bound: Option<String>,
+        /// The upper uncertainty bound, when the payload carries one.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        upper_bound: Option<String>,
     },
     /// Any other datatype, preserved as raw JSON.
     Other(Value),
@@ -940,6 +946,12 @@ fn parse_data_value(datavalue: &Value) -> WikibaseValue {
                 .and_then(Value::as_str)
                 .filter(|unit| *unit != "1")
                 .map(str::to_owned);
+            let bound = |key: &str| {
+                value
+                    .and_then(|inner| inner.get(key))
+                    .and_then(Value::as_str)
+                    .map(str::to_owned)
+            };
             WikibaseValue::Quantity {
                 amount: value
                     .and_then(|inner| inner.get("amount"))
@@ -947,6 +959,8 @@ fn parse_data_value(datavalue: &Value) -> WikibaseValue {
                     .unwrap_or_default()
                     .to_owned(),
                 unit,
+                lower_bound: bound("lowerBound"),
+                upper_bound: bound("upperBound"),
             }
         }
         // No type at all but a bare string value: infer a string (sparse
@@ -1005,18 +1019,31 @@ pub fn render_snak_value(snak: &WikibaseSnak) -> ValueDisplay {
                 text: time.trim_start_matches('+').to_owned(),
                 item: None,
             },
-            WikibaseValue::Quantity { amount, unit } => ValueDisplay {
-                // The unit is part of the value: a unit-only change must not
-                // render as `5 → 5`. Shown as the unit entity id (label
-                // resolution for units is follow-on datatype rendering).
-                text: match unit.as_deref().map(unit_entity_id) {
-                    Some(unit) => {
-                        format!("{} {unit}", amount.trim_start_matches('+'))
-                    }
-                    None => amount.trim_start_matches('+').to_owned(),
-                },
-                item: None,
-            },
+            WikibaseValue::Quantity {
+                amount,
+                unit,
+                lower_bound,
+                upper_bound,
+            } => {
+                // Unit and bounds are part of the value: a unit-only or
+                // bounds-only change must not render as `5 → 5`. The unit is
+                // shown as its entity id (label resolution for units is
+                // follow-on datatype rendering).
+                use std::fmt::Write as _;
+                let mut text = amount.trim_start_matches('+').to_owned();
+                if let (Some(lower), Some(upper)) = (lower_bound, upper_bound) {
+                    let _ = write!(
+                        text,
+                        " [{}..{}]",
+                        lower.trim_start_matches('+'),
+                        upper.trim_start_matches('+')
+                    );
+                }
+                if let Some(unit) = unit.as_deref().map(unit_entity_id) {
+                    let _ = write!(text, " {unit}");
+                }
+                ValueDisplay { text, item: None }
+            }
             WikibaseValue::Other(value) => ValueDisplay {
                 text: value.to_string(),
                 item: None,
@@ -1409,6 +1436,12 @@ fn changed_part_details(
     parts: StatementChangeParts,
 ) -> Vec<String> {
     let mut details = Vec::new();
+    // Honesty backstop: the raw value moved but the best-effort renderer
+    // shows the same text on both sides (a datatype detail the renderer
+    // does not cover yet). Say so instead of presenting `X → X` silently.
+    if parts.value && statement_value_text(labels, before) == statement_value_text(labels, after) {
+        details.push("value details beyond the rendered form changed".to_owned());
+    }
     if parts.qualifiers {
         details.push(format!(
             "qualifiers {} \u{2192} {}",
@@ -2394,6 +2427,60 @@ mod tests {
     }
 
     #[test]
+    fn invisible_value_change_is_annotated_not_silent() {
+        // A calendar-model-only time edit: the raw mainsnak differs (parts
+        // marks the value changed) but the rendered form is identical on
+        // both sides. The changed row must say so, never present `X → X`.
+        let statement = |calendar: &str| {
+            super::parse_statement_object(
+                "P569",
+                &serde_json::json!({
+                    "id": "Q42$abc",
+                    "mainsnak": {
+                        "snaktype": "value",
+                        "property": "P569",
+                        "datavalue": {
+                            "type": "time",
+                            "value": {
+                                "time": "+1952-03-11T00:00:00Z",
+                                "precision": 11,
+                                "calendarmodel": calendar
+                            }
+                        }
+                    },
+                    "rank": "normal"
+                }),
+            )
+        };
+        let before = statement("http://www.wikidata.org/entity/Q1985727");
+        let after = statement("http://www.wikidata.org/entity/Q1985786");
+        let parts = super::statement_change_parts(&before, &after);
+        assert!(parts.value, "raw mainsnak moved");
+        let details =
+            super::changed_part_details(&std::collections::BTreeMap::new(), &before, &after, parts);
+        assert!(
+            details
+                .iter()
+                .any(|detail| detail.contains("beyond the rendered form")),
+            "equal-display value change must be annotated: {details:?}"
+        );
+    }
+
+    #[test]
+    fn quantity_rendering_includes_bounds_when_present() {
+        let bounded = super::WikibaseSnak {
+            property: "P2044".to_owned(),
+            kind: super::WikibaseSnakKind::Value(super::WikibaseValue::Quantity {
+                amount: "+5".to_owned(),
+                unit: None,
+                lower_bound: Some("+4.8".to_owned()),
+                upper_bound: Some("+5.2".to_owned()),
+            }),
+        };
+        assert_eq!(super::render_snak_value(&bounded).text, "5 [4.8..5.2]");
+    }
+
+    #[test]
     fn quantity_rendering_includes_the_unit() {
         // A unit-only change must not render as `5 → 5`.
         let with_unit = super::WikibaseSnak {
@@ -2401,6 +2488,8 @@ mod tests {
             kind: super::WikibaseSnakKind::Value(super::WikibaseValue::Quantity {
                 amount: "+5".to_owned(),
                 unit: Some("http://www.wikidata.org/entity/Q11573".to_owned()),
+                lower_bound: None,
+                upper_bound: None,
             }),
         };
         assert_eq!(super::render_snak_value(&with_unit).text, "5 Q11573");
@@ -2411,6 +2500,8 @@ mod tests {
             kind: super::WikibaseSnakKind::Value(super::WikibaseValue::Quantity {
                 amount: "+5".to_owned(),
                 unit: None,
+                lower_bound: None,
+                upper_bound: None,
             }),
         };
         assert_eq!(super::render_snak_value(&unitless).text, "5");

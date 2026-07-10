@@ -73,6 +73,9 @@ the design sketch, and a machine-readable task-graph arm is roadmap there too.
   against the wrapper's own terminator — a literal `</nowiki>` inside a quote
   must not break out; the helper entity-encodes terminators and the malicious
   fixture asserts the breakout case renders inert.
+- 2026-07-10 (Codex review, round 5): unreadable-source lines render the
+  specific reader-facing `unusable_reason` when present — the field is a
+  report disclosure, so dropping it violated the every-disclosure rule.
 
 ## Scope boundary
 
@@ -187,8 +190,12 @@ may not know the numbering:
      so lines carry the dead URL only; an additive candidate-archives field
      on unreachable findings is noted upstream so the appendix could offer
      repair candidates.
-  4. *Unreadable sources* — fetched but not machine-readable (PDF, viewer
-     shells), honestly framed as a tool limitation: the citation may be fine.
+  4. *Unreadable sources* — fetched but not machine-readable, honestly framed
+     as a tool limitation: the citation may be fine. Each line renders the
+     specific reader-facing reason when the report carries one
+     (`unusable_reason`: a PDF the pipeline cannot read, an interactive
+     viewer shell, a paywall page, …) — the reason is a report disclosure,
+     and the reviewer's next move differs by which it is.
   5. *Unconfirmed supports* — `Supported` verdicts whose quote was not
      re-located **exactly**: `Unlocated` (not found at all) or `LocatedFuzzy`
      (approximate match only — explicitly not groundable; the contract's
@@ -337,6 +344,10 @@ is pure).*
 - [ ] A no-quote `NotSupported` finding renders the no-passage wording and
       never a quote, with `source_excerpt` (when present) labeled as context
       rather than evidence, verified by a renderer test.
+- [ ] An unreadable-source line renders the reader-facing `unusable_reason`
+      when the finding carries one (PDF vs viewer shell vs paywall, via the
+      copy module), verified by a renderer test over fixtures with distinct
+      reasons.
 - [ ] Supported findings render as compact one-line entries (ref label,
       claim prefix, grounding marker) with no quotes, and unconfirmed supports
       render in their own sublist rather than inside the supported list,

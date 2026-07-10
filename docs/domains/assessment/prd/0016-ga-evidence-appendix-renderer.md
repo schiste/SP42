@@ -71,14 +71,25 @@ One renderer, `reports → wikitext appendix`, organized by GA criterion:
   (`unusable` split, honestly framed as a tool limitation), and
   `NotSupported`/`Partial` findings — each line carrying the claim, its
   `ref_id`, the verdict, the verbatim located quote, and the source link.
-  Skips and extraction failures render as their own first-class lists. Book
-  citations render with their resolve/ground outcomes (deep links to scanned
-  pages when grounded).
+  Supported findings render as a **compact one-line-each list** — `ref_id`,
+  claim prefix, grounding marker — documenting the positive half of the
+  spot-check (the reviewing guide expects the reviewer to say what they
+  checked; "12 supported" without naming which refs is not a spot-check
+  record) while keeping quote bulk out of the appendix; their full detail
+  stays in the CLI/structured rendering. Unconfirmed supports (unlocated
+  grounding) form their own visible sublist, never blended into the supported
+  list. Skips and extraction failures render as their own first-class lists.
+  Book citations render with their resolve/ground outcomes (deep links to
+  scanned pages when grounded).
 - **Criterion 5 section** (when a `StabilitySignal` is supplied): Layer A facts
   first (timeline, phase markers, marker inventory, triage outcome and knob
   disclosure), then the labeled Layer B characterizations with their cited
   evidence. The PRD-0015 conduct posture binds the rendering: participants
   counted, never named outside evidence/diff links.
+- **A "not assessed by SP42" line** naming the criteria the appendix says
+  nothing about (1a, 2c, 3, 4, 6 — and 5 until the stability section lands),
+  so silence cannot be read as endorsement. One line; the appendix's own
+  honesty arm.
 - **Provenance footer**, always: article and `rev_id`, run date, SP42 version,
   and an explicit framing line — this is a tool-generated evidence appendix;
   the criteria judgments and the pass/hold/fail are the reviewer's.
@@ -144,6 +155,14 @@ is pure).*
 - [ ] An unlocated-support finding (`Supported`/`Partial` with
       `grounding_status` unlocated) renders as unconfirmed support, distinct
       from grounded findings, verified by a renderer test.
+- [ ] Supported findings render as compact one-line entries (`ref_id`, claim
+      prefix, grounding marker) with no quotes, and unconfirmed supports
+      render in their own sublist rather than inside the supported list,
+      verified by renderer tests.
+- [ ] The "not assessed by SP42" line names the criteria the supplied inputs
+      say nothing about — criterion 5 leaves the list exactly when a
+      `StabilitySignal` renders — verified by renderer tests over both input
+      shapes.
 - [ ] Quoted evidence containing wikitext markup (templates, refs, links) is
       `<nowiki>`-escaped so the appendix never transcludes or breaks page
       markup, verified by a malicious-quote fixture.
@@ -193,23 +212,29 @@ is pure).*
   it is renderer copy, not contract, so it can change without touching
   report semantics.
 
-## Open questions
+## Resolved questions
 
-1. **Surface shape.** Proposed: both a `ga-appendix` format flag on the
-   existing page-verify CLI path *and* a render-from-saved-report mode — with
-   the saved-report render as the **core**, not the convenience: the
-   implementation sketch (`2026-07-10-ga-appendix-renderer.md`) confirmed it
-   needs no bridge session, no server, and no network, making it the pure,
-   replayable heart of the renderer and the fixture-test entry point. The
-   `verify-page` flag is the convenience layered on top. React if one should
-   ship without the other.
-2. **Supported findings: how much detail?** Proposed: supported findings
-   appear in the stats line and as a compact count per section, with detail
-   lines only for actionable findings (dead, unusable, not-supported, partial,
-   skipped) — bounding appendix length while keeping every honesty arm
-   visible. The full per-finding detail remains in the CLI/structured
-   rendering. React if supported findings should render their quotes too.
-3. **Section for criteria SP42 says nothing about.** Proposed: the appendix
-   includes a one-line "not assessed by SP42" list (1a, 2c, 3, 4, 6) so a
-   reader cannot mistake silence for endorsement. React if that reads as
-   noise.
+All three carry the Editor's decided answers (design discussion 2026-07-10),
+folded into the body above; they remain open to reviewer reaction until
+acceptance.
+
+1. **Surface shape.** Resolved: **both ship in the MVP.** The
+   render-from-saved-report mode is the core — the implementation sketch
+   (`2026-07-10-ga-appendix-renderer.md`) confirmed it needs no bridge
+   session, no server, and no network, making it the pure, replayable heart
+   of the renderer and the fixture-test entry point — and the `verify-page`
+   format flag is the convenience reviewers will actually type, a few lines
+   once the builder exists.
+2. **Supported findings: how much detail?** Resolved: **a compact
+   one-line-each list, not counts-only.** The originally proposed counts-only
+   answer was revised during discussion: the GA spot-check's purpose is to
+   document that sources *support* the text, and a reviewer's record must say
+   *which* refs were checked — counts alone don't serve that. Supported
+   findings render one line each (`ref_id`, claim prefix, grounding marker),
+   quotes stay in the CLI/structured rendering, and unconfirmed supports form
+   their own visible sublist rather than blending into the supported list.
+3. **Section for criteria SP42 says nothing about.** Resolved: **keep the
+   "not assessed by SP42" line.** One line, the appendix's own honesty arm;
+   it protects the reviewer (no one can later claim the tool vouched for
+   neutrality or breadth), which outweighs any reads-as-noise concern.
+   Criterion 5 leaves the list exactly when a `StabilitySignal` renders.

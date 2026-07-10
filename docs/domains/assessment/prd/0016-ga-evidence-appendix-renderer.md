@@ -45,6 +45,14 @@ the design sketch, and a machine-readable task-graph arm is roadmap there too.
   `sp42-citation` contracts; both CLI surfaces bound to the DoD. The
   implementation sketch was synced with all of the above. State `Draft` →
   `Discussion` on PR open.
+- 2026-07-10 (Codex review, PR #129): two contract assumptions corrected
+  against the code. `ref_id` is the stable cite id, not the rendered marker
+  (the extractor's `BlockRef::ref_text` never reaches the report) — the MVP
+  derives a reader-facing ref label and an additive `ref_text` is the third
+  upstream note. And `archive_of` exists only on findings *recovered* through
+  an archive fallback — the dead-links sublist split into recovered-via-
+  archive (with repair handles) and unrecovered (dead URL only; additive
+  candidate-archives field is the fourth upstream note).
 
 ## Scope boundary
 
@@ -129,23 +137,31 @@ may not know the numbering:
   sublists **in order of consequence for the review** — the substantive
   spot-check events before the mechanical repairs:
   1. *Claim–source disagreements* — `NotSupported`/`Partial` findings, each
-     line carrying the claim, its citation marker (`[1]`, named refs — what
-     `ref_id` already holds), the reader-facing verdict, the verbatim located
-     quote, and the source link. These can sink criterion 2 or reveal text
-     drift; they lead.
-  2. *Dead links* — unreachable sources, with their `archive_of` repair
-     handles. Mechanical and actionable.
-  3. *Unreadable sources* — fetched but not machine-readable (PDF, viewer
+     line carrying the claim, its reader-facing ref label, the reader-facing
+     verdict, the verbatim located quote, and the source link. These can sink
+     criterion 2 or reveal text drift; they lead.
+  2. *Recovered via archive* — findings whose claim was verified through an
+     archive fallback: supported, but the live URL is dead, and `archive_of`
+     (which the contract populates **only** in this case) is the repair
+     handle — "update the citation to the archive." Pulled out of the
+     supported list because they are actionable.
+  3. *Dead links (unrecovered)* — unreachable sources no archive rescued.
+     The report preserves no archive candidates for these (candidate archive
+     URLs live on the extractor's use-site and are not copied into findings),
+     so lines carry the dead URL only; an additive candidate-archives field
+     on unreachable findings is noted upstream so the appendix could offer
+     repair candidates.
+  4. *Unreadable sources* — fetched but not machine-readable (PDF, viewer
      shells), honestly framed as a tool limitation: the citation may be fine.
-  4. *Unconfirmed supports* — supported/partial verdicts whose quote could not
+  5. *Unconfirmed supports* — supported/partial verdicts whose quote could not
      be re-located: the panel's judgment without evidence in hand, never
      blended into the supported list.
-  5. *Supported findings* — a compact one-line-each spot-check record
-     (citation marker, claim prefix, grounding marker); the reviewing guide
+  6. *Supported findings* — a compact one-line-each spot-check record
+     (ref label, claim prefix, grounding marker); the reviewing guide
      expects the reviewer to say what they checked, and counts alone are not a
      record. Quotes stay in the CLI/structured rendering.
-  6. *Skipped refs and extraction failures* — first-class, never dropped.
-  7. *Book citations* — resolve/ground outcomes with scanned-page deep links
+  7. *Skipped refs and extraction failures* — first-class, never dropped.
+  8. *Book citations* — resolve/ground outcomes with scanned-page deep links
      when grounded, as PRD-0009 lands them in the report contract.
 - **Criterion 5 (stable) section** (when a `StabilitySignal` is supplied): Layer A facts
   first (timeline, phase markers, marker inventory, triage outcome and knob
@@ -185,8 +201,15 @@ Wording invariants, enforced as contract rather than style:
 - **Cold-reader legibility.** No raw contract identifiers in the output —
   verdict and status vocabulary renders through the reader-facing copy module
   ("the source did not support this claim", never `NotSupported`), and refs
-  are addressed by their human-facing citation markers (`[1]`, named refs),
-  which is what `ref_id` already carries (ADR-0011).
+  are addressed by a **reader-facing ref label**. The report today carries
+  only the stable cite id (`ref_id`, e.g. `cite_ref-smith_3-0`) — not the
+  rendered marker, despite ADR-0011's prose gesturing at `[1]`-style
+  addressing — so the MVP derives the label (the ref name parsed from the
+  cite id when present, else a stable per-report index) and never prints the
+  raw cite id. The clean fix is upstream: the extractor already holds the
+  visible marker (`BlockRef::ref_text`) and simply does not copy it into the
+  report; an additive `ref_text` on `CitationFinding`/`SkippedRef` is noted
+  for the references domain.
 - **Evidence phrasing throughout** ("12 of 14 URL citations verified
   supported; 2 dead links: …").
 
@@ -237,9 +260,10 @@ is pure).*
       line (stating the grounded/unconfirmed split within supported verdicts,
       derived from `findings` since `stats` lacks it), sublists in the
       consequence order specified, each disagreement line carrying claim,
-      citation marker, reader-facing verdict, verbatim quote, and source
-      link; dead-link lines carry their `archive_of` URLs — verified by
-      renderer tests.
+      reader-facing ref label, reader-facing verdict, verbatim quote, and
+      source link; recovered-via-archive lines carry their `archive_of`
+      repair handles while unrecovered dead-link lines carry the dead URL
+      only — verified by renderer tests.
 - [ ] Skips and extraction failures render as distinct first-class lists and
       are never dropped, verified over a fixture containing both.
 - [ ] The wording invariants hold: no pass/fail phrasing, and
@@ -255,7 +279,7 @@ is pure).*
 - [ ] An unlocated-support finding (`Supported`/`Partial` with
       `grounding_status` unlocated) renders as unconfirmed support, distinct
       from grounded findings, verified by a renderer test.
-- [ ] Supported findings render as compact one-line entries (citation marker,
+- [ ] Supported findings render as compact one-line entries (ref label,
       claim prefix, grounding marker) with no quotes, and unconfirmed supports
       render in their own sublist rather than inside the supported list,
       verified by renderer tests.
@@ -270,10 +294,11 @@ is pure).*
       line, what-is-this explainer link) is always present, verified by a
       renderer test.
 - [ ] No raw contract identifiers (`NotSupported`, `SourceUnavailable`, enum
-      variant names generally) appear in the appendix; all verdict/status
-      vocabulary comes from the reader-facing copy module, verified by a
-      renderer assertion scanning output over a fixture exercising every
-      verdict and status.
+      variant names generally, and raw `cite_ref-…` ids) appear in the
+      appendix; all verdict/status vocabulary comes from the reader-facing
+      copy module and ref labels are derived, verified by a renderer
+      assertion scanning output over a fixture exercising every verdict and
+      status.
 - [ ] Rendering is deterministic: the same inputs — reports plus the
       shell-injected `rendered_at` timestamp (`Clock` trait; the report
       contract carries no run timestamp today) — produce a byte-identical

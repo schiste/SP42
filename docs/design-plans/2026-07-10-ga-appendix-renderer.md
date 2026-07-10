@@ -20,7 +20,12 @@ shaped it (and fed corrections back into PRD-0016 — see the closing section):
   verdict/passage/provenance it carries `grounding_status` (a `Supported`
   verdict can be **`Unlocated`** — judged supported but the quote could not be
   re-located), `source_excerpt`, `unusable_reason`, Citoid `metadata`, and
-  `archive_of`. The appendix has to render the grounding axis honestly.
+  `archive_of`. The appendix has to render the grounding axis honestly. Two
+  limits Codex's PR-129 review pinned down (verified): `ref_id` is the stable
+  cite id (`cite_ref-…`), not the rendered marker — the extractor's
+  `BlockRef::ref_text` is never copied into the report — and `archive_of` is
+  populated **only** when an archive fallback succeeded; unrecovered dead
+  links carry no archive candidates (those live on the extractor's use-site).
 - A shared flat renderer abstraction exists: `sp42-reporting::ReportDocument`
   (title / lead lines / sections of plain strings) with text and markdown
   renderers, used by `sp42-citation::citation_page_report` and the patrol
@@ -78,9 +83,11 @@ clippy).
    linked once); stats summary line (preferring `stats`, deriving the
    grounded/unconfirmed split from `findings` since `stats` lacks it);
    sublists in consequence order — claim–source disagreements first (claim +
-   citation marker + reader-facing verdict + located quote + source link),
-   then dead links with `archive_of`, unreadable sources framed as tool
-   limitation, unconfirmed supports as their own sublist, the compact
+   derived reader-facing ref label + reader-facing verdict + located quote +
+   source link), then recovered-via-archive findings with their `archive_of`
+   repair handles, unrecovered dead links (dead URL only — the contract
+   preserves no archive candidates for them), unreadable sources framed as
+   tool limitation, unconfirmed supports as their own sublist, the compact
    supported-findings spot-check record, skips and extraction failures, book
    outcomes as the contract carries them; the positive "assessed by SP42"
    line (2b only, MVP); provenance footer with the what-is-this explainer
@@ -118,10 +125,15 @@ sketch: consequence-ordered sublists (disagreements lead), the supported
 compact list and unconfirmed sublist (Q2's revised resolution), the inverted
 "assessed by SP42" line, number-and-name headings, cold-reader legibility
 (no raw contract identifiers), the explainer link, and the shell-injected
-`rendered_at`. Two small upstream notes for the references domain came out of
-the same review: an additive `supported_unlocated` counter on
-`PageVerificationStats`, and an additive `verified_at` on the report, so the
-footer can state when verification (not rendering) happened.
+`rendered_at`. Codex's review of PR #129 then corrected two contract
+assumptions (ref labels derived from `ref_id`; the recovered/unrecovered
+dead-link split). Four small upstream notes for the references domain came out
+of these reviews, all additive: `supported_unlocated` on
+`PageVerificationStats`; `verified_at` on the report (so the footer states
+when verification, not rendering, happened); `ref_text` on
+`CitationFinding`/`SkippedRef` (the extractor already holds the visible
+marker); and candidate archive URLs on unreachable findings (so dead-link
+lines can offer repairs).
 
 ## What the sketch taught the PRD
 

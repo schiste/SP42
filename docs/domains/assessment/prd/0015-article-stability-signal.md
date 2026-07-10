@@ -4,8 +4,8 @@
 **Editor:** Luis Villa
 **Date:** 2026-07-09
 **State:** Discussion
-**Discussion:** design conversation 2026-07-09 (extending SP42 toward Good-article
-assessment); PR link pending.
+**Discussion:** [PR #124](https://github.com/schiste/SP42/pull/124); design
+conversation 2026-07-09 (extending SP42 toward Good-article assessment).
 
 ## Changelog
 

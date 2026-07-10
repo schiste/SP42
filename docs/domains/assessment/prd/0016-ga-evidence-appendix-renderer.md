@@ -7,9 +7,23 @@
 **Discussion:** design conversation 2026-07-10; PR link pending.
 **Spawned ADRs:** none expected — the renderer is pure composition over
 existing report contracts (`PageVerificationReport`, ADR-0011; `StabilitySignal`,
-PRD-0015). Later lanes carry their own artifacts: posting the appendix is the
-ADR-0010 + insertion-extension + ADR-0018 work named in the design sketch, and a
-machine-readable task-graph arm is roadmap there too.
+PRD-0015), and the new `sp42-assessment` crate follows ADR-0013's layered
+architecture via the `adding-a-domain.md` turnkey path exactly (domain policy
+over existing contracts; no new platform mechanism, no new contract), so the
+crate itself triggers no ADR. Later lanes carry their own artifacts: posting
+the appendix is the ADR-0010 + insertion-extension + ADR-0018 work named in
+the design sketch, and a machine-readable task-graph arm is roadmap there too.
+
+## Changelog
+
+- 2026-07-10: Drafted as the design sketch's first build step. The
+  implementation sketch (`2026-07-10-ga-appendix-renderer.md`) was written the
+  same day and fed back three corrections: the grounding axis joined the
+  wording invariants (unlocated support renders as unconfirmed), the stability
+  DoD items were staged behind PRD-0015's implementation, and the saved-report
+  render was recognized as the core surface. All three open questions resolved
+  same-day with the Editor, including reversing the counts-only proposal for
+  supported findings in favor of a compact spot-check record.
 
 ## Scope boundary
 

@@ -172,16 +172,21 @@ This vocabulary is **explicitly provisional**: it is the part of the design most
 exposed to alpha evidence, and the improvement loop below is its revision
 mechanism — alpha-era Layer B runs *are* the PRD-0007 benchmark corpus. The
 contract therefore treats class evolution as additive under the ADR-0009 replay
-discipline (new variants never break deserialization of old snapshots), so
-reshaping the vocabulary is a planned amendment path, not a broken freeze.
+discipline: new variants never break deserialization of old snapshots, and
+existing variants are never renamed or removed — only deprecated (they stay
+deserializable and renderable forever; they just stop being emitted). Reshaping
+the vocabulary is a planned amendment path, not a broken freeze.
 
 Two disciplines transfer from the citation path unchanged:
 
 - **Grounding (ADR-0007 spirit).** Every characterization must cite its evidence:
   specific `rev_id`s and verbatim excerpts (edit summaries, talk-page sentences)
   that are locatable in the fetched evidence pool. A characterization whose
-  excerpt cannot be located verbatim is rejected. "The editors seem to be
-  fighting," without a quote, is not an output this system can produce.
+  excerpt cannot be located verbatim is rejected: it degrades to `Unclear` with
+  the rejection disclosed in the report — never silently dropped, since a panel
+  reaching for an ungroundable claim is itself signal the operator should see.
+  "The editors seem to be fighting," without a quote, is not an output this
+  system can produce.
 - **Abstention.** `Unclear` is always acceptable; low panel agreement surfaces to
   the operator rather than being averaged away.
 

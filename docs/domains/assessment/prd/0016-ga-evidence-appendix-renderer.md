@@ -53,6 +53,13 @@ the design sketch, and a machine-readable task-graph arm is roadmap there too.
   an archive fallback — the dead-links sublist split into recovered-via-
   archive (with repair handles) and unrecovered (dead URL only; additive
   candidate-archives field is the fourth upstream note).
+- 2026-07-10 (Codex review, round 2): the `Partial`+unlocated double-bucket
+  resolved — verdict partitions the sublists, grounding annotates, every
+  finding appears in exactly one sublist (disagreements win; hiding a
+  disagreement is the worse failure); a residual raw-`ref_id` mention in
+  Q2's resolution corrected to the derived ref label; and the sketch's CLI
+  phase pins an explicit `ga-appendix` value name against the enum's
+  lowercase `rename_all`.
 
 ## Scope boundary
 
@@ -139,7 +146,13 @@ may not know the numbering:
   1. *Claim–source disagreements* — `NotSupported`/`Partial` findings, each
      line carrying the claim, its reader-facing ref label, the reader-facing
      verdict, the verbatim located quote, and the source link. These can sink
-     criterion 2 or reveal text drift; they lead.
+     criterion 2 or reveal text drift; they lead. **This bucket takes every**
+     `NotSupported`/`Partial` **finding regardless of grounding status**: an
+     unlocated quote on a `Partial` renders as an annotation on its line
+     here, never re-buckets it under unconfirmed supports — hiding a
+     claim–source disagreement is the worse failure. Verdict partitions the
+     sublists; grounding annotates. Every finding appears in exactly one
+     sublist.
   2. *Recovered via archive* — findings whose claim was verified through an
      archive fallback: supported, but the live URL is dead, and `archive_of`
      (which the contract populates **only** in this case) is the repair
@@ -153,9 +166,10 @@ may not know the numbering:
      repair candidates.
   4. *Unreadable sources* — fetched but not machine-readable (PDF, viewer
      shells), honestly framed as a tool limitation: the citation may be fine.
-  5. *Unconfirmed supports* — supported/partial verdicts whose quote could not
-     be re-located: the panel's judgment without evidence in hand, never
-     blended into the supported list.
+  5. *Unconfirmed supports* — `Supported` verdicts whose quote could not be
+     re-located: the panel's judgment without evidence in hand, never blended
+     into the supported list. (`Partial`+unlocated stays in the disagreements
+     bucket, annotated — see its precedence rule.)
   6. *Supported findings* — a compact one-line-each spot-check record
      (ref label, claim prefix, grounding marker); the reviewing guide
      expects the reviewer to say what they checked, and counts alone are not a
@@ -193,11 +207,11 @@ Wording invariants, enforced as contract rather than style:
 - **PRD-0014's mismatch framing verbatim**: a `NotSupported`/`Partial` finding
   is rendered as claim-and-source disagreement, never as a citation failure —
   the article text may be the wrong side.
-- **The grounding axis renders honestly.** A `Supported`/`Partial` verdict
-  whose `grounding_status` is unlocated renders as *unconfirmed* support —
-  the panel's judgment without a re-locatable quote — visually and verbally
-  distinct from grounded findings. This is precisely the nuance
-  hand-transcription loses.
+- **The grounding axis renders honestly.** Unlocated grounding is always
+  visible and never presented as grounded: a `Supported`+unlocated finding
+  renders in the unconfirmed-supports sublist, and a `Partial`+unlocated
+  finding carries an unlocated annotation on its disagreement line. This is
+  precisely the nuance hand-transcription loses.
 - **Cold-reader legibility.** No raw contract identifiers in the output —
   verdict and status vocabulary renders through the reader-facing copy module
   ("the source did not support this claim", never `NotSupported`), and refs
@@ -276,9 +290,12 @@ is pure).*
       then — and whenever the signal is absent — criterion 5 stays out of the
       "assessed by SP42" line, verified by an absent-signal fixture. The
       citations-only appendix is this PRD's MVP acceptance gate.
-- [ ] An unlocated-support finding (`Supported`/`Partial` with
-      `grounding_status` unlocated) renders as unconfirmed support, distinct
-      from grounded findings, verified by a renderer test.
+- [ ] Unlocated grounding is always visible and never double-bucketed: a
+      `Supported`+unlocated finding renders in the unconfirmed-supports
+      sublist, a `Partial`+unlocated finding stays in the disagreements
+      bucket with an unlocated annotation, and every finding appears in
+      exactly one sublist — verified by renderer tests over both
+      combinations.
 - [ ] Supported findings render as compact one-line entries (ref label,
       claim prefix, grounding marker) with no quotes, and unconfirmed supports
       render in their own sublist rather than inside the supported list,
@@ -378,7 +395,8 @@ acceptance.
    answer was revised during discussion: the GA spot-check's purpose is to
    document that sources *support* the text, and a reviewer's record must say
    *which* refs were checked — counts alone don't serve that. Supported
-   findings render one line each (`ref_id`, claim prefix, grounding marker),
+   findings render one line each (derived reader-facing ref label, claim
+   prefix, grounding marker),
    quotes stay in the CLI/structured rendering, and unconfirmed supports form
    their own visible sublist rather than blending into the supported list.
 3. **Section for criteria SP42 says nothing about.** Resolved: **keep the

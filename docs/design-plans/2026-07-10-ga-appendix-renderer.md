@@ -87,7 +87,9 @@ clippy).
    source link), then recovered-via-archive findings with their `archive_of`
    repair handles, unrecovered dead links (dead URL only — the contract
    preserves no archive candidates for them), unreadable sources framed as
-   tool limitation, unconfirmed supports as their own sublist, the compact
+   tool limitation, unconfirmed supports as their own sublist
+   (`Supported`+unlocated only; `Partial`+unlocated stays annotated in the
+   disagreements bucket — verdict partitions, grounding annotates), the compact
    supported-findings spot-check record, skips and extraction failures, book
    outcomes as the contract carries them; the positive "assessed by SP42"
    line (2b only, MVP); provenance footer with the what-is-this explainer
@@ -97,7 +99,10 @@ clippy).
    wording invariants (incl. `Unlocated` rendering as unconfirmed support and
    a no-raw-contract-identifiers scan), nowiki escaping over a
    malicious-quote fixture, determinism with a pinned timestamp.
-2. **CLI surface.** `OutputFormat::GaAppendix` accepted by `verify-page`; new
+2. **CLI surface.** `OutputFormat::GaAppendix` accepted by `verify-page` —
+   with an explicit `#[value(name = "ga-appendix")]`, because the enum's
+   existing `#[value(rename_all = "lowercase")]` would otherwise expose
+   `gaappendix` and break the advertised flag and the CLI tests; new
    `render-report` subcommand taking a saved report JSON (and later the
    stability snapshot) — pure, asserts no bridge/session/network. Legacy-argv
    rewriting untouched. Round-trip test: saved fixture → identical appendix

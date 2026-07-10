@@ -191,15 +191,18 @@ Two disciplines transfer from the citation path unchanged:
   the operator rather than being averaged away.
 
 **Evidence packaging: one bundle per article.** The panel sees the
-whole evidence pool — all chains, summaries, and matched talk threads — in a
+whole evidence pool — all chains, summaries, matched talk threads, and the
+dispute-marker inventory — in a
 single call, because the question is article-level and cross-chain context is
 itself evidence: the same two editors recurring across three chains over six
 weeks is the signature of a sustained dispute, and per-chain calls structurally
 cannot see that pattern (nor cleanly partition talk threads that relate to
 several chains). Cost also scales with nominations rather than with churn. The
 bundle is size-capped with **disclosed truncation**; per-chain sharding is not a
-rival design but the overflow strategy when even the truncated bundle exceeds
-the cap — used with its cross-chain blindness stated in the report. Whether
+rival design but the fallback for when fitting under the cap would truncate away
+so much evidence that the bundle stops being representative (a usefulness floor —
+a policy knob alongside the cap) — used with its cross-chain blindness stated in
+the report. Whether
 attention dilution on large bundles is real at our evidence sizes is exactly
 what the alpha-era PRD-0007 fixtures measure; the choice is benchmark-revisable.
 

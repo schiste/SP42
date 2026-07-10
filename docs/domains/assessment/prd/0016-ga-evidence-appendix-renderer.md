@@ -4,7 +4,8 @@
 **Editor:** Luis Villa
 **Date:** 2026-07-10
 **State:** Discussion
-**Discussion:** design conversation 2026-07-10; PR link pending.
+**Discussion:** [PR #129](https://github.com/schiste/SP42/pull/129); design
+conversation 2026-07-10.
 **Spawned ADRs:** none expected — the renderer is pure composition over
 existing report contracts (`PageVerificationReport`, ADR-0011; `StabilitySignal`,
 PRD-0015), and the new `sp42-assessment` crate follows ADR-0013's layered

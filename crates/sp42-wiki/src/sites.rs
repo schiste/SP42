@@ -92,6 +92,7 @@ pub fn derive_wiki_config(wiki_id: &str) -> Option<WikiConfig> {
         templates: WikiTemplates {
             citation_needed: None,
             bare_url_citation: None,
+            citation_concerns: BTreeMap::new(),
         },
     })
 }

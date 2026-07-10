@@ -28,7 +28,7 @@ Expose SP42's verification primitives as a small set of typed tools an external 
 
 SP42's surface is complementary to the official, read-only [Wikidata MCP](https://www.wikidata.org/wiki/Wikidata:MCP) (Wikimedia Deutschland): that server *reads* statements, references, and the P31/P279 hierarchy but cannot fetch a source or judge whether it supports a claim. An agent runs both — Wikidata MCP to read a statement and its reference URL, SP42 to verify that URL actually supports the statement. Its existence also confirms MCP as the right protocol for this ecosystem.
 
-The *how* — crate layout, the `rmcp` SDK, execution/caching model, phase plan — is in the design plan `docs/design-plans/2026-06-30-citation-verification-mcp-surface.md`.
+The *how* — crate layout, the `rmcp` SDK, execution/caching model, phase plan — is in the design plan `attic/design-plans/2026-06-30-citation-verification-mcp-surface.md`.
 
 ## Definition of Done
 

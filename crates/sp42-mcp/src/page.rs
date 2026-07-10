@@ -53,6 +53,13 @@ pub struct PageFinding {
     /// The originating ref's marker id, addressable back to the page citation.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub ref_id: String,
+    /// Set when this verdict was produced against an **archive** fallback because the citation's
+    /// live URL was `SourceUnavailable`: the (unreachable) live URL the archive stands in for.
+    /// `ref_url` then points at the archive that was actually read, so without this an agent would
+    /// see a plain supported finding and miss that the page's live citation is dead and needs
+    /// repair. `None` for a verdict from the primary source.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub archive_of: Option<String>,
 }
 
 /// Result of `verify_wikipedia_page`.
@@ -203,6 +210,7 @@ fn to_page_finding(finding: CitationFinding) -> PageFinding {
         quote: finding.passage.map(|passage| passage.quote),
         use_site_ordinal: finding.use_site_ordinal,
         ref_id: finding.ref_id,
+        archive_of: finding.archive_of.map(|url| url.to_string()),
     }
 }
 
@@ -251,6 +259,33 @@ mod tests {
                 sources: vec![CitedSource {
                     url: url.parse().expect("url parses"),
                     archive_urls: vec![],
+                }],
+                ref_text: "Example".to_owned(),
+                named: false,
+                is_bare_url_ref: false,
+            }],
+            text,
+            block_kind: BlockKind::Paragraph,
+            block_ordinal: ordinal,
+        }
+    }
+
+    /// Like `block_with`, but the ref also carries an archive fallback URL, so an unreachable
+    /// live `url` can be re-verified against `archive_url`.
+    fn block_with_archive(
+        ordinal: usize,
+        ref_id: &str,
+        url: &str,
+        archive_url: &str,
+    ) -> ParsoidBlock {
+        let text = "The bridge opened in 1998.".to_owned();
+        ParsoidBlock {
+            refs: vec![BlockRef {
+                offset: text.len(),
+                ref_id: ref_id.to_owned(),
+                sources: vec![CitedSource {
+                    url: url.parse().expect("url parses"),
+                    archive_urls: vec![archive_url.parse().expect("archive url parses")],
                 }],
                 ref_text: "Example".to_owned(),
                 named: false,
@@ -324,6 +359,56 @@ mod tests {
         assert_eq!(finding.ref_url, "https://example.com/bridge");
         assert_eq!(finding.quote.as_deref(), Some("the bridge opened in 1998"));
         assert_eq!(finding.ref_id, "cite_ref-1");
+        // A primary-source verdict carries no archive provenance.
+        assert_eq!(finding.archive_of, None);
+    }
+
+    #[tokio::test]
+    async fn archive_fallback_surfaces_dead_live_url_in_finding() {
+        // Live URL is unreachable (404), so verification falls back to the archive. The archive is
+        // what was read (`ref_url`), but the finding must still name the dead live URL in
+        // `archive_of` so an agent knows the page citation needs repair.
+        let fetch = StubHttpClient::new([
+            Ok(HttpResponse {
+                status: 404,
+                headers: BTreeMap::from([("content-type".to_owned(), "text/html".to_owned())]),
+                body: Vec::new(),
+            }),
+            Ok(HttpResponse {
+                status: 200,
+                headers: BTreeMap::from([("content-type".to_owned(), "text/html".to_owned())]),
+                body: html_body(),
+            }),
+        ]);
+        let models = StubModelClient::new([Ok(completion(
+            r#"{"verdict": "SUPPORTED", "quote": "the bridge opened in 1998"}"#,
+        ))]);
+        let result = verify_extracted(
+            &fetch,
+            &models,
+            &FixedClock::new(0),
+            &[model()],
+            vec![block_with_archive(
+                0,
+                "cite_ref-1",
+                "https://example.com/dead",
+                "https://web.archive.org/web/2020/https://example.com/dead",
+            )],
+            &page_request(),
+            false,
+            None,
+        )
+        .await;
+        let finding = &result.findings[0];
+        assert_eq!(finding.verdict, Verdict::Supported);
+        assert_eq!(
+            finding.ref_url,
+            "https://web.archive.org/web/2020/https://example.com/dead"
+        );
+        assert_eq!(
+            finding.archive_of.as_deref(),
+            Some("https://example.com/dead")
+        );
     }
 
     #[tokio::test]

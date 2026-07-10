@@ -392,6 +392,8 @@ fn install_inline_edit_effect(
             batch_rev_ids: None,
             replacement_text: Some(action.new_text),
             node_locator: None,
+            concern_kind: None,
+            reason: None,
         };
         console::info(&format!("[SP42] inline edit on rev {}", request.rev_id));
         set_action_status.set("Saving inline edit...".to_string());
@@ -440,6 +442,8 @@ fn install_tag_action_effect(
             batch_rev_ids: None,
             replacement_text: None,
             node_locator: None,
+            concern_kind: None,
+            reason: None,
         };
 
         set_action_status.set("Adding citation needed...".to_string());

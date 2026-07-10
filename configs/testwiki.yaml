@@ -14,3 +14,5 @@ scoring_policy_ref: active/testwiki-vandalism
 templates:
   citation_needed: "Citation needed"
   bare_url_citation: "cite web"
+  citation_concerns:
+    partial-support: "Failed verification span"

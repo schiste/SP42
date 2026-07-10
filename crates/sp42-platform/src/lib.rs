@@ -64,9 +64,9 @@ pub mod wikibase;
 pub mod wikitext_editor;
 
 pub use action_contracts::{
-    ActionResponseSummary, PatrolRequest, RollbackRequest, SessionActionExecutionRequest,
-    SessionActionExecutionResponse, SessionActionKind, TokenKind, UndoRequest, WikiPageSaveRequest,
-    is_retryable_action_api_error,
+    ActionResponseSummary, CitationConcernKind, PatrolRequest, RollbackRequest,
+    SessionActionExecutionRequest, SessionActionExecutionResponse, SessionActionKind, TokenKind,
+    UndoRequest, WikiPageSaveRequest, is_retryable_action_api_error,
 };
 pub use action_executor::{
     build_patrol_request, build_rollback_request, build_token_request, build_undo_request,

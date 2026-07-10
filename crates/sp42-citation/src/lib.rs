@@ -39,7 +39,9 @@ pub use citation::extract::{
 };
 pub use citation::locate_quote::{FuzzyLocate, locate_quote, locate_quote_fuzzy};
 pub use citation::page::{
-    PageVerificationReport, PageVerificationRequest, PageVerificationStats, verify_page,
+    PageVerificationReport, PageVerificationRequest, PageVerificationStats, ReverifyFindingRequest,
+    ReverifyFindingResponse, apply_reverified_finding, select_reverify_use_site,
+    verify_one_use_site, verify_page,
 };
 pub use citation::parsing::{
     ParsedVerdict, canonicalize_verdict, parse_repair_response, parse_verdict_response,

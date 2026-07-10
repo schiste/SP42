@@ -1,10 +1,13 @@
 //! Shared types used across all SP42 targets.
 
+use std::collections::BTreeMap;
 use std::fmt;
 
 use serde::{Deserialize, Serialize};
 pub use sp42_types::{HttpMethod, HttpRequest, HttpResponse, ServerSentEvent, WebSocketFrame};
 use url::Url;
+
+use crate::action_contracts::CitationConcernKind;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(from = "bool", into = "bool")]
@@ -466,6 +469,13 @@ pub struct WikiTemplates {
     /// the bare-URL routes refuse with `bare-url-repair-not-enabled`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub bare_url_citation: Option<String>,
+    /// Maintenance-template names for `FlagCitation` concern kinds (PRD-0014),
+    /// e.g. `partial-support: "Failed verification span"`. A kind absent from
+    /// this map has no configured template on this wiki; `FlagCitation`
+    /// refuses for that kind rather than inserting a wrong-language template,
+    /// mirroring `citation_needed`/`bare_url_citation` above.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub citation_concerns: BTreeMap<CitationConcernKind, String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]

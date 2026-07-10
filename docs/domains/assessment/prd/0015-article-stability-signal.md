@@ -52,6 +52,12 @@ It deliberately excludes:
 - **Per-edit damage scoring.** LiftWing revertrisk answers "is this one edit
   likely vandalism"; this signal answers "is this article's recent history a
   fight." Different question, different consumer (see Alternatives).
+- **Cross-article conduct aggregation.** The signal is per-article and
+  windowed, full stop. Aggregating conduct-adjacent classifications across
+  articles into per-editor profiles would be a different tool with a different
+  ethics posture (the patrol domain's `user_analyzer` reads talk-page
+  *warnings* for triage — narrower and precedented); this PRD closes that door
+  explicitly. See the conduct posture in Layer B.
 - **Automatic on-nomination runs.** The eventual goal includes running this
   signal automatically when an article is nominated, which needs a GAN-feed
   watcher (patrolling/live-domain machinery). That comes much later, after this
@@ -220,6 +226,31 @@ Two disciplines transfer from the citation path unchanged:
 - **Abstention.** `Unclear` is always acceptable; low panel agreement surfaces to
   the operator rather than being averaged away.
 
+**Conduct posture.** Several classes describe activity by identifiable editors,
+so this signal is the one assessment output that is *about people's behavior*,
+and it carries its own discipline:
+
+- **Classify history, never persons.** Classifications bind to revision sets
+  and threads, and every rendered characterization is phrased about the
+  article's history ("a sustained revert cycle: 12 reverts between 2
+  participants over 9 days"), never as a predicate on a named editor.
+  Usernames live only in the evidence layer — `rev_id`s and diff links, public
+  record that speaks for itself.
+- **No intent vocabulary.** The panel prompt and class definitions exclude
+  motive claims — no "POV-pushing," no "bad faith," no "deliberately."
+  Patterns and counts only; verbatim quotes are evidence attributed to their
+  authors by the wiki itself, but SP42's own words never assert what someone
+  meant.
+- **The pasteable rendering counts; the local report links.** The GA-appendix
+  rendering — the artifact most likely to be published — carries class,
+  counts, interval, and diff links, with no usernames in characterization
+  text. The operator-facing local report may show the per-participant
+  breakdown (a reviewer legitimately needs to know two accounts from twelve).
+  An operator who names names publicly does so in their own words under their
+  own signature — SP42 never hands them a pre-written accusation.
+- Cross-article aggregation into editor profiles is a scope-boundary
+  exclusion, recorded there.
+
 **Evidence packaging: one bundle per article.** The panel sees the
 whole evidence pool — all chains, summaries, matched talk threads, and the
 dispute-marker inventory — in a
@@ -284,8 +315,12 @@ CLI-first, matching the references-domain pattern: a `stability` report for
 `{wiki_id, title, rev_id?}` — `rev_id` is optional: omitted, SP42 resolves the
 current head revision and records it in the report (the normal interactive
 case); supplied, it reproduces a prior run's window exactly (the replay case).
-Foldable into the GA assist report (design doc) and eventually the browser
-shell. Read-only; no apply lane exists or is planned for this signal.
+An **audit flag** forces Layer B regardless of the triage outcome, with the
+report labeled as an audit run — the instrument that makes false-quiets
+measurable (the alpha checkpoint is tracked in
+[#122](https://github.com/schiste/SP42/issues/122)). Foldable into the GA
+assist report (design doc) and eventually the browser shell. Read-only; no
+apply lane exists or is planned for this signal.
 
 ## Definition of Done
 
@@ -353,6 +388,14 @@ recorded MediaWiki responses — no live network (ADR-0009 discipline).*
 - [ ] Every report records the triage outcome, the sensors that fired, and —
       whenever Layer B did not run — why not, verified by contract/renderer
       tests across quiet, unambiguous-benign, and ambiguous fixtures.
+- [ ] The pasteable (GA-appendix) stability rendering contains **no usernames**
+      outside evidence/diff links — characterization text is about the
+      article's history, participants counted rather than named — verified by
+      a renderer test over a fixture whose classifications involve named
+      participants.
+- [ ] A quiet-triaged fixture run with the **audit flag** still invokes
+      Layer B, and the report labels the run as an audit with the triage
+      outcome it would otherwise have had, verified by a fixture test.
 - [ ] With `rev_id` omitted, the run resolves the current head revision and
       records it in the report; with the recorded `rev_id` supplied **and the
       recorded knob settings in effect**, the run re-renders byte-identically
@@ -422,6 +465,21 @@ recorded MediaWiki responses — no live network (ADR-0009 discipline).*
 - **Cost surprise.** Layer B spends real inference. Mitigation: the gate keeps
   quiet pages free; the ambiguous-middle share is tracked (improvement loop);
   and the report contract itself records when and why Layer B ran or declined.
+- **False quiet (mis-set triage threshold suppresses evidence).** The
+  insensitive direction of the triage knobs does not waste money — it hides a
+  real dispute behind "no instability indicators found," and by construction
+  nobody looks. Mitigations: the default-sensitive rule and disclosed knob
+  settings (Policy knobs), plus the audit flag (Surface) that forces Layer B
+  so quiet outcomes can be sampled; measuring the false-quiet rate during
+  alpha is tracked in [#122](https://github.com/schiste/SP42/issues/122).
+- **Classifications characterize editor conduct.** `EditWarPattern` over cited
+  `rev_id`s effectively describes identifiable editors' behavior; pasted into
+  a public review page, that becomes a tool-sourced conduct accusation (the
+  aspersions problem). Mitigation: the conduct posture in Layer B —
+  classify history never persons, no intent vocabulary, no usernames in the
+  pasteable rendering's characterization text, no cross-article aggregation
+  (scope exclusion) — and any public naming is the operator's own words under
+  their own signature.
 - **Pageviews API dependency.** The attention sensor adds one external read
   edge. Mitigation: the standard treatment (behind the `HttpClient` trait,
   replayed fixtures) and degrade-with-disclosure — the sensor reports itself

@@ -7,7 +7,7 @@
 **Discussion:** design conversation 2026-07-09 (extending SP42 toward Good-article
 assessment); no tracking issue yet.
 **Spawned ADRs:** none yet. If accepted, expect one thin **platform** ADR
-pinning the resolved-Q2 placement: the page-history fetch edge (revision list +
+pinning the decided placement: the page-history fetch edge (revision list +
 tags + summaries), the revert-chain reducer, and the talk-activity sensor as
 platform mechanisms (pure builders/parsers over the `HttpClient` trait), with
 the `StabilitySignal` contract in `sp42-core` (Constitution Art. 9.1, the
@@ -25,6 +25,13 @@ a reviewer needs to judge whether the article is *stable* — the shape of
 content dispute"). It is the first assessment-domain capability; how it slots into
 a full GA review is the companion design doc
 (`docs/design-plans/2026-07-09-ga-review-assist.md`).
+
+The signal itself is **process- and wiki-agnostic**: its evidence — history
+tags, talk-page templates, protection status — is generic MediaWiki, so it runs
+on any article of any wiki SP42 resolves (ADR-0014). The GA phase markers are
+optional annotations, not preconditions: where there is no `{{GA nominee}}` or
+review page — another wiki, or an article that simply is not nominated — the
+timeline renders single-phase, with no exemption presumed.
 
 It deliberately excludes:
 
@@ -50,7 +57,7 @@ It deliberately excludes:
   watcher (patrolling/live-domain machinery). That comes much later, after this
   design is proven extensively in operator-attended use. Two forward
   constraints are recorded now so the design does not foreclose it: the
-  three-phase window (resolved Q1) must degrade gracefully when run at
+  three-phase window must degrade gracefully when run at
   nomination time (phases 2–3 empty), and an unattended run executes **Layer A
   only** — Layer B inference spend with no operator present is deferred to the
   first attended run or an explicit budget opt-in (the ADR-0011 Decision 5
@@ -93,10 +100,10 @@ For the nominated article, SP42 fetches and reduces:
   template-presence parsing discipline `user_analyzer` already applies to warning
   templates.
 - **Protection status** of the article (full/semi, expiry).
-- **Talk-page activity volume** (resolved Q3): talk-edit counts and thread
+- **Talk-page activity volume**: talk-edit counts and thread
   recency over the window — a deterministic sensor, so a banner-less active
   dispute (a hot talk page with no reverts) still reaches triage.
-- **Three review phases** (resolved Q1). The evidence window is anchored to
+- **Three review phases.** The evidence window is anchored to
   **run time** — 90 days back — not the nomination timestamp: GAN backlog waits
   run to months, and criterion 5 is about *current* behavior, so a
   nomination-anchored window would hand the reviewer a stale picture. The
@@ -126,7 +133,7 @@ Layer A triages the article into three outcomes:
 
 The existing model panel (ADR-0006) reads the evidence Layer A gathered — edit
 summaries, the diffs of the revert-chain revisions, the relevant talk-page
-threads — and classifies into a small categorical vocabulary (resolved Q3):
+threads — and classifies into a small categorical vocabulary:
 
 - `EditWarPattern` — sustained back-and-forth between committed participants
 - `ActiveContentDispute` — an unresolved dispute conducted on the talk page,
@@ -160,7 +167,7 @@ Two disciplines transfer from the citation path unchanged:
 - **Abstention.** `Unclear` is always acceptable; low panel agreement surfaces to
   the operator rather than being averaged away.
 
-**Evidence packaging (resolved Q4): one bundle per article.** The panel sees the
+**Evidence packaging: one bundle per article.** The panel sees the
 whole evidence pool — all chains, summaries, and matched talk threads — in a
 single call, because the question is article-level and cross-chain context is
 itself evidence: the same two editors recurring across three chains over six
@@ -178,7 +185,7 @@ what the alpha-era PRD-0007 fixtures measure; the choice is benchmark-revisable.
 A versioned `StabilitySignal` aggregate — a Constitution Art. 9.1 serde contract
 living in `sp42-core`, following the `PageVerificationReport` precedent
 (ADR-0011), so shells and renderers consume it without depending on the
-assessment crate (resolved Q2) — rendering both layers, labeled: the raw
+assessment crate — rendering both layers, labeled: the raw
 timeline with phase markers and the marker inventory (Layer A, facts), then —
 only when it ran — the panel characterization with its cited evidence (Layer B,
 interpretation). The report records its window bounds and phase timestamps for
@@ -289,8 +296,7 @@ recorded MediaWiki responses — no live network (ADR-0009 discipline).*
 - **Operator habituation / over-trust.** Mitigation: evidence-forward rendering
   (facts before interpretation), no pass/fail wording, low-agreement surfacing.
 - **Wrong evidence window.** Too short misses slow-burn disputes; too long
-  punishes ancient history. Mitigation: configurable window (90-day default,
-  resolved Q1), run-time anchoring with recorded bounds, and the three-phase
+  punishes ancient history. Mitigation: configurable window (90-day default), run-time anchoring with recorded bounds, and the three-phase
   split so exemption never silently expands.
 - **Cost surprise.** Layer B spends real inference. Mitigation: the gate keeps
   quiet pages free; the ambiguous-middle share is tracked (improvement loop), and

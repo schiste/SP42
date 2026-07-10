@@ -177,20 +177,35 @@ Wording invariants, enforced as contract rather than style:
 
 Mechanics:
 
-- **Plain wikitext only** — headings, lists, links. No template dependencies,
-  so the output is portable and cannot break when a wiki lacks a template.
-  Verbatim quoted evidence is `<nowiki>`-escaped: a grounded quote is
-  arbitrary text, and pasting it must never transclude a template or break the
-  page's markup.
-- **Stable ordering and addressing.** Findings render in report order, keyed
-  by `ref_id`/`use_site_ordinal`, so two runs over the same article produce
-  line-comparable appendices (the hold-loop comparability the design sketch
-  commits to).
+- **Plain wikitext for the MVP** — headings, lists, links, no transclusions.
+  The reason is the dependency failure mode, not renderer trust (the wiki is
+  the renderer): a transclusion executes wiki-side logic SP42 does not
+  control — a missing template renders as redlink garbage, and a later
+  template revision silently changes what an already-posted appendix
+  displays. Plain markup displays as emitted, forever, on any wiki. The known
+  counterargument is recorded: enwiki GA reviews have a native template idiom
+  (`{{GAList}}` and friends), and to the on-ramp reader a plain appendix may
+  read as less native, not more trustworthy — so whether to adopt the native
+  idiom is explicitly routed to the alpha copy review with real GA reviewers,
+  and adopting it would be a copy-module change, not an architecture change.
+  Independent of that decision, verbatim quoted evidence is `<nowiki>`-escaped
+  as a hard safety rule: a grounded quote is arbitrary text, and pasting it
+  must never transclude a template or break the page's markup.
+- **Stable ordering and addressing.** Sublist *categories* order by
+  consequence (as specified above); *within* each sublist, findings keep
+  report order, keyed by `ref_id`/`use_site_ordinal` — so two runs over the
+  same article produce line-comparable appendices (the hold-loop
+  comparability the design sketch commits to) while the disagreements still
+  lead.
 - **Placement per the layering rule**: the renderer is assessment-domain
-  *policy* (GA-shaped wording is process-specific) over `sp42-core` contracts —
-  the first code in an `sp42-assessment` domain crate, wired per
-  `adding-a-domain.md`. The criterion copy lives in one module for later
-  localization; MVP copy is English/enwiki-GA.
+  *policy* (GA-shaped wording is process-specific) over the references
+  domain's report contracts — `PageVerificationReport` lives in
+  `sp42-citation` (the implementation sketch verified this; domain→domain
+  dependency is allowed), with `StabilitySignal` slated for `sp42-core` per
+  PRD-0015. The crate is flat `crates/sp42-assessment`, matching the actual
+  workspace layout rather than `adding-a-domain.md`'s nested illustration,
+  and is otherwise wired per that doc. The criterion copy lives in one module
+  for later localization; MVP copy is English/enwiki-GA.
 - **Surface**: CLI-first — a `ga-appendix` output format on the page-verify
   path, and equally a render of a *saved* report (the replay-friendly core: a
   stored `PageVerificationReport` + optional `StabilitySignal` render with no
@@ -259,9 +274,12 @@ is pure).*
   the house norm (PRD-0008/0009/0015), and the pasteable artifact is the
   point; the browser Citations tab is the committed eventual home, as a
   follow-on.
-- *Use GA review templates for richer layout.* Deferred: template dependencies
-  vary per wiki and can break the paste; plain wikitext is portable. Revisit
-  with real reviewer feedback.
+- *Use GA review templates (`{{GAList}}` and friends) for native layout.*
+  Deferred, not rejected: the MVP is plain wikitext for the dependency
+  failure mode (missing/revised templates change or break a posted appendix),
+  but the native idiom may read as more trustworthy to the on-ramp reader —
+  the decision is routed to the alpha copy review with real GA reviewers, and
+  adopting it is a copy-module change only.
 - *Auto-post to the review subpage.* Rejected here — that is the design
   sketch's step 4 with its own blockers (insertion extension, ADR-0018), and
   posting without them would bypass the ADR-0010 discipline.

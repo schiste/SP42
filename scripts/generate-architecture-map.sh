@@ -127,7 +127,52 @@ def rel(path):
 def doc_link(doc):
     return f"[{doc['id']}]({rel(doc['path'])})"
 
-# ── 4. Mermaid diagram ──
+# ── 4. Mermaid diagrams ──
+# Layer-level overview: one node per layer (domains individually), edges
+# aggregated from the real crate edges, labelled with the dependency count.
+def group_of(c):
+    return DOMAIN_OF[c] if LAYER[c] == "domain" else LAYER[c]
+
+group_edges = {}
+for a, b in edges:  # full edge set, including sp42-types targets
+    ga, gb = group_of(a), group_of(b)
+    if ga != gb:
+        group_edges[(ga, gb)] = group_edges.get((ga, gb), 0) + 1
+
+group_crates = {}
+for c in crates:
+    group_crates.setdefault(group_of(c), []).append(c)
+
+GROUP_LABEL = {
+    "shell": "Shells — composition roots",
+    "hybrid": "sp42-core — hybrid, being retired",
+    "platform": "Platform — mechanisms, primitives, contracts",
+}
+GROUP_CLASS = {"shell": "shell", "hybrid": "hybrid", "platform": "platform"}
+
+def group_node(g):
+    label = GROUP_LABEL.get(g, f"{g} domain")
+    n = len(group_crates[g])
+    if g != "hybrid":
+        label += f"<br/>{n} crate{'s' if n > 1 else ''}"
+    return f'G_{g}["{label}"]:::{GROUP_CLASS.get(g, "domain")}'
+
+o = ["flowchart LR"]
+order = ["shell"] + sorted(g for g in group_crates if LAYER[group_crates[g][0]] == "domain") \
+        + [g for g in ("hybrid", "platform") if g in group_crates]
+for g in order:
+    o.append(f"  {group_node(g)}")
+for (ga, gb), n in sorted(group_edges.items()):
+    o.append(f'  G_{ga} -->|{n} dep{"s" if n > 1 else ""}| G_{gb}')
+o += [
+    "  classDef shell fill:#fef3c7,stroke:#b45309,color:#111",
+    "  classDef domain fill:#dcfce7,stroke:#15803d,color:#111",
+    "  classDef platform fill:#dbeafe,stroke:#1d4ed8,color:#111",
+    "  classDef hybrid fill:#fee2e2,stroke:#b91c1c,color:#111,stroke-dasharray: 4 3",
+]
+overview = "\n".join(o)
+
+# Crate-level map:
 def node_id(c):
     return c.replace("-", "_")
 
@@ -204,7 +249,16 @@ lines = [
     "The dependency invariant (`platform ◄─ domains ◄─ shells`) is *enforced*",
     "by `scripts/check-layering.sh` — this page is the picture, not the police.",
     "",
-    "## Layered crate map",
+    "## Layer overview",
+    "",
+    "One node per layer (domains shown individually); edge labels count the",
+    "underlying crate-to-crate dependencies, drawn in full in the next diagram.",
+    "",
+    "```mermaid",
+    overview,
+    "```",
+    "",
+    "## Crate-level map",
     "",
     "```mermaid",
     mermaid,

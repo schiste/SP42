@@ -13,7 +13,35 @@ an ADR or PRD is linked to a crate when the document names that crate.
 The dependency invariant (`platform ◄─ domains ◄─ shells`) is *enforced*
 by `scripts/check-layering.sh` — this page is the picture, not the police.
 
-## Layered crate map
+## Layer overview
+
+One node per layer (domains shown individually); edge labels count the
+underlying crate-to-crate dependencies, drawn in full in the next diagram.
+
+```mermaid
+flowchart LR
+  G_shell["Shells — composition roots<br/>7 crates"]:::shell
+  G_patrolling["patrolling domain<br/>1 crate"]:::domain
+  G_references["references domain<br/>1 crate"]:::domain
+  G_hybrid["sp42-core — hybrid, being retired"]:::hybrid
+  G_platform["Platform — mechanisms, primitives, contracts<br/>9 crates"]:::platform
+  G_hybrid -->|1 dep| G_patrolling
+  G_hybrid -->|2 deps| G_platform
+  G_hybrid -->|1 dep| G_references
+  G_patrolling -->|5 deps| G_platform
+  G_platform -->|2 deps| G_hybrid
+  G_references -->|3 deps| G_platform
+  G_shell -->|5 deps| G_hybrid
+  G_shell -->|5 deps| G_patrolling
+  G_shell -->|28 deps| G_platform
+  G_shell -->|3 deps| G_references
+  classDef shell fill:#fef3c7,stroke:#b45309,color:#111
+  classDef domain fill:#dcfce7,stroke:#15803d,color:#111
+  classDef platform fill:#dbeafe,stroke:#1d4ed8,color:#111
+  classDef hybrid fill:#fee2e2,stroke:#b91c1c,color:#111,stroke-dasharray: 4 3
+```
+
+## Crate-level map
 
 ```mermaid
 flowchart TB

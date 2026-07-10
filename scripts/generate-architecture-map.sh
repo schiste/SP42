@@ -51,6 +51,21 @@ DOMAIN_OF = {
     "sp42-citation": "references",
 }
 
+# Curated per-crate notes for the decision-coverage table — the place for
+# caveats the mechanical sources can't express, with a citation. Links are
+# relative to docs/platform/.
+NOTES = {
+    "sp42-core": "Hybrid exemption — re-export facade being split into"
+                 " platform/domain crates and retired"
+                 " ([ADR-0013](adr/0013-layered-platform-domain-architecture.md))",
+    "sp42-inference": "Still depends on `sp42-core`; edge disappears when the"
+                      " facade is retired"
+                      " ([ADR-0013](adr/0013-layered-platform-domain-architecture.md))",
+    "sp42-wiki": "Still depends on `sp42-core`; edge disappears when the"
+                 " facade is retired"
+                 " ([ADR-0013](adr/0013-layered-platform-domain-architecture.md))",
+}
+
 # ── 2. Workspace crates + dependency edges ──
 meta = json.loads(
     subprocess.check_output(["cargo", "metadata", "--format-version", "1", "--no-deps"])
@@ -145,7 +160,7 @@ for c in crates:
 
 GROUP_LABEL = {
     "shell": "Shells — composition roots",
-    "hybrid": "sp42-core — hybrid, being retired",
+    "hybrid": "sp42-core — hybrid, being retired (ADR-0013)",
     "platform": "Platform — mechanisms, primitives, contracts",
 }
 GROUP_CLASS = {"shell": "shell", "hybrid": "hybrid", "platform": "platform"}
@@ -231,7 +246,7 @@ mermaid = "\n".join(m)
 def crate_row(c):
     a = ", ".join(doc_link(x) for x in adrs_of[c]) or "—"
     p = ", ".join(doc_link(x) for x in prds_of[c]) or "—"
-    return f"| `{c}` | {LAYER[c]} | {a} | {p} |"
+    return f"| `{c}` | {LAYER[c]} | {a} | {p} | {NOTES.get(c, '')} |"
 
 lines = [
     "# SP42 architecture map",
@@ -273,8 +288,8 @@ lines = [
     "",
     "## Decision coverage by crate",
     "",
-    "| Crate | Layer | ADRs that name it | PRDs that name it |",
-    "|---|---|---|---|",
+    "| Crate | Layer | ADRs that name it | PRDs that name it | Notes |",
+    "|---|---|---|---|---|",
 ]
 lines += [crate_row(c) for c in crates]
 

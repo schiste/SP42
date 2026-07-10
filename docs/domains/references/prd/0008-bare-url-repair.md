@@ -3,10 +3,22 @@
 **Drafter:** Claude Code (Fable 5)
 **Editor:** Luis Villa
 **Date:** 2026-06-09
-**State:** Draft
+**State:** Accepted
 **Discussion:** https://github.com/schiste/SP42/issues/27 (this PRD supersedes
-the issue's micro-PRD draft)
+the issue's micro-PRD draft; issue left open to track the frwiki-enablement
+follow-on, not this MVP)
 **Spawned ADRs:** ADR-0010 (operator-confirmed content proposals), drafted with the closing PR once the citation-verification series (0006–0009) merged (see Resolved question 5). The editing *mechanism* is governed by ADR-0003 (accepted, implemented).
+
+## Changelog
+
+- 2026-07-01: State `Draft` → `Accepted` — all five open questions already
+  carried decided answers (see Resolved questions below); the closing PR (#40,
+  merged 2026-06-12) implements items 1–7 of the Definition of Done, checked
+  off below with their test coverage. **Not** moved to `Implemented`: DoD
+  item 8, the live confirmed repair on `test.wikipedia.org`, was left
+  unchecked as "Manual testwiki smoke (operator at keyboard)" in PR #40's own
+  test plan — Editor to confirm whether that smoke test has since run before
+  this moves to `Implemented`. PRD-0014 (browser surface for this flow) spawned.
 
 ## Scope boundary
 
@@ -146,40 +158,60 @@ bare-url execute --title <T> --rev <N> --ordinal <K> [--wiki <ID>] [--action-not
 
 ## Definition of Done
 
-*The items below name planned test coverage; the closing PR records the exact
-test ids and updates this list when the PRD moves to `Implemented`.*
+*Items 1–7 verified by the `crates/sp42-citation/src/bare_url_repair.rs` and
+`crates/sp42-server/src/citation_routes.rs` test suites as of PR #40
+(merged 2026-06-12); test names below. Item 8 is the one DoD item PR #40 did
+not close — see Changelog.*
 
-- [ ] Given a reference whose content is a bare URL, SP42 proposes a filled
+- [x] Given a reference whose content is a bare URL, SP42 proposes a filled
       citation populated **only** from fetched metadata, verified by renderer
       tests over a **replayed metadata-service response** (no live network in
-      tests).
-- [ ] The proposal targets the correct reference when the **same URL occurs
+      tests). — `renders_every_field_from_the_basic_fixture`,
+      `website_falls_back_and_partial_dates_pass_through`,
+      `creators_fallback_formats_authors` (`bare_url_repair.rs`).
+- [x] The proposal targets the correct reference when the **same URL occurs
       earlier** in the article (in prose and in another reference), verified by
       a fixture test asserting the addressed node changed and nothing else did.
-- [ ] Confirming applies **exactly the proposed replacement**: the wiki save
+      — `proposals_target_each_bare_reference_including_duplicates`
+      (`citation_routes.rs`).
+- [x] Confirming applies **exactly the proposed replacement**: the wiki save
       carries the proposal's wikitext and the reviewed revision's `baserevid`,
-      verified by a mock-wiki write-path test.
-- [ ] No write occurs without a confirmation bound to the exact proposed edit:
+      verified by a mock-wiki write-path test. — the scripted `WikitextEditor`
+      test double and apply-path tests around `editor_errors_map_to_editor_codes`
+      (`citation_routes.rs`).
+- [x] No write occurs without a confirmation bound to the exact proposed edit:
       a proposal whose anchor has drifted (or whose ordinal is gone) refuses
       with `node-drift`/`node-out-of-range` and **zero** requests reach the
-      wiki's edit endpoint, verified by a write-path refusal test.
-- [ ] Metadata with no usable title (none, or the URL echoed back as the
+      wiki's edit endpoint, verified by a write-path refusal test. —
+      `editor_errors_map_to_editor_codes` (`citation_routes.rs`).
+- [x] Metadata with no usable title (none, or the URL echoed back as the
       title) yields **decline-to-propose** (a structured "no proposal"
       outcome, not an error and not a thin template), verified by
-      sparse-fixture tests covering both cases.
-- [ ] The metadata service being unreachable or rate-limited degrades to "no
+      sparse-fixture tests covering both cases. —
+      `declines_without_a_usable_title`, `declines_when_the_title_echoes_the_url`
+      (`bare_url_repair.rs`).
+- [x] The metadata service being unreachable or rate-limited degrades to "no
       proposal available" without blocking the review flow or the other
-      dispositions, verified by an error-path test.
-- [ ] The repair disposition is offered **only on wikis where it is enabled**,
+      dispositions, verified by an error-path test. —
+      `declines_when_metadata_is_unavailable` (`bare_url_repair.rs`),
+      `citoid_failure_declines_only_the_affected_reference` (`citation_routes.rs`).
+- [x] The repair disposition is offered **only on wikis where it is enabled**,
       and the MVP enables only the test wiki: the production `frwiki` config
       does not offer or accept it, verified by a config-gating test on the
-      proposal and apply paths.
+      proposal and apply paths. — `gate_yields_the_configured_template`,
+      `gate_refusal_emits_no_citoid_traffic_and_leaves_editor_untouched`,
+      `ensure_bare_url_edit_capability_accepts_when_can_edit_true`,
+      `ensure_bare_url_edit_capability_refuses_when_can_edit_false`
+      (`citation_routes.rs`).
 - [ ] A first confirmed repair lands on `test.wikipedia.org`, driven through
       the CLI surface: the closing PR
       records the target reference, its before/after wikitext, and the
       resulting revision id, and the session's action history returns the
       confirmed action entry (the live-edit acceptance gate; endpoint
-      availability verified 2026-06-09).
+      availability verified 2026-06-09). — **Unconfirmed.** PR #40's test plan
+      lists this as "Manual testwiki smoke (operator at keyboard)," unchecked.
+      Not required for `Accepted`, but required before this PRD claims
+      `Implemented`.
 
 ## Alternatives
 
@@ -249,11 +281,10 @@ test ids and updates this list when the PRD moves to `Implemented`.*
   shown is small and single-reference; declining sparse metadata keeps the
   proposal quality high enough that reading it stays cheap.
 
-## Open questions
+## Resolved questions
 
-All five carry the Editor's decided answers (2026-06-09), folded into the
-body above; they remain open to reviewer reaction until acceptance.
-Implementation is proceeding at-risk against these answers:
+All five carried the Editor's decided answers (2026-06-09), folded into the
+body above, and are settled as of `Accepted` (2026-07-01):
 
 1. **What counts as a bare URL for the MVP?** Resolved: a reference whose
    content, after whitespace trimming, is exactly one plain `http(s)` URL —

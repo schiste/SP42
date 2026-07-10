@@ -797,6 +797,7 @@ pub use raw_report_disclosure as RawReportDisclosure;
 pub struct EvidenceDisclosureProps {
     summary: String,
     children: Children,
+    open: bool,
 }
 
 impl EvidenceDisclosureProps {
@@ -805,7 +806,17 @@ impl EvidenceDisclosureProps {
         Self {
             summary: summary.into(),
             children,
+            open: false,
         }
+    }
+
+    /// Start expanded rather than collapsed — e.g. when a caller wants the
+    /// evidence visible alongside other content shown at the same time
+    /// (citation findings with an action row, PRD-0014).
+    #[must_use]
+    pub const fn with_open(mut self, open: bool) -> Self {
+        self.open = open;
+        self
     }
 }
 
@@ -814,7 +825,7 @@ pub fn evidence_disclosure(props: EvidenceDisclosureProps) -> impl IntoView {
     let children = props.children;
 
     view! {
-        <details class="sp42-evidence-disclosure">
+        <details class="sp42-evidence-disclosure" open=props.open>
             <summary>{props.summary}</summary>
             {children()}
         </details>

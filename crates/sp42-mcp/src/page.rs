@@ -262,6 +262,7 @@ mod tests {
                 }],
                 ref_text: "Example".to_owned(),
                 named: false,
+                is_bare_url_ref: false,
             }],
             text,
             block_kind: BlockKind::Paragraph,

@@ -111,6 +111,12 @@ pub struct BlockRef {
     pub ref_text: String,
     /// `true` when this is a reuse of a `<ref name="…">`.
     pub named: bool,
+    /// `true` when the reference's whole rendered content is a single bare URL
+    /// (no cite template) — i.e. a bare-URL-repair target. Classified from the
+    /// ref's content (not the marker), so a finding can be routed to bare-URL
+    /// repair only when its own ref is genuinely bare, rather than inferred from
+    /// a source URL that another (bare) ref happens to share.
+    pub is_bare_url_ref: bool,
 }
 
 /// A single prose-bearing block emitted by the editor's one DOM pass.

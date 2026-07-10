@@ -48,9 +48,9 @@ It deliberately excludes:
   subpage under the operator's account is the design sketch's step 4, blocked
   on the ADR-0003 insertion extension and ADR-0018, and not re-specified here.
 - **Any new judgment.** The renderer adds wording, ordering, and layout — it
-  must not add, drop, or soften a single finding. The honesty arms (skips,
-  extraction failures, declined Layer B, truncations) render or the renderer
-  is wrong.
+  must not add, drop, or soften a single finding. **Every disclosure the input
+  reports carry renders** — skips, extraction failures, declined Layer B,
+  whatever honesty arms the contracts grow — or the renderer is wrong.
 - **A machine-readable arm.** The task-graph-shaped output for external agents
   (design sketch, external-ecosystem notes) is roadmap, not this PRD.
 - **Hold-loop diffing.** Run-to-run comparability is designed in now (stable

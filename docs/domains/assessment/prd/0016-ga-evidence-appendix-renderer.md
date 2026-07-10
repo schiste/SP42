@@ -82,6 +82,11 @@ the design sketch, and a machine-readable task-graph arm is roadmap there too.
   repair handle renders wherever the finding lands; and the sketch's CLI
   phase moved `ga-appendix` off the shared `OutputFormat` (flattened into
   unrelated commands) onto a command-local page-report format enum.
+- 2026-07-10 (Codex review, round 7): the escaping rule and its DoD item
+  broadened from quoted evidence to **every rendered verbatim field** —
+  claims are article wikitext by construction, and `source_excerpt` is
+  arbitrary source text — with the malicious fixture carrying hostile
+  content in each field kind.
 
 ## Scope boundary
 
@@ -286,14 +291,15 @@ Mechanics:
   read as less native, not more trustworthy — so whether to adopt the native
   idiom is explicitly routed to the alpha copy review with real GA reviewers,
   and adopting it would be a copy-module change, not an architecture change.
-  Independent of that decision, verbatim quoted evidence is `<nowiki>`-escaped
-  as a hard safety rule: a grounded quote is arbitrary text, and pasting it
-  must never transclude a template or break the page's markup. The escaping
-  must survive the wrapper's own terminator: a quote containing a literal
+  Independent of that decision, **every verbatim field** is escaped as a hard
+  safety rule — quotes, claims (article sentences are themselves arbitrary
+  wikitext), `source_excerpt` context, and any future verbatim field —
+  because pasting the appendix must never transclude a template or break the
+  page's markup, whichever field the hostile text arrived in. The escaping
+  must survive the wrapper's own terminator: content containing a literal
   `</nowiki>` would close a naive wrapper and let everything after it execute,
   so the helper entity-encodes nowiki terminators (and any markup-significant
-  angle brackets) inside the quoted content rather than trusting the wrapper
-  alone.
+  angle brackets) inside the content rather than trusting the wrapper alone.
 - **Stable ordering and addressing.** Sublist *categories* order by
   consequence (as specified above); *within* each sublist, findings keep
   report order, keyed by `ref_id`/`use_site_ordinal` — so two runs over the
@@ -370,11 +376,14 @@ is pure).*
       only; plus 5 exactly when a `StabilitySignal` renders) and that all
       other criteria and sub-criteria were not assessed, verified by renderer
       tests over both input shapes.
-- [ ] Quoted evidence containing wikitext markup (templates, refs, links,
-      **and a literal `</nowiki>` terminator**) is escaped so the appendix
-      never transcludes or breaks page markup — the terminator case asserts
-      that markup *following* an embedded `</nowiki>` still renders inert —
-      verified by a malicious-quote fixture covering all four shapes.
+- [ ] **Every rendered verbatim field** — quotes, claims, `source_excerpt`
+      context — containing wikitext markup (templates, refs, links, **and a
+      literal `</nowiki>` terminator**) is escaped so the appendix never
+      transcludes or breaks page markup; the terminator case asserts that
+      markup *following* an embedded `</nowiki>` still renders inert, and the
+      malicious fixture carries hostile content in each field kind (a claim
+      discussing `{{Infobox}}`, an excerpt embedding a terminator, a quote
+      with a ref tag), verified by renderer tests over all of them.
 - [ ] The provenance footer (article, `rev_id`, run date, version, framing
       line, what-is-this explainer link) is always present, verified by a
       renderer test.

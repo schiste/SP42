@@ -69,6 +69,10 @@ the design sketch, and a machine-readable task-graph arm is roadmap there too.
   disagreements bucket with their repair handle). And `LocatedFuzzy` joins
   `Unlocated` in the non-exact-grounding treatment, matching the contract's
   exact-`Located`-only grounding gate.
+- 2026-07-10 (Codex review, round 4): the quote-escaping rule hardened
+  against the wrapper's own terminator — a literal `</nowiki>` inside a quote
+  must not break out; the helper entity-encodes terminators and the malicious
+  fixture asserts the breakout case renders inert.
 
 ## Scope boundary
 
@@ -266,7 +270,12 @@ Mechanics:
   and adopting it would be a copy-module change, not an architecture change.
   Independent of that decision, verbatim quoted evidence is `<nowiki>`-escaped
   as a hard safety rule: a grounded quote is arbitrary text, and pasting it
-  must never transclude a template or break the page's markup.
+  must never transclude a template or break the page's markup. The escaping
+  must survive the wrapper's own terminator: a quote containing a literal
+  `</nowiki>` would close a naive wrapper and let everything after it execute,
+  so the helper entity-encodes nowiki terminators (and any markup-significant
+  angle brackets) inside the quoted content rather than trusting the wrapper
+  alone.
 - **Stable ordering and addressing.** Sublist *categories* order by
   consequence (as specified above); *within* each sublist, findings keep
   report order, keyed by `ref_id`/`use_site_ordinal` — so two runs over the
@@ -336,9 +345,11 @@ is pure).*
       only; plus 5 exactly when a `StabilitySignal` renders) and that all
       other criteria and sub-criteria were not assessed, verified by renderer
       tests over both input shapes.
-- [ ] Quoted evidence containing wikitext markup (templates, refs, links) is
-      `<nowiki>`-escaped so the appendix never transcludes or breaks page
-      markup, verified by a malicious-quote fixture.
+- [ ] Quoted evidence containing wikitext markup (templates, refs, links,
+      **and a literal `</nowiki>` terminator**) is escaped so the appendix
+      never transcludes or breaks page markup — the terminator case asserts
+      that markup *following* an embedded `</nowiki>` still renders inert —
+      verified by a malicious-quote fixture covering all four shapes.
 - [ ] The provenance footer (article, `rev_id`, run date, version, framing
       line, what-is-this explainer link) is always present, verified by a
       renderer test.

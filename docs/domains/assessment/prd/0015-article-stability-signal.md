@@ -124,14 +124,19 @@ it was placed.
 
 Layer A triages the article into three outcomes:
 
-1. **Quiet** — no reverts, no dispute markers, no protection, and no unusual
-   talk activity in the window. The report says "no instability indicators
+1. **Quiet** — no reverts, no dispute markers, no protection, and no talk
+   activity above the triage threshold (a policy knob, tuned via the
+   improvement loop) in the window. The report says "no instability indicators
    found" and **no inference runs**. This is the common case and it is free.
-2. **Unambiguous** — overwhelming mechanical evidence (e.g. full protection over
-   an active dispute banner plus a live revert chain). Reported directly from the
-   deterministic facts.
-3. **Ambiguous middle** — reverts or markers exist but their meaning is unclear.
-   Only this slice pays for Layer B.
+2. **Unambiguous** — the deterministic facts alone settle the picture, in
+   *either* direction. Unambiguously disputed: e.g. full protection over an
+   active dispute banner plus a live revert chain. Unambiguously benign:
+   sensors fired but every firing is covered by a graduated deterministic rule
+   (all churn is self-reverts; every revert's summary cites vandalism policy) —
+   reported clean with the mechanical explanation, no inference spent. This
+   benign arm is where the improvement loop's graduated classes land.
+3. **Ambiguous middle** — reverts, markers, protection, or talk activity exist
+   and no deterministic rule explains them. Only this slice pays for Layer B.
 
 ### Layer B — panel interpretation (inference, gated to the ambiguous middle)
 

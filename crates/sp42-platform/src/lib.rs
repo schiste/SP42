@@ -182,9 +182,10 @@ pub use wikibase::{
     WIKIBASE_PROPERTY_CONTENT_MODEL, WIKITEXT_CONTENT_MODEL, WikibaseEntity, WikibaseError,
     WikibaseLabels, WikibaseReference, WikibaseSnak, WikibaseSnakKind, WikibaseStatement,
     WikibaseValue, build_entity_request, build_label_request, classify_content_model,
-    collect_label_ids, default_namespace_content_model, derive_content_model_capabilities,
-    diff_entities, parse_entity, parse_entity_content, parse_labels, parse_revision_contents,
-    render_entity_diff_report, render_snak_value, render_statement_claim, route_content_diff,
+    collect_label_ids, default_namespace_content_model, default_namespace_content_model_for_wiki,
+    derive_content_model_capabilities, diff_entities, parse_entity, parse_entity_content,
+    parse_labels, parse_revision_contents, render_entity_diff_report, render_snak_value,
+    render_statement_claim, route_content_diff,
 };
 pub use wikitext_editor::{
     BlockKind, BlockRef, CitedSource, ParsoidBlock, ScriptedEditorInvocation,

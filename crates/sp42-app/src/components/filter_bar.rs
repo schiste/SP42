@@ -52,6 +52,9 @@ const NAMESPACE_OPTIONS: &[(i32, &str)] = &[
     (6, "File"),
     (10, "Template"),
     (14, "Category"),
+    // Wikibase property namespace; default-selected only on wikis whose
+    // resolved defaults include it (the wikidata family).
+    (120, "Property"),
 ];
 
 #[component]

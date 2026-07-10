@@ -134,11 +134,32 @@ pub fn default_namespace_content_model(api_url: &Url, namespace: i32) -> Option<
     if !is_wikidata {
         return None;
     }
+    wikidata_namespace_default(namespace)
+}
+
+/// The wikidata-family namespace → content-model defaults shared by both
+/// keyed forms above (mirrors `$wgNamespaceContentModels`).
+fn wikidata_namespace_default(namespace: i32) -> Option<&'static str> {
     match namespace {
         0 => Some(WIKIBASE_ITEM_CONTENT_MODEL),
         120 => Some(WIKIBASE_PROPERTY_CONTENT_MODEL),
         _ => None,
     }
+}
+
+/// [`default_namespace_content_model`], keyed by wiki dbname instead of the
+/// api url — the form browser surfaces hold (a stream event carries the
+/// `wiki_id`, not its api url). Same wikidata-family scope; other Wikibase
+/// hosts are additive here too.
+#[must_use]
+pub fn default_namespace_content_model_for_wiki(
+    wiki_id: &str,
+    namespace: i32,
+) -> Option<&'static str> {
+    if !matches!(wiki_id, "wikidatawiki" | "testwikidatawiki") {
+        return None;
+    }
+    wikidata_namespace_default(namespace)
 }
 
 /// Derive the content-model capability axis for a revision.

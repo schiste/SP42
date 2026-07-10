@@ -59,6 +59,17 @@ pub(super) fn install_patrol_eventstream(
 }
 
 fn stream_event_to_queued_edit(event: &StreamEvent) -> QueuedEdit {
+    // Seed the per-namespace default content model exactly like the server
+    // ingestion paths (ADR-0016) — otherwise a live Wikidata edit is queued
+    // as unknown/wikitext and mis-scored against the initial-load entries.
+    let content_model =
+        sp42_core::default_namespace_content_model_for_wiki(&event.wiki, event.namespace)
+            .map(str::to_owned);
+    // Entity content mirrors the scoring engine's gate (ADR-0016 Decision 5):
+    // a uniform base with no signal contributions — the wikitext byte/identity
+    // heuristics below misread entity JSON edits.
+    let entity_content =
+        sp42_core::derive_content_model_capabilities(content_model.as_deref()).entity_diff;
     let is_anon = event
         .user
         .chars()
@@ -79,34 +90,15 @@ fn stream_event_to_queued_edit(event: &StreamEvent) -> QueuedEdit {
 
     let mut score = 0i32;
     let mut contributions = Vec::new();
-    if is_anon {
-        score += 20;
-        contributions.push(SignalContribution {
-            signal: ScoringSignal::AnonymousUser,
-            weight: 20,
-            note: None,
-        });
-    }
-    if matches!(performer, EditorIdentity::Temporary { .. }) {
-        score += 20;
-        contributions.push(SignalContribution {
-            signal: ScoringSignal::AnonymousUser,
-            weight: 20,
-            note: Some("temporary account".to_string()),
-        });
-    }
-    if event.byte_delta().abs() > 500 {
-        score += 15;
-        contributions.push(SignalContribution {
-            signal: ScoringSignal::LargeContentRemoval,
-            weight: 15,
-            note: None,
-        });
+    if entity_content {
+        // No contributions: keep entity inserts chronological (PRD-0011 Q3).
+    } else {
+        apply_wikitext_quick_signals(event, is_anon, &performer, &mut score, &mut contributions);
     }
 
     QueuedEdit {
         event: EditEvent {
-            content_model: None,
+            content_model,
             wiki_id: event.wiki.clone(),
             title: event.title.clone(),
             namespace: event.namespace,
@@ -126,5 +118,87 @@ fn stream_event_to_queued_edit(event: &StreamEvent) -> QueuedEdit {
             total: score,
             contributions,
         },
+    }
+}
+
+/// The quick wikitext-content signals for a live insert (anon/temporary
+/// identity, large removals). Skipped entirely for entity content.
+fn apply_wikitext_quick_signals(
+    event: &StreamEvent,
+    is_anon: bool,
+    performer: &EditorIdentity,
+    score: &mut i32,
+    contributions: &mut Vec<SignalContribution>,
+) {
+    if is_anon {
+        *score += 20;
+        contributions.push(SignalContribution {
+            signal: ScoringSignal::AnonymousUser,
+            weight: 20,
+            note: None,
+        });
+    }
+    if matches!(performer, EditorIdentity::Temporary { .. }) {
+        *score += 20;
+        contributions.push(SignalContribution {
+            signal: ScoringSignal::AnonymousUser,
+            weight: 20,
+            note: Some("temporary account".to_string()),
+        });
+    }
+    if event.byte_delta().abs() > 500 {
+        *score += 15;
+        contributions.push(SignalContribution {
+            signal: ScoringSignal::LargeContentRemoval,
+            weight: 15,
+            note: None,
+        });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::stream_event_to_queued_edit;
+    use crate::platform::eventstream::StreamEvent;
+
+    fn event(wiki: &str, namespace: i32) -> StreamEvent {
+        StreamEvent {
+            wiki: wiki.to_string(),
+            title: "Q42".to_string(),
+            namespace,
+            rev_id: 1,
+            old_rev_id: Some(0),
+            user: "127.0.0.1".to_string(), // anon + large removal: both signals fire on wikitext
+            bot: false,
+            minor: false,
+            new_page: false,
+            patrolled: false,
+            timestamp_ms: 0,
+            comment: None,
+            length_old: 2000,
+            length_new: 100,
+        }
+    }
+
+    #[test]
+    fn live_wikidata_insert_seeds_content_model_and_skips_wikitext_signals() {
+        let queued = stream_event_to_queued_edit(&event("wikidatawiki", 0));
+        assert_eq!(queued.event.content_model.as_deref(), Some("wikibase-item"));
+        // Mirrors the scoring engine's entity gate: uniform base, no signals.
+        assert_eq!(queued.score.total, 0);
+        assert!(queued.score.contributions.is_empty());
+
+        // A Wikidata talk-page edit stays on the wikitext path.
+        let talk = stream_event_to_queued_edit(&event("wikidatawiki", 1));
+        assert_eq!(talk.event.content_model, None);
+        assert!(!talk.score.contributions.is_empty());
+    }
+
+    #[test]
+    fn live_wikipedia_insert_keeps_the_quick_signals() {
+        let queued = stream_event_to_queued_edit(&event("enwiki", 0));
+        assert_eq!(queued.event.content_model, None);
+        assert_eq!(queued.score.total, 35, "anon + large removal");
+        assert_eq!(queued.score.contributions.len(), 2);
     }
 }

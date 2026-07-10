@@ -47,8 +47,8 @@ Criterion numbering throughout refers to the
 [Good article criteria](https://en.wikipedia.org/wiki/Wikipedia:Good_article_criteria):
 1 well-written (1a prose, 1b MoS), 2 verifiable (2b inline support, 2c no
 original research, 2d no copyvio), 3 broad, 4 neutral, 5 stable, 6 media.
-SP42's evidence feeds 2 (and 5, once PRD-0015 lands); the rest appear only in
-the "not assessed" line.
+SP42's evidence feeds 2b (and 5, once PRD-0015 lands); everything else is
+covered only by the "assessed by SP42" honesty line.
 
 Inputs are the contracts as they exist today:
 
@@ -128,20 +128,26 @@ may not know the numbering:
   6. *Skipped refs and extraction failures* — first-class, never dropped.
   7. *Book citations* — resolve/ground outcomes with scanned-page deep links
      when grounded, as PRD-0009 lands them in the report contract.
-- **Criterion 5 section** (when a `StabilitySignal` is supplied): Layer A facts
+- **Criterion 5 (stable) section** (when a `StabilitySignal` is supplied): Layer A facts
   first (timeline, phase markers, marker inventory, triage outcome and knob
   disclosure), then the labeled Layer B characterizations with their cited
   evidence. The PRD-0015 conduct posture binds the rendering: participants
   counted, never named outside evidence/diff links.
-- **A "not assessed by SP42" line** naming the criteria the appendix says
-  nothing about (1a, 2c, 3, 4, 6 — and 5 until the stability section lands),
-  so silence cannot be read as endorsement. One line; the appendix's own
-  honesty arm.
+- **An "assessed by SP42" line**, stated positively because the assessed set
+  is tiny and the complement drifts: "this appendix carries evidence for
+  criterion 2b (inline support) only" — plus criterion 5 exactly when a
+  stability signal renders — "all other criteria and sub-criteria were not
+  assessed." One line; the appendix's own honesty arm, so silence cannot be
+  read as endorsement, and drift-proof as evidence lanes land.
 - **Provenance footer**, always: article and `rev_id`, run date, SP42 version,
   an explicit framing line — this is a tool-generated evidence appendix; the
   criteria judgments and the pass/hold/fail are the reviewer's — and a
   **"what is this?" link** to a stable explainer of the tool and its verdict
-  vocabulary, because the default reader has never heard of SP42.
+  vocabulary, because the default reader has never heard of SP42 (repo-hosted
+  docs page for the MVP — the platform's `public_documents` surface is the
+  natural host; an on-wiki essay page is the eventual home once SP42 has a
+  community presence, since wiki editors trust on-wiki links more than
+  GitHub URLs).
 
 Wording invariants, enforced as contract rather than style:
 
@@ -204,8 +210,8 @@ is pure).*
 - [ ] *(staged: lands with PRD-0015's implementation, not the MVP gate)* A
       supplied `StabilitySignal` renders facts-then-interpretation with the
       conduct posture enforced (no usernames outside evidence links); until
-      then — and whenever the signal is absent — criterion 5 appears in the
-      "not assessed" line, verified by an absent-signal fixture. The
+      then — and whenever the signal is absent — criterion 5 stays out of the
+      "assessed by SP42" line, verified by an absent-signal fixture. The
       citations-only appendix is this PRD's MVP acceptance gate.
 - [ ] An unlocated-support finding (`Supported`/`Partial` with
       `grounding_status` unlocated) renders as unconfirmed support, distinct
@@ -214,10 +220,10 @@ is pure).*
       prefix, grounding marker) with no quotes, and unconfirmed supports
       render in their own sublist rather than inside the supported list,
       verified by renderer tests.
-- [ ] The "not assessed by SP42" line names the criteria the supplied inputs
-      say nothing about — criterion 5 leaves the list exactly when a
-      `StabilitySignal` renders — verified by renderer tests over both input
-      shapes.
+- [ ] The "assessed by SP42" line states the assessed set positively (2b
+      only; plus 5 exactly when a `StabilitySignal` renders) and that all
+      other criteria and sub-criteria were not assessed, verified by renderer
+      tests over both input shapes.
 - [ ] Quoted evidence containing wikitext markup (templates, refs, links) is
       `<nowiki>`-escaped so the appendix never transcludes or breaks page
       markup, verified by a malicious-quote fixture.
@@ -297,7 +303,12 @@ acceptance.
    quotes stay in the CLI/structured rendering, and unconfirmed supports form
    their own visible sublist rather than blending into the supported list.
 3. **Section for criteria SP42 says nothing about.** Resolved: **keep the
-   "not assessed by SP42" line.** One line, the appendix's own honesty arm;
-   it protects the reviewer (no one can later claim the tool vouched for
-   neutrality or breadth), which outweighs any reads-as-noise concern.
-   Criterion 5 leaves the list exactly when a `StabilitySignal` renders.
+   honesty line.** One line, the appendix's own honesty arm; it protects the
+   reviewer (no one can later claim the tool vouched for neutrality or
+   breadth), which outweighs any reads-as-noise concern. During the
+   paragraph review the line was inverted to state the *assessed* set
+   positively ("evidence for criterion 2b only" — plus 5 exactly when a
+   `StabilitySignal` renders; everything else not assessed): the original
+   complement enumeration (1a, 2c, 3, 4, 6) was simply wrong — it omitted
+   1b, 2a, and 2d — and a complement list re-drifts every time an evidence
+   lane lands, while the assessed set stays tiny and self-correcting.

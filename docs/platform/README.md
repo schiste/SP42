@@ -7,6 +7,7 @@ engine), and `xtask`.
 
 ## Operational docs
 
+- [architecture.md](architecture.md) — generated layered crate map with ADR/PRD cross-links (regenerate with `scripts/generate-architecture-map.sh`)
 - [RUNTIME_CONFIGURATION.md](RUNTIME_CONFIGURATION.md) — server environment, API base URL, and local dev auth
 - [DESKTOP_DISTRIBUTION.md](DESKTOP_DISTRIBUTION.md) — desktop shell backends, build prerequisites, signing/notarization
 - [DEVELOPER_SURFACE.md](DEVELOPER_SURFACE.md) — localhost reporting, action/live boundaries, telemetry, milestone boundaries

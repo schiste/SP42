@@ -24,6 +24,12 @@ the design sketch, and a machine-readable task-graph arm is roadmap there too.
   render was recognized as the core surface. All three open questions resolved
   same-day with the Editor, including reversing the counts-only proposal for
   supported findings in favor of a compact spot-check record.
+- 2026-07-10 (review): primary persona set to the **on-ramp reader** — the GA
+  reviewer/editor with zero SP42 context reading a pasted appendix cold — per
+  the Editor. Consequences folded in: cold-reader legibility joins the wording
+  invariants (no raw contract identifiers; copy-module vocabulary), the footer
+  gains a what-is-this explainer link, and the copy-drift risk is reweighted
+  as SP42's first impression.
 
 ## Scope boundary
 
@@ -72,8 +78,15 @@ that reads as verdicts: "citation failed" where the honest statement is "the
 claim and the source disagree" (PRD-0014's framing), or "criterion 2: pass"
 where SP42 makes no such judgment.
 
-This is for the GA reviewer already using SP42's evidence runs: they want the
-paste-ready appendix, with the wording discipline built in.
+The primary user is the **GA reviewer with no SP42 context** — the on-ramp.
+That is who reads a pasted appendix cold on a review page (reviewer, nominator,
+talk-page watcher), and it is who a first-time operator is the day they try
+SP42 because they saw one. The operator running the render is further along
+the ramp, but the *default reader assumption* is zero tool familiarity: the
+appendix must explain itself — its vocabulary, its provenance, and what it is
+not (a verdict) — without the CLI, the docs, or prior exposure. The wording
+discipline is built in precisely because the audience cannot be assumed to
+know the posture.
 
 ## Proposal
 
@@ -105,8 +118,10 @@ One renderer, `reports → wikitext appendix`, organized by GA criterion:
   so silence cannot be read as endorsement. One line; the appendix's own
   honesty arm.
 - **Provenance footer**, always: article and `rev_id`, run date, SP42 version,
-  and an explicit framing line — this is a tool-generated evidence appendix;
-  the criteria judgments and the pass/hold/fail are the reviewer's.
+  an explicit framing line — this is a tool-generated evidence appendix; the
+  criteria judgments and the pass/hold/fail are the reviewer's — and a
+  **"what is this?" link** to a stable explainer of the tool and its verdict
+  vocabulary, because the default reader has never heard of SP42.
 
 Wording invariants, enforced as contract rather than style:
 
@@ -119,6 +134,11 @@ Wording invariants, enforced as contract rather than style:
   the panel's judgment without a re-locatable quote — visually and verbally
   distinct from grounded findings. This is precisely the nuance
   hand-transcription loses.
+- **Cold-reader legibility.** No raw contract identifiers in the output —
+  verdict and status vocabulary renders through the reader-facing copy module
+  ("the source did not support this claim", never `NotSupported`), and refs
+  are addressed by their human-facing citation markers (`[1]`, named refs),
+  which is what `ref_id` already carries (ADR-0011).
 - **Evidence phrasing throughout** ("12 of 14 URL citations verified
   supported; 2 dead links: …").
 
@@ -181,7 +201,13 @@ is pure).*
       `<nowiki>`-escaped so the appendix never transcludes or breaks page
       markup, verified by a malicious-quote fixture.
 - [ ] The provenance footer (article, `rev_id`, run date, version, framing
-      line) is always present, verified by a renderer test.
+      line, what-is-this explainer link) is always present, verified by a
+      renderer test.
+- [ ] No raw contract identifiers (`NotSupported`, `SourceUnavailable`, enum
+      variant names generally) appear in the appendix; all verdict/status
+      vocabulary comes from the reader-facing copy module, verified by a
+      renderer assertion scanning output over a fixture exercising every
+      verdict and status.
 - [ ] Rendering is deterministic: the same input reports produce a
       byte-identical appendix, verified by a replay test.
 - [ ] Rendering a saved report performs no network and no inference, verified
@@ -224,7 +250,9 @@ is pure).*
 - **Copy drift vs. GA community expectations.** The criterion wording is
   centralized in one module and reviewed with real reviewers during alpha;
   it is renderer copy, not contract, so it can change without touching
-  report semantics.
+  report semantics. This risk carries extra weight under the on-ramp persona:
+  the appendix is SP42's public face, and for most readers the first SP42
+  artifact they ever see — the copy *is* the first impression.
 
 ## Resolved questions
 

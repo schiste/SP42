@@ -83,13 +83,16 @@ clippy).
    linked once); stats summary line (preferring `stats`, deriving the
    grounded/unconfirmed split from `findings` since `stats` lacks it);
    sublists in consequence order — claim–source disagreements first (claim +
-   derived reader-facing ref label + reader-facing verdict + located quote +
-   source link), then recovered-via-archive findings with their `archive_of`
+   derived reader-facing ref label + reader-facing verdict + located quote
+   when `passage` exists — `NotSupported` is typically a no-quote verdict and
+   says so; `archive_of` renders on any line carrying it), then
+   recovered-via-archive findings (`Supported` only) with their `archive_of`
    repair handles, unrecovered dead links (dead URL only — the contract
    preserves no archive candidates for them), unreadable sources framed as
    tool limitation, unconfirmed supports as their own sublist
-   (`Supported`+unlocated only; `Partial`+unlocated stays annotated in the
-   disagreements bucket — verdict partitions, grounding annotates), the compact
+   (`Supported` with `Unlocated` or `LocatedFuzzy`; `Partial` with either
+   stays annotated in the disagreements bucket — verdict partitions,
+   grounding annotates), the compact
    supported-findings spot-check record, skips and extraction failures, book
    outcomes as the contract carries them; the positive "assessed by SP42"
    line (2b only, MVP); provenance footer with the what-is-this explainer

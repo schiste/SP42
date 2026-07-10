@@ -60,6 +60,15 @@ the design sketch, and a machine-readable task-graph arm is roadmap there too.
   Q2's resolution corrected to the derived ref label; and the sketch's CLI
   phase pins an explicit `ga-appendix` value name against the enum's
   lowercase `rename_all`.
+- 2026-07-10 (Codex review, round 3): three more contract corrections. The
+  quote requirement is scoped to findings carrying `passage` — `NotSupported`
+  is typically a no-quote verdict (`NotApplicable`), so its line states no
+  supporting passage was found, and `source_excerpt` only ever renders as
+  labeled context. `archive_of` renders on any line that carries it (the
+  contract stamps it on archive-backed disagreements too, which stay in the
+  disagreements bucket with their repair handle). And `LocatedFuzzy` joins
+  `Unlocated` in the non-exact-grounding treatment, matching the contract's
+  exact-`Located`-only grounding gate.
 
 ## Scope boundary
 
@@ -145,19 +154,29 @@ may not know the numbering:
   spot-check events before the mechanical repairs:
   1. *Claim–source disagreements* — `NotSupported`/`Partial` findings, each
      line carrying the claim, its reader-facing ref label, the reader-facing
-     verdict, the verbatim located quote, and the source link. These can sink
-     criterion 2 or reveal text drift; they lead. **This bucket takes every**
+     verdict, the located quote **when the finding carries one**, and the
+     source link. A `NotSupported` finding is typically a **no-quote verdict**
+     (ADR-0007: grounded by the search outcome, never a fabricated passage —
+     `passage` absent, grounding `NotApplicable`): its line states that no
+     supporting passage was found, rather than pretending to quote.
+     `source_excerpt`, when present, may render only as labeled context (what
+     the panel read), never presented as grounded evidence. And `archive_of`
+     renders on **any** line that carries it, whatever the bucket — an
+     archive-backed disagreement keeps its dead-live-URL repair handle here.
+     These can sink criterion 2 or reveal text drift; they lead. **This bucket takes every**
      `NotSupported`/`Partial` **finding regardless of grounding status**: an
      unlocated quote on a `Partial` renders as an annotation on its line
      here, never re-buckets it under unconfirmed supports — hiding a
      claim–source disagreement is the worse failure. Verdict partitions the
      sublists; grounding annotates. Every finding appears in exactly one
      sublist.
-  2. *Recovered via archive* — findings whose claim was verified through an
-     archive fallback: supported, but the live URL is dead, and `archive_of`
-     (which the contract populates **only** in this case) is the repair
+  2. *Recovered via archive* — findings whose claim was **supported** through
+     an archive fallback: the live URL is dead and `archive_of` is the repair
      handle — "update the citation to the archive." Pulled out of the
-     supported list because they are actionable.
+     supported list because they are actionable. (The contract stamps
+     `archive_of` on any non-unavailable archive verdict, including archive-
+     backed `Partial`/`NotSupported` — those stay in the disagreements bucket
+     and carry the same repair handle there.)
   3. *Dead links (unrecovered)* — unreachable sources no archive rescued.
      The report preserves no archive candidates for these (candidate archive
      URLs live on the extractor's use-site and are not copied into findings),
@@ -166,10 +185,13 @@ may not know the numbering:
      repair candidates.
   4. *Unreadable sources* — fetched but not machine-readable (PDF, viewer
      shells), honestly framed as a tool limitation: the citation may be fine.
-  5. *Unconfirmed supports* — `Supported` verdicts whose quote could not be
-     re-located: the panel's judgment without evidence in hand, never blended
-     into the supported list. (`Partial`+unlocated stays in the disagreements
-     bucket, annotated — see its precedence rule.)
+  5. *Unconfirmed supports* — `Supported` verdicts whose quote was not
+     re-located **exactly**: `Unlocated` (not found at all) or `LocatedFuzzy`
+     (approximate match only — explicitly not groundable; the contract's
+     grounding gate accepts exact `Located` alone), each annotated with
+     which. Never blended into the supported list. (`Partial` with either
+     status stays in the disagreements bucket, annotated — see its precedence
+     rule.)
   6. *Supported findings* — a compact one-line-each spot-check record
      (ref label, claim prefix, grounding marker); the reviewing guide
      expects the reviewer to say what they checked, and counts alone are not a
@@ -207,10 +229,12 @@ Wording invariants, enforced as contract rather than style:
 - **PRD-0014's mismatch framing verbatim**: a `NotSupported`/`Partial` finding
   is rendered as claim-and-source disagreement, never as a citation failure —
   the article text may be the wrong side.
-- **The grounding axis renders honestly.** Unlocated grounding is always
-  visible and never presented as grounded: a `Supported`+unlocated finding
-  renders in the unconfirmed-supports sublist, and a `Partial`+unlocated
-  finding carries an unlocated annotation on its disagreement line. This is
+- **The grounding axis renders honestly.** Non-exact grounding is always
+  visible and never presented as grounded: a `Supported` finding whose quote
+  is `Unlocated` or only `LocatedFuzzy` renders in the unconfirmed-supports
+  sublist (annotated with which), a `Partial` with either status carries the
+  annotation on its disagreement line, and a no-quote verdict states that no
+  supporting passage was found rather than quoting anything. This is
   precisely the nuance hand-transcription loses.
 - **Cold-reader legibility.** No raw contract identifiers in the output —
   verdict and status vocabulary renders through the reader-facing copy module
@@ -274,10 +298,12 @@ is pure).*
       line (stating the grounded/unconfirmed split within supported verdicts,
       derived from `findings` since `stats` lacks it), sublists in the
       consequence order specified, each disagreement line carrying claim,
-      reader-facing ref label, reader-facing verdict, verbatim quote, and
-      source link; recovered-via-archive lines carry their `archive_of`
-      repair handles while unrecovered dead-link lines carry the dead URL
-      only — verified by renderer tests.
+      reader-facing ref label, reader-facing verdict, the located quote when
+      `passage` is present (no-quote verdicts render the no-passage wording;
+      `source_excerpt` only ever as labeled context), and source link;
+      `archive_of` renders on every line that carries it, in every bucket,
+      while unrecovered dead-link lines carry the dead URL only — verified by
+      renderer tests.
 - [ ] Skips and extraction failures render as distinct first-class lists and
       are never dropped, verified over a fixture containing both.
 - [ ] The wording invariants hold: no pass/fail phrasing, and
@@ -290,12 +316,18 @@ is pure).*
       then — and whenever the signal is absent — criterion 5 stays out of the
       "assessed by SP42" line, verified by an absent-signal fixture. The
       citations-only appendix is this PRD's MVP acceptance gate.
-- [ ] Unlocated grounding is always visible and never double-bucketed: a
-      `Supported`+unlocated finding renders in the unconfirmed-supports
-      sublist, a `Partial`+unlocated finding stays in the disagreements
-      bucket with an unlocated annotation, and every finding appears in
-      exactly one sublist — verified by renderer tests over both
-      combinations.
+- [ ] Non-exact grounding is always visible and never double-bucketed: a
+      `Supported` finding with `Unlocated` or `LocatedFuzzy` grounding
+      renders in the unconfirmed-supports sublist (annotated with which), a
+      `Partial` with either stays in the disagreements bucket with the
+      annotation, and every finding appears in exactly one sublist — verified
+      by renderer tests over all four verdict×status combinations.
+- [ ] An archive-backed disagreement (`Partial`/`NotSupported` carrying
+      `archive_of`) renders in the disagreements bucket **with** its repair
+      handle, verified by a renderer test.
+- [ ] A no-quote `NotSupported` finding renders the no-passage wording and
+      never a quote, with `source_excerpt` (when present) labeled as context
+      rather than evidence, verified by a renderer test.
 - [ ] Supported findings render as compact one-line entries (ref label,
       claim prefix, grounding marker) with no quotes, and unconfirmed supports
       render in their own sublist rather than inside the supported list,

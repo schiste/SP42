@@ -420,8 +420,13 @@ recorded MediaWiki responses — no live network (ADR-0009 discipline).*
   punishes ancient history. Mitigation: configurable window (90-day default), run-time anchoring with recorded bounds, and the three-phase
   split so exemption never silently expands.
 - **Cost surprise.** Layer B spends real inference. Mitigation: the gate keeps
-  quiet pages free; the ambiguous-middle share is tracked (improvement loop), and
-  the CLI reports when and why Layer B ran.
+  quiet pages free; the ambiguous-middle share is tracked (improvement loop);
+  and the report contract itself records when and why Layer B ran or declined.
+- **Pageviews API dependency.** The attention sensor adds one external read
+  edge. Mitigation: the standard treatment (behind the `HttpClient` trait,
+  replayed fixtures) and degrade-with-disclosure — the sensor reports itself
+  not-run rather than folding into a silent quiet. If that API disappears,
+  Wikimedia has bigger problems than this sensor.
 
 ## Resolved questions
 

@@ -59,8 +59,10 @@ evidence *for* a review, not a review.
    - *Citations:* `verify-page` over the pinned revision (ADR-0011) — verdict +
      located quote per use-site, dead-vs-unusable split, archive fallbacks,
      skips first-class. Book citations flow through PRD-0009 resolve/ground.
-   - *Stability:* the PRD-0015 two-layer signal, keyed to the nomination
-     timestamp.
+   - *Stability:* the PRD-0015 two-layer signal — window anchored to run time
+     (the observed head revision), with the `{{GA nominee}}` and review-start
+     timestamps rendered only as phase markers, per the PRD's resolved window
+     semantics.
    - *(as they land)* media-licensing relay (6a) and the MoS/layout lint flags.
 3. **GA-shaped rendering.** The report renders as a wikitext evidence appendix
    organized by criterion number — the shape a reviewer pastes into

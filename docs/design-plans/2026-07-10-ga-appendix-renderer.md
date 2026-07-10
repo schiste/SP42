@@ -73,14 +73,23 @@ clippy).
 
 1. **Crate + builder core.** `crates/sp42-assessment` (workspace member,
    lints inherited, layer-check clean); `ga_appendix.rs` building the
-   criterion-2 section from a `PageVerificationReport`: stats summary line,
-   actionable-first sublists (dead links with `archive_of`, unusable with
-   `unusable_reason` framed as tool limitation, not-supported/partial with
-   claim + `ref_id` + verdict + located quote + source link), skips and
-   extraction failures as first-class lists, "not assessed" line, provenance
-   footer. `copy.rs` holds every English string. Tests: structure, wording
-   invariants (incl. `Unlocated` rendering as unconfirmed support), nowiki
-   escaping over a malicious-quote fixture, determinism.
+   criterion-2 section from a `PageVerificationReport` per the PRD's section
+   spec: number-and-name headings ("Criterion 2 (verifiable)", criteria page
+   linked once); stats summary line (preferring `stats`, deriving the
+   grounded/unconfirmed split from `findings` since `stats` lacks it);
+   sublists in consequence order — claim–source disagreements first (claim +
+   citation marker + reader-facing verdict + located quote + source link),
+   then dead links with `archive_of`, unreadable sources framed as tool
+   limitation, unconfirmed supports as their own sublist, the compact
+   supported-findings spot-check record, skips and extraction failures, book
+   outcomes as the contract carries them; the positive "assessed by SP42"
+   line (2b only, MVP); provenance footer with the what-is-this explainer
+   link. The builder takes the report **plus a shell-injected `rendered_at`**
+   (`Clock` trait — the report contract has no run timestamp) and stays pure.
+   `copy.rs` holds every English string. Tests: structure and ordering,
+   wording invariants (incl. `Unlocated` rendering as unconfirmed support and
+   a no-raw-contract-identifiers scan), nowiki escaping over a
+   malicious-quote fixture, determinism with a pinned timestamp.
 2. **CLI surface.** `OutputFormat::GaAppendix` accepted by `verify-page`; new
    `render-report` subcommand taking a saved report JSON (and later the
    stability snapshot) — pure, asserts no bridge/session/network. Legacy-argv
@@ -88,9 +97,11 @@ clippy).
    bytes.
 3. **Fixture realism + docs.** Render a real-article-shaped fixture (the
    ADR-0011 smoke-test articles are the model) and hand-check the paste on a
-   sandbox talk page; adjust copy. Update the assessment README (crate born)
-   and the stale references-domain "no crate yet" line while in there. PRD
-   moves toward `Implemented` with test ids recorded.
+   sandbox talk page; adjust copy — this phase also carries the routed
+   `{{GAList}}` native-idiom question to real GA reviewers (PRD Alternatives).
+   Update the assessment README (crate born) and the stale references-domain
+   "no crate yet" line while in there. PRD moves toward `Implemented` with
+   test ids recorded.
 4. **Stability section (staged; lands with PRD-0015's implementation).** Add
    the `StabilitySignal` input and criterion-5 section: facts before labeled
    interpretation, conduct posture (participants counted, usernames only in
@@ -99,6 +110,18 @@ clippy).
 
 Out of scope (committed elsewhere): posting (sketch step 4), browser Citations
 tab rendering, machine-readable arm, hold-loop diff rendering.
+
+## Review-time sync (2026-07-10)
+
+The PRD's paragraph-by-paragraph Editor review then flowed back into this
+sketch: consequence-ordered sublists (disagreements lead), the supported
+compact list and unconfirmed sublist (Q2's revised resolution), the inverted
+"assessed by SP42" line, number-and-name headings, cold-reader legibility
+(no raw contract identifiers), the explainer link, and the shell-injected
+`rendered_at`. Two small upstream notes for the references domain came out of
+the same review: an additive `supported_unlocated` counter on
+`PageVerificationStats`, and an additive `verified_at` on the report, so the
+footer can state when verification (not rendering) happened.
 
 ## What the sketch taught the PRD
 

@@ -296,9 +296,11 @@ is pure).*
 - *Auto-post to the review subpage.* Rejected here — that is the design
   sketch's step 4 with its own blockers (insertion extension, ADR-0018), and
   posting without them would bypass the ADR-0010 discipline.
-- *Put the renderer in `sp42-reporting`.* Rejected: that crate is patrolling-
-  domain reporting; GA wording is assessment policy, and the layering rule
-  puts process-specific policy in its own domain crate.
+- *Put the renderer in `sp42-reporting`.* Rejected: that crate hosts shared
+  report primitives (`ReportDocument`, consumed by patrol reports and
+  `sp42-citation` alike) — putting process-specific GA policy in a shared-
+  primitives crate would invert the layering from the other direction; the
+  layering rule puts process policy in its own domain crate.
 
 ## Risks
 

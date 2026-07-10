@@ -87,6 +87,11 @@ the design sketch, and a machine-readable task-graph arm is roadmap there too.
   claims are article wikitext by construction, and `source_excerpt` is
   arbitrary source text — with the malicious fixture carrying hostile
   content in each field kind.
+- 2026-07-10 (Codex review, round 8): supported spot-check lines gain the
+  source link as a required discriminator (a bundled ref yields several
+  use-sites sharing one `ref_id`), and the no-raw-identifiers scan extends
+  to skipped/extraction-failure lines, whose contract `reason` strings
+  embed raw cite ids today.
 
 ## Scope boundary
 
@@ -220,10 +225,18 @@ may not know the numbering:
      status stays in the disagreements bucket, annotated — see its precedence
      rule.)
   6. *Supported findings* — a compact one-line-each spot-check record
-     (ref label, claim prefix, grounding marker); the reviewing guide
-     expects the reviewer to say what they checked, and counts alone are not a
-     record. Quotes stay in the CLI/structured rendering.
+     (ref label, claim prefix, **source link**, grounding marker); the
+     reviewing guide expects the reviewer to say what they checked, and
+     counts alone are not a record. The source link is load-bearing, not
+     decoration: a bundled ref yields one finding per cited URL sharing the
+     same `ref_id`, so without it two supported lines can be
+     indistinguishable and the record cannot say *which* source was
+     spot-checked. Quotes stay in the CLI/structured rendering.
   7. *Skipped refs and extraction failures* — first-class, never dropped.
+     Failure and skip *reasons* render through the copy module with any
+     embedded raw cite ids rewritten to derived ref labels — the contract's
+     `BlockFailure.reason` strings carry raw `ref_id`s today, and the
+     no-raw-identifiers invariant binds these lines too.
   8. *Book citations* — resolve/ground outcomes with scanned-page deep links
      when grounded, as PRD-0009 lands them in the report contract.
 - **Criterion 5 (stable) section** (when a `StabilitySignal` is supplied): Layer A facts
@@ -369,9 +382,11 @@ is pure).*
       copy module), verified by a renderer test over fixtures with distinct
       reasons.
 - [ ] Supported findings render as compact one-line entries (ref label,
-      claim prefix, grounding marker) with no quotes, and unconfirmed supports
-      render in their own sublist rather than inside the supported list,
-      verified by renderer tests.
+      claim prefix, source link, grounding marker) with no quotes; two
+      supported use-sites from one bundled ref (same `ref_id`, different
+      URLs) render distinguishably; and unconfirmed supports render in their
+      own sublist rather than inside the supported list — verified by
+      renderer tests including a bundled-ref fixture.
 - [ ] The "assessed by SP42" line states the assessed set positively (2b
       only; plus 5 exactly when a `StabilitySignal` renders) and that all
       other criteria and sub-criteria were not assessed, verified by renderer
@@ -389,10 +404,12 @@ is pure).*
       renderer test.
 - [ ] No raw contract identifiers (`NotSupported`, `SourceUnavailable`, enum
       variant names generally, and raw `cite_ref-…` ids) appear in the
-      appendix; all verdict/status vocabulary comes from the reader-facing
-      copy module and ref labels are derived, verified by a renderer
-      assertion scanning output over a fixture exercising every verdict and
-      status.
+      appendix — **including in skipped and extraction-failure lines, whose
+      contract `reason` strings embed raw cite ids today** — all
+      verdict/status vocabulary comes from the reader-facing copy module and
+      ref labels are derived, verified by a renderer assertion scanning
+      output over a fixture exercising every verdict, status, skip, and
+      failure record.
 - [ ] Rendering is deterministic: the same inputs — reports plus the
       shell-injected `rendered_at` timestamp (`Clock` trait; the report
       contract carries no run timestamp today) — produce a byte-identical

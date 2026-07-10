@@ -143,6 +143,24 @@ Layer A triages the article into three outcomes:
    attention spike exist and no deterministic rule explains them. Only this
    slice pays for Layer B.
 
+**Policy knobs.** The design carries five numeric knobs — the talk-activity
+threshold, the attention-spike threshold, the bundle size cap, the usefulness
+floor, and the evidence window — all sitting **upstream of interpretation**:
+they allocate attention (what is gathered, what is interpreted, how it is
+packaged) and never themselves state anything about the article. Their failure
+directions are asymmetric, and the two triage thresholds have a dangerous one:
+set too sensitive they waste a panel call; set too insensitive they **suppress
+evidence** — a quiet outcome that hides a real dispute. Two rules follow.
+*Default sensitive:* knobs err toward over-triggering, because that failure is
+visible and cheap while the other is silent. *Disclose settings:* every report
+records the knob values in effect, so "quiet" reads as "no sensor exceeded
+these recorded thresholds" — auditable, not authoritative — and replay stays
+honest (the same `rev_id` under different knob settings is a different run,
+and the report says so). How these knobs interact for real users is expected
+to be learned by using the tool — alpha dogfooding feeding the improvement
+loop — not settled on paper; the defaults are opening positions, not
+commitments.
+
 ### Layer B — panel interpretation (inference, gated to the ambiguous middle)
 
 The existing model panel (ADR-0006) reads the evidence Layer A gathered — edit
@@ -273,7 +291,9 @@ recorded MediaWiki responses — no live network (ADR-0009 discipline).*
 - [ ] A quiet article (no reverts, markers, protection, attention spike, or
       above-threshold talk activity in the window) produces a "no instability
       indicators" report and **zero** model-inference calls, verified by a
-      fixture test asserting the mock `ModelClient` is never invoked.
+      fixture test asserting the mock `ModelClient` is never invoked and that
+      the report records the effective knob settings (the thresholds "quiet"
+      was judged against).
 - [ ] Revert chains are reduced correctly from a replayed history fixture
       (tags + summaries → chains with participants and intervals), including
       self-revert recognition, verified by unit tests over the reducer.
@@ -329,9 +349,11 @@ recorded MediaWiki responses — no live network (ADR-0009 discipline).*
       whenever Layer B did not run — why not, verified by contract/renderer
       tests across quiet, unambiguous-benign, and ambiguous fixtures.
 - [ ] With `rev_id` omitted, the run resolves the current head revision and
-      records it in the report; with the recorded `rev_id` supplied, the run
-      re-renders byte-identically over the same fixtures, verified by a replay
-      determinism test.
+      records it in the report; with the recorded `rev_id` supplied **and the
+      recorded knob settings in effect**, the run re-renders byte-identically
+      over the same fixtures, verified by a replay determinism test; the same
+      `rev_id` under different knob settings reports the changed settings,
+      verified by a knob-variation fixture.
 
 ## Alternatives
 
@@ -348,9 +370,17 @@ recorded MediaWiki responses — no live network (ADR-0009 discipline).*
   per-edit damage probability for patrol triage; summing it does not answer
   "is this a sustained dispute," and it is Wikipedia-trained per-edit, not
   validated for article-level aggregation.
-- *Numeric thresholds ("unstable if >N reverts/week").* Rejected: false
-  precision the GA documentation itself does not define; thresholds would encode
-  a criterion judgment this signal deliberately refuses to make.
+- *Numeric thresholds ("unstable if >N reverts/week").* Rejected — and the
+  distinction from the policy knobs the design *does* carry deserves stating
+  precisely. The rejected threshold sits at the **conclusion**: its output *is*
+  the claim about the article, converting a count directly into a stability
+  judgment with no interpretation behind it and no GA-documented basis for any
+  particular N — invented authority. The accepted knobs sit **upstream of
+  interpretation** and never surface as claims about the article. They are not
+  therefore harmless — a mis-set triage threshold suppresses evidence rather
+  than wasting money — which is exactly why they carry the default-sensitive
+  and disclosed-settings rules (see Policy knobs) instead of a pretense of
+  safety.
 - *Status quo (reviewer reads the history manually).* This remains the fallback
   whenever inference is unavailable — Layer A alone still assembles the evidence,
   which is most of the drudgery being removed.

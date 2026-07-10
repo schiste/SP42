@@ -105,10 +105,17 @@ Section headings carry the criterion number **and name** — "Criterion 2
 (verifiable)" — with the criteria page linked once, because the default reader
 may not know the numbering:
 
-- **Criterion 2 (verifiable) section.** A stats summary line (from the
-  report's `stats` arm, no re-aggregation), then sublists **in order of
-  consequence for the review** — the substantive spot-check events before the
-  mechanical repairs:
+- **Criterion 2 (verifiable) section.** A stats summary line — preferring the
+  report's `stats` arm, deriving deterministically from `findings` only what
+  `stats` lacks: today, the grounded/unconfirmed split within supported
+  verdicts, which the summary must state ("10 supported, 2 of them
+  unconfirmed") because blending them would violate the grounding invariant
+  below. (The gap is really ADR-0011's stats arm lagging its own grounding
+  axis; an additive `supported_unlocated`-style counter on
+  `PageVerificationStats` in `sp42-citation` is the clean upstream fix, noted
+  here for the references domain — this PRD does not gate on it.) Then
+  sublists **in order of consequence for the review** — the substantive
+  spot-check events before the mechanical repairs:
   1. *Claim–source disagreements* — `NotSupported`/`Partial` findings, each
      line carrying the claim, its citation marker (`[1]`, named refs — what
      `ref_id` already holds), the reader-facing verdict, the verbatim located
@@ -197,10 +204,12 @@ is pure).*
 
 - [ ] A fixture `PageVerificationReport` renders to an appendix with the
       criterion-2 structure above: number-and-name section headings, stats
-      line, sublists in the consequence order specified, each disagreement
-      line carrying claim, citation marker, reader-facing verdict, verbatim
-      quote, and source link; dead-link lines carry their `archive_of` URLs —
-      verified by renderer tests.
+      line (stating the grounded/unconfirmed split within supported verdicts,
+      derived from `findings` since `stats` lacks it), sublists in the
+      consequence order specified, each disagreement line carrying claim,
+      citation marker, reader-facing verdict, verbatim quote, and source
+      link; dead-link lines carry their `archive_of` URLs — verified by
+      renderer tests.
 - [ ] Skips and extraction failures render as distinct first-class lists and
       are never dropped, verified over a fixture containing both.
 - [ ] The wording invariants hold: no pass/fail phrasing, and

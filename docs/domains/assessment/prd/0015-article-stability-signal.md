@@ -88,17 +88,18 @@ sensor and cost gate.
 
 ### Layer A — deterministic sensor and gate (no inference, always runs)
 
-For the nominated article, SP42 fetches and reduces:
+For the article under review, SP42 fetches and reduces:
 
 - **Revert timeline** from page history (revision list with tags and edit
   summaries): revisions tagged `mw-undo` / `mw-rollback` / `mw-reverted`, reduced
   to revert *chains* (who reverted whom, how many rounds, over what interval),
   with self-reverts recognized as such. Revert density and distinct-participant
   counts over the evidence window.
-- **Dispute markers** from the article talk page: active dispute banners
-  (`{{POV}}` and family), open split/merge proposals, RfC templates — the same
-  template-presence parsing discipline `user_analyzer` already applies to warning
-  templates.
+- **Dispute markers**, from both surfaces: the **article wikitext** carries the
+  maintenance banners (`{{POV}}` and family) and split/merge proposal tags; the
+  **talk page** carries RfC templates and the dispute discussions themselves —
+  the same template-presence parsing discipline `user_analyzer` already applies
+  to warning templates, pointed at two pages rather than one.
 - **Protection status** of the article (full/semi, expiry).
 - **Talk-page activity volume**: talk-edit counts and thread
   recency over the window — a deterministic sensor, so a banner-less active

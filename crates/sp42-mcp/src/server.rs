@@ -164,9 +164,12 @@ impl Sp42McpServer {
         Parameters(params): Parameters<PageParams>,
     ) -> Result<String, String> {
         let mut config = match &params.wiki_id {
+            // `resolve`, not `config`: accept any known Wikimedia project (deriving the config from
+            // the embedded SiteMatrix, ADR-0014) not just wikis with a hand-written config file.
+            // `config` would reject valid projects like `dewiki` in a default install.
             Some(wiki_id) => self
                 .registry
-                .config(wiki_id)
+                .resolve(wiki_id)
                 .map_err(|error| error.to_string())?,
             None => self.registry.default_config(),
         };

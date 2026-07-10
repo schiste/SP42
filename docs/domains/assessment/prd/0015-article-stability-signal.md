@@ -231,10 +231,11 @@ which deterministic rules are worth writing:
 - Every Layer B run is recorded as a replayable case under the ADR-0009
   snapshot/replay discipline and becomes a candidate fixture for the PRD-0007
   benchmarking harness.
-- When a *class* of cases proves consistently classifiable (self-reverts;
-  reverts whose summaries cite vandalism policy), that class graduates into
-  Layer A as a deterministic rule, and a regression fixture pins it.
-- The share of nominations that need Layer B at all is the tracked health metric:
+- When a *class* of cases proves consistently classifiable (reverts whose
+  summaries cite vandalism policy; churn confined to a single since-blocked
+  account), that class graduates into Layer A as a deterministic rule — landing
+  in the unambiguous-benign triage arm — and a regression fixture pins it.
+- The share of runs that need Layer B at all is the tracked health metric:
   a shrinking inference share is what "the algorithm is improving" means here.
 
 Posture precedent: the patrol queue already consumes a model signal (LiftWing

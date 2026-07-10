@@ -3,7 +3,7 @@
 **Drafter:** Claude Code
 **Editor:** Luis Villa
 **Date:** 2026-07-10
-**State:** Draft
+**State:** Discussion
 **Discussion:** design conversation 2026-07-10; PR link pending.
 **Spawned ADRs:** none expected — the renderer is pure composition over
 existing report contracts (`PageVerificationReport`, ADR-0011; `StabilitySignal`,
@@ -33,6 +33,17 @@ the design sketch, and a machine-readable task-graph arm is roadmap there too.
   GA criteria at first use, appendix headings carry number and name, and the
   criterion-2 sublists reordered by consequence for the review
   (disagreements lead; link rot follows).
+- 2026-07-10 (review, continued): the honesty line inverted to state the
+  assessed set positively (the complement enumeration was wrong and would
+  re-drift); the stats line derives the grounded/unconfirmed split from
+  `findings` with an additive `supported_unlocated` stats counter noted
+  upstream; determinism pinned via shell-injected `rendered_at` with an
+  additive `verified_at` noted upstream; plain-wikitext rationale restated
+  (dependency failure mode, not renderer trust) with the `{{GAList}}`
+  native-idiom question routed to alpha; placement corrected to
+  `sp42-citation` contracts; both CLI surfaces bound to the DoD. The
+  implementation sketch was synced with all of the above. State `Draft` →
+  `Discussion` on PR open.
 
 ## Scope boundary
 

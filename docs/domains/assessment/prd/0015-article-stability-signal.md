@@ -3,12 +3,23 @@
 **Drafter:** Claude Code
 **Editor:** Luis Villa
 **Date:** 2026-07-09
-**State:** Draft
+**State:** Discussion
 **Discussion:** design conversation 2026-07-09 (extending SP42 toward Good-article
-assessment); no tracking issue yet.
+assessment); PR link pending.
+
+## Changelog
+
+- 2026-07-09: Drafted; the four open questions resolved same-day in design
+  discussion with the Editor, then a full paragraph-by-paragraph Editor review
+  applied: run-time-anchored three-phase window, seven provisional classes
+  (multi-classification, evidence-bound), policy-knob discipline
+  (default-sensitive, disclosed settings), fits-or-declines evidence budget,
+  conduct posture, and the false-quiet audit mode (#122). State `Draft` →
+  `Discussion` on PR open.
 **Spawned ADRs:** none yet. If accepted, expect one thin **platform** ADR
 pinning the decided placement: the page-history fetch edge (revision list +
-tags + summaries), the revert-chain reducer, and the talk-activity sensor as
+tags + summaries), the Pageviews fetch edge, the revert-chain reducer, and the
+talk-activity sensor as
 platform mechanisms (pure builders/parsers over the `HttpClient` trait), with
 the `StabilitySignal` contract in `sp42-core` (Constitution Art. 9.1, the
 `PageVerificationReport` precedent) and triage/vocabulary policy left to the
@@ -505,8 +516,9 @@ acceptance.
    watcher is deliberately deferred until the design is proven in
    operator-attended use.
 2. **Placement of the mechanisms.** Resolved: **mechanisms platform, contract
-   in `sp42-core`, policy in the domain.** The page-history fetch edge and
-   revert-chain reducer are platform — pure builders/parsers over the
+   in `sp42-core`, policy in the domain.** The page-history fetch edge, the
+   Pageviews fetch edge, the revert-chain reducer, and the talk-activity
+   sensor are platform — pure builders/parsers over the
    `HttpClient` trait (the Citoid/recentchanges precedent) — with the
    reuse-by-design case strengthened since drafting: the history fetch is
    content-model agnostic (`prop=revisions` serves entity revisions

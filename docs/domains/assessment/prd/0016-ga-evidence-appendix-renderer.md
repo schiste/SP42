@@ -29,7 +29,10 @@ the design sketch, and a machine-readable task-graph arm is roadmap there too.
   the Editor. Consequences folded in: cold-reader legibility joins the wording
   invariants (no raw contract identifiers; copy-module vocabulary), the footer
   gains a what-is-this explainer link, and the copy-drift risk is reweighted
-  as SP42's first impression.
+  as SP42's first impression. Same review: criterion numbering keyed to the
+  GA criteria at first use, appendix headings carry number and name, and the
+  criterion-2 sublists reordered by consequence for the review
+  (disagreements lead; link rot follows).
 
 ## Scope boundary
 
@@ -39,6 +42,13 @@ artifact a Good-article reviewer pastes into `Talk:Article/GAn`. It is the
 first build step of the GA review-assist design sketch
 (`docs/design-plans/2026-07-09-ga-review-assist.md`) and deliberately its
 smallest: no new verification, no new fetches, no writes, no inference.
+
+Criterion numbering throughout refers to the
+[Good article criteria](https://en.wikipedia.org/wiki/Wikipedia:Good_article_criteria):
+1 well-written (1a prose, 1b MoS), 2 verifiable (2b inline support, 2c no
+original research, 2d no copyvio), 3 broad, 4 neutral, 5 stable, 6 media.
+SP42's evidence feeds 2 (and 5, once PRD-0015 lands); the rest appear only in
+the "not assessed" line.
 
 Inputs are the contracts as they exist today:
 
@@ -90,24 +100,34 @@ know the posture.
 
 ## Proposal
 
-One renderer, `reports → wikitext appendix`, organized by GA criterion:
+One renderer, `reports → wikitext appendix`, organized by GA criterion.
+Section headings carry the criterion number **and name** — "Criterion 2
+(verifiable)" — with the criteria page linked once, because the default reader
+may not know the numbering:
 
-- **Criterion 2 section.** A stats summary line (from the report's `stats` arm,
-  no re-aggregation), then actionable sublists ordered most-actionable-first:
-  dead links (with the `archive_of` repair handles), unreadable sources
-  (`unusable` split, honestly framed as a tool limitation), and
-  `NotSupported`/`Partial` findings — each line carrying the claim, its
-  `ref_id`, the verdict, the verbatim located quote, and the source link.
-  Supported findings render as a **compact one-line-each list** — `ref_id`,
-  claim prefix, grounding marker — documenting the positive half of the
-  spot-check (the reviewing guide expects the reviewer to say what they
-  checked; "12 supported" without naming which refs is not a spot-check
-  record) while keeping quote bulk out of the appendix; their full detail
-  stays in the CLI/structured rendering. Unconfirmed supports (unlocated
-  grounding) form their own visible sublist, never blended into the supported
-  list. Skips and extraction failures render as their own first-class lists.
-  Book citations render with their resolve/ground outcomes (deep links to
-  scanned pages when grounded).
+- **Criterion 2 (verifiable) section.** A stats summary line (from the
+  report's `stats` arm, no re-aggregation), then sublists **in order of
+  consequence for the review** — the substantive spot-check events before the
+  mechanical repairs:
+  1. *Claim–source disagreements* — `NotSupported`/`Partial` findings, each
+     line carrying the claim, its citation marker (`[1]`, named refs — what
+     `ref_id` already holds), the reader-facing verdict, the verbatim located
+     quote, and the source link. These can sink criterion 2 or reveal text
+     drift; they lead.
+  2. *Dead links* — unreachable sources, with their `archive_of` repair
+     handles. Mechanical and actionable.
+  3. *Unreadable sources* — fetched but not machine-readable (PDF, viewer
+     shells), honestly framed as a tool limitation: the citation may be fine.
+  4. *Unconfirmed supports* — supported/partial verdicts whose quote could not
+     be re-located: the panel's judgment without evidence in hand, never
+     blended into the supported list.
+  5. *Supported findings* — a compact one-line-each spot-check record
+     (citation marker, claim prefix, grounding marker); the reviewing guide
+     expects the reviewer to say what they checked, and counts alone are not a
+     record. Quotes stay in the CLI/structured rendering.
+  6. *Skipped refs and extraction failures* — first-class, never dropped.
+  7. *Book citations* — resolve/ground outcomes with scanned-page deep links
+     when grounded, as PRD-0009 lands them in the report contract.
 - **Criterion 5 section** (when a `StabilitySignal` is supplied): Layer A facts
   first (timeline, phase markers, marker inventory, triage outcome and knob
   disclosure), then the labeled Layer B characterizations with their cited
@@ -170,10 +190,11 @@ tests run over fixture reports — no live network, no inference (the renderer
 is pure).*
 
 - [ ] A fixture `PageVerificationReport` renders to an appendix with the
-      criterion-2 structure above: stats line, actionable-first sublists, each
-      finding line carrying claim, `ref_id`, verdict, verbatim quote, and
-      source link; dead-link lines carry their `archive_of` URLs — verified by
-      renderer tests.
+      criterion-2 structure above: number-and-name section headings, stats
+      line, sublists in the consequence order specified, each disagreement
+      line carrying claim, citation marker, reader-facing verdict, verbatim
+      quote, and source link; dead-link lines carry their `archive_of` URLs —
+      verified by renderer tests.
 - [ ] Skips and extraction failures render as distinct first-class lists and
       are never dropped, verified over a fixture containing both.
 - [ ] The wording invariants hold: no pass/fail phrasing, and

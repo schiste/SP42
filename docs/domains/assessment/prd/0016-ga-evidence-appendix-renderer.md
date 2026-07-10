@@ -150,11 +150,14 @@ may not know the numbering:
   an explicit framing line — this is a tool-generated evidence appendix; the
   criteria judgments and the pass/hold/fail are the reviewer's — and a
   **"what is this?" link** to a stable explainer of the tool and its verdict
-  vocabulary, because the default reader has never heard of SP42 (repo-hosted
-  docs page for the MVP — the platform's `public_documents` surface is the
-  natural host; an on-wiki essay page is the eventual home once SP42 has a
-  community presence, since wiki editors trust on-wiki links more than
-  GitHub URLs).
+  vocabulary, because the default reader has never heard of SP42. The
+  explainer is a repo-hosted docs page for the MVP — the platform's
+  `public_documents` surface is the natural host — with an on-wiki essay page
+  as the eventual home once SP42 has a community presence, since wiki editors
+  trust on-wiki links more than GitHub URLs. The footer's date is the
+  shell-injected render date, labeled as such, until the report contract
+  carries a verification timestamp (see the Definition of Done's upstream
+  note).
 
 Wording invariants, enforced as contract rather than style:
 
@@ -240,8 +243,8 @@ is pure).*
 - [ ] An unlocated-support finding (`Supported`/`Partial` with
       `grounding_status` unlocated) renders as unconfirmed support, distinct
       from grounded findings, verified by a renderer test.
-- [ ] Supported findings render as compact one-line entries (`ref_id`, claim
-      prefix, grounding marker) with no quotes, and unconfirmed supports
+- [ ] Supported findings render as compact one-line entries (citation marker,
+      claim prefix, grounding marker) with no quotes, and unconfirmed supports
       render in their own sublist rather than inside the supported list,
       verified by renderer tests.
 - [ ] The "assessed by SP42" line states the assessed set positively (2b
@@ -259,8 +262,18 @@ is pure).*
       vocabulary comes from the reader-facing copy module, verified by a
       renderer assertion scanning output over a fixture exercising every
       verdict and status.
-- [ ] Rendering is deterministic: the same input reports produce a
-      byte-identical appendix, verified by a replay test.
+- [ ] Rendering is deterministic: the same inputs — reports plus the
+      shell-injected `rendered_at` timestamp (`Clock` trait; the report
+      contract carries no run timestamp today) — produce a byte-identical
+      appendix, verified by a replay test with a pinned timestamp. (Upstream
+      note, alongside the stats-split one: an additive `verified_at` on
+      `PageVerificationReport` would let the footer state when the
+      *verification* ran — the honest timestamp for a re-rendered saved
+      report; until then the footer labels its date as the render date.)
+- [ ] Both MVP surfaces produce the appendix: `render-report` over a saved
+      fixture report, and the `ga-appendix` format on the page-verify path,
+      with the saved-report render byte-identical to the fixture render,
+      verified by CLI tests.
 - [ ] Rendering a saved report performs no network and no inference, verified
       by asserting mock clients are never invoked.
 - [ ] The `sp42-assessment` crate passes the layer check (platform ◄ domain ◄

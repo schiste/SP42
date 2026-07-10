@@ -53,13 +53,13 @@ Behavioral acceptance criteria specific to this surface (the Constitution's gene
 ### DoD bindings (2026-07-10)
 
 Audit of each DoD item against the test suite (all cited tests pass;
-`cargo test -p sp42-mcp`, 27 tests, plus the engine suites). Boxes stay
+`cargo test -p sp42-mcp`, 29 tests, plus the engine suites). Boxes stay
 unchecked until every clause is bound; the two gaps are tracked in #134.
 
 | # | Item | Verdict | Binding / gap |
 |---|------|---------|---------------|
 | 1 | stdio client lists 4 tools + round-trip per verb | PARTIAL | Tool list bound in-process: `server.rs::tool_router_lists_the_mvp_verbs` (exactly four routes); wire shapes: 7 serde round-trips in `lib.rs`. Gap: no stdio-level test (nothing spawns the binary or drives the rmcp stdio transport) and no per-verb `tools/call` round-trip (#134). |
-| 2 | `probe_source`: unreachable vs unextractable, zero model calls | BOUND | `probe.rs::reachable_clean_body_is_extractable`, `::reachable_anti_bot_body_is_not_extractable_but_human_readable` (`human_readable_hint`), `::non_2xx_is_unreachable_with_status`, `::transport_failure_is_unreachable_without_status` (+ PDF/short-body/viewer-shell). Zero model calls is structural: `probe_source` takes no `ModelClient`. |
+| 2 | `probe_source`: unreachable vs unextractable, zero model calls | BOUND | `probe.rs::reachable_clean_body_is_extractable`, `::reachable_paywalled_body_is_not_extractable_but_human_readable` (`NavChromePaywall`, `human_readable_hint` — added by this PR; the DoD names the paywalled fixture explicitly), `::reachable_anti_bot_body_is_not_extractable_but_human_readable`, `::non_2xx_is_unreachable_with_status`, `::transport_failure_is_unreachable_without_status` (+ PDF/short-body/viewer-shell). Zero model calls is structural: `probe_source` takes no `ModelClient`. |
 | 3 | `verify_claim`: URL or pre-fetched, same behavior | BOUND | `verify.rs::url_source_supported_with_grounded_quote` and `::text_source_skips_fetch_with_same_grounding` — same body text, same model completion, same verdict + grounded quote; the text path proves the fetch is skipped. |
 | 4 | Unchanged `Verdict`; no fabricated quote as evidence | BOUND | `verify.rs::fabricated_quote_is_never_surfaced` (`quote.is_none()` on non-locatable support); engine-level `sp42-citation` `end_to_end_fabricated_quote_is_unverified_not_groundable`. Verdict reuse is by re-export/`From` of `sp42_citation::Verdict` — no new variants exist to drift. |
 | 5 | Page verb: per-use-site verdicts + progress event | PARTIAL | Per-use-site verdicts bound: `page.rs::full_run_verifies_use_site_with_grounded_quote`; cap and dry-run: `::fan_out_cap_truncates_and_flags`, `::estimate_only_counts_without_calling_the_panel`. Gap: no progress-event mechanism exists anywhere in the crate (build or amend, #134), and coverage is unit-level over hand-built blocks rather than an integration test over a fixture article. |

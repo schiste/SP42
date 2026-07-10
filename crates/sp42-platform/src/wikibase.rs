@@ -309,14 +309,39 @@ pub struct WikibaseEntity {
     /// Statements by property id, in payload order.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub statements: BTreeMap<String, Vec<WikibaseStatement>>,
-    /// Sitelinks: site dbname → page title.
+    /// Sitelinks by site dbname: linked title plus badge item ids, so a
+    /// badge-only edit (title unchanged) is still a detectable change and
+    /// the never-a-no-op invariant holds.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    pub sitelinks: BTreeMap<String, String>,
+    pub sitelinks: BTreeMap<String, WikibaseSitelink>,
     /// Unmodeled top-level entity fields (`datatype`, lexeme forms, …),
     /// preserved so [`diff_entities`] can surface changes to them as
     /// [`UnknownEntityChange`]s instead of silently dropping them.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub extra: BTreeMap<String, Value>,
+}
+
+/// One sitelink: the linked page title and the badge item ids
+/// (`Q17437796` "featured article" and friends). Badges are part of the
+/// sitelink payload, so a badge-only edit must not diff as a no-op.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WikibaseSitelink {
+    pub title: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub badges: Vec<String>,
+}
+
+impl WikibaseSitelink {
+    /// The display form sitelink diff rows carry: the title, plus the badge
+    /// ids in brackets when any are set (`"Douglas Adams [Q17437796]"`).
+    #[must_use]
+    pub fn display(&self) -> String {
+        if self.badges.is_empty() {
+            self.title.clone()
+        } else {
+            format!("{} [{}]", self.title, self.badges.join(", "))
+        }
+    }
 }
 
 impl WikibaseEntity {
@@ -737,12 +762,29 @@ fn parse_alias_map(aliases: Option<&Value>) -> BTreeMap<String, Vec<String>> {
     map
 }
 
-fn parse_sitelinks(sitelinks: Option<&Value>) -> BTreeMap<String, String> {
+fn parse_sitelinks(sitelinks: Option<&Value>) -> BTreeMap<String, WikibaseSitelink> {
     let mut map = BTreeMap::new();
     if let Some(sitelinks) = sitelinks.and_then(Value::as_object) {
         for (site, link) in sitelinks {
             if let Some(title) = link.get("title").and_then(Value::as_str) {
-                map.insert(site.clone(), title.to_owned());
+                let badges = link
+                    .get("badges")
+                    .and_then(Value::as_array)
+                    .map(|badges| {
+                        badges
+                            .iter()
+                            .filter_map(Value::as_str)
+                            .map(str::to_owned)
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                map.insert(
+                    site.clone(),
+                    WikibaseSitelink {
+                        title: title.to_owned(),
+                        badges,
+                    },
+                );
             }
         }
     }
@@ -909,6 +951,12 @@ pub struct ValueDisplay {
     pub item: Option<String>,
 }
 
+/// The entity id tail of a unit URI (`…/entity/Q11573` → `Q11573`); the
+/// full string when it has no path tail (already an id, or unrecognized).
+fn unit_entity_id(unit: &str) -> &str {
+    unit.rsplit('/').next().unwrap_or(unit)
+}
+
 /// Render a snak to a display string. Best-effort by design (PRD-0010 open
 /// question 1): consumers surface the rendered form for inspection; richer
 /// datatype rendering is follow-on work.
@@ -936,8 +984,16 @@ pub fn render_snak_value(snak: &WikibaseSnak) -> ValueDisplay {
                 text: time.trim_start_matches('+').to_owned(),
                 item: None,
             },
-            WikibaseValue::Quantity { amount, .. } => ValueDisplay {
-                text: amount.trim_start_matches('+').to_owned(),
+            WikibaseValue::Quantity { amount, unit } => ValueDisplay {
+                // The unit is part of the value: a unit-only change must not
+                // render as `5 → 5`. Shown as the unit entity id (label
+                // resolution for units is follow-on datatype rendering).
+                text: match unit.as_deref().map(unit_entity_id) {
+                    Some(unit) => {
+                        format!("{} {unit}", amount.trim_start_matches('+'))
+                    }
+                    None => amount.trim_start_matches('+').to_owned(),
+                },
                 item: None,
             },
             WikibaseValue::Other(value) => ValueDisplay {
@@ -1004,10 +1060,12 @@ pub struct AliasChange {
 pub struct SitelinkChange {
     /// The site dbname (`enwiki`, `frwiki`, …).
     pub site: String,
-    /// The linked title before the edit; `None` when the sitelink was added.
+    /// The sitelink display form ([`WikibaseSitelink::display`]: title plus
+    /// badge ids when present) before the edit; `None` when the sitelink was
+    /// added.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub before: Option<String>,
-    /// The linked title after the edit; `None` when the sitelink was removed.
+    /// The display form after the edit; `None` when the sitelink was removed.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub after: Option<String>,
 }
@@ -1645,11 +1703,13 @@ pub fn diff_entities(old: Option<&WikibaseEntity>, new: &WikibaseEntity) -> Enti
 
     for (site, before) in &old.sitelinks {
         match new.sitelinks.get(site) {
+            // Struct equality covers badges too: a badge-only edit (same
+            // title) is a change, never a no-op.
             Some(after) if after == before => {}
             other => diff.sitelinks.push(SitelinkChange {
                 site: site.clone(),
-                before: Some(before.clone()),
-                after: other.cloned(),
+                before: Some(before.display()),
+                after: other.map(WikibaseSitelink::display),
             }),
         }
     }
@@ -1658,7 +1718,7 @@ pub fn diff_entities(old: Option<&WikibaseEntity>, new: &WikibaseEntity) -> Enti
             diff.sitelinks.push(SitelinkChange {
                 site: site.clone(),
                 before: None,
-                after: Some(after.clone()),
+                after: Some(after.display()),
             });
         }
     }
@@ -1869,7 +1929,10 @@ mod tests {
             Some("Douglas Adams")
         );
         assert_eq!(
-            entity.sitelinks.get("enwiki").map(String::as_str),
+            entity
+                .sitelinks
+                .get("enwiki")
+                .map(|link| link.title.as_str()),
             Some("Douglas Adams")
         );
 
@@ -2266,5 +2329,69 @@ mod tests {
         let encoded = serde_json::to_string(&diff).expect("diff serializes");
         let decoded: super::EntityDiff = serde_json::from_str(&encoded).expect("diff deserializes");
         assert_eq!(decoded, diff);
+    }
+
+    #[test]
+    fn badge_only_sitelink_edit_is_never_a_no_op() {
+        // Same title, different badges: the honesty invariant requires a
+        // sitelink change, and the display form shows what moved.
+        let before_json = serde_json::json!({
+            "id": "Q42", "type": "item",
+            "sitelinks": {"enwiki": {"site": "enwiki", "title": "Douglas Adams", "badges": []}}
+        });
+        let after_json = serde_json::json!({
+            "id": "Q42", "type": "item",
+            "sitelinks": {"enwiki": {"site": "enwiki", "title": "Douglas Adams",
+                                      "badges": ["Q17437796"]}}
+        });
+        let before = super::parse_entity(
+            "Q42",
+            serde_json::json!({"entities": {"Q42": before_json}})
+                .to_string()
+                .as_bytes(),
+        )
+        .expect("before parses");
+        let after = super::parse_entity(
+            "Q42",
+            serde_json::json!({"entities": {"Q42": after_json}})
+                .to_string()
+                .as_bytes(),
+        )
+        .expect("after parses");
+
+        let diff = super::diff_entities(Some(&before), &after);
+        assert!(
+            diff.has_changes(),
+            "badge-only edit must not diff as a no-op"
+        );
+        assert_eq!(diff.sitelinks.len(), 1);
+        assert_eq!(diff.sitelinks[0].before.as_deref(), Some("Douglas Adams"));
+        assert_eq!(
+            diff.sitelinks[0].after.as_deref(),
+            Some("Douglas Adams [Q17437796]")
+        );
+    }
+
+    #[test]
+    fn quantity_rendering_includes_the_unit() {
+        // A unit-only change must not render as `5 → 5`.
+        let with_unit = super::WikibaseSnak {
+            property: "P2048".to_owned(),
+            kind: super::WikibaseSnakKind::Value(super::WikibaseValue::Quantity {
+                amount: "+5".to_owned(),
+                unit: Some("http://www.wikidata.org/entity/Q11573".to_owned()),
+            }),
+        };
+        assert_eq!(super::render_snak_value(&with_unit).text, "5 Q11573");
+
+        // The dimensionless unit stays a bare amount.
+        let unitless = super::WikibaseSnak {
+            property: "P1114".to_owned(),
+            kind: super::WikibaseSnakKind::Value(super::WikibaseValue::Quantity {
+                amount: "+5".to_owned(),
+                unit: None,
+            }),
+        };
+        assert_eq!(super::render_snak_value(&unitless).text, "5");
     }
 }

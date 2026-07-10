@@ -19,6 +19,10 @@ PRD-0009), not re-specified here.
 - [PRD-0015 — Article stability signal](prd/0015-article-stability-signal.md) —
   two-layer stability evidence (deterministic sensor/gate + panel interpretation
   of the ambiguous middle), shaped for GA criterion 5
+- [PRD-0016 — GA evidence appendix renderer](prd/0016-ga-evidence-appendix-renderer.md) —
+  pure renderer from the existing report contracts to the pasteable
+  `Talk:Article/GAn` wikitext evidence appendix; the design sketch's first
+  build step and the domain's first crate
 
 ## Architecture Decision Records
 

@@ -31,8 +31,17 @@ It deliberately excludes:
 - **Any pass/fail on criterion 5.** The output is evidence plus a categorical
   characterization; the criterion judgment stays with the human reviewer, matching
   the informational-verdict posture of the references domain (ADR-0007).
-- **Patrol queue ranking.** The revert/dispute machinery here may later inform
-  queue ranking, but scoring policy is PRD-0003 territory and untouched.
+- **Patrol-domain queue scoring.** "Queue" here is the patrolling domain's
+  ranked recentchanges queue, not anything GA: the revert-chain and dispute
+  machinery this PRD builds could plausibly feed patrol's *edit* ranking
+  someday (an edit landing on an article with a live edit war is a different
+  patrol decision than one landing on a quiet page), but scoring policy is
+  PRD-0003 territory and untouched here.
+- **Any GA intake queue.** In the MVP there is no queue on the assessment side
+  at all: the operator picks a nomination off the GAN page themselves and names
+  the article to SP42. Browsing the GAN backlog inside SP42 is a convenience
+  that rides the deferred feed-watcher work (see the automatic-runs exclusion
+  below), not this PRD.
 - **Per-edit damage scoring.** LiftWing revertrisk answers "is this one edit
   likely vandalism"; this signal answers "is this article's recent history a
   fight." Different question, different consumer (see Alternatives).

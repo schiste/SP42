@@ -302,14 +302,27 @@ fn in_transclusion(
 /// `url=`. The first present alias becomes the citation's primary source.
 const URL_PARAM_ALIASES: &[&str] = &[
     "url",
+    // Each alias in both CS1 spellings, hyphenated first: the no-hyphen forms
+    // (`chapterurl=`, …) are accepted CS1 aliases still common in article
+    // wikitext, and a ref using one must not be dropped as a non-URL source
+    // (SP42#62). Pairs stay adjacent so the priority order is by level, not
+    // by spelling.
     "chapter-url",
+    "chapterurl",
     "conference-url",
+    "conferenceurl",
     "contribution-url",
+    "contributionurl",
     "article-url",
+    "articleurl",
     "section-url",
+    "sectionurl",
     "entry-url",
+    "entryurl",
     "map-url",
+    "mapurl",
     "transcript-url",
+    "transcripturl",
 ];
 
 /// Extract cited sources from a cite-template data-mw.
@@ -717,6 +730,18 @@ mod tests {
         let mut seen_urls = std::collections::HashSet::new();
         super::push_template_sources(data_mw, &mut sources, &mut seen_urls);
         assert_eq!(sources.len(), 1, "chapter-url should produce one source");
+        assert_eq!(sources[0].url.as_str(), "https://example.org/chapter");
+    }
+
+    #[test]
+    fn push_template_sources_accepts_no_hyphen_url_alias() {
+        // The no-hyphen CS1 spelling (`chapterurl=`) is an accepted alias and
+        // must extract just like `chapter-url=` (SP42#62).
+        let data_mw = r#"{"parts":[{"template":{"target":{"wt":"cite book"},"params":{"chapterurl":{"wt":"https://example.org/chapter"},"title":{"wt":"A Book"}},"i":0}}]}"#;
+        let mut sources = Vec::new();
+        let mut seen_urls = std::collections::HashSet::new();
+        super::push_template_sources(data_mw, &mut sources, &mut seen_urls);
+        assert_eq!(sources.len(), 1, "chapterurl should produce one source");
         assert_eq!(sources[0].url.as_str(), "https://example.org/chapter");
     }
 

@@ -51,6 +51,15 @@ filed by the platform layer or domain they govern:
 - Platform ADRs live in [platform/adr/](platform/adr/).
 - Domain ADRs and PRDs live under `domains/<domain>/adr/` and `domains/<domain>/prd/`.
 
+**Which home an ADR gets follows the same reuse-by-design test as code
+(ADR-0013):** a decision that governs a reusable mechanism, primitive, or
+contract is **platform-homed even when a domain motivated it** (this is why the
+Wikidata read/write ADRs 0016–0017 live under `platform/adr/` although PRD-0011
+spawned them); a decision that encodes one domain's policy, workflow, or
+semantics is **domain-homed** (like the citation-verification ADRs under
+`domains/references/adr/`). When in doubt, ask whether a second domain would
+consume the decision by design — yes means platform.
+
 **Numbering is global.** ADR numbers are unique across all folders, and so are PRD
 numbers — a new record takes the next free number regardless of which folder it
 lands in. ADRs and PRDs cross-reference each other by textual ID (e.g. `ADR-0006`,

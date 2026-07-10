@@ -89,6 +89,11 @@ Wording invariants, enforced as contract rather than style:
 - **PRD-0014's mismatch framing verbatim**: a `NotSupported`/`Partial` finding
   is rendered as claim-and-source disagreement, never as a citation failure —
   the article text may be the wrong side.
+- **The grounding axis renders honestly.** A `Supported`/`Partial` verdict
+  whose `grounding_status` is unlocated renders as *unconfirmed* support —
+  the panel's judgment without a re-locatable quote — visually and verbally
+  distinct from grounded findings. This is precisely the nuance
+  hand-transcription loses.
 - **Evidence phrasing throughout** ("12 of 14 URL citations verified
   supported; 2 dead links: …").
 
@@ -130,10 +135,15 @@ is pure).*
       `NotSupported`/`Partial` findings render in mismatch framing (no
       "failed citation"-style wording), verified by renderer assertions over
       an adversarial fixture.
-- [ ] A supplied `StabilitySignal` renders facts-then-interpretation with the
-      conduct posture enforced (no usernames outside evidence links); an
-      absent one renders as an explicit "stability not run" note — verified
-      over PRD-0015's fixtures and an absent-signal fixture.
+- [ ] *(staged: lands with PRD-0015's implementation, not the MVP gate)* A
+      supplied `StabilitySignal` renders facts-then-interpretation with the
+      conduct posture enforced (no usernames outside evidence links); until
+      then — and whenever the signal is absent — criterion 5 appears in the
+      "not assessed" line, verified by an absent-signal fixture. The
+      citations-only appendix is this PRD's MVP acceptance gate.
+- [ ] An unlocated-support finding (`Supported`/`Partial` with
+      `grounding_status` unlocated) renders as unconfirmed support, distinct
+      from grounded findings, verified by a renderer test.
 - [ ] Quoted evidence containing wikitext markup (templates, refs, links) is
       `<nowiki>`-escaped so the appendix never transcludes or breaks page
       markup, verified by a malicious-quote fixture.
@@ -186,9 +196,13 @@ is pure).*
 ## Open questions
 
 1. **Surface shape.** Proposed: both a `ga-appendix` format flag on the
-   existing page-verify CLI path *and* a render-from-saved-report mode, with
-   the saved-report render as the core (pure, replayable) and the flag as
-   convenience. React if one should ship without the other.
+   existing page-verify CLI path *and* a render-from-saved-report mode — with
+   the saved-report render as the **core**, not the convenience: the
+   implementation sketch (`2026-07-10-ga-appendix-renderer.md`) confirmed it
+   needs no bridge session, no server, and no network, making it the pure,
+   replayable heart of the renderer and the fixture-test entry point. The
+   `verify-page` flag is the convenience layered on top. React if one should
+   ship without the other.
 2. **Supported findings: how much detail?** Proposed: supported findings
    appear in the stats line and as a compact count per section, with detail
    lines only for actionable findings (dead, unusable, not-supported, partial,

@@ -104,6 +104,10 @@ For the article under review, SP42 fetches and reduces:
 - **Talk-page activity volume**: talk-edit counts and thread
   recency over the window — a deterministic sensor, so a banner-less active
   dispute (a hot talk page with no reverts) still reaches triage.
+- **Attention volatility**: pageview spikes (public Pageviews API) and
+  unique-editor surges over the window — the method behind Wikimedia
+  Enterprise's Breaking-News signal — so news-driven churn is detected and can
+  be *distinguished from* dispute-driven churn rather than mistaken for it.
 
 The window over that evidence spans **three review phases**. It is anchored to
 **run time** (the observed head revision, per the scope boundary) — 90 days
@@ -124,9 +128,9 @@ it was placed.
 
 Layer A triages the article into three outcomes:
 
-1. **Quiet** — no reverts, no dispute markers, no protection, and no talk
-   activity above the triage threshold (a policy knob, tuned via the
-   improvement loop) in the window. The report says "no instability indicators
+1. **Quiet** — no reverts, no dispute markers, no protection, no attention
+   spike, and no talk activity above the triage threshold (thresholds are
+   policy knobs, tuned via the improvement loop) in the window. The report says "no instability indicators
    found" and **no inference runs**. This is the common case and it is free.
 2. **Unambiguous** — the deterministic facts alone settle the picture, in
    *either* direction. Unambiguously disputed: e.g. full protection over an
@@ -135,8 +139,9 @@ Layer A triages the article into three outcomes:
    (all churn is self-reverts; every revert's summary cites vandalism policy) —
    reported clean with the mechanical explanation, no inference spent. This
    benign arm is where the improvement loop's graduated classes land.
-3. **Ambiguous middle** — reverts, markers, protection, or talk activity exist
-   and no deterministic rule explains them. Only this slice pays for Layer B.
+3. **Ambiguous middle** — reverts, markers, protection, talk activity, or an
+   attention spike exist and no deterministic rule explains them. Only this
+   slice pays for Layer B.
 
 ### Layer B — panel interpretation (inference, gated to the ambiguous middle)
 
@@ -151,6 +156,13 @@ categorical vocabulary:
   typically surfaced by the talk-activity sensor alone, since a hot talk page
   need involve no reverts or banners at all)
 - `VandalismCleanup` — churn is vandalism plus its reversion (GA-exempt)
+- `NewsDrivenVolatility` — rapid, largely good-faith editing driven by outside
+  attention (a news event), not internal conflict; typically surfaced by the
+  attention-volatility sensor. Exculpatory in the same way as
+  `VandalismCleanup`: criterion 5 scopes instability to edit wars and content
+  disputes, and a hot history caused by the news cycle is the signature most
+  easily mistaken for one by raw activity counts — naming the cause is exactly
+  the distinction a reviewer needs.
 - `StaleDisputeBanner` — a dispute marker whose discussion has gone dormant
 - `ReviewDrivenChurn` — review-phase edits responding to the review (GA-exempt).
   Kept as a class rather than folded into the phase split: the phase marker says
@@ -316,6 +328,17 @@ recorded MediaWiki responses — no live network (ADR-0009 discipline).*
 - *Status quo (reviewer reads the history manually).* This remains the fallback
   whenever inference is unavailable — Layer A alone still assembles the evidence,
   which is most of the drudgery being removed.
+- *Reuse a Wikimedia Enterprise stability datapoint.* Surveyed (2026-07-09): no
+  packaged stability datapoint exists. WME's Credibility Signals ship the
+  *ingredients* — per-revision revertrisk, protection, maintenance-tag counts,
+  watchers, editor reputation, and a Breaking-News volatility boolean — and its
+  documentation leaves "how long has this been stable" to the customer to
+  compute over versions. Those signals are a paid firehose of the same public
+  data SP42 already reads directly, so a commercial dependency buys nothing
+  here; the survey instead validates commercial demand for exactly the
+  interpretation layer this PRD adds, and its Breaking-News method (pageview +
+  unique-editor spikes) is adopted as the attention-volatility sensor in
+  Layer A.
 
 ## Risks
 
@@ -365,16 +388,20 @@ acceptance.
    `sp42-core`, not the domain crate. Triage thresholds, panel prompts, the
    vocabulary, and GA phase semantics stay assessment-domain. Pinned by the
    spawned ADR.
-3. **Categorical vocabulary.** Resolved: **six classes, explicitly
+3. **Categorical vocabulary.** Resolved: **seven classes, explicitly
    provisional.** `ReviewDrivenChurn` stays — the phase split says *when*,
    classification says *why*, and an edit war erupting mid-hold must not
    inherit the phase's exemption. `ActiveContentDispute` is added: criterion 5
    names "content dispute" as distinct from edit war, and a hot talk page with
    no reverts and no banner was inexpressible in the five-class draft — with
    the Layer A consequence that talk-activity volume joins the deterministic
-   triage sensors. The vocabulary is expected to be reshaped by alpha evidence
-   (the Editor's stated expectation); the additive-evolution rule in the body
-   is what makes that a planned amendment rather than a contract break.
+   triage sensors. `NewsDrivenVolatility` is added during review (from the
+   Wikimedia Enterprise survey recorded in Alternatives), with the
+   attention-volatility sensor as its Layer A counterpart: news churn is the
+   non-dispute cause most easily mistaken for an edit war. The vocabulary is
+   expected to be reshaped by alpha evidence (the Editor's stated
+   expectation); the additive-evolution rule in the body is what makes that a
+   planned amendment rather than a contract break.
 4. **Panel evidence packaging.** Resolved: **one bundle per article**, size-
    capped with disclosed truncation; per-chain sharding demoted to the overflow
    strategy (cross-chain blindness stated in the report when used). Cross-chain

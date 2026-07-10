@@ -396,7 +396,7 @@ pub(super) fn DiffPane(
     selected_edit: ReadSignal<Option<QueuedEdit>>,
     diff_loading: ReadSignal<bool>,
     current_diff: ReadSignal<Option<StructuredDiff>>,
-    current_entity_diff: ReadSignal<Option<sp42_core::ContentDiffReport>>,
+    current_entity_diff: ReadSignal<Option<sp42_core::EntityDiffReport>>,
     current_media_diff: ReadSignal<Option<MediaDiffReport>>,
     media_diff_loading: ReadSignal<bool>,
     set_tag_action: WriteSignal<Option<TagAction>>,

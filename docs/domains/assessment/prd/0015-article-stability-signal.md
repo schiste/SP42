@@ -247,9 +247,11 @@ nothing and claim nothing where it is not.
 ### Surface
 
 CLI-first, matching the references-domain pattern: a `stability` report for
-`{wiki_id, title, rev_id}`, foldable into the GA assist report (design doc) and
-eventually the browser shell. Read-only; no apply lane exists or is planned for
-this signal.
+`{wiki_id, title, rev_id?}` — `rev_id` is optional: omitted, SP42 resolves the
+current head revision and records it in the report (the normal interactive
+case); supplied, it reproduces a prior run's window exactly (the replay case).
+Foldable into the GA assist report (design doc) and eventually the browser
+shell. Read-only; no apply lane exists or is planned for this signal.
 
 ## Definition of Done
 

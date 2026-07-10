@@ -208,16 +208,20 @@ what the alpha-era PRD-0007 fixtures measure; the choice is benchmark-revisable.
 
 ### The report
 
-A versioned `StabilitySignal` aggregate — a Constitution Art. 9.1 serde contract
-living in `sp42-core`, following the `PageVerificationReport` precedent
-(ADR-0011), so shells and renderers consume it without depending on the
-assessment crate — rendering both layers, labeled: the raw
-timeline with phase markers and the marker inventory (Layer A, facts), then —
-only when it ran — the panel characterization with its cited evidence (Layer B,
-interpretation). The report records its window bounds and phase timestamps for
-replay. The rendering never uses pass/fail wording for criterion 5. When the
-evidence pool was truncated (very large talk archives), the truncation is
-disclosed in the report, not silent.
+The report is a versioned `StabilitySignal` aggregate: a Constitution Art. 9.1
+serde contract living in `sp42-core`, following the `PageVerificationReport`
+precedent (ADR-0011), so shells and renderers consume it without depending on
+the assessment crate. It renders both layers, labeled — the raw timeline with
+phase markers and the marker inventory (Layer A, facts), then the panel
+characterizations, each with its cited evidence (Layer B, interpretation), when
+Layer B ran. The report always records the triage outcome: which outcome
+Layer A reached, which sensors fired, and — whenever Layer B did **not** run —
+why not (quiet; covered by graduated deterministic rules; or, later, an
+unattended run's Layer-A-only policy), so a facts-only report is honest on its
+face rather than reading as a full run that found nothing. It records its
+window bounds and phase timestamps for replay. The rendering never uses
+pass/fail wording for criterion 5. When the evidence pool was truncated (very
+large talk archives), the truncation is disclosed in the report, not silent.
 
 ### The improvement loop
 

@@ -203,7 +203,7 @@ Reading notes:
 | [PRD-0006](../domains/patrolling/prd/0006-multi-operator-coordination.md) | Multi-operator coordination | Implemented | patrolling | ADR-0001 |
 | [PRD-0007](../domains/references/prd/0007-llm-output-benchmarking.md) | LLM output-quality benchmarking | Accepted | references | ADR-0007, ADR-0010 |
 | [PRD-0008](../domains/references/prd/0008-bare-url-repair.md) | Bare-URL repair | Implemented | references | ADR-0002, ADR-0003, ADR-0010 |
-| [PRD-0009](../domains/references/prd/0009-book-citation-grounding-and-open-library-enrichment.md) | Book-citation grounding and Open Library enrichment | Draft (grounding pipeline shipped — source fetch, body | references | ADR-0004, ADR-0006, ADR-0007, ADR-0009, ADR-0010, ADR-0011, ADR-0017 |
+| [PRD-0009](../domains/references/prd/0009-book-citation-grounding-and-open-library-enrichment.md) | Book-citation grounding and Open Library enrichment | Draft | references | ADR-0004, ADR-0006, ADR-0007, ADR-0009, ADR-0010, ADR-0011, ADR-0017 |
 | [PRD-0010](../domains/references/prd/0010-citation-verification-mcp-surface.md) | Citation-verification agent surface (MCP) | Implemented | references | ADR-0007, ADR-0008 |
 | [PRD-0011](../domains/wikidata/prd/0011-wikidata-first-class-target.md) | Wikidata as a first-class SP42 target | Draft | wikidata | ADR-0003, ADR-0007, ADR-0009, ADR-0010, ADR-0014, ADR-0016, ADR-0017 |
 | [PRD-0015](../domains/assessment/prd/0015-article-stability-signal.md) | Article stability signal | Discussion | assessment | ADR-0006, ADR-0007, ADR-0009, ADR-0011, ADR-0014 |

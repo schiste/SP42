@@ -3,9 +3,15 @@
 **Drafter:** Claude Code (Opus 4.8)
 **Editor:** Luis Villa
 **Date:** 2026-06-30
-**State:** Implemented
+**State:** Draft
 **Discussion:** none yet
 **Spawned ADRs:** none yet (bound by ADR-0007 verification semantics and ADR-0008 verification contract; a transport/threat-model ADR is expected with the hosted phase, not the MVP)
+
+**Implementation note (2026-07-10):** The MVP shipped (the `sp42-mcp` crate:
+`probe_source`, `verify_claim`, `verify_wikipedia_page`,
+`verify_wikidata_statement`; PR #103), but the DoD items are not yet bound to
+their closing tests and the Open Questions section is unresolved, so per
+`docs/process/prd-protocol.md` the PRD cannot claim `Implemented` yet.
 
 ## Problem
 

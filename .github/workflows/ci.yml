@@ -90,6 +90,8 @@ jobs:
         run: cargo ci-doc
       - name: Layer check (ADR-0013 dependency direction)
         run: ./scripts/check-layering.sh
+      - name: Architecture map freshness
+        run: ./scripts/generate-architecture-map.sh --check
       - name: Design-system gate
         run: ./scripts/check-design-system.sh
       - name: Forbidden-pattern guard (added lines)

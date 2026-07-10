@@ -104,20 +104,23 @@ For the article under review, SP42 fetches and reduces:
 - **Talk-page activity volume**: talk-edit counts and thread
   recency over the window — a deterministic sensor, so a banner-less active
   dispute (a hot talk page with no reverts) still reaches triage.
-- **Three review phases.** The evidence window is anchored to
-  **run time** — 90 days back — not the nomination timestamp: GAN backlog waits
-  run to months, and criterion 5 is about *current* behavior, so a
-  nomination-anchored window would hand the reviewer a stale picture. The
-  `{{GA nominee}}` and review-start timestamps render as phase markers on the
-  timeline: **pre-nomination** (the baseline record), **nomination →
-  review-start** (counts fully toward stability — backlog-wait editing is
-  ordinary editing; no exemption applies yet), and **review-start → now**
-  (presumptively exempt under the GA footnote's changes-based-on-the-review
-  carve-out, but *classified rather than blanket-exempted* — an edit war that
-  erupts during a hold still counts). The report records its window bounds and
-  phase timestamps, restoring the reproducibility a fixed anchor would have
-  given. Dispute markers and protection status are **windowless** — a live
-  banner is current state regardless of when it was placed.
+
+The window over that evidence spans **three review phases**. It is anchored to
+**run time** (the observed head revision, per the scope boundary) — 90 days
+back — not the nomination timestamp: GAN backlog waits run to months, and
+criterion 5 is about *current* behavior, so a nomination-anchored window would
+hand the reviewer a stale picture. The `{{GA nominee}}` timestamp and the
+review-start timestamp (the creation of the `Talk:Article/GAn` review subpage)
+render as phase markers on the timeline: **pre-nomination** (the baseline
+record), **nomination → review-start** (counts fully toward stability —
+backlog-wait editing is ordinary editing; no exemption applies yet), and
+**review-start → now** (presumptively exempt under the GA footnote's
+changes-based-on-the-review carve-out, but *classified rather than
+blanket-exempted* — an edit war that erupts during a hold still counts). The
+report records its window bounds and phase timestamps, restoring the
+reproducibility a fixed anchor would have given. Dispute markers and protection
+status are **windowless** — a live banner is current state regardless of when
+it was placed.
 
 Layer A triages the article into three outcomes:
 

@@ -1469,6 +1469,46 @@ fn changed_part_details(
     details
 }
 
+/// The subpart details of a whole added/removed statement: an introduced or
+/// deleted statement can carry qualifiers, a non-normal rank, and references,
+/// and reviewers must be able to inspect all of it from the row, not just the
+/// property and main value.
+fn statement_subpart_details(
+    labels: &BTreeMap<String, String>,
+    statement: &WikibaseStatement,
+) -> Vec<String> {
+    let mut details = Vec::new();
+    if !statement.qualifiers.is_empty() {
+        details.push(format!(
+            "qualifiers {}",
+            snak_list_text(labels, &statement.qualifiers)
+        ));
+    }
+    if statement.rank != StatementRank::Normal {
+        details.push(format!("rank {}", rank_text(statement.rank)));
+    }
+    if !statement.references.is_empty() {
+        details.push(format!(
+            "references {}",
+            references_text(labels, &statement.references)
+        ));
+    }
+    details
+}
+
+fn whole_statement_row_text(
+    labels: &BTreeMap<String, String>,
+    statement: &WikibaseStatement,
+) -> String {
+    let core = statement_row_text(labels, statement);
+    let details = statement_subpart_details(labels, statement);
+    if details.is_empty() {
+        core
+    } else {
+        format!("{core} ({})", details.join("; "))
+    }
+}
+
 fn statement_row(
     labels: &BTreeMap<String, String>,
     change: &StatementChange,
@@ -1476,11 +1516,11 @@ fn statement_row(
     match change {
         StatementChange::Added { statement } => EntityChangeRowReport {
             kind: EntityChangeKind::Added,
-            text: statement_row_text(labels, statement),
+            text: whole_statement_row_text(labels, statement),
         },
         StatementChange::Removed { statement } => EntityChangeRowReport {
             kind: EntityChangeKind::Removed,
-            text: statement_row_text(labels, statement),
+            text: whole_statement_row_text(labels, statement),
         },
         StatementChange::Changed {
             before,
@@ -2345,6 +2385,57 @@ mod tests {
         );
         let unlabeled = super::render_entity_diff_report(&diff, &BTreeMap::new());
         assert!(unlabeled.sections[0].rows[0].text.starts_with("P800:"));
+    }
+
+    #[test]
+    fn added_and_removed_statement_rows_render_subpart_details() {
+        use std::collections::BTreeMap;
+
+        // A whole statement carrying qualifiers, a non-normal rank, and a
+        // reference: adding or removing it must expose all of that, not just
+        // the property and main value.
+        let statement = json!({
+            "id": "Q42$s1",
+            "rank": "preferred",
+            "mainsnak": {"snaktype": "value", "property": "P800", "datavalue": {"type": "string", "value": "v"}},
+            "qualifiers": {"P580": [{"datavalue": {"value": "1979"}}]},
+            "references": [{"snaks": {"P854": [{"datavalue": {"value": "https://ref.example/"}}]}}]
+        });
+        let empty = parse_entity(
+            "Q42",
+            json!({"id": "Q42", "claims": {}}).to_string().as_bytes(),
+        )
+        .expect("entity parses");
+        let full = entity_with_statement(&statement);
+
+        for (diff, kind) in [
+            (
+                diff_entities(Some(&empty), &full),
+                super::EntityChangeKind::Added,
+            ),
+            (
+                diff_entities(Some(&full), &empty),
+                super::EntityChangeKind::Removed,
+            ),
+        ] {
+            let report = super::render_entity_diff_report(&diff, &BTreeMap::new());
+            let row = &report.sections[0].rows[0];
+            assert_eq!(row.kind, kind);
+            assert!(row.text.starts_with("P800: v ("), "core text: {}", row.text);
+            assert!(row.text.contains("qualifiers [P580: 1979]"), "{}", row.text);
+            assert!(row.text.contains("rank preferred"), "{}", row.text);
+            assert!(row.text.contains("https://ref.example/"), "{}", row.text);
+        }
+
+        // A bare statement (no qualifiers, normal rank, no references) keeps
+        // the plain row with no detail parenthetical.
+        let bare = json!({
+            "id": "Q42$s2",
+            "mainsnak": {"snaktype": "value", "property": "P800", "datavalue": {"type": "string", "value": "v"}}
+        });
+        let diff = diff_entities(Some(&empty), &entity_with_statement(&bare));
+        let report = super::render_entity_diff_report(&diff, &BTreeMap::new());
+        assert_eq!(report.sections[0].rows[0].text, "P800: v");
     }
 
     #[test]

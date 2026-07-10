@@ -3,7 +3,7 @@
 **Drafter:** Claude Code (Opus 4.8)
 **Editor:** Luis Villa
 **Date:** 2026-06-30
-**State:** Draft
+**State:** Implemented
 **Discussion:** none yet
 **Spawned ADRs:** none yet (bound by ADR-0007 verification semantics and ADR-0008 verification contract; a transport/threat-model ADR is expected with the hosted phase, not the MVP)
 

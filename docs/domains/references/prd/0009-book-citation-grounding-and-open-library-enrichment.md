@@ -3,7 +3,9 @@
 **Drafter:** Claude Code (Opus 4.8)
 **Editor:** Luis Villa
 **Date:** 2026-07-01
-**State:** Draft
+**State:** Draft (grounding pipeline shipped — source fetch, body
+classification, page report, PRs #104/#110; the Open Library apply lane
+remains gated, so the PRD stays Draft until it lands or is descoped)
 **Discussion:** design conversation 2026-07-01 (Internet Archive editable book
 metadata → SP42 integration); no tracking issue yet.
 **Spawned ADRs:** none yet. If this PRD is accepted, expect at least one thin ADR

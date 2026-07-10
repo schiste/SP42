@@ -17,11 +17,12 @@ Capabilities built on top of the platform.
 
 - **Patrolling** — the shipped review workflow (queueing, scoring, diffing,
   reviewer actions, multi-operator coordination). → [docs/domains/patrolling/](domains/patrolling/README.md)
-- **References / citation verification** — incoming; no crate yet. Lives as a PRD
-  plus ADR-0007–0009. → [docs/domains/references/](domains/references/README.md)
+- **References / citation verification** — shipped as the `sp42-citation` domain
+  crate, with an agent surface in `sp42-mcp`. PRDs 0001/0007–0010 plus
+  ADR-0007–0009, 0011, 0015. → [docs/domains/references/](domains/references/README.md)
 - **Wikidata** — incoming; no crate yet. Making Wikidata a first-class target
   (entity read/diff + patrol) and a referenced source/sink of facts. Lives as
-  PRD-0011, spawning platform ADR-0015 and continuing ADR-0014.
+  PRD-0011, spawning platform ADR-0016–0017 and continuing ADR-0014.
   → [docs/domains/wikidata/](domains/wikidata/README.md)
 - **Assessment** — incoming; no crate yet. Evidence-assembly for per-article
   quality assessments, starting with Good-article review. Lives as PRD-0015 plus

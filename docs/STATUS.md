@@ -7,7 +7,7 @@ This document tracks the current implementation state by phase. It is meant to b
 Foundations are complete:
 
 - Cargo workspace and toolchain policy are in place
-- `sp42-core` owns shared contracts, traits, scoring primitives, and runtime logic
+- `sp42-platform` owns shared contracts, traits, scoring primitives, and runtime logic (extracted from `sp42-core`, now a retiring re-export facade)
 - `sp42-wiki` owns wiki config parsing, registry/default selection, fixtures, and capability profiles
 - `sp42-live` owns EventStreams ingestion, recentchanges/backlog polling, live queue filtering, and live operator contracts
 - action contracts are split from MediaWiki execution and server session adapters; a future `sp42-actions` crate should wait until shared neutral types avoid a crate cycle

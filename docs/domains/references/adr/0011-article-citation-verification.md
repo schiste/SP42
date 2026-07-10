@@ -1,6 +1,6 @@
 # ADR-0011: Article-level citation verification (the review path)
 
-**Status:** Proposed
+**Status:** Accepted
 **Date:** 2026-06-25
 **Author:** Luis Villa
 

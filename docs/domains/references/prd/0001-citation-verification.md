@@ -3,7 +3,7 @@
 **Drafter:** Claude Code Opus 4.8
 **Editor:** Luis Villa
 **Date:** 2026-06-04
-**State:** Draft
+**State:** Implemented
 **Discussion:** <PR link>
 **Spawned ADRs:** ADR-0006, ADR-0007, ADR-0008, ADR-0009 (see below)
 

@@ -1,6 +1,6 @@
 # ADR-0015: Rules-compliant read-only fetch edge
 
-**Status:** Proposed
+**Status:** Accepted
 **Date:** 2026-06-29
 **Author:** Luis Villa
 

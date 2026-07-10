@@ -880,6 +880,166 @@ async fn verify_page_unknown_wiki_returns_400() {
     assert_eq!(response.status(), StatusCode::BAD_REQUEST);
 }
 
+#[tokio::test]
+async fn reverify_route_requires_a_session() {
+    // Re-verify spends SP42_INFERENCE_* credentials the same way verify-page
+    // does (PRD-0014), so it must be session-gated ahead of any inference wiring.
+    // SAFETY: `cargo test` runs each test in its own thread but shares the
+    // process env; this crate's tests never read these two vars concurrently
+    // with a write, only unset-then-assert within a single test.
+    unsafe {
+        std::env::remove_var("SP42_INFERENCE_MODELS");
+        std::env::remove_var("SP42_INFERENCE_URL");
+    }
+    let router = build_router(test_state());
+    let response = router
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/dev/citation/reverify")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::json!({
+                        "wiki_id": "frwiki",
+                        "title": "Exemple",
+                        "rev_id": 42,
+                        "ref_id": "cite_note-1"
+                    })
+                    .to_string(),
+                ))
+                .expect("request should build"),
+        )
+        .await
+        .expect("request should complete");
+
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn reverify_route_is_registered() {
+    // Ensure inference env is absent so we hit the 503 wiring check deterministically.
+    // SAFETY: see reverify_route_requires_a_session.
+    unsafe {
+        std::env::remove_var("SP42_INFERENCE_MODELS");
+        std::env::remove_var("SP42_INFERENCE_URL");
+    }
+    let state = test_state();
+    let session_id = "reverify-registered";
+    state.sessions.write().await.insert(
+        session_id.to_string(),
+        test_session("Example", "secret-token", now_ms()),
+    );
+    let cookie = format!("{SESSION_COOKIE_NAME}={session_id}");
+    let router = build_router(state);
+    let response = router
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/dev/citation/reverify")
+                .header("content-type", "application/json")
+                .header(axum::http::header::COOKIE, cookie)
+                .header(CSRF_HEADER_NAME, "csrf-token")
+                .body(Body::from(
+                    serde_json::json!({
+                        "wiki_id": "frwiki",
+                        "title": "Exemple",
+                        "rev_id": 42,
+                        "ref_id": "cite_note-1"
+                    })
+                    .to_string(),
+                ))
+                .expect("request should build"),
+        )
+        .await
+        .expect("request should complete");
+
+    // 503 (no inference configured) proves the route is registered and reached
+    // the inference-wiring step — not a 404 or 405.
+    assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+}
+
+#[tokio::test]
+async fn reverify_unknown_wiki_returns_400() {
+    // SAFETY: see reverify_route_requires_a_session.
+    unsafe {
+        std::env::remove_var("SP42_INFERENCE_MODELS");
+        std::env::remove_var("SP42_INFERENCE_URL");
+    }
+    let state = test_state();
+    let session_id = "reverify-unknown-wiki";
+    state.sessions.write().await.insert(
+        session_id.to_string(),
+        test_session("Example", "secret-token", now_ms()),
+    );
+    let cookie = format!("{SESSION_COOKIE_NAME}={session_id}");
+    let router = build_router(state);
+    let response = router
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/dev/citation/reverify")
+                .header("content-type", "application/json")
+                .header(axum::http::header::COOKIE, cookie)
+                .header(CSRF_HEADER_NAME, "csrf-token")
+                .body(Body::from(
+                    serde_json::json!({
+                        "wiki_id": "unknown_wiki_id_12345",
+                        "title": "Exemple",
+                        "rev_id": 42,
+                        "ref_id": "cite_note-1"
+                    })
+                    .to_string(),
+                ))
+                .expect("request should build"),
+        )
+        .await
+        .expect("request should complete");
+
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn reverify_rejects_empty_ref_id_before_inference_wiring() {
+    // Cheap field validation happens before the (expensive, 503-when-absent)
+    // inference wiring step — mirrors the ordering used throughout action_routes.
+    // SAFETY: see reverify_route_requires_a_session.
+    unsafe {
+        std::env::remove_var("SP42_INFERENCE_MODELS");
+        std::env::remove_var("SP42_INFERENCE_URL");
+    }
+    let state = test_state();
+    let session_id = "reverify-empty-ref-id";
+    state.sessions.write().await.insert(
+        session_id.to_string(),
+        test_session("Example", "secret-token", now_ms()),
+    );
+    let cookie = format!("{SESSION_COOKIE_NAME}={session_id}");
+    let router = build_router(state);
+    let response = router
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/dev/citation/reverify")
+                .header("content-type", "application/json")
+                .header(axum::http::header::COOKIE, cookie)
+                .header(CSRF_HEADER_NAME, "csrf-token")
+                .body(Body::from(
+                    serde_json::json!({
+                        "wiki_id": "frwiki",
+                        "title": "Exemple",
+                        "rev_id": 42,
+                        "ref_id": ""
+                    })
+                    .to_string(),
+                ))
+                .expect("request should build"),
+        )
+        .await
+        .expect("request should complete");
+
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+}
+
 fn session_cookie_for_mode(mode: DeploymentMode) -> String {
     let mut state = test_state();
     state.deployment = test_deployment_for_mode(mode);
@@ -3043,6 +3203,8 @@ fn inline_edit_request(
         batch_rev_ids: None,
         replacement_text,
         node_locator,
+        concern_kind: None,
+        reason: None,
     }
 }
 
@@ -3400,6 +3562,223 @@ async fn bare_url_apply_saves_exact_replacement_with_baserevid() {
         edits[0].contains("bare-URL+repair"),
         "default summary should be applied: {}",
         edits[0]
+    );
+}
+
+fn flag_citation_request(
+    concern_kind: Option<sp42_core::CitationConcernKind>,
+    selected_text: Option<String>,
+    reason: Option<String>,
+) -> sp42_core::SessionActionExecutionRequest {
+    sp42_core::SessionActionExecutionRequest {
+        wiki_id: "frwiki".to_string(),
+        kind: sp42_core::SessionActionKind::FlagCitation,
+        rev_id: 42,
+        title: Some("Exemple".to_string()),
+        target_user: None,
+        undo_after_rev_id: None,
+        summary: None,
+        selected_text,
+        batch_rev_ids: None,
+        replacement_text: None,
+        node_locator: None,
+        concern_kind,
+        reason,
+    }
+}
+
+/// Decodes a single `application/x-www-form-urlencoded` field from a captured
+/// mock-wiki edit body, so assertions can inspect real wikitext content
+/// (braces, `%`, spaces) instead of its percent-encoded form.
+fn decoded_form_field(body: &str, key: &str) -> Option<String> {
+    url::form_urlencoded::parse(body.as_bytes())
+        .find(|(k, _)| k == key)
+        .map(|(_, v)| v.into_owned())
+}
+
+#[tokio::test]
+async fn flag_citation_partial_support_saves_wrapped_template_with_baserevid() {
+    let backend = spawn_mock_wiki_backend("The article claims 6% growth in Q1.").await;
+    let mut config = wiki_config_for_backend(&backend.base_url);
+    config.templates.citation_concerns.insert(
+        sp42_core::CitationConcernKind::PartialSupport,
+        "Failed verification span".to_string(),
+    );
+    let client = crate::runtime_adapters::BearerHttpClient::new(
+        reqwest::Client::new(),
+        "test-access-token".to_string(),
+    );
+    let payload = flag_citation_request(
+        Some(sp42_core::CitationConcernKind::PartialSupport),
+        Some("6% growth in Q1".to_string()),
+        Some("source says 7%".to_string()),
+    );
+
+    let response = crate::action_routes::execute_flag_citation_action(&client, &config, &payload)
+        .await
+        .expect("configured partial-support flag should succeed");
+
+    assert_eq!(response.status, 200);
+    let edits = backend
+        .edit_bodies
+        .lock()
+        .expect("mock edit log should lock");
+    assert_eq!(edits.len(), 1, "exactly one save must reach the wiki");
+    assert!(
+        edits[0].contains("baserevid=42"),
+        "save must stay baserevid-guarded: {}",
+        edits[0]
+    );
+    let text = decoded_form_field(&edits[0], "text").expect("edit body should carry page text");
+    // `date=` is the live current-month French label (`current_french_date`) —
+    // assert the structure around it rather than pinning an exact value.
+    assert!(
+        text.starts_with("The article claims {{Failed verification span|6% growth in Q1|date="),
+        "unexpected prefix: {text}"
+    );
+    assert!(
+        text.ends_with("|reason=source says 7%}}."),
+        "unexpected suffix: {text}"
+    );
+}
+
+#[tokio::test]
+async fn flag_citation_refuses_when_wiki_has_no_configured_template() {
+    let backend = spawn_mock_wiki_backend("The article claims 6% growth.").await;
+    let config = wiki_config_for_backend(&backend.base_url);
+    let client = crate::runtime_adapters::BearerHttpClient::new(
+        reqwest::Client::new(),
+        "test-access-token".to_string(),
+    );
+    let payload = flag_citation_request(
+        Some(sp42_core::CitationConcernKind::PartialSupport),
+        Some("6% growth".to_string()),
+        None,
+    );
+
+    let error = crate::action_routes::execute_flag_citation_action(&client, &config, &payload)
+        .await
+        .expect_err("unconfigured wiki must refuse rather than insert a wrong-language template");
+
+    let sp42_core::ActionError::Execution { code, .. } = error;
+    assert_eq!(code.as_deref(), Some("citation-concern-not-enabled"));
+    assert!(
+        backend
+            .edit_bodies
+            .lock()
+            .expect("mock edit log should lock")
+            .is_empty(),
+        "a refused flag must never reach the wiki"
+    );
+}
+
+#[tokio::test]
+async fn flag_citation_failed_verification_refuses_as_not_yet_implemented() {
+    let backend = spawn_mock_wiki_backend("The article claims 6% growth.").await;
+    let mut config = wiki_config_for_backend(&backend.base_url);
+    // Even if a wiki configured a template for it, the insert-after-<ref>
+    // anchor doesn't exist yet — this must refuse regardless of config.
+    config.templates.citation_concerns.insert(
+        sp42_core::CitationConcernKind::FailedVerification,
+        "Failed verification".to_string(),
+    );
+    let client = crate::runtime_adapters::BearerHttpClient::new(
+        reqwest::Client::new(),
+        "test-access-token".to_string(),
+    );
+    let payload = flag_citation_request(
+        Some(sp42_core::CitationConcernKind::FailedVerification),
+        Some("6% growth".to_string()),
+        None,
+    );
+
+    let error = crate::action_routes::execute_flag_citation_action(&client, &config, &payload)
+        .await
+        .expect_err("not-supported flag anchor is not implemented yet");
+
+    let sp42_core::ActionError::Execution {
+        code, http_status, ..
+    } = error;
+    assert_eq!(
+        code.as_deref(),
+        Some("citation-concern-anchor-not-implemented")
+    );
+    assert_eq!(http_status, Some(501));
+    assert!(
+        backend
+            .edit_bodies
+            .lock()
+            .expect("mock edit log should lock")
+            .is_empty(),
+        "an unimplemented anchor must never reach the wiki"
+    );
+}
+
+#[tokio::test]
+async fn flag_citation_refuses_ambiguous_claim_text() {
+    let backend = spawn_mock_wiki_backend("le mot, le mot, deux fois.").await;
+    let mut config = wiki_config_for_backend(&backend.base_url);
+    config.templates.citation_concerns.insert(
+        sp42_core::CitationConcernKind::PartialSupport,
+        "Failed verification span".to_string(),
+    );
+    let client = crate::runtime_adapters::BearerHttpClient::new(
+        reqwest::Client::new(),
+        "test-access-token".to_string(),
+    );
+    let payload = flag_citation_request(
+        Some(sp42_core::CitationConcernKind::PartialSupport),
+        Some("le mot".to_string()),
+        None,
+    );
+
+    let error = crate::action_routes::execute_flag_citation_action(&client, &config, &payload)
+        .await
+        .expect_err("ambiguous claim text must refuse rather than guess");
+
+    let sp42_core::ActionError::Execution { code, .. } = error;
+    assert_eq!(code.as_deref(), Some("text-ambiguous"));
+    assert!(
+        backend
+            .edit_bodies
+            .lock()
+            .expect("mock edit log should lock")
+            .is_empty()
+    );
+}
+
+#[test]
+fn validate_flag_citation_requires_concern_kind() {
+    let payload = flag_citation_request(None, Some("une phrase".to_string()), None);
+    let report = capability_report_allowing_edit();
+    let (status, body) = crate::action_routes::validate_action_request(&payload, &report)
+        .expect_err("flag citation without concern_kind must be rejected");
+    assert_eq!(status, axum::http::StatusCode::BAD_REQUEST);
+    assert!(
+        body.0["error"]
+            .as_str()
+            .expect("error body should carry a message")
+            .contains("concern_kind")
+    );
+}
+
+#[test]
+fn validate_rejects_node_locator_for_flag_citation() {
+    let mut payload = flag_citation_request(
+        Some(sp42_core::CitationConcernKind::PartialSupport),
+        Some("une phrase".to_string()),
+        None,
+    );
+    payload.node_locator = Some(template_locator());
+    let report = capability_report_allowing_edit();
+    let (status, body) = crate::action_routes::validate_action_request(&payload, &report)
+        .expect_err("flag citation must reject locators");
+    assert_eq!(status, axum::http::StatusCode::BAD_REQUEST);
+    assert!(
+        body.0["error"]
+            .as_str()
+            .expect("error body should carry a message")
+            .contains("not supported")
     );
 }
 

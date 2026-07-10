@@ -14,6 +14,8 @@ builds on the platform LLM interface ([ADR-0006](../../platform/adr/0006-using-l
 - [PRD-0007 — LLM output-quality benchmarking](prd/0007-llm-output-benchmarking.md) — eval corpus, deterministic hard gates, and baseline/compare framework for LLM outputs
 - [PRD-0008 — Bare-URL repair](prd/0008-bare-url-repair.md) — fill a bare URL into a complete cite template via propose/confirm
 - [PRD-0009 — Book-citation grounding and Open Library enrichment](prd/0009-book-citation-grounding-and-open-library-enrichment.md) — verify book citations against Internet Archive full-text and offer sourced, operator-confirmed Open Library metadata improvements
+- [PRD-0012 — Citation insertion for unsourced claims](prd/0012-citation-insertion.md) — ground a candidate source against a sentence's atomic claims, then propose a `<ref>` insert
+- [PRD-0014 — Citation repair and insertion, browser surface](prd/0014-citation-repair-insertion-browser-surface.md) — per-finding action row in the Citations tab routing to text-edit or citation-fix, operator always chooses
 
 ## Architecture Decision Records
 

@@ -270,15 +270,17 @@ shell. Read-only; no apply lane exists or is planned for this signal.
 *Names planned coverage; the closing PR records exact test ids. All tests replay
 recorded MediaWiki responses — no live network (ADR-0009 discipline).*
 
-- [ ] A quiet article (no reverts/markers/protection/unusual talk activity in
-      the window) produces a "no instability indicators" report and **zero**
-      model-inference calls, verified by a fixture test asserting the mock
-      `ModelClient` is never invoked.
+- [ ] A quiet article (no reverts, markers, protection, attention spike, or
+      above-threshold talk activity in the window) produces a "no instability
+      indicators" report and **zero** model-inference calls, verified by a
+      fixture test asserting the mock `ModelClient` is never invoked.
 - [ ] Revert chains are reduced correctly from a replayed history fixture
       (tags + summaries → chains with participants and intervals), including
       self-revert recognition, verified by unit tests over the reducer.
-- [ ] Dispute banners, split/merge proposals, and protection status surface from
-      replayed talk-page and page-info fixtures, verified by parser tests.
+- [ ] Dispute banners and split/merge tags surface from replayed
+      article-wikitext fixtures, RfC templates from replayed talk-page
+      fixtures, and protection status from replayed page-info fixtures,
+      verified by parser tests per surface.
 - [ ] The report splits activity across the three phases (pre-nomination /
       nomination→review-start / review-start→run), keyed on the `{{GA nominee}}`
       and review-start timestamps, records its window bounds, and degrades to
@@ -291,8 +293,10 @@ recorded MediaWiki responses — no live network (ADR-0009 discipline).*
 - [ ] An ambiguous fixture (reverts present, meaning unclear) triggers Layer B,
       and the resulting characterization carries at least one cited `rev_id` and
       one verbatim excerpt locatable in the fetched evidence; a fabricated
-      (non-locatable) excerpt is rejected by the grounding gate, verified by unit
-      tests on the gate.
+      (non-locatable) excerpt is rejected by the grounding gate and the affected
+      classification degrades to `Unclear` **with the rejection disclosed in the
+      report** (never silently dropped), verified by unit tests on the gate and
+      a renderer assertion on the disclosure.
 - [ ] A vandalism-cleanup fixture (reverts whose context is vandalism reversion)
       classifies as `VandalismCleanup` with cited evidence and is **not**
       reported as an instability indicator, verified by a replayed-panel fixture
@@ -305,7 +309,29 @@ recorded MediaWiki responses — no live network (ADR-0009 discipline).*
 - [ ] Every Layer B run persists a replayable snapshot suitable for the PRD-0007
       harness, verified by asserting the snapshot round-trips byte-identically.
 - [ ] Evidence-pool truncation (oversized talk archives) is disclosed in the
-      report, verified by an oversized fixture.
+      report, verified by an oversized fixture; when the usefulness floor forces
+      per-chain sharding instead, the report states the resulting cross-chain
+      blindness, verified by a floor-triggering fixture.
+- [ ] Sensors firing under a graduated deterministic rule (e.g. every revert's
+      summary cites vandalism policy) triage as **unambiguous-benign**: reported
+      clean with the mechanical explanation and **zero** model-inference calls,
+      verified by a fixture test asserting the mock `ModelClient` is never
+      invoked.
+- [ ] A pageview/unique-editor-spike fixture with no dispute markers reaches
+      Layer B via the attention-volatility sensor and classifies
+      `NewsDrivenVolatility`, not reported as criterion-5 instability, verified
+      by a replayed-panel fixture test.
+- [ ] A mixed fixture (vandalism cleanup in one chain, an edit war in another)
+      yields **both** classifications, each bound to its own evidence
+      (`rev_id`s / excerpts), with panel agreement measured per classification,
+      verified by a replayed-panel fixture test.
+- [ ] Every report records the triage outcome, the sensors that fired, and —
+      whenever Layer B did not run — why not, verified by contract/renderer
+      tests across quiet, unambiguous-benign, and ambiguous fixtures.
+- [ ] With `rev_id` omitted, the run resolves the current head revision and
+      records it in the report; with the recorded `rev_id` supplied, the run
+      re-renders byte-identically over the same fixtures, verified by a replay
+      determinism test.
 
 ## Alternatives
 

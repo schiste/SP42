@@ -142,13 +142,14 @@ Layer A triages the article into three outcomes:
 
 The existing model panel (ADR-0006) reads the evidence Layer A gathered — edit
 summaries, the diffs of the revert-chain revisions, the relevant talk-page
-threads — and classifies into a small categorical vocabulary:
+threads, and the dispute-marker inventory — and classifies it against a small
+categorical vocabulary:
 
 - `EditWarPattern` — sustained back-and-forth between committed participants
-- `ActiveContentDispute` — an unresolved dispute conducted on the talk page,
-  without reverts or banners (criterion 5 names "content dispute" as a distinct
-  thing from an edit war; the talk-activity sensor is what routes this case to
-  Layer B at all)
+- `ActiveContentDispute` — an unresolved dispute conducted on the talk page
+  (criterion 5 names "content dispute" as a distinct thing from an edit war;
+  typically surfaced by the talk-activity sensor alone, since a hot talk page
+  need involve no reverts or banners at all)
 - `VandalismCleanup` — churn is vandalism plus its reversion (GA-exempt)
 - `StaleDisputeBanner` — a dispute marker whose discussion has gone dormant
 - `ReviewDrivenChurn` — review-phase edits responding to the review (GA-exempt).
@@ -158,6 +159,14 @@ threads — and classifies into a small categorical vocabulary:
   (summaries referencing the review, edits landing in review-flagged sections)
   separates the two.
 - `Unclear` — the panel declines to characterize
+
+The output is a **set of classifications, not one label per article**: each
+classification binds to the specific evidence it characterizes (these revert
+chains, this talk thread, this banner), so a mixed article — vandalism cleanup
+in May, an edit war in June — reports both truths instead of averaging them
+into `Unclear`. The grounding rule below anchors per classification (each cites
+its own `rev_id`s and excerpts), and panel agreement is likewise measured per
+classification, not per article.
 
 This vocabulary is **explicitly provisional**: it is the part of the design most
 exposed to alpha evidence, and the improvement loop below is its revision

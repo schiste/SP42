@@ -21,6 +21,7 @@ Operational guidance for the model panel is in [model-panel.md](model-panel.md).
 - [PRD-0010 — Citation-verification agent surface (MCP)](prd/0010-citation-verification-mcp-surface.md) — expose probe/verify verbs to agent clients via the `sp42-mcp` shell
 - [PRD-0012 — Citation insertion for unsourced claims](prd/0012-citation-insertion.md) — ground a candidate source against a sentence's atomic claims, then propose a `<ref>` insert
 - [PRD-0014 — Citation repair and insertion, browser surface](prd/0014-citation-repair-insertion-browser-surface.md) — per-finding action row in the Citations tab routing to text-edit or citation-fix, operator always chooses
+- [PRD-0017 — Interactive review sessions](prd/0017-interactive-review-sessions.md) — agent opens a session on a page, the operator queues anchored feedback, the agent polls for it (loop ported from lavish-axi, keyed to wiki pages)
 
 ## Architecture Decision Records
 
@@ -29,6 +30,7 @@ Operational guidance for the model panel is in [model-panel.md](model-panel.md).
 - [ADR-0009 — Source-snapshot storage for reproducibility](adr/0009-citation-source-snapshot-storage.md)
 - [ADR-0011 — Article-level citation verification (the review path)](adr/0011-article-citation-verification.md)
 - [ADR-0015 — Rules-compliant read-only fetch edge](adr/0015-rules-compliant-read-only-fetch-edge.md)
+- [ADR-0018 — Review-session bridge contract and store placement](adr/0018-review-session-bridge-contract.md)
 
 The shared LLM posture these depend on (model panel, measured agreement, keyless
 inference endpoint) is a platform decision,

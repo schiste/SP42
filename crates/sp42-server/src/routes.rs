@@ -18,6 +18,10 @@ use crate::citation_routes::{
     post_bare_url_apply, post_bare_url_proposals, post_citation_reverify, post_verify_page,
 };
 use crate::operator_live::get_live_operator_view;
+use crate::review_routes::{
+    get_review_sessions, post_review_end, post_review_open, post_review_poll, post_review_prompts,
+    post_review_reply,
+};
 use crate::revision_artifacts::{
     get_rendered_hunk_preview, get_revision_diff, get_revision_media_diff,
 };
@@ -84,7 +88,38 @@ fn operator_routes(router: Router<AppState>) -> Router<AppState> {
     let router = operator_api_routes(router);
     let router = operator_storage_routes(router);
     let router = dev_bridge_routes(router);
+    let router = review_session_routes(router);
     static_asset_routes(router)
+}
+
+/// Interactive review-session bridge (PRD-0017): agent opens/polls, the
+/// operator queues feedback, both through the same session-gated bridge.
+fn review_session_routes(router: Router<AppState>) -> Router<AppState> {
+    router
+        .route(
+            route_contracts::DEV_REVIEW_OPEN_PATH,
+            axum::routing::post(post_review_open),
+        )
+        .route(
+            route_contracts::DEV_REVIEW_SESSIONS_PATH,
+            get(get_review_sessions),
+        )
+        .route(
+            route_contracts::DEV_REVIEW_PROMPTS_PATH,
+            axum::routing::post(post_review_prompts),
+        )
+        .route(
+            route_contracts::DEV_REVIEW_POLL_PATH,
+            axum::routing::post(post_review_poll),
+        )
+        .route(
+            route_contracts::DEV_REVIEW_REPLY_PATH,
+            axum::routing::post(post_review_reply),
+        )
+        .route(
+            route_contracts::DEV_REVIEW_END_PATH,
+            axum::routing::post(post_review_end),
+        )
 }
 
 fn coordination_routes(router: Router<AppState>) -> Router<AppState> {

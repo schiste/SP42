@@ -212,7 +212,7 @@ pub(crate) async fn post_bare_url_proposals(
 
 /// Resolve a page's current revision id via the wiki action API (a public read).
 /// Used when a verify-page request leaves `rev_id` at `0` ("latest").
-async fn fetch_latest_revid(
+pub(crate) async fn fetch_latest_revid(
     client: &(impl HttpClient + ?Sized),
     config: &sp42_core::WikiConfig,
     title: &str,

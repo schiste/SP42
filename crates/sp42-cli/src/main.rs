@@ -11,10 +11,13 @@ use sp42_core::routes as route_contracts;
 use sp42_core::{
     CitationFinding, CitationVerificationRequest, CitoidMetadata, ClaimContext,
     DevAuthBootstrapRequest, DevAuthSessionStatus, FetchedSource, GroundingStatus,
-    PageVerificationReport, PageVerificationRequest, QueuedEdit, SessionActionExecutionRequest,
-    SessionActionExecutionResponse, SessionActionKind, SystemClock, VerificationOutcome,
-    VerifyOptions as CoreVerifyOptions, build_dev_auth_bootstrap_request, locate_quote,
-    locate_quote_fuzzy, parse_dev_auth_status, verify_citation_use_site,
+    PageVerificationReport, PageVerificationRequest, QueuedEdit, ReviewAckResponse, ReviewAnchor,
+    ReviewEndRequest, ReviewOpenRequest, ReviewOpenResponse, ReviewPollRequest, ReviewPollResponse,
+    ReviewPollStatus, ReviewPrompt, ReviewPromptKind, ReviewQueueRequest, ReviewQueueResponse,
+    ReviewReplyRequest, ReviewSessionSnapshot, ReviewSessionsResponse,
+    SessionActionExecutionRequest, SessionActionExecutionResponse, SessionActionKind, SystemClock,
+    VerificationOutcome, VerifyOptions as CoreVerifyOptions, build_dev_auth_bootstrap_request,
+    locate_quote, locate_quote_fuzzy, parse_dev_auth_status, verify_citation_use_site,
 };
 use sp42_devtools::{
     DEV_PREVIEW_SAMPLE_EVENTS, DEV_PREVIEW_WIKI_ID, DevContextOptions, DevWorkbenchOptions,
@@ -235,6 +238,8 @@ enum Command {
     Batch(BatchArgs),
     /// Preview or apply bare-URL citation repairs (PRD-0008).
     BareUrl(BareUrlArgs),
+    /// Interactive review sessions: open a page, wait for operator feedback (PRD-0017).
+    Review(ReviewArgs),
     /// Dev / operator queue views; reads the event payload from STDIN.
     Preview(PreviewArgs),
 }
@@ -328,6 +333,137 @@ struct VerifyPageArgs {
     /// Revision id. Omit for the latest revision (the server resolves it).
     #[arg(long)]
     rev: Option<u64>,
+    /// Local server base URL.
+    #[arg(long, default_value = LOCAL_SERVER_BASE_URL)]
+    bridge_base_url: String,
+    #[command(flatten)]
+    fmt: FormatArg,
+}
+
+#[derive(Debug, Args)]
+struct ReviewArgs {
+    #[command(subcommand)]
+    action: ReviewAction,
+}
+
+#[derive(Debug, Subcommand)]
+enum ReviewAction {
+    /// Open or resume a review session on a page (bare title or pasted wiki URL).
+    Open(ReviewOpenArgs),
+    /// Wait for operator feedback on an open session; re-arms until feedback or end.
+    Poll(ReviewPollArgs),
+    /// Queue operator feedback from the command line (dev/test surface).
+    Queue(ReviewQueueArgs),
+    /// Send an agent chat reply to the operator surface.
+    Reply(ReviewReplyArgs),
+    /// End a session as the agent (a plain reopen stays allowed).
+    End(ReviewEndArgs),
+    /// List review sessions on the local server.
+    Sessions(ReviewSessionsArgs),
+}
+
+#[derive(Debug, Args)]
+struct ReviewOpenArgs {
+    /// Page target: bare title or pasted wiki URL (oldid URLs pin the revision).
+    target: String,
+    /// Target wiki id.
+    #[arg(long, default_value = BARE_URL_DEFAULT_WIKI)]
+    wiki: String,
+    /// Revision id. Omit for the latest revision (the server resolves it).
+    #[arg(long)]
+    rev: Option<u64>,
+    /// Resume a session the operator explicitly ended (only when they ask).
+    #[arg(long)]
+    reopen: bool,
+    /// Local server base URL.
+    #[arg(long, default_value = LOCAL_SERVER_BASE_URL)]
+    bridge_base_url: String,
+    #[command(flatten)]
+    fmt: FormatArg,
+}
+
+#[derive(Debug, Args)]
+struct ReviewPollArgs {
+    /// Page target: bare title or pasted wiki URL.
+    target: String,
+    /// Target wiki id.
+    #[arg(long, default_value = BARE_URL_DEFAULT_WIKI)]
+    wiki: String,
+    /// Chat reply shown to the operator before the wait starts.
+    #[arg(long)]
+    agent_reply: Option<String>,
+    /// Return after one bounded server wait instead of re-arming until feedback.
+    #[arg(long)]
+    once: bool,
+    /// Local server base URL.
+    #[arg(long, default_value = LOCAL_SERVER_BASE_URL)]
+    bridge_base_url: String,
+    #[command(flatten)]
+    fmt: FormatArg,
+}
+
+#[derive(Debug, Args)]
+struct ReviewQueueArgs {
+    /// Page target: bare title or pasted wiki URL.
+    target: String,
+    /// The feedback prompt to queue.
+    #[arg(long)]
+    message: String,
+    /// Target wiki id.
+    #[arg(long, default_value = BARE_URL_DEFAULT_WIKI)]
+    wiki: String,
+    /// Anchor the prompt to this block ordinal.
+    #[arg(long)]
+    block: Option<usize>,
+    /// Anchor the prompt to this cite id (e.g. cite_ref-x_2-0).
+    #[arg(long)]
+    ref_id: Option<String>,
+    /// Anchor the prompt to this verbatim selected text.
+    #[arg(long)]
+    selected_text: Option<String>,
+    /// Queue and end the session in one action ("send & end").
+    #[arg(long)]
+    end: bool,
+    /// Local server base URL.
+    #[arg(long, default_value = LOCAL_SERVER_BASE_URL)]
+    bridge_base_url: String,
+    #[command(flatten)]
+    fmt: FormatArg,
+}
+
+#[derive(Debug, Args)]
+struct ReviewReplyArgs {
+    /// Page target: bare title or pasted wiki URL.
+    target: String,
+    /// The reply text.
+    #[arg(long)]
+    message: String,
+    /// Target wiki id.
+    #[arg(long, default_value = BARE_URL_DEFAULT_WIKI)]
+    wiki: String,
+    /// Local server base URL.
+    #[arg(long, default_value = LOCAL_SERVER_BASE_URL)]
+    bridge_base_url: String,
+    #[command(flatten)]
+    fmt: FormatArg,
+}
+
+#[derive(Debug, Args)]
+struct ReviewEndArgs {
+    /// Page target: bare title or pasted wiki URL.
+    target: String,
+    /// Target wiki id.
+    #[arg(long, default_value = BARE_URL_DEFAULT_WIKI)]
+    wiki: String,
+    /// Local server base URL.
+    #[arg(long, default_value = LOCAL_SERVER_BASE_URL)]
+    bridge_base_url: String,
+    #[command(flatten)]
+    fmt: FormatArg,
+}
+
+#[derive(Debug, Args)]
+struct ReviewSessionsArgs {
     /// Local server base URL.
     #[arg(long, default_value = LOCAL_SERVER_BASE_URL)]
     bridge_base_url: String,
@@ -703,6 +839,7 @@ fn dispatch(command: Command) -> Result<String, String> {
             models: args.models,
         }),
         Command::BareUrl(args) => dispatch_bare_url(args.action),
+        Command::Review(args) => dispatch_review(args.action),
         Command::Preview(args) => dispatch_preview(args),
     }
 }
@@ -3126,6 +3263,372 @@ async fn execute_bare_url_via_bridge(
     })
 }
 
+/// An authenticated bridge session: the reqwest client plus the cookie and
+/// CSRF token every gated review request must carry (ADR-0002).
+struct BridgeSession {
+    client: reqwest::Client,
+    cookie: String,
+    csrf_token: String,
+}
+
+/// Bootstrap the local dev-auth bridge and capture the session cookie and
+/// CSRF token — the shared preamble of every gated bridge call.
+async fn bootstrap_bridge_session(base_url: &str) -> Result<BridgeSession, String> {
+    let client = reqwest::Client::builder()
+        .user_agent(sp42_core::branding::USER_AGENT)
+        .build()
+        .map_err(|error| format!("bridge client failed to build: {error}"))?;
+    let bootstrap_request =
+        build_dev_auth_bootstrap_request(base_url, &DevAuthBootstrapRequest::default())
+            .map_err(|error| error.to_string())?;
+    let bootstrap_response = execute_local_http_request(&client, bootstrap_request).await?;
+    let bootstrap =
+        parse_dev_auth_status(&bootstrap_response.body).map_err(|error| error.to_string())?;
+    if !bootstrap.authenticated {
+        return Err("bridge bootstrap did not produce an authenticated session".to_string());
+    }
+    let cookie = session_cookie_from_headers(&bootstrap_response.headers)
+        .ok_or_else(|| "bridge bootstrap did not set a session cookie".to_string())?;
+    let csrf_token = bootstrap
+        .csrf_token
+        .ok_or_else(|| "bridge bootstrap did not return a CSRF token".to_string())?;
+    Ok(BridgeSession {
+        client,
+        cookie,
+        csrf_token,
+    })
+}
+
+/// POST a JSON body to a gated review route and parse the JSON response.
+async fn post_review_route<Request, Response>(
+    bridge: &BridgeSession,
+    base_url: &str,
+    path: &str,
+    request: &Request,
+) -> Result<Response, String>
+where
+    Request: serde::Serialize,
+    Response: serde::de::DeserializeOwned,
+{
+    let response = bridge
+        .client
+        .post(format!("{base_url}{path}"))
+        .header(COOKIE, bridge.cookie.as_str())
+        .header(
+            route_contracts::CSRF_HEADER_NAME,
+            bridge.csrf_token.as_str(),
+        )
+        .json(request)
+        .send()
+        .await
+        .map_err(|error| format!("review request to {path} failed: {error}"))?;
+    let status = response.status();
+    if !status.is_success() {
+        // Keep the server's JSON detail: refusals like the operator-ended
+        // reopen gate carry their etiquette guidance in the body.
+        let body = response.text().await.unwrap_or_default();
+        return Err(format!(
+            "review request to {path} failed: HTTP {status}: {body}"
+        ));
+    }
+    response
+        .json::<Response>()
+        .await
+        .map_err(|error| format!("review response from {path} was invalid: {error}"))
+}
+
+/// Route a `review` subcommand to its runner on a fresh Tokio runtime
+/// (`reqwest` needs a reactor; mirrors `render_verify_page`).
+fn dispatch_review(action: ReviewAction) -> Result<String, String> {
+    let runtime = tokio::runtime::Runtime::new()
+        .map_err(|error| format!("failed to start async runtime: {error}"))?;
+    match action {
+        ReviewAction::Open(args) => {
+            let format = args.fmt.format;
+            let response = runtime.block_on(run_review_open(&args))?;
+            render_review_output(format, &response, render_review_open_text(&response))
+        }
+        ReviewAction::Poll(args) => {
+            let format = args.fmt.format;
+            let response = runtime.block_on(run_review_poll(&args))?;
+            render_review_output(format, &response, render_review_poll_text(&response))
+        }
+        ReviewAction::Queue(args) => {
+            let format = args.fmt.format;
+            let response = runtime.block_on(run_review_queue(&args))?;
+            let text = format!(
+                "queued {} prompt(s)\n{}",
+                response.queued,
+                render_review_snapshot_line(&response.session)
+            );
+            render_review_output(format, &response, text)
+        }
+        ReviewAction::Reply(args) => {
+            let format = args.fmt.format;
+            let response = runtime.block_on(run_review_reply(&args))?;
+            let text = format!(
+                "reply delivered\n{}",
+                render_review_snapshot_line(&response.session)
+            );
+            render_review_output(format, &response, text)
+        }
+        ReviewAction::End(args) => {
+            let format = args.fmt.format;
+            let response = runtime.block_on(run_review_end(&args))?;
+            let text = format!(
+                "session ended by agent\n{}",
+                render_review_snapshot_line(&response.session)
+            );
+            render_review_output(format, &response, text)
+        }
+        ReviewAction::Sessions(args) => {
+            let format = args.fmt.format;
+            let response = runtime.block_on(run_review_sessions(&args))?;
+            render_review_output(format, &response, render_review_sessions_text(&response))
+        }
+    }
+}
+
+async fn run_review_open(args: &ReviewOpenArgs) -> Result<ReviewOpenResponse, String> {
+    let bridge = bootstrap_bridge_session(&args.bridge_base_url).await?;
+    let request = ReviewOpenRequest {
+        wiki_id: args.wiki.clone(),
+        target: args.target.clone(),
+        rev_id: args.rev.unwrap_or(0),
+        reopen: args.reopen,
+    };
+    post_review_route(
+        &bridge,
+        &args.bridge_base_url,
+        route_contracts::DEV_REVIEW_OPEN_PATH,
+        &request,
+    )
+    .await
+}
+
+/// Wait for operator feedback. Each request is a bounded server-side wait;
+/// the loop re-arms until feedback, an end, or a missing session, so from
+/// the agent's side this behaves like one long poll. Waiting narration goes
+/// to stderr; stdout stays reserved for the final structured response.
+async fn run_review_poll(args: &ReviewPollArgs) -> Result<ReviewPollResponse, String> {
+    let bridge = bootstrap_bridge_session(&args.bridge_base_url).await?;
+    let title = sp42_core::parse_page_target(&args.target).title;
+    if let Some(reply) = &args.agent_reply {
+        let request = ReviewReplyRequest {
+            wiki_id: args.wiki.clone(),
+            title: title.clone(),
+            text: reply.clone(),
+        };
+        let _: ReviewAckResponse = post_review_route(
+            &bridge,
+            &args.bridge_base_url,
+            route_contracts::DEV_REVIEW_REPLY_PATH,
+            &request,
+        )
+        .await?;
+    }
+    let request = ReviewPollRequest {
+        wiki_id: args.wiki.clone(),
+        title: title.clone(),
+        wait_ms: 0,
+    };
+    loop {
+        let response: ReviewPollResponse = post_review_route(
+            &bridge,
+            &args.bridge_base_url,
+            route_contracts::DEV_REVIEW_POLL_PATH,
+            &request,
+        )
+        .await?;
+        if args.once || response.status != ReviewPollStatus::Waiting {
+            return Ok(response);
+        }
+        eprintln!(
+            "review poll: still waiting for operator feedback on {title} \
+             (re-arming; queued feedback is never lost)"
+        );
+    }
+}
+
+/// Build the queue prompt from CLI anchor flags: `--selected-text` makes a
+/// text prompt, `--block`/`--ref-id` a block prompt, neither a free-form
+/// message. Anchored prompts require `--block` so the anchor is complete.
+fn build_review_queue_prompt(args: &ReviewQueueArgs) -> Result<ReviewPrompt, String> {
+    let anchored = args.ref_id.is_some() || args.selected_text.is_some();
+    let Some(block_ordinal) = args.block else {
+        if anchored {
+            return Err("--ref-id/--selected-text need --block to anchor the prompt".to_string());
+        }
+        return Ok(ReviewPrompt {
+            kind: ReviewPromptKind::Message,
+            prompt: args.message.clone(),
+            anchor: None,
+        });
+    };
+    let kind = if args.selected_text.is_some() {
+        ReviewPromptKind::Text
+    } else {
+        ReviewPromptKind::Block
+    };
+    Ok(ReviewPrompt {
+        kind,
+        prompt: args.message.clone(),
+        anchor: Some(ReviewAnchor {
+            block_ordinal,
+            ref_id: args.ref_id.clone(),
+            selected_text: args.selected_text.clone(),
+        }),
+    })
+}
+
+async fn run_review_queue(args: &ReviewQueueArgs) -> Result<ReviewQueueResponse, String> {
+    let bridge = bootstrap_bridge_session(&args.bridge_base_url).await?;
+    let request = ReviewQueueRequest {
+        wiki_id: args.wiki.clone(),
+        title: sp42_core::parse_page_target(&args.target).title,
+        prompts: vec![build_review_queue_prompt(args)?],
+        end_session: args.end,
+    };
+    post_review_route(
+        &bridge,
+        &args.bridge_base_url,
+        route_contracts::DEV_REVIEW_PROMPTS_PATH,
+        &request,
+    )
+    .await
+}
+
+async fn run_review_reply(args: &ReviewReplyArgs) -> Result<ReviewAckResponse, String> {
+    let bridge = bootstrap_bridge_session(&args.bridge_base_url).await?;
+    let request = ReviewReplyRequest {
+        wiki_id: args.wiki.clone(),
+        title: sp42_core::parse_page_target(&args.target).title,
+        text: args.message.clone(),
+    };
+    post_review_route(
+        &bridge,
+        &args.bridge_base_url,
+        route_contracts::DEV_REVIEW_REPLY_PATH,
+        &request,
+    )
+    .await
+}
+
+async fn run_review_end(args: &ReviewEndArgs) -> Result<ReviewAckResponse, String> {
+    let bridge = bootstrap_bridge_session(&args.bridge_base_url).await?;
+    let request = ReviewEndRequest {
+        wiki_id: args.wiki.clone(),
+        title: sp42_core::parse_page_target(&args.target).title,
+    };
+    post_review_route(
+        &bridge,
+        &args.bridge_base_url,
+        route_contracts::DEV_REVIEW_END_PATH,
+        &request,
+    )
+    .await
+}
+
+async fn run_review_sessions(args: &ReviewSessionsArgs) -> Result<ReviewSessionsResponse, String> {
+    let client = reqwest::Client::builder()
+        .user_agent(sp42_core::branding::USER_AGENT)
+        .build()
+        .map_err(|error| format!("bridge client failed to build: {error}"))?;
+    let url = format!(
+        "{}{}",
+        args.bridge_base_url,
+        route_contracts::DEV_REVIEW_SESSIONS_PATH
+    );
+    let response = client
+        .get(&url)
+        .send()
+        .await
+        .map_err(|error| format!("review sessions request failed: {error}"))?
+        .error_for_status()
+        .map_err(|error| format!("review sessions request failed: {error}"))?;
+    response
+        .json::<ReviewSessionsResponse>()
+        .await
+        .map_err(|error| format!("review sessions payload was invalid: {error}"))
+}
+
+/// Shared review output shaping: JSON is the machine contract; text and
+/// markdown share the same line-oriented rendering.
+fn render_review_output<T: serde::Serialize>(
+    format: OutputFormat,
+    value: &T,
+    text: String,
+) -> Result<String, String> {
+    match format {
+        OutputFormat::Json => {
+            serde_json::to_string_pretty(value).map_err(|error| error.to_string())
+        }
+        OutputFormat::Text => Ok(text),
+        OutputFormat::Markdown => Ok(format!("## Review session\n\n```\n{text}\n```")),
+    }
+}
+
+fn render_review_snapshot_line(session: &ReviewSessionSnapshot) -> String {
+    let ended = session.ended_by.map_or(String::new(), |by| {
+        format!(", ended by {by:?}").to_lowercase()
+    });
+    format!(
+        "session: {} ({}) rev {} — {:?}, {} pending prompt(s){}",
+        session.title,
+        session.wiki_id,
+        session.rev_id,
+        session.status,
+        session.pending_prompts,
+        ended
+    )
+}
+
+fn render_review_open_text(response: &ReviewOpenResponse) -> String {
+    format!(
+        "{}\noutline: {} block(s)\nnext: {}",
+        render_review_snapshot_line(&response.session),
+        response.outline.len(),
+        response.next_step
+    )
+}
+
+fn render_review_prompt_line(prompt: &ReviewPrompt) -> String {
+    let anchor = prompt.anchor.as_ref().map_or(String::new(), |anchor| {
+        let ref_part = anchor
+            .ref_id
+            .as_deref()
+            .map_or(String::new(), |ref_id| format!(", ref {ref_id}"));
+        let text_part = anchor
+            .selected_text
+            .as_deref()
+            .map_or(String::new(), |text| format!(", text \"{text}\""));
+        format!(" (block {}{ref_part}{text_part})", anchor.block_ordinal)
+    });
+    format!("- [{:?}] {}{anchor}", prompt.kind, prompt.prompt).to_string()
+}
+
+fn render_review_poll_text(response: &ReviewPollResponse) -> String {
+    let mut lines = vec![format!("status: {:?}", response.status).to_lowercase()];
+    lines.extend(response.prompts.iter().map(render_review_prompt_line));
+    if let Some(ended_by) = response.ended_by {
+        lines.push(format!("ended by: {ended_by:?}").to_lowercase());
+    }
+    lines.push(format!("next: {}", response.next_step));
+    lines.join("\n")
+}
+
+fn render_review_sessions_text(response: &ReviewSessionsResponse) -> String {
+    if response.sessions.is_empty() {
+        return "no review sessions".to_string();
+    }
+    response
+        .sessions
+        .iter()
+        .map(render_review_snapshot_line)
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
 async fn execute_local_http_request(
     client: &reqwest::Client,
     request: HttpRequest,
@@ -3466,12 +3969,14 @@ mod tests {
 
     use super::{
         ActionKind, BareUrlAction, BareUrlCliMode, BareUrlCliOptions, BareUrlExecuteReport, Cli,
-        CliOptions, Command, ContextPreviewOptions, LOCAL_SERVER_BASE_URL, OutputFormat, ShellMode,
-        VerifyPageCliOptions, WorkbenchOptions, render_action_preview, render_backlog_preview,
+        CliOptions, Command, ContextPreviewOptions, FormatArg, LOCAL_SERVER_BASE_URL, OutputFormat,
+        ReviewAction, ReviewAnchor, ReviewPollResponse, ReviewPollStatus, ReviewPrompt,
+        ReviewPromptKind, ReviewQueueArgs, ShellMode, VerifyPageCliOptions, WorkbenchOptions,
+        build_review_queue_prompt, render_action_preview, render_backlog_preview,
         render_bare_url_execute, render_bare_url_proposals, render_context_preview,
-        render_coordination_preview, render_parity_report, render_queue, render_scenario_report,
-        render_session_digest, render_stream_preview, render_workbench, select_bare_url_proposal,
-        server_report_lines,
+        render_coordination_preview, render_parity_report, render_queue, render_review_poll_text,
+        render_scenario_report, render_session_digest, render_stream_preview, render_workbench,
+        select_bare_url_proposal, server_report_lines,
     };
     use clap::Parser;
     use serde_json::json;
@@ -4449,5 +4954,122 @@ mod tests {
             select_bare_url_proposal(&response, 1).expect_err("should fail for missing ordinal");
         assert!(error.contains("no bare-URL proposal for ordinal 1"));
         assert!(error.contains("declined: []"));
+    }
+
+    #[test]
+    fn review_open_args_parse_target_wiki_rev_and_reopen() {
+        let cli = Cli::parse_from([
+            "sp42-cli",
+            "review",
+            "open",
+            "https://en.wikipedia.org/wiki/Example",
+            "--wiki",
+            "enwiki",
+            "--rev",
+            "5",
+            "--reopen",
+        ]);
+        let Command::Review(args) = cli.command else {
+            panic!("expected review command");
+        };
+        let ReviewAction::Open(open) = args.action else {
+            panic!("expected open action");
+        };
+        assert_eq!(open.target, "https://en.wikipedia.org/wiki/Example");
+        assert_eq!(open.wiki, "enwiki");
+        assert_eq!(open.rev, Some(5));
+        assert!(open.reopen);
+        assert_eq!(open.bridge_base_url, LOCAL_SERVER_BASE_URL);
+    }
+
+    #[test]
+    fn review_queue_prompt_builds_each_anchor_shape() {
+        let base = ReviewQueueArgs {
+            target: "Exemple".to_string(),
+            message: "tighten this".to_string(),
+            wiki: "frwiki".to_string(),
+            block: None,
+            ref_id: None,
+            selected_text: None,
+            end: false,
+            bridge_base_url: LOCAL_SERVER_BASE_URL.to_string(),
+            fmt: FormatArg {
+                format: OutputFormat::Text,
+            },
+        };
+
+        let message = build_review_queue_prompt(&base).expect("message prompt should build");
+        assert_eq!(message.kind, ReviewPromptKind::Message);
+        assert!(message.anchor.is_none());
+
+        let block = build_review_queue_prompt(&ReviewQueueArgs {
+            block: Some(3),
+            ref_id: Some("cite_ref-a_1-0".to_string()),
+            ..clone_review_queue_args(&base)
+        })
+        .expect("block prompt should build");
+        assert_eq!(block.kind, ReviewPromptKind::Block);
+        let anchor = block.anchor.expect("block prompt should carry an anchor");
+        assert_eq!(anchor.block_ordinal, 3);
+        assert_eq!(anchor.ref_id.as_deref(), Some("cite_ref-a_1-0"));
+
+        let text = build_review_queue_prompt(&ReviewQueueArgs {
+            block: Some(2),
+            selected_text: Some("the quote".to_string()),
+            ..clone_review_queue_args(&base)
+        })
+        .expect("text prompt should build");
+        assert_eq!(text.kind, ReviewPromptKind::Text);
+
+        let missing_block = build_review_queue_prompt(&ReviewQueueArgs {
+            ref_id: Some("cite_ref-a_1-0".to_string()),
+            ..clone_review_queue_args(&base)
+        })
+        .expect_err("an anchored prompt without --block must refuse");
+        assert!(missing_block.contains("--block"));
+    }
+
+    fn clone_review_queue_args(args: &ReviewQueueArgs) -> ReviewQueueArgs {
+        ReviewQueueArgs {
+            target: args.target.clone(),
+            message: args.message.clone(),
+            wiki: args.wiki.clone(),
+            block: args.block,
+            ref_id: args.ref_id.clone(),
+            selected_text: args.selected_text.clone(),
+            end: args.end,
+            bridge_base_url: args.bridge_base_url.clone(),
+            fmt: FormatArg {
+                format: OutputFormat::Text,
+            },
+        }
+    }
+
+    #[test]
+    fn review_poll_text_lists_prompts_and_next_step() {
+        let response = ReviewPollResponse {
+            contract_version: 1,
+            status: ReviewPollStatus::Feedback,
+            prompts: vec![ReviewPrompt {
+                kind: ReviewPromptKind::Text,
+                prompt: "check this quote".to_string(),
+                anchor: Some(ReviewAnchor {
+                    block_ordinal: 3,
+                    ref_id: Some("cite_ref-x_2-0".to_string()),
+                    selected_text: Some("the quote".to_string()),
+                }),
+            }],
+            session_ended: false,
+            ended_by: None,
+            next_step: "apply the feedback".to_string(),
+        };
+
+        let text = render_review_poll_text(&response);
+
+        assert!(text.contains("status: feedback"));
+        assert!(text.contains("check this quote"));
+        assert!(text.contains("block 3"));
+        assert!(text.contains("cite_ref-x_2-0"));
+        assert!(text.contains("next: apply the feedback"));
     }
 }

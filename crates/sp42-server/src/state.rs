@@ -13,6 +13,7 @@ use crate::coordination::CoordinationRegistry;
 use crate::deployment::DeploymentConfig;
 use crate::live_queue::IngestionSupervisorSnapshot;
 use crate::local_env::LocalOAuthConfig;
+use crate::review_routes::SharedReviewSessions;
 use crate::revision_artifacts::{CachedRenderedHunkPreview, CachedRevisionArtifacts};
 use crate::wikimedia_capabilities::CapabilityProbeTargets;
 
@@ -38,6 +39,7 @@ pub(crate) struct AppState {
     pub(crate) capability_targets: CapabilityProbeTargets,
     pub(crate) clock: Arc<dyn Clock>,
     pub(crate) coordination: CoordinationRegistry,
+    pub(crate) review_sessions: SharedReviewSessions,
     pub(crate) deployment: DeploymentConfig,
     pub(crate) wiki_registry: WikiRegistry,
     pub(crate) wikitext_editor: Arc<dyn WikitextEditor>,

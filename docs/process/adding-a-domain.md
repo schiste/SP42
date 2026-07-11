@@ -70,7 +70,11 @@ platform  ◄─  domains  ◄─  shells
    /crates/sp42-<domain>/   @your-handle
    ```
 6. **Document it.** Add a `docs/domains/<domain>/` entry describing the capability
-   and any domain-specific PRDs/ADRs.
+   and any domain-specific PRDs/ADRs. File new ADRs by the reuse-by-design test
+   (see "How ADRs and PRDs are filed" in [docs/README.md](../README.md)): a
+   reusable mechanism/contract ADR is platform-homed even when your domain
+   motivated it; your domain's own policy/workflow ADRs live in
+   `docs/domains/<domain>/adr/`.
 7. **Verify green.** Run:
    ```sh
    ./scripts/check-layering.sh

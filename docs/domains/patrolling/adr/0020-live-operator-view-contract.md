@@ -3,6 +3,7 @@
 **Status:** Accepted
 **Date:** 2026-07-11
 **Author:** Luis Villa (drafted by Claude Code)
+**Summary:** The operator review workbench reads one server-assembled `GET /operator/live/{wiki_id}` payload — queue, selected diff, scoring, and ready-to-POST action preflight, resolved server-side in dependency order — so the client gets one consistent snapshot and never reproduces the assembly.
 
 **As-built:** retroactive characterization of a shipped contract (PRD-0002).
 There is no forward "closing PR"; this records the `GET /operator/live/{wiki_id}`

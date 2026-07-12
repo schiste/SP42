@@ -3,6 +3,7 @@
 **Status:** Accepted
 **Date:** 2026-07-11
 **Author:** Luis Villa (drafted by Claude Code)
+**Summary:** Multi-operator coordination is six message kinds relayed through a server-authoritative hub (authenticated actor rewriting, echo suppression, no backfill) and folded by one deterministic last-writer-wins-until-pinned reducer run identically on client and server, framed as MessagePack over an injectable `WebSocket` trait.
 
 **As-built:** retroactive characterization of a shipped contract (PRD-0006).
 Records the coordination message kinds, the relay/fan-out, room state, and the

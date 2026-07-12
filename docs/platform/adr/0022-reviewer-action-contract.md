@@ -3,6 +3,7 @@
 **Status:** Accepted
 **Date:** 2026-07-11
 **Author:** Luis Villa (drafted by Claude Code)
+**Summary:** Reviewer dispositions execute through one capability-gated `POST /dev/actions/execute` route that acquires MediaWiki tokens server-side just-in-time (no token material on the wire), enforces app-layer CSRF plus `baserevid` binding, and refuses with zero writes on drift.
 
 **As-built:** retroactive characterization of a shipped contract (PRD-0004).
 Records the action envelope — the disposition set, the execute route, token

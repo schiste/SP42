@@ -3,6 +3,7 @@
 **Status:** Accepted
 **Date:** 2026-07-11
 **Author:** Luis Villa (drafted by Claude Code)
+**Summary:** Edit scores are itemized explanations (a signed contribution per signal, integer total, no model confidence); all tuning lives in versioned per-wiki policy files compiled to a hot-path struct, and the queue ranks deterministically on the total — the mechanism is platform, the signal catalogue is patrolling-specific today.
 
 **As-built:** retroactive characterization of a shipped contract (PRD-0003).
 Records the composite-score shape, the scoring-policy file schema, and the

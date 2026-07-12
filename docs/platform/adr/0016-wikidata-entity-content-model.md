@@ -3,6 +3,7 @@
 **Status:** Proposed
 **Date:** 2026-07-01
 **Author:** Luis Villa (drafted by Claude Code)
+**Summary:** Wikidata support treats the content model as a first-class per-revision fact, adding an additive `EntityDiff` and content-model routing so entity revisions are read and diffed alongside wikitext without disturbing the wikitext path.
 
 Spawned by PRD-0011 (Wikidata as a first-class SP42 target). This ADR owns the
 **read** mechanism; the entity **write** contract is ADR-0017.

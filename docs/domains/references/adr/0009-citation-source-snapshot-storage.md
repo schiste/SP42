@@ -3,6 +3,7 @@
 **Status:** Accepted
 **Date:** 2026-06-07
 **Author:** Luis Villa
+**Summary:** Verification is reproducible because two content-addressed, versioned records — a source snapshot and an immutable verdict record — are persisted behind a `Storage` trait, so a verdict replays deterministically by fixing the substrate and re-running the panel rather than trusting the model.
 
 ## Context
 

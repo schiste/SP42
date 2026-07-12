@@ -3,6 +3,7 @@
 **Status:** Accepted
 **Date:** 2026-06-27
 **Author:** Christophe Henner (drafted with Claude)
+**Summary:** Login is required via Wikimedia OAuth, and any Wikimedia project resolves from a vendored SiteMatrix snapshot (`dbname → base url`) under a universal default scoring policy, so SP42 works across projects without per-wiki configuration.
 
 ## Context
 

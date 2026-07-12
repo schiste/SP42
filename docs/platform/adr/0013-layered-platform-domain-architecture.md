@@ -3,6 +3,7 @@
 **Status:** Accepted
 **Date:** 2026-06-26
 **Author:** Christophe Henner (drafted with Claude)
+**Summary:** The workspace is three layers expressed as `crates/{platform,domains,shells}/` folders with a one-way dependency direction (platform ◄ domains ◄ shells), classified by a reuse-by-design rule and enforced mechanically by `check-layering.sh`.
 
 **Implementation note (2026-07-10):** Implemented, with one divergence from
 Decision §1. The extraction landed (`sp42-platform`/`sp42-patrol`/`sp42-citation`

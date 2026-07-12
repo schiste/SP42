@@ -3,6 +3,7 @@
 **Status:** Accepted
 **Date:** 2026-06-04
 **Author:** Luis Villa
+**Summary:** Content edits mutate wikitext through a `WikitextEditor` trait that addresses `<ref>`/citation nodes by document-order ordinal, re-grounds on the expected node text and refuses (not throws) on drift or out-of-range, and re-serializes the page losslessly.
 
 **Implementation note (2026-06-09):** Implemented (Decisions 1-6). The open
 licensing gate resolved via ADR-0001 §3 — SP42 is `GPL-3.0-only`, so the

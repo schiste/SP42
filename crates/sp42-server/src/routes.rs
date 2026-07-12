@@ -19,7 +19,8 @@ use crate::citation_routes::{
 };
 use crate::operator_live::get_live_operator_view;
 use crate::revision_artifacts::{
-    get_rendered_hunk_preview, get_revision_diff, get_revision_media_diff,
+    get_rendered_hunk_preview, get_revision_content_diff, get_revision_diff,
+    get_revision_media_diff,
 };
 use crate::runtime_status::{
     get_debug_summary, get_healthz, get_operator_readiness, get_operator_report,
@@ -149,6 +150,10 @@ fn operator_api_routes(router: Router<AppState>) -> Router<AppState> {
         .route(
             route_contracts::OPERATOR_DIFF_PATTERN,
             get(get_revision_diff),
+        )
+        .route(
+            route_contracts::OPERATOR_CONTENT_DIFF_PATTERN,
+            get(get_revision_content_diff),
         )
         .route(
             route_contracts::OPERATOR_MEDIA_DIFF_PATTERN,

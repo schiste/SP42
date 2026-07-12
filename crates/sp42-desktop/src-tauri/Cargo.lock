@@ -3063,6 +3063,7 @@ dependencies = [
  "serde_json",
  "sp42-platform",
  "sp42-types",
+ "url",
 ]
 
 [[package]]

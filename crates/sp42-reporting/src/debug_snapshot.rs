@@ -276,6 +276,7 @@ mod tests {
     fn builds_snapshot_from_available_inputs() {
         let config = sp42_wiki::test_fixtures::frwiki_config();
         let event = EditEvent {
+            content_model: None,
             wiki_id: "frwiki".to_string(),
             title: "Exemple".to_string(),
             namespace: 0,
@@ -388,6 +389,7 @@ mod tests {
     #[test]
     fn selected_scoring_traces_include_signal_breakdown() {
         let event = EditEvent {
+            content_model: None,
             wiki_id: "frwiki".to_string(),
             title: "Nouvelle page".to_string(),
             namespace: 0,

@@ -1,7 +1,7 @@
 # ADR-0020: Live-operator-view contract — the server-assembled patrol payload
 
 **Status:** Accepted
-**Date:** 2026-07-12
+**Date:** 2026-07-11
 **Author:** Luis Villa (drafted by Claude Code)
 
 **As-built:** retroactive characterization of a shipped contract (PRD-0002).

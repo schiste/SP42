@@ -4,27 +4,44 @@ use sp42_citation::{
     render_page_verification_text, source_unavailable_detail,
 };
 use sp42_core::{
-    CitationFinding, CitoidMetadata, DevAuthBootstrapRequest, GroundingStatus,
-    PageVerificationReport, parse_page_target,
+    BareUrlApplyRequest, CitationConcernKind, CitationFinding, CitationVerdict, CitoidMetadata,
+    DevAuthBootstrapRequest, GroundingStatus, PageVerificationReport, ReverifyFindingRequest,
+    SessionActionExecutionRequest, SessionActionKind, SupportLevel, apply_reverified_finding,
+    parse_page_target,
 };
 use sp42_reporting::ReportSection;
 use sp42_ui::{
-    Button, ButtonProps, ButtonType, CommandBar, CommandBarProps, CommandTitle, CommandTitleProps,
-    DataPanel, DataPanelProps, Density, EvidenceBlock, EvidenceBlockProps, EvidenceDisclosure,
-    EvidenceDisclosureProps, Field, FieldProps, Gap, Inline, InlineProps, InventoryHeader,
-    InventoryHeaderProps, InventoryShell, InventoryShellProps, Link, LinkProps, MetaText,
-    MetaTextProps, PageShell, PageShellProps, PanelGrid, PanelGridProps, RawReportDisclosure,
-    RawReportDisclosureProps, ResultCard, ResultCardHeader, ResultCardHeaderProps, ResultCardProps,
-    ResultDisclosure, ResultDisclosureProps, ResultList, ResultListProps, StatusBadge,
-    StatusBadgeProps, StatusRegion, StatusRegionProps, Text, TextElement, TextInput,
-    TextInputProps, TextProps, TextWeight, Tone, Width,
+    Button, ButtonProps, ButtonSurface, ButtonType, CommandBar, CommandBarProps, CommandTitle,
+    CommandTitleProps, DataPanel, DataPanelProps, Density, DiffEditPanel, DiffEditPanelProps,
+    EvidenceBlock, EvidenceBlockProps, EvidenceDisclosure, EvidenceDisclosureProps, Field,
+    FieldProps, Gap, Inline, InlineProps, InventoryHeader, InventoryHeaderProps, InventoryShell,
+    InventoryShellProps, Link, LinkProps, MetaText, MetaTextProps, PageShell, PageShellProps,
+    PanelGrid, PanelGridProps, RawReportDisclosure, RawReportDisclosureProps, ResultCard,
+    ResultCardHeader, ResultCardHeaderProps, ResultCardProps, ResultDisclosure,
+    ResultDisclosureProps, ResultList, ResultListProps, Select, SelectOption, SelectProps, Stack,
+    StackProps, StatusBadge, StatusBadgeProps, StatusRegion, StatusRegionProps, Text, TextElement,
+    TextInput, TextInputProps, TextProps, TextWeight, Tone, Width,
 };
 
 use crate::components::style::wiki_base_url;
 use crate::components::ui_children;
-use crate::platform::auth::{bootstrap_dev_auth_session, fetch_dev_auth_session_status};
-use crate::platform::citation::fetch_page_report;
+use crate::platform::auth::{
+    bootstrap_dev_auth_session, execute_dev_auth_action, fetch_dev_auth_session_status,
+};
+use crate::platform::citation::{
+    apply_bare_url_proposal, fetch_bare_url_proposals, fetch_page_report, reverify_finding,
+};
 use crate::platform::config::{is_local_deployment, selected_wiki_id};
+
+/// A re-verify result to fold into the page report: the card's stable identity
+/// (`ref_id`, `use_site_ordinal`) plus its freshly re-verified finding.
+type ReverifyTarget = (String, u32, CitationFinding);
+
+/// Context handle the action row uses to fold a re-verify result into the page-level report, so a
+/// verdict change regroups the card (and updates the section counts/colors) rather than only
+/// refreshing the card in place. Provided by [`CitationSurface`].
+#[derive(Clone, Copy)]
+struct ReverifyApply(Callback<ReverifyTarget>);
 
 #[component]
 pub fn CitationSurface() -> impl IntoView {
@@ -34,6 +51,22 @@ pub fn CitationSurface() -> impl IntoView {
     let (report, set_report) = signal(None::<PageVerificationReport>);
     let (load_error, set_load_error) = signal(None::<String>);
     let (loading, set_loading) = signal(false);
+
+    // Re-verify updates the page report (not just the card's local signal), so a finding whose
+    // verdict changes regroups under the correct section and the tallies/colors update. Provided as
+    // context so the deeply-nested action row can reach it without threading a prop through every
+    // section/card. The tuple is (ref_id, use_site_ordinal, fresh finding) — the card's stable
+    // identity plus its re-verified verdict.
+    let apply_reverify: ReverifyApply = ReverifyApply(Callback::new(
+        move |(ref_id, ordinal, fresh): ReverifyTarget| {
+            set_report.update(|maybe| {
+                if let Some(current) = maybe.as_mut() {
+                    apply_reverified_finding(current, &ref_id, ordinal, fresh);
+                }
+            });
+        },
+    ));
+    provide_context(apply_reverify);
 
     let load_action = Action::new_local(move |_: &()| {
         let wiki = wiki_id.get_untracked();
@@ -355,7 +388,15 @@ fn FindingGroupSection(
                     .map(|finding| {
                         let article_url =
                             article_anchor_url(&wiki_id, &title, rev_id, &finding.ref_id);
-                        view! { <FindingCard finding=finding article_url=article_url /> }
+                        view! {
+                            <FindingCardContainer
+                                finding=finding
+                                article_url=article_url
+                                wiki_id=wiki_id.clone()
+                                title=title.clone()
+                                rev_id=rev_id
+                            />
+                        }
                     })
                     .collect_view()}
                     }.into_any())))}
@@ -388,6 +429,729 @@ fn article_anchor_url(wiki_id: &str, title: &str, rev_id: u64, ref_id: &str) -> 
     Some(url.to_string())
 }
 
+/// Owns the mutable, re-verifiable copy of one finding (PRD-0014): renders the
+/// read-only `FindingCard` plus, beneath it, the action row for
+/// `Partial`/`NotSupported` verdicts. Re-verify replaces the signal in place,
+/// so both re-render with the fresh result without touching the page-level
+/// report signal.
+#[component]
+fn FindingCardContainer(
+    finding: CitationFinding,
+    article_url: Option<String>,
+    wiki_id: String,
+    title: String,
+    rev_id: u64,
+) -> impl IntoView {
+    let current = RwSignal::new(finding);
+
+    view! {
+        {move || view! { <FindingCard finding=current.get() article_url=article_url.clone() /> }}
+        {move || {
+            finding_has_action_row(&current.get()).then(|| {
+                view! {
+                    <FindingActionRow
+                        finding=current
+                        wiki_id=wiki_id.clone()
+                        title=title.clone()
+                        rev_id=rev_id
+                    />
+                }
+            })
+        }}
+    }
+}
+
+/// Which of the four action-row controls is currently open. `None` of them
+/// pre-selected — the row starts fully closed (PRD-0014 `DoD`: no default).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum OpenPanel {
+    None,
+    EditText,
+    FixCitation,
+    FlagCitation,
+}
+
+/// Which flow "Fix citation" routes to (PRD-0014, Resolved question 1):
+/// - `Insert` (PRD-0012): no ref to replace — an unsourced claim.
+/// - `Replace` (PRD-0008): the finding's own ref is a **bare URL**, so bare-URL
+///   repair applies to it.
+/// - `AlreadyFormatted`: the finding traces to an existing ref that is already a
+///   formatted citation (not a bare URL). Bare-URL repair does not apply — and
+///   crucially, we must not offer it, because matching a repair proposal by the
+///   shared source URL could otherwise apply *another* bare ref's repair to this
+///   formatted citation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum FixCitationRoute {
+    Replace,
+    Insert,
+    AlreadyFormatted,
+}
+
+fn fix_citation_route(finding: &CitationFinding) -> FixCitationRoute {
+    if finding.ref_id.is_empty() {
+        FixCitationRoute::Insert
+    } else if finding.is_bare_url_ref {
+        FixCitationRoute::Replace
+    } else {
+        FixCitationRoute::AlreadyFormatted
+    }
+}
+
+/// An action row renders only for `Partial`/`NotSupported` findings;
+/// `Supported`/`SourceUnavailable` findings stay read-only (PRD-0014 `DoD`).
+fn finding_has_action_row(finding: &CitationFinding) -> bool {
+    matches!(
+        finding.verdict,
+        CitationVerdict::Judged(SupportLevel::Partial | SupportLevel::NotSupported)
+    )
+}
+
+/// The concern kind SP42 suggests from `finding.verdict` (PRD-0014) — a
+/// suggestion only; the operator may override to any wiki-configured kind
+/// regardless of verdict (Resolved question 5).
+fn suggested_concern_kind(finding: &CitationFinding) -> Option<CitationConcernKind> {
+    match finding.verdict {
+        CitationVerdict::Judged(SupportLevel::Partial) => Some(CitationConcernKind::PartialSupport),
+        CitationVerdict::Judged(SupportLevel::NotSupported) => {
+            Some(CitationConcernKind::FailedVerification)
+        }
+        _ => None,
+    }
+}
+
+fn concern_kind_options() -> Vec<SelectOption> {
+    vec![
+        SelectOption::new(
+            CitationConcernKind::PartialSupport.label(),
+            "Partial support (span)",
+        ),
+        SelectOption::new(
+            CitationConcernKind::FailedVerification.label(),
+            "Failed verification (after ref)",
+        ),
+    ]
+}
+
+fn parse_concern_kind(value: &str) -> Option<CitationConcernKind> {
+    match value {
+        "partial-support" => Some(CitationConcernKind::PartialSupport),
+        "failed-verification" => Some(CitationConcernKind::FailedVerification),
+        _ => None,
+    }
+}
+
+/// Which concern kind "Confirm flag" applies (PRD-0014, Resolved question 5):
+/// the operator's selection always wins when present and parseable — SP42
+/// only suggests, never decides, so a value the operator chose (including a
+/// deliberate override away from the suggestion) takes priority over
+/// `finding.verdict`'s default.
+fn resolve_concern_kind(
+    selected: Option<&str>,
+    suggested: Option<CitationConcernKind>,
+) -> Option<CitationConcernKind> {
+    selected.and_then(parse_concern_kind).or(suggested)
+}
+
+/// The action row beneath a finding's card (PRD-0014): three equal-weight
+/// actions (edit article text / fix citation / flag citation) plus a fourth,
+/// always-available Re-verify control. None is pre-selected or defaulted;
+/// each opens its own propose/preview step inline, terminating in the same
+/// operator-confirmed apply every other action in this domain uses.
+#[component]
+fn FindingActionRow(
+    finding: RwSignal<CitationFinding>,
+    wiki_id: String,
+    title: String,
+    rev_id: u64,
+) -> impl IntoView {
+    let (open, set_open) = signal(OpenPanel::None);
+    let (status, set_status) = signal(String::new());
+    let (busy, set_busy) = signal(false);
+    // Present when rendered inside the page (always, in practice); absent only in an isolated
+    // component render. When present, Re-verify folds its result into the page report so the card
+    // regroups; when absent, we fall back to refreshing the card's local signal in place.
+    let reverify_apply = use_context::<ReverifyApply>();
+    // The revision subsequent Edit/Fix/Flag actions from this row anchor to. Seeded with the
+    // report's revision, but a successful Re-verify (which runs against the *latest* revision)
+    // advances it to the revision actually verified — otherwise a later confirmed action would
+    // carry a stale `baserevid` and could hit an edit conflict or anchor to the wrong revision.
+    let (base_rev_id, set_base_rev_id) = signal(rev_id);
+    let ordinal = finding.get_untracked().use_site_ordinal;
+    let edit_textarea_id = format!("sp42-citation-edit-{ordinal}");
+    let reason_textarea_id = format!("sp42-citation-reason-{ordinal}");
+    let concern_select_id = format!("sp42-citation-concern-{ordinal}");
+
+    Stack(StackProps::new(ui_children(move || {
+        view! {
+            {
+                let wiki_id = wiki_id.clone();
+                let title = title.clone();
+                Inline(InlineProps::new(ui_children(move || {
+                    let wiki_id = wiki_id.clone();
+                    let title = title.clone();
+                    view! {
+                        {Button(
+                            ButtonProps::new("Edit article text")
+                                .with_surface(ButtonSurface::Subtle)
+                                .with_density(Density::Compact)
+                                .with_disabled(Signal::derive(move || busy.get()))
+                                .on_click(move |_| {
+                                    set_status.set(String::new());
+                                    set_open.set(if open.get_untracked() == OpenPanel::EditText {
+                                        OpenPanel::None
+                                    } else {
+                                        OpenPanel::EditText
+                                    });
+                                }),
+                        )}
+                        {Button(
+                            ButtonProps::new("Fix citation")
+                                .with_surface(ButtonSurface::Subtle)
+                                .with_density(Density::Compact)
+                                .with_disabled(Signal::derive(move || busy.get()))
+                                .on_click(move |_| {
+                                    set_status.set(String::new());
+                                    set_open.set(if open.get_untracked() == OpenPanel::FixCitation {
+                                        OpenPanel::None
+                                    } else {
+                                        OpenPanel::FixCitation
+                                    });
+                                }),
+                        )}
+                        {Button(
+                            ButtonProps::new("Flag citation")
+                                .with_surface(ButtonSurface::Subtle)
+                                .with_density(Density::Compact)
+                                .with_disabled(Signal::derive(move || busy.get()))
+                                .on_click(move |_| {
+                                    set_status.set(String::new());
+                                    set_open.set(if open.get_untracked() == OpenPanel::FlagCitation {
+                                        OpenPanel::None
+                                    } else {
+                                        OpenPanel::FlagCitation
+                                    });
+                                }),
+                        )}
+                        {Button(
+                            ButtonProps::new("Re-verify")
+                                .with_surface(ButtonSurface::Ghost)
+                                .with_density(Density::Compact)
+                                .with_disabled(Signal::derive(move || busy.get()))
+                                .on_click(move |_| {
+                                    let current = finding.get_untracked();
+                                    let ref_id = current.ref_id.clone();
+                                    if ref_id.is_empty() {
+                                        set_status.set(
+                                            "Re-verify needs an existing citation reference on the page."
+                                                .to_string(),
+                                        );
+                                        return;
+                                    }
+                                    // The card's stable identity in the page report, used to fold
+                                    // the fresh verdict back in (and regroup) on success.
+                                    let apply_ref_id = current.ref_id.clone();
+                                    let apply_ordinal = current.use_site_ordinal;
+                                    let request = ReverifyFindingRequest {
+                                        wiki_id: wiki_id.clone(),
+                                        title: title.clone(),
+                                        rev_id: 0,
+                                        ref_id,
+                                        // The stable cross-revision key: the original cited URL
+                                        // (`archive_of` when verified via an archive, else the
+                                        // fetched provenance URL — both equal the use-site's
+                                        // `request.source_url`). Re-verify runs against the latest
+                                        // revision, where the page-global ordinal may have shifted,
+                                        // so match on the URL, not the position.
+                                        source_url: Some(
+                                            current
+                                                .archive_of
+                                                .as_ref()
+                                                .map_or_else(
+                                                    || current.provenance.url.to_string(),
+                                                    ToString::to_string,
+                                                ),
+                                        ),
+                                        // Positional fallback for older servers only.
+                                        use_site_ordinal: Some(current.use_site_ordinal),
+                                    };
+                                    set_busy.set(true);
+                                    set_status
+                                        .set("Re-verifying against the current article state...".to_string());
+                                    wasm_bindgen_futures::spawn_local(async move {
+                                        match reverify_finding(&request).await {
+                                            Ok(response) => {
+                                                // Advance the baserevid for later actions to the
+                                                // revision we actually verified against.
+                                                set_base_rev_id.set(response.rev_id);
+                                                // Fold the fresh verdict into the page report so the
+                                                // card regroups under its new section (counts/colors
+                                                // update too); fall back to the local card signal if
+                                                // there's no page context.
+                                                match reverify_apply {
+                                                    Some(apply) => apply.0.run((
+                                                        apply_ref_id.clone(),
+                                                        apply_ordinal,
+                                                        response.finding,
+                                                    )),
+                                                    None => finding.set(response.finding),
+                                                }
+                                                set_status.set("Re-verified.".to_string());
+                                            }
+                                            Err(error) => set_status.set(format!("Re-verify error: {error}")),
+                                        }
+                                        set_busy.set(false);
+                                    });
+                                }),
+                        )}
+                    }
+                    .into_any()
+                })).with_gap(Gap::Small))
+            }
+
+            {move || {
+                (!status.get().is_empty()).then(|| {
+                    MetaText(MetaTextProps::new(ui_children(move || {
+                        view! { {status.get()} }.into_any()
+                    })))
+                })
+            }}
+
+            {
+                let wiki_id = wiki_id.clone();
+                let title = title.clone();
+                move || {
+                    let wiki_id = wiki_id.clone();
+                    let title = title.clone();
+                    match open.get() {
+                    OpenPanel::EditText => {
+                        let edit_textarea_id = edit_textarea_id.clone();
+                        let edit_id_for_save = edit_textarea_id.clone();
+                        view! {
+                            {MetaText(MetaTextProps::new(ui_children(|| {
+                                view! {
+                                    "The operator authors the replacement text — SP42 does not suggest one."
+                                }
+                                    .into_any()
+                            })))}
+                            {DiffEditPanel(
+                                // Starts empty (PRD-0014 DoD) — SP42 never
+                                // authors claim content in this domain, not
+                                // even by pre-filling a starting point.
+                                DiffEditPanelProps::new(edit_textarea_id, String::new(), ui_children(move || {
+                                    let wiki_id = wiki_id.clone();
+                                    let title = title.clone();
+                                    let edit_id_for_save = edit_id_for_save.clone();
+                                    view! {
+                                        {Button(
+                                            ButtonProps::new("Save edit")
+                                                .with_tone(Tone::Success)
+                                                .with_density(Density::Compact)
+                                                .with_disabled(Signal::derive(move || busy.get()))
+                                                .on_click(move |_| {
+                                                    let claim = finding.get_untracked().claim.clone();
+                                                    let replacement = textarea_value(&edit_id_for_save);
+                                                    if replacement.trim().is_empty() {
+                                                        set_status.set(
+                                                            "Enter the replacement text before saving."
+                                                                .to_string(),
+                                                        );
+                                                        return;
+                                                    }
+                                                    let request = SessionActionExecutionRequest {
+                                                        wiki_id: wiki_id.clone(),
+                                                        kind: SessionActionKind::InlineEdit,
+                                                        rev_id: base_rev_id.get_untracked(),
+                                                        title: Some(title.clone()),
+                                                        target_user: None,
+                                                        undo_after_rev_id: None,
+                                                        summary: Some("SP42: inline edit".to_string()),
+                                                        selected_text: Some(claim),
+                                                        batch_rev_ids: None,
+                                                        replacement_text: Some(replacement),
+                                                        node_locator: None,
+                                                        concern_kind: None,
+                                                        reason: None,
+                                                    };
+                                                    set_busy.set(true);
+                                                    set_status.set("Saving edit...".to_string());
+                                                    wasm_bindgen_futures::spawn_local(async move {
+                                                        match execute_dev_auth_action(&request).await {
+                                                            Ok(response) if response.accepted => {
+                                                                set_status.set(
+                                                                    "Edit saved. Click Re-verify to check \
+                                                                     whether it resolved the mismatch."
+                                                                        .to_string(),
+                                                                );
+                                                                set_open.set(OpenPanel::None);
+                                                            }
+                                                            Ok(response) => {
+                                                                set_status.set(format!(
+                                                                    "Edit rejected: {}",
+                                                                    response.message.unwrap_or_default()
+                                                                ));
+                                                            }
+                                                            Err(error) => {
+                                                                set_status.set(format!("Edit error: {error}"));
+                                                            }
+                                                        }
+                                                        set_busy.set(false);
+                                                    });
+                                                }),
+                                        )}
+                                        {Button(
+                                            ButtonProps::new("Cancel")
+                                                .with_surface(ButtonSurface::Ghost)
+                                                .with_density(Density::Compact)
+                                                .on_click(move |_| set_open.set(OpenPanel::None)),
+                                        )}
+                                    }
+                                    .into_any()
+                                })),
+                            )}
+                        }
+                            .into_any()
+                    }
+                    OpenPanel::FixCitation => {
+                        view! {
+                            <FixCitationPanel
+                                finding=finding
+                                wiki_id=wiki_id.clone()
+                                title=title.clone()
+                                rev_id=base_rev_id.get_untracked()
+                                on_close=move || set_open.set(OpenPanel::None)
+                                set_status=set_status
+                            />
+                        }
+                            .into_any()
+                    }
+                    OpenPanel::FlagCitation => {
+                        let current = finding.get();
+                        let suggested = suggested_concern_kind(&current);
+                        let suggested_value =
+                            suggested.map(CitationConcernKind::label).unwrap_or_default();
+                        let concern_select_id = concern_select_id.clone();
+                        let concern_select_for_field = concern_select_id.clone();
+                        let concern_select_for_confirm = concern_select_id.clone();
+                        let reason_textarea_id = reason_textarea_id.clone();
+                        let reason_id_for_confirm = reason_textarea_id.clone();
+                        Stack(StackProps::new(ui_children(move || {
+                            view! {
+                                {Field(FieldProps::new(
+                                    "Concern kind",
+                                    ui_children(move || {
+                                        view! {
+                                            {Select(
+                                                SelectProps::new(
+                                                    concern_select_for_field.clone(),
+                                                    concern_kind_options(),
+                                                )
+                                                    .with_value(suggested_value),
+                                            )}
+                                        }
+                                            .into_any()
+                                    }),
+                                ))}
+                                {DiffEditPanel(
+                                    DiffEditPanelProps::new(
+                                        reason_textarea_id,
+                                        String::new(),
+                                        ui_children(move || {
+                                            let wiki_id = wiki_id.clone();
+                                            let title = title.clone();
+                                            let concern_select_for_confirm =
+                                                concern_select_for_confirm.clone();
+                                            let reason_id_for_confirm = reason_id_for_confirm.clone();
+                                            view! {
+                                                {Button(
+                                                    ButtonProps::new("Confirm flag")
+                                                        .with_tone(Tone::Warning)
+                                                        .with_density(Density::Compact)
+                                                        .with_disabled(Signal::derive(move || busy.get()))
+                                                        .on_click(move |_| {
+                                                            let current = finding.get_untracked();
+                                                            let kind = resolve_concern_kind(
+                                                                select_value(&concern_select_for_confirm)
+                                                                    .as_deref(),
+                                                                suggested_concern_kind(&current),
+                                                            );
+                                                            let Some(kind) = kind else {
+                                                                set_status.set(
+                                                                    "Choose a concern kind before confirming."
+                                                                        .to_string(),
+                                                                );
+                                                                return;
+                                                            };
+                                                            if current.claim.trim().is_empty() {
+                                                                set_status.set(
+                                                                    "This finding has no claim text to flag."
+                                                                        .to_string(),
+                                                                );
+                                                                return;
+                                                            }
+                                                            let reason = textarea_value(&reason_id_for_confirm);
+                                                            let request = SessionActionExecutionRequest {
+                                                                wiki_id: wiki_id.clone(),
+                                                                kind: SessionActionKind::FlagCitation,
+                                                                rev_id: base_rev_id.get_untracked(),
+                                                                title: Some(title.clone()),
+                                                                target_user: None,
+                                                                undo_after_rev_id: None,
+                                                                summary: None,
+                                                                selected_text: Some(current.claim.clone()),
+                                                                batch_rev_ids: None,
+                                                                replacement_text: None,
+                                                                node_locator: None,
+                                                                concern_kind: Some(kind),
+                                                                reason: (!reason.trim().is_empty())
+                                                                    .then_some(reason),
+                                                            };
+                                                            set_busy.set(true);
+                                                            set_status.set("Flagging citation...".to_string());
+                                                            wasm_bindgen_futures::spawn_local(async move {
+                                                                match execute_dev_auth_action(&request).await {
+                                                                    Ok(response) if response.accepted => {
+                                                                        set_status
+                                                                            .set("Citation flagged.".to_string());
+                                                                        set_open.set(OpenPanel::None);
+                                                                    }
+                                                                    Ok(response) => {
+                                                                        set_status.set(format!(
+                                                                            "Flag rejected: {}",
+                                                                            response.message.unwrap_or_default()
+                                                                        ));
+                                                                    }
+                                                                    Err(error) => {
+                                                                        set_status
+                                                                            .set(format!("Flag error: {error}"));
+                                                                    }
+                                                                }
+                                                                set_busy.set(false);
+                                                            });
+                                                        }),
+                                                )}
+                                                {Button(
+                                                    ButtonProps::new("Cancel")
+                                                        .with_surface(ButtonSurface::Ghost)
+                                                        .with_density(Density::Compact)
+                                                        .on_click(move |_| set_open.set(OpenPanel::None)),
+                                                )}
+                                            }
+                                                .into_any()
+                                        }),
+                                    ),
+                                )}
+                                {MetaText(MetaTextProps::new(ui_children(|| {
+                                    view! {
+                                        "Optional reason above (threaded into the template's reason= parameter)."
+                                    }
+                                        .into_any()
+                                })))}
+                            }
+                            .into_any()
+                        })).with_gap(Gap::Small))
+                            .into_any()
+                    }
+                    OpenPanel::None => ().into_any(),
+                }
+                }
+            }
+        }
+        .into_any()
+    })).with_gap(Gap::Small))
+}
+
+/// "Fix citation" (PRD-0014): routes to PRD-0008's bare-URL repair replace
+/// flow when `finding.ref_id` is non-empty, or reports the PRD-0012 insert
+/// flow as not yet shipped when it's empty (Resolved question 1) — errors
+/// informatively rather than hiding the button.
+#[component]
+fn FixCitationPanel(
+    finding: RwSignal<CitationFinding>,
+    wiki_id: String,
+    title: String,
+    rev_id: u64,
+    on_close: impl Fn() + Send + Sync + 'static,
+    set_status: WriteSignal<String>,
+) -> impl IntoView {
+    let route = fix_citation_route(&finding.get_untracked());
+
+    match route {
+        FixCitationRoute::AlreadyFormatted => {
+            Stack(StackProps::new(ui_children(move || {
+                view! {
+                    {MetaText(MetaTextProps::new(ui_children(|| {
+                        view! {
+                            "This citation is already a formatted reference, not a bare URL, so bare-URL repair doesn't apply to it. Use Edit article text or Flag citation instead."
+                        }
+                            .into_any()
+                    })))}
+                    {Button(
+                        ButtonProps::new("Close")
+                            .with_surface(ButtonSurface::Ghost)
+                            .with_density(Density::Compact)
+                            .on_click(move |_| on_close()),
+                    )}
+                }
+                .into_any()
+            })).with_gap(Gap::Small))
+            .into_any()
+        }
+        FixCitationRoute::Insert => {
+            Stack(StackProps::new(ui_children(move || {
+                view! {
+                    {MetaText(MetaTextProps::new(ui_children(|| {
+                        view! {
+                            "Citation insertion (PRD-0012) hasn't shipped yet, so Fix citation can't propose a citation for this unsourced claim. Use Edit article text or Flag citation instead."
+                        }
+                            .into_any()
+                    })))}
+                    {Button(
+                        ButtonProps::new("Close")
+                            .with_surface(ButtonSurface::Ghost)
+                            .with_density(Density::Compact)
+                            .on_click(move |_| on_close()),
+                    )}
+                }
+                .into_any()
+            })).with_gap(Gap::Small))
+            .into_any()
+        }
+        FixCitationRoute::Replace => {
+            let (proposal, set_proposal) = signal(None::<BareUrlApplyRequest>);
+            let (preview, set_preview) = signal(None::<(String, String)>);
+            let (loading, set_loading) = signal(true);
+            let (busy, set_busy) = signal(false);
+            // The original cited URL (the bare URL on the page), not the archive it may have been
+            // verified through — that's what the bare-URL proposals are keyed by.
+            let source_url = {
+                let f = finding.get_untracked();
+                f.archive_of
+                    .as_ref()
+                    .map_or_else(|| f.provenance.url.to_string(), ToString::to_string)
+            };
+
+            let wiki_for_load = wiki_id.clone();
+            let title_for_load = title.clone();
+            let source_url_for_load = source_url.clone();
+            wasm_bindgen_futures::spawn_local(async move {
+                match fetch_bare_url_proposals(&wiki_for_load, &title_for_load, rev_id).await {
+                    Ok(response) => {
+                        // A URL can appear on more than one reference; each yields its own
+                        // proposal with its own locator. The finding identifies only the source
+                        // URL, so if two references cite it, we can't tell which locator this card
+                        // belongs to — applying the first would repair the wrong reference. Proceed
+                        // only when the match is unique; otherwise refuse and point at the CLI,
+                        // which addresses a reference by locator.
+                        let mut matching = response
+                            .proposals
+                            .into_iter()
+                            .filter(|p| p.url == source_url_for_load);
+                        match (matching.next(), matching.next()) {
+                            (Some(found), None) => {
+                                set_preview.set(Some((
+                                    found.current_anchor.clone(),
+                                    found.replacement_wikitext.clone(),
+                                )));
+                                set_proposal.set(Some(BareUrlApplyRequest {
+                                    wiki_id: wiki_for_load.clone(),
+                                    title: title_for_load.clone(),
+                                    rev_id,
+                                    locator: found.locator,
+                                    replacement_wikitext: found.replacement_wikitext,
+                                    summary: None,
+                                }));
+                            }
+                            (Some(_), Some(_)) => set_status.set(
+                                "Fix citation: this page has more than one reference to the same \
+                                 bare URL, so SP42 can't tell which one this finding points to. \
+                                 Repair it from the CLI, which targets the reference by locator."
+                                    .to_string(),
+                            ),
+                            (None, _) => {}
+                        }
+                    }
+                    Err(error) => set_status.set(format!("Fix citation: {error}")),
+                }
+                set_loading.set(false);
+            });
+
+            let confirm_replace = move |_: leptos::ev::MouseEvent| {
+                let Some(request) = proposal.get_untracked() else {
+                    return;
+                };
+                set_busy.set(true);
+                set_status.set("Applying bare-URL repair...".to_string());
+                wasm_bindgen_futures::spawn_local(async move {
+                    match apply_bare_url_proposal(&request).await {
+                        Ok(response) if response.accepted => {
+                            set_status.set(
+                                "Citation repaired. Click Re-verify to check the fresh result."
+                                    .to_string(),
+                            );
+                        }
+                        Ok(response) => {
+                            set_status.set(format!(
+                                "Repair rejected: {}",
+                                response.message.unwrap_or_default()
+                            ));
+                        }
+                        Err(error) => set_status.set(format!("Repair error: {error}")),
+                    }
+                    set_busy.set(false);
+                });
+            };
+
+            Stack(StackProps::new(ui_children(move || {
+                view! {
+                    {move || {
+                        if loading.get() {
+                            return MetaText(MetaTextProps::new(ui_children(|| {
+                                view! { "Checking for a bare-URL repair proposal..." }.into_any()
+                            })))
+                                .into_any();
+                        }
+                        match preview.get() {
+                            Some((before, after)) => {
+                                view! {
+                                    {EvidenceBlock(EvidenceBlockProps::new("Current", before))}
+                                    {EvidenceBlock(
+                                        EvidenceBlockProps::new("Proposed", after).with_tone(Tone::Success),
+                                    )}
+                                    {Button(
+                                        ButtonProps::new("Confirm repair")
+                                            .with_tone(Tone::Success)
+                                            .with_density(Density::Compact)
+                                            .with_disabled(Signal::derive(move || busy.get()))
+                                            .on_click(confirm_replace),
+                                    )}
+                                }
+                                    .into_any()
+                            }
+                            None => {
+                                MetaText(MetaTextProps::new(ui_children(|| {
+                                    view! {
+                                        "No bare-URL repair proposal is available for this citation."
+                                    }
+                                        .into_any()
+                                })))
+                                    .into_any()
+                            }
+                        }
+                    }}
+                    {Button(
+                        ButtonProps::new("Close")
+                            .with_surface(ButtonSurface::Ghost)
+                            .with_density(Density::Compact)
+                            .on_click(move |_| on_close()),
+                    )}
+                }
+                .into_any()
+            })).with_gap(Gap::Small))
+            .into_any()
+        }
+    }
+}
+
 #[component]
 fn FindingCard(finding: CitationFinding, article_url: Option<String>) -> impl IntoView {
     // The verdict is carried by the enclosing group section + color, so the card
@@ -410,6 +1174,10 @@ fn FindingCard(finding: CitationFinding, article_url: Option<String>) -> impl In
     let excerpt = finding.source_excerpt.clone();
     let source_meta = finding.metadata.as_ref().and_then(metadata_line);
     let has_evidence = quote.is_some() || excerpt.is_some();
+    // Start the evidence expanded when the action row is about to sit right
+    // beneath it, so the claim and located passage render side by side
+    // instead of behind an extra click (PRD-0014 DoD).
+    let evidence_open = finding_has_action_row(&finding);
 
     ResultCard(ResultCardProps::new(ui_children(move || {
         view! {
@@ -506,7 +1274,8 @@ fn FindingCard(finding: CitationFinding, article_url: Option<String>) -> impl In
                             }
                             .into_any()
                         }),
-                    ),
+                    )
+                    .with_open(evidence_open),
                 )
             })}
         }
@@ -602,4 +1371,201 @@ fn input_value(ev: &leptos::ev::Event) -> String {
 #[cfg(not(target_arch = "wasm32"))]
 fn input_value(_ev: &leptos::ev::Event) -> String {
     String::new()
+}
+
+/// Reads a textarea element's current DOM value by id on demand (e.g. a Save
+/// click), rather than tracking every keystroke through a signal — mirrors
+/// the patrol rail's `DiffEditPanel` save handler (`diff_viewer.rs`).
+#[cfg(target_arch = "wasm32")]
+fn textarea_value(id: &str) -> String {
+    use wasm_bindgen::JsCast;
+
+    web_sys::window()
+        .and_then(|window| window.document())
+        .and_then(|document| document.get_element_by_id(id))
+        .and_then(|element| element.dyn_into::<web_sys::HtmlTextAreaElement>().ok())
+        .map(|textarea| textarea.value())
+        .unwrap_or_default()
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn textarea_value(_id: &str) -> String {
+    String::new()
+}
+
+/// Reads a select element's current DOM value by id on demand, same rationale as
+/// `textarea_value`. `None` when the element isn't found (not yet mounted).
+#[cfg(target_arch = "wasm32")]
+fn select_value(id: &str) -> Option<String> {
+    use wasm_bindgen::JsCast;
+
+    web_sys::window()
+        .and_then(|window| window.document())
+        .and_then(|document| document.get_element_by_id(id))
+        .and_then(|element| element.dyn_into::<web_sys::HtmlSelectElement>().ok())
+        .map(|select| select.value())
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn select_value(_id: &str) -> Option<String> {
+    None
+}
+
+#[cfg(test)]
+mod action_row_tests {
+    use super::{
+        FixCitationRoute, finding_has_action_row, fix_citation_route, parse_concern_kind,
+        resolve_concern_kind, suggested_concern_kind,
+    };
+    use sp42_core::{
+        CitationConcernKind, CitationFinding, CitationFindingKind, CitationVerdict,
+        GroundingAssertion, GroundingStatus, PanelAgreement, SourceProvenance, SupportLevel,
+    };
+
+    fn finding(verdict: CitationVerdict) -> CitationFinding {
+        CitationFinding {
+            kind: CitationFindingKind::CitationVerdict,
+            verdict,
+            grounding_status: GroundingStatus::Located,
+            source_unavailable_reason: None,
+            unusable_reason: None,
+            agreement: PanelAgreement::new(3, 3),
+            passage: None,
+            provenance: SourceProvenance {
+                url: url::Url::parse("https://example.org/a").expect("test url"),
+                content_hash: "hash".to_string(),
+                fetched_at: 0,
+                http_status: Some(200),
+            },
+            source_excerpt: None,
+            metadata: None,
+            grounding: GroundingAssertion::SourceFetched {
+                source_hash: "hash".to_string(),
+            },
+            use_site_ordinal: 0,
+            ref_id: "cite_note-1".to_string(),
+            claim: "The article claims 6% growth.".to_string(),
+            preceding_context: Vec::new(),
+            archive_of: None,
+            is_bare_url_ref: false,
+            schema_version: 1,
+        }
+    }
+
+    #[test]
+    fn action_row_shows_only_for_partial_and_not_supported() {
+        // PRD-0014 DoD: "An action row renders only for Partial/NotSupported
+        // findings; Supported/SourceUnavailable findings remain read-only" —
+        // verified over all four verdict fixtures.
+        assert!(!finding_has_action_row(&finding(CitationVerdict::Judged(
+            SupportLevel::Supported
+        ))));
+        assert!(finding_has_action_row(&finding(CitationVerdict::Judged(
+            SupportLevel::Partial
+        ))));
+        assert!(finding_has_action_row(&finding(CitationVerdict::Judged(
+            SupportLevel::NotSupported
+        ))));
+        assert!(!finding_has_action_row(&finding(
+            CitationVerdict::SourceUnavailable
+        )));
+    }
+
+    #[test]
+    fn suggests_partial_support_for_partial_verdict() {
+        let f = finding(CitationVerdict::Judged(SupportLevel::Partial));
+        assert_eq!(
+            suggested_concern_kind(&f),
+            Some(CitationConcernKind::PartialSupport)
+        );
+    }
+
+    #[test]
+    fn suggests_failed_verification_for_not_supported_verdict() {
+        let f = finding(CitationVerdict::Judged(SupportLevel::NotSupported));
+        assert_eq!(
+            suggested_concern_kind(&f),
+            Some(CitationConcernKind::FailedVerification)
+        );
+    }
+
+    #[test]
+    fn suggests_nothing_for_supported_or_unavailable_verdicts() {
+        assert_eq!(
+            suggested_concern_kind(&finding(CitationVerdict::Judged(SupportLevel::Supported))),
+            None
+        );
+        assert_eq!(
+            suggested_concern_kind(&finding(CitationVerdict::SourceUnavailable)),
+            None
+        );
+    }
+
+    #[test]
+    fn fix_citation_routes_to_replace_only_for_a_bare_url_ref() {
+        // PRD-0014 DoD + the ref-identity fix: "Fix citation" routes to bare-URL repair
+        // only when the finding's OWN ref is a bare URL, so a proposal matched by the
+        // shared source URL can't apply another (bare) ref's repair to this citation.
+        let mut f = finding(CitationVerdict::Judged(SupportLevel::Partial));
+        f.ref_id = "cite_note-1".to_string();
+        f.is_bare_url_ref = true;
+        assert_eq!(fix_citation_route(&f), FixCitationRoute::Replace);
+    }
+
+    #[test]
+    fn fix_citation_does_not_offer_repair_for_a_formatted_ref() {
+        // The finding's ref is already a formatted citation (not a bare URL). Even if
+        // another bare ref cites the same URL, bare-URL repair must not be offered here.
+        let mut f = finding(CitationVerdict::Judged(SupportLevel::Partial));
+        f.ref_id = "cite_note-1".to_string();
+        f.is_bare_url_ref = false;
+        assert_eq!(fix_citation_route(&f), FixCitationRoute::AlreadyFormatted);
+    }
+
+    #[test]
+    fn fix_citation_routes_to_insert_when_ref_id_empty() {
+        let mut f = finding(CitationVerdict::Judged(SupportLevel::Partial));
+        f.ref_id = String::new();
+        assert_eq!(fix_citation_route(&f), FixCitationRoute::Insert);
+    }
+
+    #[test]
+    fn parse_concern_kind_round_trips_every_variant_label() {
+        for kind in [
+            CitationConcernKind::PartialSupport,
+            CitationConcernKind::FailedVerification,
+        ] {
+            assert_eq!(parse_concern_kind(kind.label()), Some(kind));
+        }
+    }
+
+    #[test]
+    fn parse_concern_kind_rejects_unknown_value() {
+        assert_eq!(parse_concern_kind("unknown-kind"), None);
+    }
+
+    #[test]
+    fn operator_override_wins_over_suggestion() {
+        // PRD-0014 DoD: "the operator can override the suggested
+        // CitationConcernKind for any other wiki-configured one before
+        // confirming ... the apply payload reflects the operator's choice,
+        // not just the suggestion."
+        let suggested = Some(CitationConcernKind::PartialSupport);
+        let operator_choice = Some("failed-verification");
+        assert_eq!(
+            resolve_concern_kind(operator_choice, suggested),
+            Some(CitationConcernKind::FailedVerification)
+        );
+    }
+
+    #[test]
+    fn falls_back_to_suggestion_when_operator_makes_no_selection() {
+        let suggested = Some(CitationConcernKind::FailedVerification);
+        assert_eq!(resolve_concern_kind(None, suggested), suggested);
+    }
+
+    #[test]
+    fn resolves_to_none_when_neither_selected_nor_suggested() {
+        assert_eq!(resolve_concern_kind(None, None), None);
+    }
 }

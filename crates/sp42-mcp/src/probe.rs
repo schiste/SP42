@@ -121,6 +121,26 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn reachable_paywalled_body_is_not_extractable_but_human_readable() {
+        // Paywall-vendor fingerprint plus nav chrome with no substantial prose classifies as
+        // NavChromePaywall (the classifier needs the raw HTML, so this response is text/html).
+        let raw = r#"<html><head><script src="https://cdn.tinypass.com/api/tinypass.min.js"></script></head><body>Subscribe Menu Account</body></html>"#;
+        let client = StubHttpClient::new([Ok(response_with_content_type(
+            200,
+            "text/html; charset=utf-8",
+            raw,
+        ))]);
+        let result = probe_source(&client, "https://news.example.com/x").await;
+        assert!(result.reachable);
+        assert!(!result.extractable);
+        assert_eq!(
+            result.unusable_reason,
+            Some(BodyUsabilityReason::NavChromePaywall)
+        );
+        assert!(result.human_readable_hint);
+    }
+
+    #[tokio::test]
     async fn reachable_short_body_is_not_extractable() {
         let client = StubHttpClient::new([Ok(response(200, "Too short."))]);
         let result = probe_source(&client, "https://example.org/stub").await;

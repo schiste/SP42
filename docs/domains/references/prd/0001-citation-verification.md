@@ -7,6 +7,14 @@
 **Discussion:** <PR link>
 **Spawned ADRs:** ADR-0006, ADR-0007, ADR-0008, ADR-0009 (see below)
 
+**Implementation note (2026-07-10):** The capability shipped (the
+`sp42-citation` verification tree: verify, panel voting/agreement, snapshot
+storage, CLI surface; ADR-0006–0009 merged in PR #24). The DoD has been
+audited against the test suite — see *DoD bindings* below: 4 of 8 items fully
+bound, 4 partial (item 3 became bound once the anti-fabrication wording was
+reconciled with ADR-0007, #133 resolved). Remaining before `Implemented`: the
+coverage gaps in #134.
+
 ## Problem
 
 When an operator reviews a revision that adds or changes a citation, there is no
@@ -89,10 +97,16 @@ CI-green. The criteria below are specific to this feature:
       **measured agreement** signal (computed from independent model votes, never a
       model-reported number) is surfaced with it — verified by unit tests on the
       vote aggregation and a surface test.
-- [ ] The tool never reports *supported* unless the supporting passage is
-      locatable **verbatim** in a source SP42 actually fetched this session —
-      verified by a property test: a claim with no matching source text never
-      yields *supported*. (This is the load-bearing anti-fabrication invariant.)
+- [ ] The tool never treats a *supported* verdict as **groundable** unless its
+      supporting passage is locatable **verbatim** in a source SP42 actually
+      fetched this session — verified by a property test: a claim with no
+      matching source text never yields *groundable* support. Per ADR-0007's
+      two-axis model the panel's verdict and its grounding status are separate:
+      an ungrounded *supported* verdict is surfaced to the operator (so the
+      "panel said supported but SP42 couldn't ground it" signal is not lost) but
+      is marked non-groundable and blocked at the action gate — it is never
+      silently downgraded. (This is the load-bearing anti-fabrication invariant.
+      Wording reconciled with the shipped semantics 2026-07-11, #133.)
 - [ ] When the source cannot be fetched or read, the verdict is *source
       unavailable*, never a support judgment — verified by an integration test
       against an unreachable / unusable source.
@@ -112,6 +126,25 @@ CI-green. The criteria below are specific to this feature:
       absence), and source — in the default human format, a machine-readable JSON
       format, and a terse verdict-only format — verified by a CLI integration test
       against a recorded source snapshot.
+
+### DoD bindings (2026-07-10)
+
+Audit of each DoD item against the test suite (all cited tests pass;
+`cargo test -p sp42-citation -p sp42-mcp`, 282 tests, plus `sp42-server`/
+`sp42-cli` suites in CI). Boxes above stay unchecked until every clause of an
+item is bound; remaining gaps are tracked in #134, and item 3's wording
+decision in #133.
+
+| # | Item | Verdict | Binding / gap |
+|---|------|---------|---------------|
+| 1 | Categorical verdict, no numeric confidence | PARTIAL | Categorical set fully bound: `citation/verdict.rs` (`verdict_wire_round_trips_all_four_values`, `unknown_wire_string_is_rejected`, `abstention_never_serializes_as_a_support_level`). Gap: "no numeric confidence surfaced" is structural (`PanelAgreement::fraction` is computed, never serialized) but unasserted (#134). |
+| 2 | Panel vote + measured agreement | BOUND | `citation/voting.rs` (`unanimous_panel_has_full_agreement`, `clear_plurality_wins_with_measured_fraction`, `tie_never_resolves_up_to_supported`); surfaced via `sp42-cli` `renders_human_verdict_block`; e2e `verify.rs::end_to_end_supported_outcome_with_votes`. Agreement is computed from votes by construction. |
+| 3 | Never *groundable* support without verbatim passage | BOUND | Property tests bind the invariant directly: `verify.rs` (`fabricated_support_is_never_groundable` proptest, `fabricated_multi_token_quote_never_grounds_fuzzily`, `end_to_end_fabricated_quote_is_unverified_not_groundable`), plus `assemble_marks_an_unlocatable_support_as_unverified_not_downgraded`. The DoD wording was reconciled to ADR-0007's two-axis semantics (#133, resolved) so it matches the shipped "surface-and-gate, never downgrade" behavior the tests assert. |
+| 4 | Unfetchable source → *source unavailable* | BOUND | `verify.rs::end_to_end_unreachable_source_is_source_unavailable_with_no_model_call` (404 → `SourceUnavailable`, no model call); plus PDF/paywall/short-body variants (`pdf_source_is_unusable_with_no_model_call`, `law360_paywall_stub_short_circuits_no_partial`, `end_to_end_all_model_failures_surface_source_unavailable`). |
+| 5 | No wiki writes from verification | PARTIAL | Zero-write assertions exist only on the propose/apply path (`sp42-server` `bare_url_apply_*_refuses_with_zero_writes`). The verify path has no write capability wired in, but no test asserts a verification run issues zero writes (#134). |
+| 6 | Deterministic replay over same snapshot | BOUND | `citation/storage.rs::replay_is_deterministic_over_the_same_snapshot_and_votes` (identical finding, verdict, agreement); `verify.rs::prefetched_source_skips_http_fetch`. |
+| 7 | Observable: source + passage (or absence) + verdict | PARTIAL | Each piece tested: `build_source_excerpt` windows (`long_body_windows_around_the_located_quote`), passage+verdict renders (`citation_page_report.rs::renders_stats_findings_skipped_and_failures`, CLI `renders_human_verdict_block`). Gap: no single end-to-end assertion that one observable carries all three, and no surface shows the fetched-source excerpt (#134). |
+| 8 | CLI accepts article/revision/citation/ad-hoc | PARTIAL | Ad-hoc mode bound (`parses_ad_hoc_verify_flags`, `verdict_only_flag_is_recognized`, human/JSON/verdict-only renders). Gap: article/revision/single-citation CLI modes are unimplemented ("await the article parser" — whole-article verification shipped server-side via `post_verify_page` instead), and no CLI integration test against a recorded snapshot exists. Amend-or-implement decision + test: #134. |
 
 ## Alternatives
 

@@ -531,7 +531,9 @@ fn action_availability(
                 reasons.push("CSRF token is unavailable.".to_string());
             }
         }
-        SessionActionKind::TagCitationNeeded | SessionActionKind::InlineEdit => {
+        SessionActionKind::TagCitationNeeded
+        | SessionActionKind::InlineEdit
+        | SessionActionKind::FlagCitation => {
             if !capabilities.capabilities.editing.can_edit {
                 reasons.push("Edit capability is unavailable.".to_string());
             }
@@ -593,7 +595,9 @@ fn is_recommended(kind: SessionActionKind, item: &QueuedEdit) -> bool {
         SessionActionKind::Undo => {
             !has_trusted_suppression && (has_duplicate_pattern || item.score.total >= 40)
         }
-        SessionActionKind::TagCitationNeeded | SessionActionKind::InlineEdit => false,
+        SessionActionKind::TagCitationNeeded
+        | SessionActionKind::InlineEdit
+        | SessionActionKind::FlagCitation => false,
     }
 }
 
@@ -700,6 +704,7 @@ mod tests {
                 contributions: vec![],
             },
             event: EditEvent {
+                content_model: None,
                 wiki_id: "frwiki".to_string(),
                 title: "Example".to_string(),
                 namespace,

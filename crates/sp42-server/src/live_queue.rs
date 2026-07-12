@@ -438,7 +438,12 @@ pub(crate) async fn load_selected_review_state(
             liftwing_probability: None,
         })
     });
-    let liftwing_risk = if let Some(item) = selected {
+    // Revertrisk is Wikipedia-trained; for entity content no LiftWing
+    // request is built and no score is synthesized (ADR-0016 Decision 7).
+    let liftwing_risk = if let Some(item) = selected
+        && sp42_core::derive_content_model_capabilities(item.event.content_model.as_deref())
+            .revertrisk_scoring
+    {
         execute_liftwing_score(
             &BearerHttpClient::new(state.http_client.clone(), access_token.to_string()),
             config,
@@ -466,7 +471,14 @@ pub(crate) async fn load_selected_review_state(
     } else {
         None
     };
-    if let Some(diff) = diff.as_ref()
+    // Diff hints are wikitext-only signals; entity content does not get
+    // wikitext signal state populated (ADR-0016 Decision 5).
+    let wikitext_signals = selected.is_none_or(|item| {
+        sp42_core::derive_content_model_capabilities(item.event.content_model.as_deref())
+            .wikitext_signals
+    });
+    if wikitext_signals
+        && let Some(diff) = diff.as_ref()
         && let Some(context) = &mut scoring_context
     {
         let hints = sp42_core::diff_engine::analyze_diff_for_scoring(

@@ -53,6 +53,8 @@ pub const OPERATOR_REPORT_PATH: &str = "/operator/report";
 pub const OPERATOR_LIVE_PATTERN: &str = "/operator/live/{wiki_id}";
 pub const OPERATOR_ARTICLE_PATTERN: &str = "/operator/article/{wiki_id}";
 pub const OPERATOR_DIFF_PATTERN: &str = "/operator/diff/{wiki_id}/{rev_id}/{old_rev_id}";
+pub const OPERATOR_CONTENT_DIFF_PATTERN: &str =
+    "/operator/content-diff/{wiki_id}/{rev_id}/{old_rev_id}";
 pub const OPERATOR_MEDIA_DIFF_PATTERN: &str =
     "/operator/media-diff/{wiki_id}/{rev_id}/{old_rev_id}";
 pub const OPERATOR_RENDERED_HUNK_PATTERN: &str =
@@ -91,6 +93,11 @@ pub const DEV_ACTION_HISTORY_PATH: &str = "/dev/actions/history";
 pub const DEV_CITATION_BARE_URL_PROPOSALS_PATH: &str = "/dev/citation/bare-url-proposals";
 pub const DEV_CITATION_BARE_URL_APPLY_PATH: &str = "/dev/citation/bare-url-apply";
 pub const DEV_CITATION_VERIFY_PAGE_PATH: &str = "/dev/citation/verify-page";
+/// Re-verify one finding in place (PRD-0014): wraps `verify_citation_use_site`
+/// against the finding's current article state. Operator-triggered only —
+/// never fired automatically — so the operator controls when its inference
+/// cost is spent.
+pub const DEV_CITATION_REVERIFY_PATH: &str = "/dev/citation/reverify";
 
 /// Header carrying the bridge session's CSRF token on state-changing routes.
 pub const CSRF_HEADER_NAME: &str = "x-sp42-csrf-token";
@@ -127,6 +134,11 @@ pub fn operator_article_path(wiki_id: &str) -> String {
 #[must_use]
 pub fn operator_diff_path(wiki_id: &str, rev_id: u64, old_rev_id: u64) -> String {
     format!("/operator/diff/{wiki_id}/{rev_id}/{old_rev_id}")
+}
+
+#[must_use]
+pub fn operator_content_diff_path(wiki_id: &str, rev_id: u64, old_rev_id: u64) -> String {
+    format!("/operator/content-diff/{wiki_id}/{rev_id}/{old_rev_id}")
 }
 
 #[must_use]

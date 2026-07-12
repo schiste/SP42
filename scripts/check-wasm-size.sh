@@ -17,11 +17,22 @@ cd "$repo_root"
 dist="${1:-target/dist/sp42-app}"
 # Ceilings (bytes). The article-level citation-review surface (per-finding
 # evidence quote, source excerpt, Citoid metadata, grouped/color-coded cards)
-# lands the optimized bundle at ~3.0 MiB raw / ~744 KiB gzip. Raise the ceilings
-# to that plus ~256 KiB raw headroom; ratchet back DOWN as the bundle shrinks
-# (e.g. moving inline styles to CSS), never up without a recorded decision.
+# lands the optimized bundle at ~3.0 MiB raw / ~744 KiB gzip. Two recorded
+# decisions stack on top (Art. 5.2):
+#   - The citation repair/insertion action-row surface (PRD-0014: per-finding
+#     edit/fix/flag/re-verify controls and their inline panels) adds ~6 KiB
+#     gzip (ceiling 848 KiB).
+#   - The entity-diff surface (PR #119 + the slim-report follow-up) first
+#     landed at ~860 KiB gzip; shipping the pre-rendered EntityDiffReport
+#     instead of the full wikibase model on the wire recovered ~28 KiB gzip
+#     (measured), for a 860 KiB ceiling on its own.
+# With BOTH surfaces in one bundle CI measures 866.2 KiB gzip — the two
+# increases are additive, so the merged ceiling is their sum plus small
+# headroom: 872 KiB (recorded decision, Art. 5.2). Ratchet back DOWN as the
+# bundle shrinks (e.g. moving inline styles to CSS), never up without a
+# recorded decision.
 max_raw="${SP42_WASM_MAX_RAW_BYTES:-3407872}"   # 3328 KiB
-max_gz="${SP42_WASM_MAX_GZIP_BYTES:-851968}"    # 832 KiB
+max_gz="${SP42_WASM_MAX_GZIP_BYTES:-892928}"    # 872 KiB
 
 wasm=""
 for f in "$dist"/*.wasm; do

@@ -17,12 +17,17 @@ Capabilities built on top of the platform.
 
 - **Patrolling** — the shipped review workflow (queueing, scoring, diffing,
   reviewer actions, multi-operator coordination). → [docs/domains/patrolling/](domains/patrolling/README.md)
-- **References / citation verification** — incoming; no crate yet. Lives as a PRD
-  plus ADR-0007–0009. → [docs/domains/references/](domains/references/README.md)
+- **References / citation verification** — shipped as the `sp42-citation` domain
+  crate, with an agent surface in `sp42-mcp`. PRDs 0001/0007–0010 plus
+  ADR-0007–0009, 0011, 0015. → [docs/domains/references/](domains/references/README.md)
 - **Wikidata** — incoming; no crate yet. Making Wikidata a first-class target
   (entity read/diff + patrol) and a referenced source/sink of facts. Lives as
-  PRD-0011, spawning platform ADR-0015 and continuing ADR-0014.
+  PRD-0011, spawning platform ADR-0016–0017 and continuing ADR-0014.
   → [docs/domains/wikidata/](domains/wikidata/README.md)
+- **Assessment** — incoming; no crate yet. Evidence-assembly for per-article
+  quality assessments, starting with Good-article review. Lives as PRD-0015 plus
+  a GA-workflow design sketch.
+  → [docs/domains/assessment/](domains/assessment/README.md)
 
 → [docs/domains/](domains/README.md)
 
@@ -45,6 +50,15 @@ filed by the platform layer or domain they govern:
 
 - Platform ADRs live in [platform/adr/](platform/adr/).
 - Domain ADRs and PRDs live under `domains/<domain>/adr/` and `domains/<domain>/prd/`.
+
+**Which home an ADR gets follows the same reuse-by-design test as code
+(ADR-0013):** a decision that governs a reusable mechanism, primitive, or
+contract is **platform-homed even when a domain motivated it** (this is why the
+Wikidata read/write ADRs 0016–0017 live under `platform/adr/` although PRD-0011
+spawned them); a decision that encodes one domain's policy, workflow, or
+semantics is **domain-homed** (like the citation-verification ADRs under
+`domains/references/adr/`). When in doubt, ask whether a second domain would
+consume the decision by design — yes means platform.
 
 **Numbering is global.** ADR numbers are unique across all folders, and so are PRD
 numbers — a new record takes the next free number regardless of which folder it

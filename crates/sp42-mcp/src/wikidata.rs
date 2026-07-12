@@ -1,23 +1,39 @@
 //! `verify_wikidata_statement` — the Wikidata convenience verb (PRD-0010, Phase 5).
 //!
-//! Net-new: there is no Wikidata path elsewhere in SP42. Given a statement reference, this fetches
-//! the entity from Wikidata's keyless `Special:EntityData` endpoint, renders the statement into a
-//! natural-language claim (resolving the property and any item-value to English labels via the
-//! action API), extracts the statement's P854 *reference URL*, and verifies the claim against that
-//! URL with [`verify_claim`]. A statement with no reference URL returns `SourceUnavailable` (not an
-//! error) without any model call.
+//! Given a statement reference, this fetches the entity from Wikidata's keyless
+//! `Special:EntityData` endpoint, renders the statement into a natural-language claim (resolving
+//! the property and any item-value to English labels via the action API), extracts the
+//! statement's P854 *reference URL*, and verifies the claim against that URL with
+//! [`verify_claim`]. A statement with no reference URL returns `SourceUnavailable` (not an error)
+//! without any model call.
+//!
+//! The entity/statement parsing and claim rendering live in the shared platform read model
+//! (`sp42_platform::wikibase`, ADR-0016 Decision 2) — this verb was that model's first consumer
+//! and now consumes it instead of carrying its own parser. P854 is the URL-reference case of the
+//! platform's full reference snak set.
 //!
 //! Rendering is best-effort and intentionally minimal (PRD-0010 open question #1): the rendered
 //! claim is always returned for inspection so a consumer can sanity-check it. Richer datatype
 //! rendering is follow-on work.
 
-use std::collections::BTreeMap;
-
-use serde_json::Value;
-use sp42_types::{Clock, HttpClient, HttpMethod, HttpRequest, ModelClient, ModelRef};
+use sp42_platform::wikibase::{
+    WikibaseEntity, WikibaseLabels, build_entity_request, build_label_request, parse_entity,
+    parse_labels, render_snak_value, render_statement_claim,
+};
+use sp42_types::{Clock, HttpClient, HttpRequest, ModelClient, ModelRef};
+use url::Url;
 
 use crate::verify::verify_claim;
 use crate::{Source, StatementRef, StatementVerifyResult, Verdict, VerifyResult};
+
+/// The language labels and claims are rendered in (PRD-0010 MVP scope).
+const RENDER_LANGUAGE: &str = "en";
+
+fn wikidata_api_url() -> Result<Url, String> {
+    "https://www.wikidata.org/w/api.php"
+        .parse()
+        .map_err(|error| format!("wikidata api url did not parse: {error}"))
+}
 
 /// Verify a Wikidata statement against its P854 reference URL.
 ///
@@ -36,37 +52,46 @@ where
     C: HttpClient + ?Sized,
     M: ModelClient + ?Sized,
 {
-    let entity_url = format!(
-        "https://www.wikidata.org/wiki/Special:EntityData/{}.json",
-        statement.entity
-    );
-    let entity_doc = get_json(fetch, &entity_url).await?;
-    let parsed = parse_statement(&entity_doc, statement)?;
+    let api_url = wikidata_api_url()?;
+    let entity_request = build_entity_request(&api_url, &statement.entity, None)
+        .map_err(|error| error.to_string())?;
+    let entity_body = fetch_ok(fetch, entity_request).await?;
+    let entity =
+        parse_entity(&statement.entity, &entity_body).map_err(|error| error.to_string())?;
 
-    // Resolve labels for the property and (if the value is an item) the value entity, in one call.
+    let chosen = entity
+        .statement(&statement.property, statement.statement_id.as_deref())
+        .ok_or_else(|| match &statement.statement_id {
+            Some(id) => format!("statement {id} not found"),
+            None => format!(
+                "no statements for {} on {}",
+                statement.property, statement.entity
+            ),
+        })?;
+
+    // Resolve labels for the property and (if the value is an item) the value entity, in one
+    // call. Label resolution is best-effort: a failed lookup falls back to raw ids.
     let mut label_ids = vec![statement.property.clone()];
-    if let Some(item) = &parsed.value_item {
-        label_ids.push(item.clone());
+    if let Some(item) = render_snak_value(&chosen.value).item {
+        label_ids.push(item);
     }
-    let labels_url = format!(
-        "https://www.wikidata.org/w/api.php?action=wbgetentities&ids={}&props=labels&languages=en&format=json",
-        label_ids.join("|")
-    );
-    let labels = get_json(fetch, &labels_url).await.ok();
+    let labels = match build_label_request(&api_url, &label_ids, RENDER_LANGUAGE) {
+        Ok(request) => match fetch_ok(fetch, request).await {
+            Ok(body) => parse_labels(&body, RENDER_LANGUAGE).unwrap_or_default(),
+            Err(_) => WikibaseLabels::default(),
+        },
+        Err(_) => WikibaseLabels::default(),
+    };
 
-    let property_label = label_of(labels.as_ref(), &statement.property)
-        .unwrap_or_else(|| statement.property.clone());
-    let value_label = parsed
-        .value_item
-        .as_ref()
-        .and_then(|item| label_of(labels.as_ref(), item))
-        .unwrap_or_else(|| parsed.value_display.clone());
-    let claim_rendered = format!(
-        "{} {} {}.",
-        parsed.subject_label, property_label, value_label
-    );
+    let claim_rendered = render_statement_claim(&subject_label(&entity), chosen, &labels);
 
-    let Some(ref_url) = parsed.ref_url else {
+    let ref_url = chosen
+        .references
+        .iter()
+        .flat_map(sp42_platform::wikibase::WikibaseReference::urls)
+        .next()
+        .map(str::to_owned);
+    let Some(ref_url) = ref_url else {
         // No reference URL: nothing to verify against. Abstain (no model call).
         return Ok(StatementVerifyResult {
             claim_rendered,
@@ -99,28 +124,21 @@ where
     })
 }
 
-/// The fields extracted from a single statement.
-struct ParsedStatement {
-    subject_label: String,
-    /// The mainsnak value rendered to a display string (an item id when the value is an entity).
-    value_display: String,
-    /// The value entity id, when the mainsnak value is a `wikibase-entityid` (for label lookup).
-    value_item: Option<String>,
-    /// The first P854 reference URL on the statement, when present.
-    ref_url: Option<String>,
+/// The entity's render-language label, falling back to its id.
+fn subject_label(entity: &WikibaseEntity) -> String {
+    entity
+        .labels
+        .get(RENDER_LANGUAGE)
+        .cloned()
+        .unwrap_or_else(|| entity.id.clone())
 }
 
-/// GET `url` through the injected client and parse the body as JSON.
-async fn get_json<C>(client: &C, url: &str) -> Result<Value, String>
+/// Execute a GET through the injected client, requiring a 2xx status.
+async fn fetch_ok<C>(client: &C, request: HttpRequest) -> Result<Vec<u8>, String>
 where
     C: HttpClient + ?Sized,
 {
-    let request = HttpRequest {
-        method: HttpMethod::Get,
-        url: url.parse().map_err(|_| format!("invalid url {url:?}"))?,
-        headers: BTreeMap::new(),
-        body: Vec::new(),
-    };
+    let url = request.url.clone();
     let response = client
         .execute(request)
         .await
@@ -128,143 +146,7 @@ where
     if !(200..300).contains(&response.status) {
         return Err(format!("wikidata fetch {url} returned {}", response.status));
     }
-    serde_json::from_slice(&response.body).map_err(|error| error.to_string())
-}
-
-/// Pull the subject label, statement value, and P854 reference URL out of an `EntityData` doc.
-fn parse_statement(
-    entity_doc: &Value,
-    statement: &StatementRef,
-) -> Result<ParsedStatement, String> {
-    let entity = entity_doc
-        .get("entities")
-        .and_then(|entities| entities.get(&statement.entity))
-        .ok_or_else(|| format!("entity {} not found", statement.entity))?;
-
-    let subject_label = entity
-        .get("labels")
-        .and_then(|labels| labels.get("en"))
-        .and_then(|en| en.get("value"))
-        .and_then(Value::as_str)
-        .unwrap_or(&statement.entity)
-        .to_owned();
-
-    let claims = entity
-        .get("claims")
-        .and_then(|claims| claims.get(&statement.property))
-        .and_then(Value::as_array)
-        .ok_or_else(|| {
-            format!(
-                "no statements for {} on {}",
-                statement.property, statement.entity
-            )
-        })?;
-
-    let chosen = match &statement.statement_id {
-        Some(id) => claims
-            .iter()
-            .find(|stmt| stmt.get("id").and_then(Value::as_str) == Some(id.as_str()))
-            .ok_or_else(|| format!("statement {id} not found"))?,
-        None => claims
-            .first()
-            .ok_or_else(|| format!("no statements for {}", statement.property))?,
-    };
-
-    let (value_display, value_item) = chosen
-        .get("mainsnak")
-        .map_or_else(|| ("(no value)".to_owned(), None), render_value);
-
-    Ok(ParsedStatement {
-        subject_label,
-        value_display,
-        value_item,
-        ref_url: extract_ref_url(chosen),
-    })
-}
-
-/// Render a mainsnak's value to a display string, returning the entity id when it is an item.
-fn render_value(mainsnak: &Value) -> (String, Option<String>) {
-    let Some(datavalue) = mainsnak.get("datavalue") else {
-        return ("(no value)".to_owned(), None);
-    };
-    let value = datavalue.get("value");
-    match datavalue.get("type").and_then(Value::as_str).unwrap_or("") {
-        "string" => (
-            value.and_then(Value::as_str).unwrap_or_default().to_owned(),
-            None,
-        ),
-        "wikibase-entityid" => {
-            let id = value
-                .and_then(|inner| inner.get("id"))
-                .and_then(Value::as_str)
-                .unwrap_or_default()
-                .to_owned();
-            let item = (!id.is_empty()).then(|| id.clone());
-            (id, item)
-        }
-        "monolingualtext" => (
-            value
-                .and_then(|inner| inner.get("text"))
-                .and_then(Value::as_str)
-                .unwrap_or_default()
-                .to_owned(),
-            None,
-        ),
-        "time" => (
-            value
-                .and_then(|inner| inner.get("time"))
-                .and_then(Value::as_str)
-                .unwrap_or_default()
-                .trim_start_matches('+')
-                .to_owned(),
-            None,
-        ),
-        "quantity" => (
-            value
-                .and_then(|inner| inner.get("amount"))
-                .and_then(Value::as_str)
-                .unwrap_or_default()
-                .trim_start_matches('+')
-                .to_owned(),
-            None,
-        ),
-        _ => (value.map(ToString::to_string).unwrap_or_default(), None),
-    }
-}
-
-/// The first P854 reference URL on the statement, when present.
-fn extract_ref_url(statement: &Value) -> Option<String> {
-    let references = statement.get("references")?.as_array()?;
-    for reference in references {
-        let p854 = reference
-            .get("snaks")
-            .and_then(|snaks| snaks.get("P854"))
-            .and_then(Value::as_array);
-        if let Some(snaks) = p854 {
-            for snak in snaks {
-                if let Some(url) = snak
-                    .get("datavalue")
-                    .and_then(|datavalue| datavalue.get("value"))
-                    .and_then(Value::as_str)
-                {
-                    return Some(url.to_owned());
-                }
-            }
-        }
-    }
-    None
-}
-
-/// Look up an English label for `id` in a `wbgetentities` labels response.
-fn label_of(labels: Option<&Value>, id: &str) -> Option<String> {
-    labels?
-        .get("entities")?
-        .get(id)?
-        .get("labels")?
-        .get("en")?
-        .get("value")?
-        .as_str()
-        .map(str::to_owned)
+    Ok(response.body)
 }
 
 #[cfg(test)]

@@ -57,7 +57,9 @@ pub use citation::openlibrary_apply::{
     parse_edit_form, parse_login_response, verify_applied,
 };
 pub use citation::page::{
-    PageVerificationReport, PageVerificationRequest, PageVerificationStats, verify_page,
+    PageVerificationReport, PageVerificationRequest, PageVerificationStats, ReverifyFindingRequest,
+    ReverifyFindingResponse, apply_reverified_finding, select_reverify_use_site,
+    verify_one_use_site, verify_page,
 };
 pub use citation::parsing::{
     ParsedVerdict, canonicalize_verdict, parse_repair_response, parse_verdict_response,

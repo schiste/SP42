@@ -456,6 +456,7 @@ mod tests {
     fn builds_shell_state_from_report() {
         let config = frwiki_config();
         let event = EditEvent {
+            content_model: None,
             wiki_id: "frwiki".to_string(),
             title: "Exemple".to_string(),
             namespace: 0,
@@ -534,6 +535,7 @@ mod tests {
     #[test]
     fn renders_shell_state_in_text_and_markdown() {
         let event = EditEvent {
+            content_model: None,
             wiki_id: "frwiki".to_string(),
             title: "Exemple".to_string(),
             namespace: 0,

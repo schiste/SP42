@@ -195,6 +195,8 @@ fn build_action_request(
             .cloned(),
         replacement_text: None,
         node_locator: None,
+        concern_kind: None,
+        reason: None,
     }
 }
 

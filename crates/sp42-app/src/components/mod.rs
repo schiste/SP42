@@ -5,6 +5,7 @@ use leptos::prelude::{AnyView, Children};
 pub(crate) mod action_bar;
 pub(crate) mod context_header;
 pub(crate) mod diff_viewer;
+pub(crate) mod entity_diff_viewer;
 pub(crate) mod filter_bar;
 pub(crate) mod inspector_feed;
 pub(crate) mod media_diff_gallery;

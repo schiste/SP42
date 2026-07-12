@@ -36,6 +36,7 @@ pub fn PatrolSurface() -> impl IntoView {
     let revision_artifacts = create_revision_artifact_controller();
     let diff_loading = revision_artifacts.diff_loading;
     let current_diff = revision_artifacts.current_diff;
+    let current_entity_diff = revision_artifacts.current_entity_diff;
     let media_diff_loading = revision_artifacts.media_diff_loading;
     let current_media_diff = revision_artifacts.current_media_diff;
     let set_tag_action = revision_artifacts.set_tag_action;
@@ -193,6 +194,7 @@ pub fn PatrolSurface() -> impl IntoView {
                         selected_edit=selected_edit
                         diff_loading=diff_loading
                         current_diff=current_diff
+                        current_entity_diff=current_entity_diff
                         current_media_diff=current_media_diff
                         media_diff_loading=media_diff_loading
                         set_tag_action=set_tag_action

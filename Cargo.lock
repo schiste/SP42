@@ -3414,6 +3414,7 @@ dependencies = [
  "sp42-platform",
  "sp42-types",
  "sp42-wiki",
+ "url",
 ]
 
 [[package]]

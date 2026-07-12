@@ -263,6 +263,14 @@ pub struct CitationFinding {
     /// `None` for every web-source finding. Back-compatible (ADR-0009 replay).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub book_scan: Option<BookScanProvenance>,
+    /// `true` when the originating ref's whole content is a single bare URL — a
+    /// bare-URL-repair target. Empty for the standalone single-claim path; the
+    /// page orchestrator stamps it from the use-site (same place it stamps
+    /// `ref_id`). Lets a browser route "Fix citation" to bare-URL repair only
+    /// when this finding's own ref is genuinely bare, not when some *other* ref
+    /// merely cites the same URL. Back-compatible (defaults `false`).
+    #[serde(default)]
+    pub is_bare_url_ref: bool,
     /// Schema version (Art. 9.1).
     pub schema_version: u32,
 }
@@ -637,6 +645,7 @@ pub fn assemble_citation_finding(
                     preceding_context: Vec::new(),
                     archive_of: None,
                     book_scan: None,
+                    is_bare_url_ref: false,
                     schema_version: SCHEMA_VERSION,
                 }
             }
@@ -750,6 +759,7 @@ fn no_quote_finding(
         preceding_context: Vec::new(),
         archive_of: None,
         book_scan: None,
+        is_bare_url_ref: false,
         schema_version: SCHEMA_VERSION,
     }
 }

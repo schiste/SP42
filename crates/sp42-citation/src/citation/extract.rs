@@ -27,6 +27,10 @@ pub struct CitationUseSite {
     pub ref_id: String,
     /// Archive/fallback URLs, tried only if the primary `source_url` is unavailable.
     pub archive_urls: Vec<url::Url>,
+    /// `true` when the originating ref's whole content is a single bare URL — a
+    /// bare-URL-repair target. Carried through so a finding can be routed to
+    /// bare-URL repair only when its own ref is genuinely bare.
+    pub is_bare_url_ref: bool,
 }
 
 /// Why a ref produced no use-site.
@@ -200,6 +204,7 @@ pub fn extract_use_sites(
                     context: context.clone(),
                     ref_id: r.ref_id.clone(),
                     archive_urls: source.archive_urls.clone(),
+                    is_bare_url_ref: r.is_bare_url_ref,
                 });
                 ordinal += 1;
             }
@@ -283,6 +288,7 @@ mod tests {
             book_sources: vec![],
             ref_text: "[1]".into(),
             named: false,
+            is_bare_url_ref: false,
         }
     }
 
@@ -297,6 +303,7 @@ mod tests {
             book_sources: vec![],
             ref_text: "[1]".into(),
             named: false,
+            is_bare_url_ref: false,
         }
     }
 

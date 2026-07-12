@@ -1,12 +1,15 @@
 # Platform
 
 Shared abstraction layers that domains consume. Platform code lives in
-`crates/sp42-types`, `sp42-coordination`, `sp42-wiki`, `sp42-server`,
-`sp42-devtools`, the shared half of `sp42-core` (contracts, runtime, scoring
-engine), and `xtask`.
+`crates/sp42-types`, `sp42-platform` (contracts, runtime, scoring engine),
+`sp42-coordination`, `sp42-wiki`, `sp42-live`, `sp42-reporting`,
+`sp42-inference`, `sp42-fetch`, and `sp42-parsoid`. The authoritative layer
+map is in `scripts/check-layering.sh`, drawn in
+[architecture.md](architecture.md).
 
 ## Operational docs
 
+- [architecture.md](architecture.md) — generated layered crate map with ADR/PRD cross-links (regenerate with `scripts/generate-architecture-map.sh`)
 - [RUNTIME_CONFIGURATION.md](RUNTIME_CONFIGURATION.md) — server environment, API base URL, and local dev auth
 - [DESKTOP_DISTRIBUTION.md](DESKTOP_DISTRIBUTION.md) — desktop shell backends, build prerequisites, signing/notarization
 - [DEVELOPER_SURFACE.md](DEVELOPER_SURFACE.md) — localhost reporting, action/live boundaries, telemetry, milestone boundaries
@@ -36,6 +39,9 @@ domains may consume it as the system expands toward sourcing and quality signals
 - [ADR-0014 — Required Wikimedia OAuth login + any-Wikimedia-project resolution](adr/0014-wikimedia-oauth-and-any-project.md)
 - [ADR-0016 — Wikidata entity content-model: revision read, `EntityDiff`, and content-model routing](adr/0016-wikidata-entity-content-model.md) (Proposed)
 - [ADR-0017 — Wikidata statement-proposal write contract](adr/0017-wikidata-statement-proposal-write-contract.md) (Proposed)
+- [ADR-0021 — Scoring and ranking contract: composite score, policy schema, compile step](adr/0021-scoring-and-ranking-contract.md)
+- [ADR-0022 — Reviewer-action contract: dispositions, execute route, tokens, CSRF/baserevid](adr/0022-reviewer-action-contract.md)
+- [ADR-0023 — Coordination contract: message kinds, relay, room state, wire codec](adr/0023-coordination-contract.md)
 
 ADR-0006 defines the provider-agnostic LLM interface every capability reaches a
 model through, and ADR-0010 defines the propose/confirm editing pattern domains

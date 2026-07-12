@@ -3,8 +3,8 @@ use sp42_core::FlagState;
 use sp42_live::LiveOperatorQuery;
 use sp42_ui::{
     Button, ButtonProps, ButtonSurface, Checkbox, CheckboxProps, Density, Field, FieldProps,
-    FilterDisclosure, FilterDisclosureProps, Gap, Inline, InlineProps, Select, SelectOption,
-    SelectProps, Separator, Size, Spacer, Text, TextInput, TextInputProps, TextProps, Tone, Width,
+    FilterDisclosure, FilterDisclosureProps, Select, SelectOption, SelectProps, Separator, Spacer,
+    TextInput, TextInputProps, Width,
 };
 
 use super::ui_children;
@@ -52,6 +52,9 @@ const NAMESPACE_OPTIONS: &[(i32, &str)] = &[
     (6, "File"),
     (10, "Template"),
     (14, "Category"),
+    // Wikibase property namespace; default-selected only on wikis whose
+    // resolved defaults include it (the wikidata family).
+    (120, "Property"),
 ];
 
 #[component]
@@ -204,33 +207,36 @@ pub fn FilterBar(
                         }),
                 )}
 
-                {Inline(
-                    InlineProps::new(ui_children(move || {
-                        view! {
-                            {filter_label("Tag:")}
-                            {TextInput(
-                                TextInputProps::new("filter-tag")
-                                    .with_value(Signal::derive(move || {
-                                        filters.get().query.tag_filter.unwrap_or_default()
-                                    }))
-                                    .with_placeholder("e.g. mw-reverted")
-                                    .with_density(Density::Compact)
-                                    .with_width(Width::Short)
-                                    .on_change(move |ev| {
-                                        let value = event_target_input_value(&ev);
-                                        update_filter!(move |f| {
-                                            f.query.tag_filter = if value.trim().is_empty() {
-                                                None
-                                            } else {
-                                                Some(value.trim().to_string())
-                                            };
-                                        });
-                                    }),
-                            )}
-                        }
-                        .into_any()
-                    }))
-                    .with_gap(Gap::XSmall),
+                {Field(
+                    FieldProps::new(
+                        "Tag:",
+                        ui_children(move || {
+                            view! {
+                                {TextInput(
+                                    TextInputProps::new("filter-tag")
+                                        .with_value(Signal::derive(move || {
+                                            filters.get().query.tag_filter.unwrap_or_default()
+                                        }))
+                                        .with_placeholder("e.g. mw-reverted")
+                                        .with_density(Density::Compact)
+                                        .with_width(Width::Short)
+                                        .on_change(move |ev| {
+                                            let value = event_target_input_value(&ev);
+                                            update_filter!(move |f| {
+                                                f.query.tag_filter = if value.trim().is_empty() {
+                                                    None
+                                                } else {
+                                                    Some(value.trim().to_string())
+                                                };
+                                            });
+                                        }),
+                                )}
+                            }
+                            .into_any()
+                        }),
+                    )
+                    .with_id("filter-tag")
+                    .with_density(Density::Compact),
                 )}
 
                 {Separator()}
@@ -287,14 +293,6 @@ pub fn FilterBar(
             .into_any()
         }),
     ))
-}
-
-fn filter_label(label: &'static str) -> AnyView {
-    Text(
-        TextProps::new(ui_children(move || view! { {label} }.into_any()))
-            .with_tone(Tone::Muted)
-            .with_size(Size::Small),
-    )
 }
 
 fn filter_select(label: &'static str, select: SelectProps) -> impl IntoView {

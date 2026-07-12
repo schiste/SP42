@@ -2,14 +2,15 @@ use std::collections::HashMap;
 
 use leptos::prelude::*;
 use sp42_core::{
-    MediaDiffReport, QueuedEdit, SessionActionExecutionRequest, SessionActionKind, StructuredDiff,
+    ContentDiffReport, EntityDiffReport, MediaDiffReport, QueuedEdit,
+    SessionActionExecutionRequest, SessionActionKind, StructuredDiff,
 };
 use sp42_patrol::LiveOperatorView;
 
 use crate::components::diff_viewer::{EditAction, TagAction};
 use crate::platform::auth::execute_dev_auth_action;
 use crate::platform::console;
-use crate::platform::live::{fetch_diff, fetch_media_diff};
+use crate::platform::live::{fetch_content_diff, fetch_media_diff};
 
 #[derive(Clone, Copy)]
 pub(in crate::pages::patrol) struct RevisionArtifactController {
@@ -17,8 +18,12 @@ pub(in crate::pages::patrol) struct RevisionArtifactController {
     pub(in crate::pages::patrol) set_diff_loading: WriteSignal<bool>,
     pub(in crate::pages::patrol) current_diff: ReadSignal<Option<StructuredDiff>>,
     set_current_diff: WriteSignal<Option<StructuredDiff>>,
+    pub(in crate::pages::patrol) current_entity_diff: ReadSignal<Option<EntityDiffReport>>,
+    set_current_entity_diff: WriteSignal<Option<EntityDiffReport>>,
     diff_cache: ReadSignal<HashMap<u64, StructuredDiff>>,
     set_diff_cache: WriteSignal<HashMap<u64, StructuredDiff>>,
+    entity_diff_cache: ReadSignal<HashMap<u64, EntityDiffReport>>,
+    set_entity_diff_cache: WriteSignal<HashMap<u64, EntityDiffReport>>,
     pub(in crate::pages::patrol) media_diff_loading: ReadSignal<bool>,
     set_media_diff_loading: WriteSignal<bool>,
     pub(in crate::pages::patrol) current_media_diff: ReadSignal<Option<MediaDiffReport>>,
@@ -45,7 +50,10 @@ pub(super) struct RevisionArtifactEffectsInput {
 pub(super) fn create_revision_artifact_controller() -> RevisionArtifactController {
     let (diff_loading, set_diff_loading) = signal(false);
     let (current_diff, set_current_diff) = signal(None::<StructuredDiff>);
+    let (current_entity_diff, set_current_entity_diff) = signal(None::<EntityDiffReport>);
     let (diff_cache, set_diff_cache) = signal(HashMap::<u64, StructuredDiff>::new());
+    let (entity_diff_cache, set_entity_diff_cache) =
+        signal(HashMap::<u64, EntityDiffReport>::new());
     let (media_diff_loading, set_media_diff_loading) = signal(false);
     let (current_media_diff, set_current_media_diff) = signal(None::<MediaDiffReport>);
     let (media_diff_cache, set_media_diff_cache) = signal(HashMap::<u64, MediaDiffReport>::new());
@@ -57,8 +65,12 @@ pub(super) fn create_revision_artifact_controller() -> RevisionArtifactControlle
         set_diff_loading,
         current_diff,
         set_current_diff,
+        current_entity_diff,
+        set_current_entity_diff,
         diff_cache,
         set_diff_cache,
+        entity_diff_cache,
+        set_entity_diff_cache,
         media_diff_loading,
         set_media_diff_loading,
         current_media_diff,
@@ -76,6 +88,21 @@ pub(in crate::pages::patrol) fn cache_initial_artifacts(
     view: &LiveOperatorView,
     artifacts: RevisionArtifactController,
 ) {
+    // The initial payload's diff is the server's text diff. For an entity
+    // revision that is raw JSON, not the review surface — do not seed it, so
+    // the selection effect cache-misses and fetches the content diff instead
+    // (ADR-0016 routing on the client edge).
+    let selected_is_entity = view
+        .selected_index
+        .and_then(|index| view.queue.get(index))
+        .is_some_and(|edit| {
+            sp42_core::derive_content_model_capabilities(edit.event.content_model.as_deref())
+                .entity_diff
+        });
+    if selected_is_entity {
+        return;
+    }
+
     if let (Some(diff), Some(selected_index)) = (&view.diff, view.selected_index) {
         if let Some(edit) = view.queue.get(selected_index) {
             let mut cache = artifacts.diff_cache.get_untracked();
@@ -100,6 +127,36 @@ pub(in crate::pages::patrol) fn cache_initial_artifacts(
         .set(view.media_diff.clone());
 }
 
+/// Apply a fetched content-diff report to the controller: text reports feed
+/// the existing text pipeline; entity reports feed the entity view
+/// (ADR-0016 Decision 4 routing, on the client edge).
+fn apply_content_diff(
+    artifacts: RevisionArtifactController,
+    rev_id: u64,
+    report: Option<ContentDiffReport>,
+) {
+    match report {
+        Some(ContentDiffReport::Text { diff }) => {
+            let mut cache = artifacts.diff_cache.get_untracked();
+            cache.insert(rev_id, diff.clone());
+            artifacts.set_diff_cache.set(cache);
+            artifacts.set_current_diff.set(Some(diff));
+            artifacts.set_current_entity_diff.set(None);
+        }
+        Some(ContentDiffReport::Entity { diff }) => {
+            let mut cache = artifacts.entity_diff_cache.get_untracked();
+            cache.insert(rev_id, diff.clone());
+            artifacts.set_entity_diff_cache.set(cache);
+            artifacts.set_current_entity_diff.set(Some(diff));
+            artifacts.set_current_diff.set(None);
+        }
+        None => {
+            artifacts.set_current_diff.set(None);
+            artifacts.set_current_entity_diff.set(None);
+        }
+    }
+}
+
 pub(in crate::pages::patrol) fn prefetch_queue_diffs(
     view: &LiveOperatorView,
     artifacts: RevisionArtifactController,
@@ -112,14 +169,29 @@ pub(in crate::pages::patrol) fn prefetch_queue_diffs(
             if artifacts.diff_cache.get_untracked().contains_key(&rev_id) {
                 continue;
             }
+            if artifacts
+                .entity_diff_cache
+                .get_untracked()
+                .contains_key(&rev_id)
+            {
+                continue;
+            }
             let old_rev_id = item.event.old_rev_id.unwrap_or(0);
             if old_rev_id == 0 {
                 continue;
             }
-            if let Ok(Some(diff)) = fetch_diff(&prefetch_wiki, rev_id, old_rev_id).await {
-                let mut cache = artifacts.diff_cache.get_untracked();
-                cache.insert(rev_id, diff);
-                artifacts.set_diff_cache.set(cache);
+            match fetch_content_diff(&prefetch_wiki, rev_id, old_rev_id).await {
+                Ok(Some(ContentDiffReport::Text { diff })) => {
+                    let mut cache = artifacts.diff_cache.get_untracked();
+                    cache.insert(rev_id, diff);
+                    artifacts.set_diff_cache.set(cache);
+                }
+                Ok(Some(ContentDiffReport::Entity { diff })) => {
+                    let mut cache = artifacts.entity_diff_cache.get_untracked();
+                    cache.insert(rev_id, diff);
+                    artifacts.set_entity_diff_cache.set(cache);
+                }
+                Ok(None) | Err(_) => {}
             }
         }
     });
@@ -209,29 +281,29 @@ fn install_selected_diff_effect(
                 diff.segments.len()
             ));
             artifacts.set_current_diff.set(Some(diff.clone()));
+            artifacts.set_current_entity_diff.set(None);
+            return current_rev;
+        }
+        let entity_cache = artifacts.entity_diff_cache.get_untracked();
+        if let Some(report) = entity_cache.get(&rev_id) {
+            console::debug(&format!("[SP42] entity diff cache HIT rev {rev_id}"));
+            artifacts.set_current_entity_diff.set(Some(report.clone()));
+            artifacts.set_current_diff.set(None);
             return current_rev;
         }
 
         console::debug(&format!("[SP42] diff cache MISS rev {rev_id} — fetching"));
         artifacts.set_diff_loading.set(true);
         artifacts.set_current_diff.set(None);
+        artifacts.set_current_entity_diff.set(None);
         if let Some(edit) = selected_edit.get_untracked() {
             let old_rev_id = edit.event.old_rev_id.unwrap_or(0);
             let wiki_id = edit.event.wiki_id.clone();
             wasm_bindgen_futures::spawn_local(async move {
-                match fetch_diff(&wiki_id, rev_id, old_rev_id).await {
-                    Ok(diff) => {
-                        if let Some(ref diff) = diff {
-                            let mut cache = artifacts.diff_cache.get_untracked();
-                            cache.insert(rev_id, diff.clone());
-                            artifacts.set_diff_cache.set(cache);
-                        }
-                        artifacts.set_current_diff.set(diff);
-                    }
-                    Err(_) => {
-                        artifacts.set_current_diff.set(None);
-                    }
-                }
+                let report = fetch_content_diff(&wiki_id, rev_id, old_rev_id)
+                    .await
+                    .unwrap_or(None);
+                apply_content_diff(artifacts, rev_id, report);
                 artifacts.set_diff_loading.set(false);
             });
         }
@@ -320,6 +392,8 @@ fn install_inline_edit_effect(
             batch_rev_ids: None,
             replacement_text: Some(action.new_text),
             node_locator: None,
+            concern_kind: None,
+            reason: None,
         };
         console::info(&format!("[SP42] inline edit on rev {}", request.rev_id));
         set_action_status.set("Saving inline edit...".to_string());
@@ -368,6 +442,8 @@ fn install_tag_action_effect(
             batch_rev_ids: None,
             replacement_text: None,
             node_locator: None,
+            concern_kind: None,
+            reason: None,
         };
 
         set_action_status.set("Adding citation needed...".to_string());
@@ -410,12 +486,16 @@ async fn invalidate_current_diff(
     let mut cache = artifacts.diff_cache.get_untracked();
     cache.remove(&rev_id);
     artifacts.set_diff_cache.set(cache);
+    let mut entity_cache = artifacts.entity_diff_cache.get_untracked();
+    entity_cache.remove(&rev_id);
+    artifacts.set_entity_diff_cache.set(entity_cache);
     artifacts.set_diff_loading.set(true);
     if let Some(item) = selected_edit.get_untracked() {
         let old_rev_id = item.event.old_rev_id.unwrap_or(0);
-        if let Ok(Some(diff)) = fetch_diff(&item.event.wiki_id, item.event.rev_id, old_rev_id).await
+        if let Ok(report) =
+            fetch_content_diff(&item.event.wiki_id, item.event.rev_id, old_rev_id).await
         {
-            artifacts.set_current_diff.set(Some(diff));
+            apply_content_diff(artifacts, item.event.rev_id, report);
         }
     }
     artifacts.set_diff_loading.set(false);

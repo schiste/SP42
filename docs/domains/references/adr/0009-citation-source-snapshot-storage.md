@@ -1,6 +1,6 @@
 # ADR-0009: Source-snapshot storage for verification reproducibility
 
-**Status:** Proposed
+**Status:** Accepted
 **Date:** 2026-06-07
 **Author:** Luis Villa
 

@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 use std::time::Duration;
 
 use axum::{
@@ -7,8 +7,9 @@ use axum::{
     http::{HeaderMap, StatusCode},
 };
 use sp42_core::{
-    QueuedEdit, RenderedHunkPreview, RenderedHunkSide, StructuredDiff, WikiConfig,
-    build_media_diff, diff_lines,
+    ContentDiff, ContentDiffReport, QueuedEdit, RenderedHunkPreview, RenderedHunkSide,
+    RevisionContent, StructuredDiff, WikiConfig, build_media_diff, collect_label_ids, diff_lines,
+    parse_labels, parse_revision_contents, render_entity_diff_report, route_content_diff,
 };
 use tracing::warn;
 
@@ -26,6 +27,10 @@ const WIKIMEDIA_API_RETRY_DELAY_MS: u64 = 150;
 pub(crate) struct RevisionArtifacts {
     pub(crate) diff: StructuredDiff,
     pub(crate) media_diff: Option<sp42_core::MediaDiffReport>,
+    /// The content-model-routed diff with resolved labels, when the pair
+    /// routed to the entity path (ADR-0016 Decision 4). `None` for wikitext
+    /// pairs, whose consumers stay on `diff` untouched.
+    pub(crate) content_diff: Option<ContentDiffReport>,
 }
 
 #[derive(Debug, Clone)]
@@ -58,6 +63,27 @@ pub(crate) async fn get_revision_diff(
             )
         })?;
     Ok(Json(diff))
+}
+
+pub(crate) async fn get_revision_content_diff(
+    Path((wiki_id, rev_id, old_rev_id)): Path<(String, u64, u64)>,
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Result<Json<Option<ContentDiffReport>>, (StatusCode, Json<serde_json::Value>)> {
+    let access_token = access_token_for_request(&state, &headers)
+        .await
+        .ok_or_else(|| unauthorized_error("No authenticated Wikimedia session is active."))?;
+    let config = config_for_state_wiki(&state, &wiki_id)?;
+    let report =
+        fetch_revision_content_diff_by_ids(&state, &access_token, &config, rev_id, old_rev_id)
+            .await
+            .map_err(|error| {
+                (
+                    StatusCode::BAD_GATEWAY,
+                    Json(serde_json::json!({"error": error})),
+                )
+            })?;
+    Ok(Json(report))
 }
 
 pub(crate) async fn get_revision_media_diff(
@@ -152,6 +178,24 @@ pub(crate) async fn fetch_revision_media_diff_by_ids(
     revision_artifacts_for_pair(state, access_token, config, rev_id, old_rev_id)
         .await
         .map(|artifacts| artifacts.and_then(|artifacts| artifacts.media_diff))
+}
+
+pub(crate) async fn fetch_revision_content_diff_by_ids(
+    state: &AppState,
+    access_token: &str,
+    config: &WikiConfig,
+    rev_id: u64,
+    old_rev_id: u64,
+) -> Result<Option<ContentDiffReport>, String> {
+    revision_artifacts_for_pair(state, access_token, config, rev_id, old_rev_id)
+        .await
+        .map(|artifacts| {
+            artifacts.map(|artifacts| {
+                artifacts.content_diff.unwrap_or(ContentDiffReport::Text {
+                    diff: artifacts.diff,
+                })
+            })
+        })
 }
 
 pub(crate) async fn fetch_rendered_hunk_preview_by_ids(
@@ -254,24 +298,55 @@ async fn revision_artifacts_for_pair(
         }
     }
 
-    let Some((before_text, after_text)) =
-        fetch_revision_text_pair(&state.http_client, access_token, config, rev_id, old_rev_id)
+    let Some((before, after)) =
+        fetch_revision_content_pair(&state.http_client, access_token, config, rev_id, old_rev_id)
             .await?
     else {
         return Ok(None);
     };
 
-    let diff = diff_lines(&before_text, &after_text);
-    let media_diff = {
-        let mut report = build_media_diff(&before_text, &after_text);
+    // Route on the revision's content model (ADR-0016 Decision 4). The text
+    // diff is still computed for every pair — it stays the existing routes'
+    // contract — while entity pairs additionally carry the structured diff.
+    let routed = route_content_diff(
+        after.content_model.as_deref(),
+        before.as_ref().map(|before| before.content.as_str()),
+        &after.content,
+    );
+    let content_diff = if let ContentDiff::Entity { ref diff } = routed {
+        let labels = resolve_entity_labels(&state.http_client, access_token, config, diff).await;
+        Some(ContentDiffReport::Entity {
+            diff: render_entity_diff_report(diff, &labels),
+        })
+    } else {
+        None
+    };
+
+    let before_content = before.map(|before| before.content).unwrap_or_default();
+    let diff = diff_lines(&before_content, &after.content);
+    // Media-reference extraction is a wikitext-only signal; the gate keys on
+    // the content model itself, not on whether the entity parse succeeded —
+    // malformed entity JSON must not fall through to wikitext extraction
+    // (ADR-0016 Decision 5).
+    let wikitext_signals =
+        sp42_core::derive_content_model_capabilities(after.content_model.as_deref())
+            .wikitext_signals;
+    let media_diff = if wikitext_signals {
+        let mut report = build_media_diff(&before_content, &after.content);
         if report.has_changes() {
             populate_media_preview_urls(config, &mut report);
             Some(report)
         } else {
             None
         }
+    } else {
+        None
     };
-    let artifacts = RevisionArtifacts { diff, media_diff };
+    let artifacts = RevisionArtifacts {
+        diff,
+        media_diff,
+        content_diff,
+    };
 
     let mut guard = state.revision_artifacts.write().await;
     guard.insert(
@@ -285,23 +360,83 @@ async fn revision_artifacts_for_pair(
     Ok(Some(artifacts))
 }
 
-async fn fetch_revision_text_pair(
+/// Fetch the revision pair for a diff. `before` is `None` only for a first
+/// revision of **entity** content (`old_rev_id == 0`), which routes to the
+/// all-added entity diff (ADR-0016 Decision 3); a first wikitext revision
+/// keeps today's behavior (no artifacts), and a nonzero-but-missing parent
+/// (deleted/suppressed) also stays `None` overall rather than being passed
+/// off as a first revision.
+async fn fetch_revision_content_pair(
     client: &reqwest::Client,
     access_token: &str,
     config: &WikiConfig,
     rev_id: u64,
     old_rev_id: u64,
-) -> Result<Option<(String, String)>, String> {
-    let revisions =
-        fetch_revision_texts(client, access_token, config, &[old_rev_id, rev_id]).await?;
-    let Some(before) = revisions.get(&old_rev_id) else {
+) -> Result<Option<(Option<RevisionContent>, RevisionContent)>, String> {
+    let requested: Vec<u64> = if old_rev_id == 0 {
+        vec![rev_id]
+    } else {
+        vec![old_rev_id, rev_id]
+    };
+    let mut revisions = fetch_revision_contents(client, access_token, config, &requested).await?;
+    let Some(after) = revisions.remove(&rev_id) else {
         return Ok(None);
     };
-    let Some(after) = revisions.get(&rev_id) else {
+    if old_rev_id == 0 {
+        let first_entity_revision =
+            sp42_core::classify_content_model(after.content_model.as_deref())
+                == sp42_core::ContentModelClass::WikibaseEntity;
+        if first_entity_revision {
+            return Ok(Some((None, after)));
+        }
+        return Ok(None);
+    }
+    let Some(before) = revisions.remove(&old_rev_id) else {
         return Ok(None);
     };
 
-    Ok(Some((before.clone(), after.clone())))
+    Ok(Some((Some(before), after)))
+}
+
+/// Resolve labels for the ids an entity diff renders, best-effort: a failed
+/// lookup renders raw `P…`/`Q…` ids rather than failing the diff.
+async fn resolve_entity_labels(
+    client: &reqwest::Client,
+    access_token: &str,
+    config: &WikiConfig,
+    diff: &sp42_core::EntityDiff,
+) -> BTreeMap<String, String> {
+    // wbgetentities accepts at most 50 ids per call; one call covers any
+    // reviewable diff, so ids beyond the cap simply render raw.
+    let ids = collect_label_ids(diff);
+    let ids: Vec<&str> = ids.iter().take(50).map(String::as_str).collect();
+    if ids.is_empty() {
+        return BTreeMap::new();
+    }
+    let joined = ids.join("|");
+    let body = fetch_wikimedia_api_bytes(
+        client,
+        access_token,
+        config,
+        &[
+            ("action", "wbgetentities"),
+            ("ids", joined.as_str()),
+            ("props", "labels"),
+            ("languages", "en"),
+            ("format", "json"),
+        ],
+        "entity label lookup",
+    )
+    .await;
+    match body {
+        Ok(body) => parse_labels(&body, "en")
+            .map(sp42_core::WikibaseLabels::into_map)
+            .unwrap_or_default(),
+        Err(error) => {
+            warn!(error, "entity label lookup failed; rendering raw ids");
+            BTreeMap::new()
+        }
+    }
 }
 
 fn revision_artifact_cache_key(wiki_id: &str, rev_id: u64, old_rev_id: u64) -> String {
@@ -486,14 +621,14 @@ fn wiki_origin_url(config: &WikiConfig) -> url::Url {
     url
 }
 
-async fn fetch_revision_texts(
+async fn fetch_revision_contents(
     client: &reqwest::Client,
     access_token: &str,
     config: &WikiConfig,
     revision_ids: &[u64],
-) -> Result<HashMap<u64, String>, String> {
+) -> Result<BTreeMap<u64, RevisionContent>, String> {
     if revision_ids.is_empty() {
-        return Ok(HashMap::new());
+        return Ok(BTreeMap::new());
     }
 
     let revids = revision_ids
@@ -509,7 +644,7 @@ async fn fetch_revision_texts(
             ("action", "query"),
             ("prop", "revisions"),
             ("revids", revids.as_str()),
-            ("rvprop", "ids|content"),
+            ("rvprop", "ids|content|contentmodel"),
             ("rvslots", "main"),
             ("format", "json"),
             ("formatversion", "2"),
@@ -518,36 +653,7 @@ async fn fetch_revision_texts(
     )
     .await?;
 
-    let parsed: serde_json::Value = serde_json::from_slice(&body)
-        .map_err(|error| format!("revision lookup JSON failed: {error}"))?;
-    let mut map = HashMap::new();
-    let pages = parsed
-        .get("query")
-        .and_then(|value| value.get("pages"))
-        .and_then(serde_json::Value::as_array)
-        .ok_or_else(|| "revision lookup payload does not contain query.pages".to_string())?;
-
-    for page in pages {
-        let Some(revisions) = page.get("revisions").and_then(serde_json::Value::as_array) else {
-            continue;
-        };
-        for revision in revisions {
-            let Some(rev_id) = revision.get("revid").and_then(serde_json::Value::as_u64) else {
-                continue;
-            };
-            let content = revision
-                .get("slots")
-                .and_then(|value| value.get("main"))
-                .and_then(|value| value.get("content"))
-                .and_then(serde_json::Value::as_str)
-                .map(ToString::to_string);
-            if let Some(content) = content {
-                map.insert(rev_id, content);
-            }
-        }
-    }
-
-    Ok(map)
+    parse_revision_contents(&body).map_err(|error| format!("revision lookup failed: {error}"))
 }
 
 async fn fetch_wikimedia_api_bytes(

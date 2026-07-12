@@ -41,21 +41,21 @@ than reimplementing queue matching.
 ## Action Boundary
 
 Action request, response, token-kind, and retryability contracts live in
-`sp42-core::action_contracts`. MediaWiki request builders, response parsing, and
-HTTP-client execution live in `sp42-core::action_executor`. Server-side
+`sp42-platform::action_contracts`. MediaWiki request builders, response parsing, and
+HTTP-client execution live in `sp42-platform::action_executor`. Server-side
 session lookup, CSRF validation, capability checks, token fetching, content-edit
 adapters, and action history writes stay in `sp42-server`.
 
-This is the stabilization step before a future `sp42-actions` crate. The split
-should wait until the shared type boundary avoids a crate cycle with
-`sp42-core`, or until the remaining core callers move to their target domain
-crates. Current validation is deterministic and local-first; authenticated live
+This is the stabilization step before a possible future `sp42-actions` crate;
+since the ADR-0013 extraction these modules live in `sp42-platform`, and any
+further split waits until a second consumer justifies it. Current validation
+is deterministic and local-first; authenticated live
 Wikimedia write validation still requires real credentials and should be called
 out in PR notes when action execution changes.
 
 Node-anchored content editing (ADR-0003) follows the same split: the
 `WikitextEditor` contract, locator types, and the deterministic scripted
-double live in `sp42-core::wikitext_editor`; the Parsoid REST adapter lives
+double live in `sp42-platform::wikitext_editor`; the Parsoid REST adapter lives
 in `sp42-server::parsoid_editor`.
 
 ## Local Operator Smoke Flow

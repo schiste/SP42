@@ -1,6 +1,6 @@
 # ADR-0011: Article-level citation verification (the review path)
 
-**Status:** Proposed
+**Status:** Accepted
 **Date:** 2026-06-25
 **Author:** Luis Villa
 
@@ -26,7 +26,7 @@ transclusion `data-mw` on a
 `<link>`, not the `<span>` a hand-built fixture assumed; (c) the
 `SOURCE_UNAVAILABLE` verdict was conflating a dead link with a source we
 fetched but could not read. The engineering detail lives in
-`docs/design-plans/2026-06-24-article-citation-extractor.md` and the matching
+`attic/design-plans/2026-06-24-article-citation-extractor.md` and the matching
 implementation plans.
 
 ## Context

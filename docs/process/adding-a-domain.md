@@ -45,14 +45,18 @@ platform  ◄─  domains  ◄─  shells
 1. **Decide the boundary.** Confirm the capability is a domain (policy/workflow),
    not a platform mechanism. If unsure, open a short note or ADR addendum before
    writing code.
-2. **Create the crate** under the domain layer:
+2. **Create the crate.** Crates currently live flat under `crates/` (the
+   `crates/{platform,domains,shells}/` folder taxonomy from ADR-0013 is a
+   pending relocation, migration phase 5):
    ```
-   crates/domains/<domain>/sp42-<domain>/
+   crates/sp42-<domain>/
      Cargo.toml      # depends only on sp42-platform (+ sp42-types) and, if needed,
                      # sibling domain crates — never a shell
      src/lib.rs
    ```
-   Add it to the workspace `members` in the root `Cargo.toml`. Inherit
+   Add it to the workspace `members` in the root `Cargo.toml`, and add it to the
+   `LAYER` map in `scripts/check-layering.sh` as a `domain` crate (the layer
+   check and the generated architecture map both read that map). Inherit
    `[lints] workspace = true` so the pedantic gate applies.
 3. **Build on the platform contract.** Import the platform's public surface
    (its `contract` prelude) and the `sp42-types` traits. Keep your crate's own
@@ -60,12 +64,17 @@ platform  ◄─  domains  ◄─  shells
 4. **Wire a shell.** A shell (`sp42-server` and/or `sp42-cli`/`sp42-app`/
    `sp42-desktop`) adds your crate as a dependency, constructs the trait impls,
    and injects them. Shells are the only place `impl Trait` lives.
-5. **Claim ownership.** Add a `CODEOWNERS` line:
+5. **Claim ownership.** Add a `CODEOWNERS` line (flat path until the phase-5
+   relocation):
    ```
-   /crates/domains/<domain>/   @your-handle
+   /crates/sp42-<domain>/   @your-handle
    ```
 6. **Document it.** Add a `docs/domains/<domain>/` entry describing the capability
-   and any domain-specific PRDs/ADRs.
+   and any domain-specific PRDs/ADRs. File new ADRs by the reuse-by-design test
+   (see "How ADRs and PRDs are filed" in [docs/README.md](../README.md)): a
+   reusable mechanism/contract ADR is platform-homed even when your domain
+   motivated it; your domain's own policy/workflow ADRs live in
+   `docs/domains/<domain>/adr/`.
 7. **Verify green.** Run:
    ```sh
    ./scripts/check-layering.sh

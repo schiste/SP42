@@ -1,0 +1,552 @@
+# PRD-0015: Article stability signal
+
+**Drafter:** Claude Code
+**Editor:** Luis Villa
+**Date:** 2026-07-09
+**State:** Discussion
+**Discussion:** [PR #124](https://github.com/schiste/SP42/pull/124); design
+conversation 2026-07-09 (extending SP42 toward Good-article assessment).
+
+## Changelog
+
+- 2026-07-09: Drafted; the four open questions resolved same-day in design
+  discussion with the Editor, then a full paragraph-by-paragraph Editor review
+  applied: run-time-anchored three-phase window, seven provisional classes
+  (multi-classification, evidence-bound), policy-knob discipline
+  (default-sensitive, disclosed settings), fits-or-declines evidence budget,
+  conduct posture, and the false-quiet audit mode (#122). State `Draft` →
+  `Discussion` on PR open.
+**Spawned ADRs:** none yet. If accepted, expect one thin **platform** ADR
+pinning the decided placement: the page-history fetch edge (revision list +
+tags + summaries), the Pageviews fetch edge, the revert-chain reducer, and the
+talk-activity sensor as
+platform mechanisms (pure builders/parsers over the `HttpClient` trait), with
+the `StabilitySignal` contract in `sp42-core` (Constitution Art. 9.1, the
+`PageVerificationReport` precedent) and triage/vocabulary policy left to the
+assessment domain.
+
+## Scope boundary
+
+This PRD owns **an article-level stability evidence signal**: given an article and
+the head revision observed at run time (the `rev_id` that anchors the evidence
+window and makes the run reproducible), SP42 gathers and interprets the evidence
+a reviewer needs to judge whether the article is *stable* — the shape of
+[Good article criterion 5](https://en.wikipedia.org/wiki/Wikipedia:Good_article_criteria)
+("does not change significantly from day to day because of an ongoing edit war or
+content dispute"). It is the first assessment-domain capability; how it slots into
+a full GA review is the companion design doc
+(`docs/design-plans/2026-07-09-ga-review-assist.md`).
+
+The signal itself is **process- and wiki-agnostic**: its evidence — history
+tags, talk-page templates, protection status — is generic MediaWiki, so it runs
+on any article of any wiki SP42 resolves (ADR-0014). The GA phase markers are
+optional annotations, not preconditions: where there is no `{{GA nominee}}` or
+review page — another wiki, or an article that simply is not nominated — the
+timeline renders single-phase, with no exemption presumed.
+
+It deliberately excludes:
+
+- **Any pass/fail on criterion 5.** The output is evidence plus a categorical
+  characterization; the criterion judgment stays with the human reviewer, matching
+  the informational-verdict posture of the references domain (ADR-0007).
+- **Patrol-domain queue scoring.** "Queue" here is the patrolling domain's
+  ranked recentchanges queue, not anything GA: the revert-chain and dispute
+  machinery this PRD builds could plausibly feed patrol's *edit* ranking
+  someday (an edit landing on an article with a live edit war is a different
+  patrol decision than one landing on a quiet page), but scoring policy is
+  PRD-0003 territory and untouched here.
+- **Any GA intake queue.** In the MVP there is no queue on the assessment side
+  at all: the operator picks a nomination off the GAN page themselves and names
+  the article to SP42. Browsing the GAN backlog inside SP42 is a convenience
+  that rides the deferred feed-watcher work (see the automatic-runs exclusion
+  below), not this PRD.
+- **Per-edit damage scoring.** LiftWing revertrisk answers "is this one edit
+  likely vandalism"; this signal answers "is this article's recent history a
+  fight." Different question, different consumer (see Alternatives).
+- **Cross-article conduct aggregation.** The signal is per-article and
+  windowed, full stop. Aggregating conduct-adjacent classifications across
+  articles into per-editor profiles would be a different tool with a different
+  ethics posture (the patrol domain's `user_analyzer` reads talk-page
+  *warnings* for triage — narrower and precedented); this PRD closes that door
+  explicitly. See the conduct posture in Layer B.
+- **Automatic on-nomination runs.** The eventual goal includes running this
+  signal automatically when an article is nominated, which needs a GAN-feed
+  watcher (patrolling/live-domain machinery). That comes much later, after this
+  design is proven extensively in operator-attended use. Two forward
+  constraints are recorded now so the design does not foreclose it: the
+  three-phase window must degrade gracefully when run at
+  nomination time (phases 2–3 empty), and an unattended run executes **Layer A
+  only** — Layer B inference spend with no operator present is deferred to the
+  first attended run or an explicit budget opt-in (the ADR-0011 Decision 5
+  budget concern).
+
+## Problem
+
+A GA reviewer must assess stability, and today that means manually reading the
+page history and talk page. The evidence-gathering is mechanical drudgery; the
+judgment is not. Crucially, the GA criteria's own footnote exempts several kinds
+of churn from counting as instability — vandalism reversion, split/merge
+proposals, good-faith copyediting, and changes made in response to the review
+itself. That exemption is why a purely deterministic checker cannot be
+comprehensive, likely ever: three tagged reverts in a week could be an edit war
+between two editors *or* one patroller cleaning up a drive-by vandal, and the
+revision tags look identical. Telling them apart means reading the edit
+summaries, the reverted diffs, and the talk-page thread — interpretation, not
+counting.
+
+This is for the same experienced reviewer as the references domain: they want the
+evidence assembled and honestly characterized, at zero cost for the common quiet
+case, with the interpretive layer clearly labeled as such.
+
+## Proposal
+
+Two layers over one evidence pool, with the deterministic layer acting as both
+sensor and cost gate.
+
+### Layer A — deterministic sensor and gate (no inference, always runs)
+
+For the article under review, SP42 fetches and reduces:
+
+- **Revert timeline** from page history (revision list with tags and edit
+  summaries): revisions tagged `mw-undo` / `mw-rollback` / `mw-reverted`, reduced
+  to revert *chains* (who reverted whom, how many rounds, over what interval),
+  with self-reverts recognized as such. Revert density and distinct-participant
+  counts over the evidence window.
+- **Dispute markers**, from both surfaces: the **article wikitext** carries the
+  maintenance banners (`{{POV}}` and family) and split/merge proposal tags; the
+  **talk page** carries RfC templates and the dispute discussions themselves —
+  the same template-presence parsing discipline `user_analyzer` already applies
+  to warning templates, pointed at two pages rather than one.
+- **Protection status** of the article (full/semi, expiry).
+- **Talk-page activity volume**: talk-edit counts and thread
+  recency over the window — a deterministic sensor, so a banner-less active
+  dispute (a hot talk page with no reverts) still reaches triage.
+- **Attention volatility**: pageview spikes (public Pageviews API) and
+  unique-editor surges over the window — the method behind Wikimedia
+  Enterprise's Breaking-News signal — so news-driven churn is detected and can
+  be *distinguished from* dispute-driven churn rather than mistaken for it.
+
+The window over that evidence spans **three review phases**. It is anchored to
+**run time** (the observed head revision, per the scope boundary) — 90 days
+back — not the nomination timestamp: GAN backlog waits run to months, and
+criterion 5 is about *current* behavior, so a nomination-anchored window would
+hand the reviewer a stale picture. The `{{GA nominee}}` timestamp and the
+review-start timestamp (the creation of the `Talk:Article/GAn` review subpage)
+render as phase markers on the timeline: **pre-nomination** (the baseline
+record), **nomination → review-start** (counts fully toward stability —
+backlog-wait editing is ordinary editing; no exemption applies yet), and
+**review-start → now** (presumptively exempt under the GA footnote's
+changes-based-on-the-review carve-out, but *classified rather than
+blanket-exempted* — an edit war that erupts during a hold still counts). The
+report records its window bounds and phase timestamps, restoring the
+reproducibility a fixed anchor would have given. Dispute markers and protection
+status are **windowless** — a live banner is current state regardless of when
+it was placed.
+
+Layer A triages the article into three outcomes:
+
+1. **Quiet** — no reverts, no dispute markers, no protection, no attention
+   spike, and no talk activity above the triage threshold (thresholds are
+   policy knobs, tuned via the improvement loop) in the window. The report says "no instability indicators
+   found" and **no inference runs**. This is the common case and it is free.
+2. **Unambiguous** — the deterministic facts alone settle the picture, in
+   *either* direction. Unambiguously disputed: e.g. full protection over an
+   active dispute banner plus a live revert chain. Unambiguously benign:
+   sensors fired but every firing is covered by a graduated deterministic rule
+   (all churn is self-reverts; every revert's summary cites vandalism policy) —
+   reported clean with the mechanical explanation, no inference spent. This
+   benign arm is where the improvement loop's graduated classes land.
+3. **Ambiguous middle** — reverts, markers, protection, talk activity, or an
+   attention spike exist and no deterministic rule explains them. Only this
+   slice pays for Layer B.
+
+**Policy knobs.** The design carries four numeric knobs — the talk-activity
+threshold, the attention-spike threshold, the bundle size cap (the evidence
+budget), and the evidence window — all sitting **upstream of interpretation**:
+they allocate attention (what is gathered, what is interpreted, how it is
+packaged) and never themselves state anything about the article. Their failure
+directions are asymmetric, and the two triage thresholds have a dangerous one:
+set too sensitive they waste a panel call; set too insensitive they **suppress
+evidence** — a quiet outcome that hides a real dispute. Two rules follow.
+*Default sensitive:* knobs err toward over-triggering, because that failure is
+visible and cheap while the other is silent. *Disclose settings:* every report
+records the knob values in effect, so "quiet" reads as "no sensor exceeded
+these recorded thresholds" — auditable, not authoritative — and replay stays
+honest (the same `rev_id` under different knob settings is a different run,
+and the report says so). How these knobs interact for real users is expected
+to be learned by using the tool — alpha dogfooding feeding the improvement
+loop — not settled on paper; the defaults are opening positions, not
+commitments.
+
+### Layer B — panel interpretation (inference, gated to the ambiguous middle)
+
+The existing model panel (ADR-0006) reads the evidence Layer A gathered — edit
+summaries, the diffs of the revert-chain revisions, the relevant talk-page
+threads, and the dispute-marker inventory — and classifies it against a small
+categorical vocabulary:
+
+- `EditWarPattern` — sustained back-and-forth between committed participants
+- `ActiveContentDispute` — an unresolved dispute conducted on the talk page
+  (criterion 5 names "content dispute" as a distinct thing from an edit war;
+  typically surfaced by the talk-activity sensor alone, since a hot talk page
+  need involve no reverts or banners at all)
+- `VandalismCleanup` — churn is vandalism plus its reversion (GA-exempt)
+- `NewsDrivenVolatility` — rapid, largely good-faith editing driven by outside
+  attention (a news event), not internal conflict; typically surfaced by the
+  attention-volatility sensor. Exculpatory in the same way as
+  `VandalismCleanup`: criterion 5 scopes instability to edit wars and content
+  disputes, and a hot history caused by the news cycle is the signature most
+  easily mistaken for one by raw activity counts — naming the cause is exactly
+  the distinction a reviewer needs.
+- `StaleDisputeBanner` — a dispute marker whose discussion has gone dormant
+- `ReviewDrivenChurn` — review-phase edits responding to the review (GA-exempt).
+  Kept as a class rather than folded into the phase split: the phase marker says
+  *when* an edit happened, classification says *why* — an edit war erupting
+  mid-hold is phase-3 activity that is **not** exempt, and only classification
+  (summaries referencing the review, edits landing in review-flagged sections)
+  separates the two.
+- `Unclear` — the panel declines to characterize
+
+The output is a **set of classifications, not one label per article**: each
+classification binds to the specific evidence it characterizes (these revert
+chains, this talk thread, this banner), so a mixed article — vandalism cleanup
+in May, an edit war in June — reports both truths instead of averaging them
+into `Unclear`. The grounding rule below anchors per classification (each cites
+its own `rev_id`s and excerpts), and panel agreement is likewise measured per
+classification, not per article.
+
+This vocabulary is **explicitly provisional**: it is the part of the design most
+exposed to alpha evidence, and the improvement loop below is its revision
+mechanism — alpha-era Layer B runs *are* the PRD-0007 benchmark corpus. The
+contract therefore treats class evolution as additive under the ADR-0009 replay
+discipline: new variants never break deserialization of old snapshots, and
+existing variants are never renamed or removed — only deprecated (they stay
+deserializable and renderable forever; they just stop being emitted). Reshaping
+the vocabulary is a planned amendment path, not a broken freeze.
+
+Two disciplines transfer from the citation path unchanged:
+
+- **Grounding (ADR-0007 spirit).** Every characterization must cite its evidence:
+  specific `rev_id`s and verbatim excerpts (edit summaries, talk-page sentences)
+  that are locatable in the fetched evidence pool. A characterization whose
+  excerpt cannot be located verbatim is rejected: it degrades to `Unclear` with
+  the rejection disclosed in the report — never silently dropped, since a panel
+  reaching for an ungroundable claim is itself signal the operator should see.
+  "The editors seem to be fighting," without a quote, is not an output this
+  system can produce.
+- **Abstention.** `Unclear` is always acceptable; low panel agreement surfaces to
+  the operator rather than being averaged away.
+
+**Conduct posture.** Several classes describe activity by identifiable editors,
+so this signal is the one assessment output that is *about people's behavior*,
+and it carries its own discipline:
+
+- **Classify history, never persons.** Classifications bind to revision sets
+  and threads, and every rendered characterization is phrased about the
+  article's history ("a sustained revert cycle: 12 reverts between 2
+  participants over 9 days"), never as a predicate on a named editor.
+  Usernames live only in the evidence layer — `rev_id`s and diff links, public
+  record that speaks for itself.
+- **No intent vocabulary.** The panel prompt and class definitions exclude
+  motive claims — no "POV-pushing," no "bad faith," no "deliberately."
+  Patterns and counts only; verbatim quotes are evidence attributed to their
+  authors by the wiki itself, but SP42's own words never assert what someone
+  meant.
+- **The pasteable rendering counts; the local report links.** The GA-appendix
+  rendering — the artifact most likely to be published — carries class,
+  counts, interval, and diff links, with no usernames in characterization
+  text. The operator-facing local report may show the per-participant
+  breakdown (a reviewer legitimately needs to know two accounts from twelve).
+  An operator who names names publicly does so in their own words under their
+  own signature — SP42 never hands them a pre-written accusation.
+- Cross-article aggregation into editor profiles is a scope-boundary
+  exclusion, recorded there.
+
+**Evidence packaging: one bundle per article.** The panel sees the
+whole evidence pool — all chains, summaries, matched talk threads, and the
+dispute-marker inventory — in a
+single call, because the question is article-level and cross-chain context is
+itself evidence: the same two editors recurring across three chains over six
+weeks is the signature of a sustained dispute, and per-chain calls structurally
+cannot see that pattern (nor cleanly partition talk threads that relate to
+several chains). Cost also scales with nominations rather than with churn. The
+bundle is size-capped — the cap *is* the **evidence budget**: the panel context
+and inference cost one Layer B call may consume. **In the MVP the bundle either
+fits or Layer B declines to run**: an oversized pool is reported as exactly that
+(Layer B not run: evidence oversized), with Layer A's facts delivered in full —
+no sampling, no truncation, no sharding, nothing silently degraded. The
+candidate mitigations — truncation, evidence sampling, per-chain sharding (with
+its cross-chain blindness) — are deliberately deferred until the alpha corpus
+shows how often real articles overflow and where panel attention actually
+degrades; choosing one on paper would be guessing. Whether
+attention dilution on large bundles is real at our evidence sizes is exactly
+what the alpha-era PRD-0007 fixtures measure; the choice is benchmark-revisable.
+
+### The report
+
+The report is a versioned `StabilitySignal` aggregate: a Constitution Art. 9.1
+serde contract living in `sp42-core`, following the `PageVerificationReport`
+precedent (ADR-0011), so shells and renderers consume it without depending on
+the assessment crate. It renders both layers, labeled — the raw timeline with
+phase markers and the marker inventory (Layer A, facts), then the panel
+characterizations, each with its cited evidence (Layer B, interpretation), when
+Layer B ran. The report always records the triage outcome: which outcome
+Layer A reached, which sensors fired, and — whenever Layer B did **not** run —
+why not (quiet; covered by graduated deterministic rules; evidence oversized;
+or, later, an unattended run's Layer-A-only policy), so a facts-only report is
+honest on its face rather than reading as a full run that found nothing. It
+records its window bounds and phase timestamps for replay. The rendering never
+uses pass/fail wording for criterion 5. An oversized evidence pool surfaces as
+the disclosed reason Layer B declined — never as a silently reduced bundle.
+
+### The improvement loop
+
+Layer B is not a permanent crutch; it is the measurement instrument that tells us
+which deterministic rules are worth writing:
+
+- Every Layer B run is recorded as a replayable case under the ADR-0009
+  snapshot/replay discipline and becomes a candidate fixture for the PRD-0007
+  benchmarking harness.
+- When a *class* of cases proves consistently classifiable (reverts whose
+  summaries cite vandalism policy; churn confined to a single since-blocked
+  account), that class graduates into Layer A as a deterministic rule — landing
+  in the unambiguous-benign triage arm — and a regression fixture pins it.
+- The share of runs that need Layer B at all is the tracked health metric:
+  a shrinking inference share is what "the algorithm is improving" means here.
+
+Posture precedent: the patrol queue already consumes a model signal (LiftWing
+revertrisk) informationally, and PRD-0011 gated scoring *off* for Wikidata rather
+than fabricate signal from an unfit model. Same principle, both directions: use a
+model where interpretation is genuinely required, grounded and categorical; spend
+nothing and claim nothing where it is not.
+
+### Surface
+
+CLI-first, matching the references-domain pattern: a `stability` report for
+`{wiki_id, title, rev_id?}` — `rev_id` is optional: omitted, SP42 resolves the
+current head revision and records it in the report (the normal interactive
+case); supplied, it reproduces a prior run's window exactly (the replay case).
+An **audit flag** forces Layer B regardless of the triage outcome, with the
+report labeled as an audit run — the instrument that makes false-quiets
+measurable (the alpha checkpoint is tracked in
+[#122](https://github.com/schiste/SP42/issues/122)). Foldable into the GA
+assist report (design doc) and eventually the browser shell. Read-only; no
+apply lane exists or is planned for this signal.
+
+## Definition of Done
+
+*Names planned coverage; the closing PR records exact test ids. All tests replay
+recorded MediaWiki responses — no live network (ADR-0009 discipline).*
+
+- [ ] A quiet article (no reverts, markers, protection, attention spike, or
+      above-threshold talk activity in the window) produces a "no instability
+      indicators" report and **zero** model-inference calls, verified by a
+      fixture test asserting the mock `ModelClient` is never invoked and that
+      the report records the effective knob settings (the thresholds "quiet"
+      was judged against).
+- [ ] Revert chains are reduced correctly from a replayed history fixture
+      (tags + summaries → chains with participants and intervals), including
+      self-revert recognition, verified by unit tests over the reducer.
+- [ ] Dispute banners and split/merge tags surface from replayed
+      article-wikitext fixtures, RfC templates from replayed talk-page
+      fixtures, and protection status from replayed page-info fixtures,
+      verified by parser tests per surface.
+- [ ] The report splits activity across the three phases (pre-nomination /
+      nomination→review-start / review-start→run), keyed on the `{{GA nominee}}`
+      and review-start timestamps, records its window bounds, and degrades to
+      fewer phases when the later timestamps are absent — verified by fixtures
+      with churn in each phase, asserting in particular that
+      nomination→review-start activity is **never** reported as exempt.
+- [ ] A banner-less, revert-free article with heavy recent talk activity reaches
+      Layer B via the talk-activity sensor and may classify
+      `ActiveContentDispute`, verified by a replayed talk-history fixture.
+- [ ] An ambiguous fixture (reverts present, meaning unclear) triggers Layer B,
+      and the resulting characterization carries at least one cited `rev_id` and
+      one verbatim excerpt locatable in the fetched evidence; a fabricated
+      (non-locatable) excerpt is rejected by the grounding gate and the affected
+      classification degrades to `Unclear` **with the rejection disclosed in the
+      report** (never silently dropped), verified by unit tests on the gate and
+      a renderer assertion on the disclosure.
+- [ ] A vandalism-cleanup fixture (reverts whose context is vandalism reversion)
+      classifies as `VandalismCleanup` with cited evidence and is **not**
+      reported as an instability indicator, verified by a replayed-panel fixture
+      test.
+- [ ] `Unclear` is an accepted panel outcome and low agreement is surfaced, not
+      averaged away, verified by a disagreeing-panel fixture.
+- [ ] The rendered report labels Layer A facts and Layer B interpretation
+      distinctly and contains no criterion-5 pass/fail wording, verified by a
+      renderer test.
+- [ ] Every Layer B run persists a replayable snapshot suitable for the PRD-0007
+      harness, verified by asserting the snapshot round-trips byte-identically.
+- [ ] An evidence pool exceeding the bundle cap causes Layer B to **decline**
+      with an explicit evidence-oversized reason recorded in the report —
+      Layer A facts delivered in full, and no truncated or sampled bundle sent
+      to the panel — verified by an oversized fixture asserting the mock
+      `ModelClient` is never invoked.
+- [ ] Sensors firing under a graduated deterministic rule (e.g. every revert's
+      summary cites vandalism policy) triage as **unambiguous-benign**: reported
+      clean with the mechanical explanation and **zero** model-inference calls,
+      verified by a fixture test asserting the mock `ModelClient` is never
+      invoked.
+- [ ] A pageview/unique-editor-spike fixture with no dispute markers reaches
+      Layer B via the attention-volatility sensor and classifies
+      `NewsDrivenVolatility`, not reported as criterion-5 instability, verified
+      by a replayed-panel fixture test.
+- [ ] A mixed fixture (vandalism cleanup in one chain, an edit war in another)
+      yields **both** classifications, each bound to its own evidence
+      (`rev_id`s / excerpts), with panel agreement measured per classification,
+      verified by a replayed-panel fixture test.
+- [ ] Every report records the triage outcome, the sensors that fired, and —
+      whenever Layer B did not run — why not, verified by contract/renderer
+      tests across quiet, unambiguous-benign, and ambiguous fixtures.
+- [ ] The pasteable (GA-appendix) stability rendering contains **no usernames**
+      outside evidence/diff links — characterization text is about the
+      article's history, participants counted rather than named — verified by
+      a renderer test over a fixture whose classifications involve named
+      participants.
+- [ ] A quiet-triaged fixture run with the **audit flag** still invokes
+      Layer B, and the report labels the run as an audit with the triage
+      outcome it would otherwise have had, verified by a fixture test.
+- [ ] With `rev_id` omitted, the run resolves the current head revision and
+      records it in the report; with the recorded `rev_id` supplied **and the
+      recorded knob settings in effect**, the run re-renders byte-identically
+      over the same fixtures, verified by a replay determinism test; the same
+      `rev_id` under different knob settings reports the changed settings,
+      verified by a knob-variation fixture.
+
+## Alternatives
+
+- *Pure deterministic checker.* Rejected: the GA footnote's exemptions
+  (vandalism reversion, review-driven changes, good-faith copyediting) are
+  meaning distinctions that identical revision tags cannot express. A
+  deterministic-only signal would either over-report (counting vandalism cleanup
+  as instability) or require the very interpretation it forgoes.
+- *Always-on LLM assessment.* Rejected: the common case is a quiet page where
+  there is nothing to interpret; spending panel inference there is waste and
+  invites fabricated signal — the exact failure PRD-0011 avoided by gating
+  scoring off for Wikidata.
+- *Reuse LiftWing revertrisk aggregated over recent edits.* Rejected: it scores
+  per-edit damage probability for patrol triage; summing it does not answer
+  "is this a sustained dispute," and it is Wikipedia-trained per-edit, not
+  validated for article-level aggregation.
+- *Numeric thresholds ("unstable if >N reverts/week").* Rejected — and the
+  distinction from the policy knobs the design *does* carry deserves stating
+  precisely. The rejected threshold sits at the **conclusion**: its output *is*
+  the claim about the article, converting a count directly into a stability
+  judgment with no interpretation behind it and no GA-documented basis for any
+  particular N — invented authority. The accepted knobs sit **upstream of
+  interpretation** and never surface as claims about the article. They are not
+  therefore harmless — a mis-set triage threshold suppresses evidence rather
+  than wasting money — which is exactly why they carry the default-sensitive
+  and disclosed-settings rules (see Policy knobs) instead of a pretense of
+  safety.
+- *Status quo (reviewer reads the history manually).* This remains the fallback
+  whenever inference is unavailable — Layer A alone still assembles the evidence,
+  which is most of the drudgery being removed.
+- *Reuse a Wikimedia Enterprise stability datapoint.* Surveyed (2026-07-09): no
+  packaged stability datapoint exists. WME's Credibility Signals ship the
+  *ingredients* — per-revision revertrisk, protection, maintenance-tag counts,
+  watchers, editor reputation, and a Breaking-News volatility boolean — and its
+  documentation leaves "how long has this been stable" to the customer to
+  compute over versions. Those signals are a paid firehose of the same public
+  data SP42 already reads directly, so a commercial dependency buys nothing
+  here; the survey instead validates commercial demand for exactly the
+  interpretation layer this PRD adds, and its Breaking-News method (pageview +
+  unique-editor spikes) is adopted as the attention-volatility sensor in
+  Layer A.
+
+## Risks
+
+- **Panel misreads discussion tone** (sarcasm, heated-but-resolving threads).
+  Mitigation: grounded excerpts the operator can check, the categorical (not
+  free-text) vocabulary, `Unclear` as a first-class outcome, and the human owning
+  the criterion judgment.
+- **Large talk archives overflow the evidence budget** (the Layer B bundle
+  cap: panel context and inference cost). MVP mitigation is **transparent
+  failure**: Layer B declines with an explicit evidence-oversized reason and
+  Layer A's facts are delivered in full, so the failure is visible and
+  countable rather than papered over. Which mitigation to adopt — truncation,
+  sampling, per-chain sharding — is chosen experimentally from the alpha
+  corpus, not on paper.
+- **Operator habituation / over-trust.** Mitigation: evidence-forward rendering
+  (facts before interpretation), no pass/fail wording, low-agreement surfacing.
+- **Wrong evidence window.** Too short misses slow-burn disputes; too long
+  punishes ancient history. Mitigation: configurable window (90-day default), run-time anchoring with recorded bounds, and the three-phase
+  split so exemption never silently expands.
+- **Cost surprise.** Layer B spends real inference. Mitigation: the gate keeps
+  quiet pages free; the ambiguous-middle share is tracked (improvement loop);
+  and the report contract itself records when and why Layer B ran or declined.
+- **False quiet (mis-set triage threshold suppresses evidence).** The
+  insensitive direction of the triage knobs does not waste money — it hides a
+  real dispute behind "no instability indicators found," and by construction
+  nobody looks. Mitigations: the default-sensitive rule and disclosed knob
+  settings (Policy knobs), plus the audit flag (Surface) that forces Layer B
+  so quiet outcomes can be sampled; measuring the false-quiet rate during
+  alpha is tracked in [#122](https://github.com/schiste/SP42/issues/122).
+- **Classifications characterize editor conduct.** `EditWarPattern` over cited
+  `rev_id`s effectively describes identifiable editors' behavior; pasted into
+  a public review page, that becomes a tool-sourced conduct accusation (the
+  aspersions problem). Mitigation: the conduct posture in Layer B —
+  classify history never persons, no intent vocabulary, no usernames in the
+  pasteable rendering's characterization text, no cross-article aggregation
+  (scope exclusion) — and any public naming is the operator's own words under
+  their own signature.
+- **Pageviews API dependency.** The attention sensor adds one external read
+  edge. Mitigation: the standard treatment (behind the `HttpClient` trait,
+  replayed fixtures) and degrade-with-disclosure — the sensor reports itself
+  not-run rather than folding into a silent quiet. If that API disappears,
+  Wikimedia has bigger problems than this sensor.
+
+## Resolved questions
+
+All four carry the Editor's decided answers (design discussion 2026-07-09),
+folded into the body above; they remain open to reviewer reaction until
+acceptance.
+
+1. **Evidence window.** Resolved: **90 days anchored to run time, three
+   phases.** The original nomination-timestamp anchor was wrong — GAN backlog
+   waits run to months and criterion 5 is about current behavior — so the
+   window ends at the evidence run, with `{{GA nominee}}` and review-start as
+   phase markers: pre-nomination (baseline), nomination→review-start (counts
+   fully), review-start→run (presumptively exempt but classified, never
+   blanket-exempted). Reproducibility is restored by recording the window
+   bounds in the report rather than by anchoring to a stale event. Dispute
+   markers and protection are windowless. The phase design degrades gracefully
+   for a future automatic nomination-time run (see Scope boundary), whose feed
+   watcher is deliberately deferred until the design is proven in
+   operator-attended use.
+2. **Placement of the mechanisms.** Resolved: **mechanisms platform, contract
+   in `sp42-core`, policy in the domain.** The page-history fetch edge, the
+   Pageviews fetch edge, the revert-chain reducer, and the talk-activity
+   sensor are platform — pure builders/parsers over the
+   `HttpClient` trait (the Citoid/recentchanges precedent) — with the
+   reuse-by-design case strengthened since drafting: the history fetch is
+   content-model agnostic (`prop=revisions` serves entity revisions
+   identically), making the Wikidata domain a credible second consumer beyond
+   patrol. The `StabilitySignal` report follows the `PageVerificationReport`
+   precedent (Constitution Art. 9.1, ADR-0011): a versioned serde contract in
+   `sp42-core`, not the domain crate. Triage thresholds, panel prompts, the
+   vocabulary, and GA phase semantics stay assessment-domain. Pinned by the
+   spawned ADR.
+3. **Categorical vocabulary.** Resolved: **seven classes, explicitly
+   provisional.** `ReviewDrivenChurn` stays — the phase split says *when*,
+   classification says *why*, and an edit war erupting mid-hold must not
+   inherit the phase's exemption. `ActiveContentDispute` is added: criterion 5
+   names "content dispute" as distinct from edit war, and a hot talk page with
+   no reverts and no banner was inexpressible in the five-class draft — with
+   the Layer A consequence that talk-activity volume joins the deterministic
+   triage sensors. `NewsDrivenVolatility` is added during review (from the
+   Wikimedia Enterprise survey recorded in Alternatives), with the
+   attention-volatility sensor as its Layer A counterpart: news churn is the
+   non-dispute cause most easily mistaken for an edit war. The vocabulary is
+   expected to be reshaped by alpha evidence (the Editor's stated
+   expectation); the additive-evolution rule in the body is what makes that a
+   planned amendment rather than a contract break.
+4. **Panel evidence packaging.** Resolved: **one bundle per article**, size-
+   capped by the evidence budget, and **fits-or-declines in the MVP** (the
+   Editor's call during review: fail transparently and pick mitigations
+   experimentally rather than choose truncation/sampling/sharding on paper).
+   Cross-chain patterns — the same participants recurring across chains — are
+   themselves evidence an article-level question needs, and per-chain calls
+   cannot recover them, which is why sharding is a deferred mitigation rather
+   than the design. Benchmark-revisable via the alpha-era PRD-0007 corpus.

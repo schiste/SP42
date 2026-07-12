@@ -356,6 +356,7 @@ mod tests {
             preceding_context: Vec::new(),
             archive_of: None,
             book_scan: None,
+            is_bare_url_ref: false,
             schema_version: crate::citation::verify::SCHEMA_VERSION,
         }
     }

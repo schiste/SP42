@@ -5,7 +5,7 @@
 **Date:** 2026-06-05
 **State:** Implemented
 **As-built:** retroactive characterization of an already-shipped feature (no forward "closing PR").
-**Related ADRs:** ADR-0001 (foundational decisions — §5 the Toolforge hosting posture, whose persistent-WebSocket support is still an open question; §7 the trait-isolated I/O posture). The coordination *contract* itself has **no ADR yet** — tracked in #21.
+**Related ADRs:** ADR-0001 (foundational decisions — §5 the Toolforge hosting posture, whose persistent-WebSocket support is still an open question; §7 the trait-isolated I/O posture). The coordination *contract* itself is **[ADR-0023](../../../platform/adr/0023-coordination-contract.md)**.
 **Discussion:** https://github.com/schiste/SP42/pull/4
 
 > **Orientation.** Read **Known gaps / drift** first for the boundary between what
@@ -27,7 +27,7 @@ deliberately excludes the *mechanism* that carries that picture:
   it. There is **no coordination ADR**: the coordination contract (the message
   kinds, the relay/fan-out semantics, the shared room-state reducer, and the
   REST inspection surface) is a public-contract concern that, per
-  `docs/process/prd-protocol.md`, warrants its own ADR, but none exists yet — tracked in #21.
+  `docs/process/prd-protocol.md`, warrants its own ADR: [ADR-0023](../../../platform/adr/0023-coordination-contract.md).
 - **What a relayed action, score, or flag *means*** is owned by its sibling PRD,
   not here. The dispositions whose on-wiki meaning coordination relays are
   **PRD-0004**; the scoring/flag semantics of a relayed score delta or flagged
@@ -104,7 +104,7 @@ Each item is an operator-observable behavior that is **already true**, bound to 
 existing test. *(The wire codec round-trip and the room-state reducer are
 additionally unit-tested as pure mechanism — `crates/sp42-coordination/src/codec.rs`
 and `…/state.rs` — but that mechanism is owned by the coordination contract
-(no ADR yet — tracked in #21).)*
+([ADR-0023](../../../platform/adr/0023-coordination-contract.md)).)*
 
 - [x] Operator messages fan out to every *other* operator in the same room, and
   claim, presence, action, and race-resolution all round-trip across three

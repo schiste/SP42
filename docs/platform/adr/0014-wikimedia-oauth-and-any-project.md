@@ -1,6 +1,6 @@
 # ADR-0014: Required Wikimedia OAuth login + any-Wikimedia-project resolution
 
-**Status:** Proposed
+**Status:** Accepted
 **Date:** 2026-06-27
 **Author:** Christophe Henner (drafted with Claude)
 

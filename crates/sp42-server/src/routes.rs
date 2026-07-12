@@ -14,10 +14,13 @@ use crate::auth_routes::{
     get_capabilities, get_session, post_auth_logout, post_bootstrap_session,
     post_local_credentials,
 };
-use crate::citation_routes::{post_bare_url_apply, post_bare_url_proposals, post_verify_page};
+use crate::citation_routes::{
+    post_bare_url_apply, post_bare_url_proposals, post_citation_reverify, post_verify_page,
+};
 use crate::operator_live::get_live_operator_view;
 use crate::revision_artifacts::{
-    get_rendered_hunk_preview, get_revision_diff, get_revision_media_diff,
+    get_rendered_hunk_preview, get_revision_content_diff, get_revision_diff,
+    get_revision_media_diff,
 };
 use crate::runtime_status::{
     get_debug_summary, get_healthz, get_operator_readiness, get_operator_report,
@@ -149,6 +152,10 @@ fn operator_api_routes(router: Router<AppState>) -> Router<AppState> {
             get(get_revision_diff),
         )
         .route(
+            route_contracts::OPERATOR_CONTENT_DIFF_PATTERN,
+            get(get_revision_content_diff),
+        )
+        .route(
             route_contracts::OPERATOR_MEDIA_DIFF_PATTERN,
             get(get_revision_media_diff),
         )
@@ -207,6 +214,10 @@ fn dev_bridge_routes(router: Router<AppState>) -> Router<AppState> {
         .route(
             route_contracts::DEV_CITATION_VERIFY_PAGE_PATH,
             axum::routing::post(post_verify_page),
+        )
+        .route(
+            route_contracts::DEV_CITATION_REVERIFY_PATH,
+            axum::routing::post(post_citation_reverify),
         )
         .route(route_contracts::ACTION_STATUS_PATH, get(get_action_status))
         .route(

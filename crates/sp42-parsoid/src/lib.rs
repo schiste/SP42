@@ -103,30 +103,46 @@ pub fn blocks_from_revision(
     // book identifiers (PRD-0009), read structurally from cite templates and
     // bare ExtLinks inside each reference's contents.
     let mut ref_sources: HashMap<String, RefSources> = HashMap::new();
+    // Parallel to `ref_sources`: whether each reference's whole rendered content is a single bare
+    // URL (a bare-URL-repair target). Keyed the same way so `collect_block` can stamp it per marker.
+    let mut ref_bare: HashMap<String, bool> = HashMap::new();
     for reference in code.filter_references() {
         ref_sources.insert(reference.id(), sources_in_reference(&reference));
+        ref_bare.insert(reference.id(), reference_is_bare_url(&reference));
     }
 
     let mut blocks = Vec::new();
     let mut ordinal = 0usize;
-    walk(&code, &ref_sources, &mut blocks, &mut ordinal);
+    walk(&code, &ref_sources, &ref_bare, &mut blocks, &mut ordinal);
     Ok(blocks)
+}
+
+/// `true` when a reference's whole rendered content is a single bare URL (no cite template) — the
+/// same test `sp42-citation`'s `classify_bare_url` applies to a wikitext anchor, evaluated here on
+/// the ref's rendered content so a finding's ref can be classified as a bare-URL-repair target.
+fn reference_is_bare_url(reference: &Reference) -> bool {
+    let text = reference.contents().text_contents();
+    let trimmed = text.trim();
+    (trimmed.starts_with("http://") || trimmed.starts_with("https://"))
+        && !trimmed.chars().any(char::is_whitespace)
+        && url::Url::parse(trimmed).is_ok()
 }
 
 /// Recursive walker — emit blocks, don't recurse into a block once emitted.
 fn walk(
     node: &impl WikinodeIterator,
     ref_sources: &HashMap<String, RefSources>,
+    ref_bare: &HashMap<String, bool>,
     blocks: &mut Vec<ParsoidBlock>,
     ordinal: &mut usize,
 ) {
     for child in node.children() {
         if let Some(kind) = block_kind(&child) {
-            blocks.push(build_block(&child, kind, *ordinal, ref_sources));
+            blocks.push(build_block(&child, kind, *ordinal, ref_sources, ref_bare));
             *ordinal += 1;
             continue; // do not descend into an emitted block
         }
-        walk(&child, ref_sources, blocks, ordinal);
+        walk(&child, ref_sources, ref_bare, blocks, ordinal);
     }
 }
 
@@ -147,10 +163,11 @@ fn build_block(
     kind: BlockKind,
     ordinal: usize,
     ref_sources: &HashMap<String, RefSources>,
+    ref_bare: &HashMap<String, bool>,
 ) -> ParsoidBlock {
     let mut text = String::new();
     let mut refs = Vec::new();
-    collect_block(node, &mut text, &mut refs, ref_sources);
+    collect_block(node, &mut text, &mut refs, ref_sources, ref_bare);
 
     // Adjust ref offsets from the untrimmed text to the trimmed text.
     // collect_block records offsets against the untrimmed accumulator,
@@ -175,6 +192,7 @@ fn collect_block(
     text: &mut String,
     refs: &mut Vec<BlockRef>,
     ref_sources: &HashMap<String, RefSources>,
+    ref_bare: &HashMap<String, bool>,
 ) {
     for child in node.children() {
         if let Some(ref_link) = child.as_reference_link() {
@@ -189,6 +207,7 @@ fn collect_block(
                 book_sources: sources.books,
                 ref_text: child.text_contents(),
                 named: ref_link.name().ok().flatten().is_some(),
+                is_bare_url_ref: ref_bare.get(&reference_id).copied().unwrap_or(false),
             });
             continue; // skip the marker's own text
         }
@@ -199,7 +218,7 @@ fn collect_block(
         }
         // Any other element: recurse so we keep inline formatting text and catch
         // nested ref markers in order.
-        collect_block(&child, text, refs, ref_sources);
+        collect_block(&child, text, refs, ref_sources, ref_bare);
     }
 }
 
@@ -300,14 +319,27 @@ fn in_transclusion(
 /// `url=`. The first present alias becomes the citation's primary source.
 const URL_PARAM_ALIASES: &[&str] = &[
     "url",
+    // Each alias in both CS1 spellings, hyphenated first: the no-hyphen forms
+    // (`chapterurl=`, …) are accepted CS1 aliases still common in article
+    // wikitext, and a ref using one must not be dropped as a non-URL source
+    // (SP42#62). Pairs stay adjacent so the priority order is by level, not
+    // by spelling.
     "chapter-url",
+    "chapterurl",
     "conference-url",
+    "conferenceurl",
     "contribution-url",
+    "contributionurl",
     "article-url",
+    "articleurl",
     "section-url",
+    "sectionurl",
     "entry-url",
+    "entryurl",
     "map-url",
+    "mapurl",
     "transcript-url",
+    "transcripturl",
 ];
 
 /// Extract cited sources from a cite-template data-mw.
@@ -517,6 +549,18 @@ mod tests {
             extlink_ref.offset > 0 && extlink_ref.offset <= etymology_block.text.len(),
             "bare-URL ref offset should be inside text bounds"
         );
+
+        // Bareness: the cite-template ref is NOT a bare-URL-repair target; the ref whose whole
+        // rendered content is a single URL IS. This is the signal that lets the browser route
+        // "Fix citation" to bare-URL repair only when a finding's own ref is genuinely bare.
+        assert!(
+            !cite_ref.is_bare_url_ref,
+            "a cite-template ref is not a bare-URL-repair target"
+        );
+        assert!(
+            extlink_ref.is_bare_url_ref,
+            "a ref whose whole content is a single bare URL is a bare-URL-repair target"
+        );
     }
 
     #[test]
@@ -566,6 +610,10 @@ mod tests {
         assert_eq!(
             r.sources[0].url.as_str(),
             "https://journal.example.org/article"
+        );
+        assert!(
+            !r.is_bare_url_ref,
+            "a cite-template ref (even one rendering bare-looking resolver links) is not bare"
         );
     }
 
@@ -752,6 +800,19 @@ mod tests {
         let mut seen_urls = std::collections::HashSet::new();
         super::push_template_sources(data_mw, &mut sources, &mut books, &mut seen_urls);
         assert_eq!(sources.len(), 1, "chapter-url should produce one source");
+        assert_eq!(sources[0].url.as_str(), "https://example.org/chapter");
+    }
+
+    #[test]
+    fn push_template_sources_accepts_no_hyphen_url_alias() {
+        // The no-hyphen CS1 spelling (`chapterurl=`) is an accepted alias and
+        // must extract just like `chapter-url=` (SP42#62).
+        let data_mw = r#"{"parts":[{"template":{"target":{"wt":"cite book"},"params":{"chapterurl":{"wt":"https://example.org/chapter"},"title":{"wt":"A Book"}},"i":0}}]}"#;
+        let mut sources = Vec::new();
+        let mut books = Vec::new();
+        let mut seen_urls = std::collections::HashSet::new();
+        super::push_template_sources(data_mw, &mut sources, &mut books, &mut seen_urls);
+        assert_eq!(sources.len(), 1, "chapterurl should produce one source");
         assert_eq!(sources[0].url.as_str(), "https://example.org/chapter");
     }
 

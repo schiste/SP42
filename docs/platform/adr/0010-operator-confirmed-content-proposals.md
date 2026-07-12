@@ -1,6 +1,6 @@
 # ADR-0010: Operator-confirmed content proposals (propose/confirm)
 
-**Status:** Proposed
+**Status:** Accepted
 **Date:** 2026-06-09
 **Author:** Luis Villa
 

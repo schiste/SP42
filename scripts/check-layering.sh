@@ -52,10 +52,16 @@ LAYER = {
     "sp42-parsoid": "platform",
     "sp42-reporting": "platform",
     "sp42-fetch": "platform",
+    # sp42-ui is platform, not a shell: it is a reusable, presentation-only
+    # component library (leptos + medium-independent semantic types), consumed
+    # by the app/desktop shells — a second-consumer-by-design mechanism, the
+    # platform test. Classifying it platform also mechanically enforces ADR-0005's
+    # core rule that sp42-ui takes NO domain dependency (a domain-typed widget
+    # like ActionBar lives in the shell, not here). See ADR-0005, issue #128.
+    "sp42-ui": "platform",
     # shells
     "sp42-cli": "shell",
     "sp42-app": "shell",
-    "sp42-ui": "shell",
     "sp42-desktop": "shell",
     "sp42-server": "shell",
     "sp42-devtools": "shell",

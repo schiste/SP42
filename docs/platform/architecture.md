@@ -55,7 +55,7 @@ flowchart TB
   end
   subgraph DOMAINS["Domains — policy, config, workflow"]
     subgraph DOM_patrolling["patrolling"]
-      sp42_patrol["sp42-patrol<br/>ADR-0013, ADR-0020"]:::domain
+      sp42_patrol["sp42-patrol<br/>ADR-0013, ADR-0020, ADR-0021"]:::domain
     end
     subgraph DOM_references["references"]
       sp42_citation["sp42-citation<br/>ADR-0013"]:::domain
@@ -161,7 +161,7 @@ Reading notes:
 | `sp42-live` | platform | [ADR-0004](adr/0004-crate-boundary-collaboration-model.md), [ADR-0013](adr/0013-layered-platform-domain-architecture.md), [ADR-0020](../domains/patrolling/adr/0020-live-operator-view-contract.md) | [PRD-0002](../domains/patrolling/prd/0002-patrol-review-workflow.md), [PRD-0004](../domains/patrolling/prd/0004-reviewer-actions-on-wikimedia.md) |  |
 | `sp42-mcp` | shell | [ADR-0016](adr/0016-wikidata-entity-content-model.md) | [PRD-0001](../domains/references/prd/0001-citation-verification.md), [PRD-0010](../domains/references/prd/0010-citation-verification-mcp-surface.md) |  |
 | `sp42-parsoid` | platform | — | — |  |
-| `sp42-patrol` | domain | [ADR-0013](adr/0013-layered-platform-domain-architecture.md), [ADR-0020](../domains/patrolling/adr/0020-live-operator-view-contract.md) | — |  |
+| `sp42-patrol` | domain | [ADR-0013](adr/0013-layered-platform-domain-architecture.md), [ADR-0020](../domains/patrolling/adr/0020-live-operator-view-contract.md), [ADR-0021](adr/0021-scoring-and-ranking-contract.md) | — |  |
 | `sp42-platform` | platform | [ADR-0013](adr/0013-layered-platform-domain-architecture.md), [ADR-0016](adr/0016-wikidata-entity-content-model.md), [ADR-0017](adr/0017-wikidata-statement-proposal-write-contract.md), [ADR-0020](../domains/patrolling/adr/0020-live-operator-view-contract.md), [ADR-0021](adr/0021-scoring-and-ranking-contract.md), [ADR-0022](adr/0022-reviewer-action-contract.md), [ADR-0023](adr/0023-coordination-contract.md) | — |  |
 | `sp42-reporting` | platform | [ADR-0004](adr/0004-crate-boundary-collaboration-model.md), [ADR-0008](../domains/references/adr/0008-citation-verification-contract.md), [ADR-0009](../domains/references/adr/0009-citation-source-snapshot-storage.md), [ADR-0013](adr/0013-layered-platform-domain-architecture.md), [ADR-0016](adr/0016-wikidata-entity-content-model.md) | [PRD-0002](../domains/patrolling/prd/0002-patrol-review-workflow.md), [PRD-0016](../domains/assessment/prd/0016-ga-evidence-appendix-renderer.md) |  |
 | `sp42-server` | shell | [ADR-0003](adr/0003-node-anchored-wikitext-editing.md), [ADR-0004](adr/0004-crate-boundary-collaboration-model.md), [ADR-0005](adr/0005-design-system-shared-component-layer.md), [ADR-0008](../domains/references/adr/0008-citation-verification-contract.md), [ADR-0009](../domains/references/adr/0009-citation-source-snapshot-storage.md), [ADR-0013](adr/0013-layered-platform-domain-architecture.md), [ADR-0015](../domains/references/adr/0015-rules-compliant-read-only-fetch-edge.md), [ADR-0020](../domains/patrolling/adr/0020-live-operator-view-contract.md), [ADR-0022](adr/0022-reviewer-action-contract.md), [ADR-0023](adr/0023-coordination-contract.md) | [PRD-0001](../domains/references/prd/0001-citation-verification.md), [PRD-0002](../domains/patrolling/prd/0002-patrol-review-workflow.md), [PRD-0003](../domains/patrolling/prd/0003-edit-scoring-and-queue-ranking.md), [PRD-0004](../domains/patrolling/prd/0004-reviewer-actions-on-wikimedia.md), [PRD-0005](../domains/patrolling/prd/0005-operator-identity-and-session.md), [PRD-0006](../domains/patrolling/prd/0006-multi-operator-coordination.md), [PRD-0008](../domains/references/prd/0008-bare-url-repair.md), [PRD-0014](../domains/references/prd/0014-citation-repair-insertion-browser-surface.md) |  |
@@ -191,7 +191,7 @@ Reading notes:
 | [ADR-0016](adr/0016-wikidata-entity-content-model.md) | Wikidata entity content-model — revision read, `EntityDiff`, and content-model routing | Proposed | platform | `sp42-mcp`, `sp42-platform`, `sp42-reporting`, `sp42-types` |
 | [ADR-0017](adr/0017-wikidata-statement-proposal-write-contract.md) | Wikidata statement-proposal write contract | Proposed | platform | `sp42-platform`, `sp42-types` |
 | [ADR-0020](../domains/patrolling/adr/0020-live-operator-view-contract.md) | Live-operator-view contract — the server-assembled patrol payload | Accepted | patrolling | `sp42-live`, `sp42-patrol`, `sp42-platform`, `sp42-server` |
-| [ADR-0021](adr/0021-scoring-and-ranking-contract.md) | Scoring and ranking contract — composite score, policy schema, compile step | Accepted | platform | `sp42-core`, `sp42-platform` |
+| [ADR-0021](adr/0021-scoring-and-ranking-contract.md) | Scoring and ranking contract — composite score, policy schema, compile step | Accepted | platform | `sp42-core`, `sp42-patrol`, `sp42-platform` |
 | [ADR-0022](adr/0022-reviewer-action-contract.md) | Reviewer-action contract — dispositions, execute route, tokens, CSRF/baserevid | Accepted | platform | `sp42-platform`, `sp42-server` |
 | [ADR-0023](adr/0023-coordination-contract.md) | Coordination contract — message kinds, relay, room state, wire codec | Accepted | platform | `sp42-coordination`, `sp42-platform`, `sp42-server`, `sp42-types` |
 

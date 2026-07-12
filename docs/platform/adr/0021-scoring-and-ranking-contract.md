@@ -17,7 +17,8 @@ never-required signal, and `docs/platform/scoring/SCORING_CONSTITUTION.md` is a
 governance charter — neither records the *structural* contract: what a score is,
 how a policy file is shaped, and how a file becomes a runtime scorer. That
 contract lives in code (`sp42-platform`) and is mechanically governed, so it
-warrants an ADR.
+warrants an ADR. The *mechanism* is domain-neutral, but the signals it scores are
+currently patrolling-specific — see Consequences for where that seam sits.
 
 ## Decision
 
@@ -67,10 +68,23 @@ ranking never depends on it.
 
 ## Consequences
 
-- Scoring is a reusable platform mechanism: the types, engine, policy
-  compiler, and ranking all live in `sp42-platform` (reached today through the
-  `sp42-core` re-export facade pending the ADR-0013 relocation). Per-wiki policy
-  *files* are domain tuning.
+- Scoring is a reusable platform *mechanism* — the accumulation types, engine,
+  policy compiler, and deterministic ranking live in `sp42-platform` (reached
+  today through the `sp42-core` re-export facade pending the ADR-0013
+  relocation), and per-wiki policy *files* are domain tuning. But the mechanism
+  is the only domain-neutral part today. The `ScoringSignal` catalogue is
+  entirely patrolling / anti-vandalism vocabulary (`AnonymousUser`,
+  `MassBlanking`, `BotLikeEdit`, `ObviousVandalism`, `LiftWingRisk`, …), and
+  every consumer is the patrol stack (`sp42-patrol`, the live queue, the patrol
+  surfaces) — there is no references- or assessment-domain consumer.
+  Cross-domain reuse is therefore forward-looking, not current; and because
+  `ScoringSignal` is a *closed* enum, a new domain cannot add a signal without
+  editing this platform type. That closed enum is the domain seam any future
+  reuse must cross. The ADR lives in platform (not patrolling — cf. ADR-0020,
+  which kept a straddling contract in its domain because `LiveOperatorView` is
+  an *aggregation*) because here the *mechanism* is what warrants the
+  reusable-contract treatment; the patrolling-specific catalogue is merely what
+  that mechanism currently carries.
 - `scripts/check-scoring-governance.sh` mechanically enforces the doc/schema/
   config/eval triad: it pins the existence and key lines of the two docs, both
   JSON schemas, the active/candidate policies, the eval profile, and the four

@@ -5,7 +5,7 @@
 **Date:** 2026-06-05
 **State:** Implemented
 **As-built:** retroactive characterization of an already-shipped feature (no forward "closing PR").
-**Related ADRs:** ADR-0001 (foundational decisions), ADR-0002 (local dev-auth bridge contract — but operator identity/capabilities are owned by PRD-0005). The assembled live-operator-view contract has no ADR yet — tracked in #18.
+**Related ADRs:** ADR-0001 (foundational decisions), ADR-0002 (local dev-auth bridge contract — but operator identity/capabilities are owned by PRD-0005). The assembled live-operator-view contract is [ADR-0020](../adr/0020-live-operator-view-contract.md).
 **Discussion:** https://github.com/schiste/SP42/pull/4
 
 ## Scope boundary
@@ -16,7 +16,7 @@ This PRD characterizes **the operator's main review loop** — what a reviewer d
 - **What a chosen disposition DOES on the wiki, and how the operator knows it landed** — the on-wiki meaning of rollback / undo / patrol / tag / inline-fix and its reported outcome — is owned by **PRD-0004**. This PRD picks the disposition and ends the loop; PRD-0004 picks up at "the operator has decided."
 - **Who the operator is acting as, and which dispositions their identity may perform** — the server-owned session, the per-wiki capability report, and login — is owned by **PRD-0005**. This workflow *relies on* that surface to know which actions to offer and which to mark available.
 - **How a disposition is carried out** — the action contract, token acquisition, request building, and execution — is *implementation* (the content-edit editing mechanism is governed by ADR-0003). This PRD references that mechanism, it does not specify it.
-- **How the live view and the per-selection action preflight are *assembled*** — the `GET /operator/live/{wiki_id}` payload shape and the preflight's construction — is *implementation*; that contract has no ADR of its own yet (tracked in #18).
+- **How the live view and the per-selection action preflight are *assembled*** — the `GET /operator/live/{wiki_id}` payload shape and the preflight's construction — is *implementation*; that contract is [ADR-0020](../adr/0020-live-operator-view-contract.md).
 
 The one split worth stating explicitly is inside the per-selection **action preflight**, because it straddles two PRDs:
 

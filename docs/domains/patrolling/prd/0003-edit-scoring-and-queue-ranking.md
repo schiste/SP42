@@ -5,14 +5,14 @@
 **Date:** 2026-06-05
 **State:** Implemented
 **As-built:** retroactive characterization of an already-shipped feature (no forward "closing PR").
-**Related ADRs:** ADR-0001 (foundational decisions — §9 LiftWing as supplementary ML scoring provider). The scoring/ranking *contract* itself (the composite-score shape, the policy-file schema, the compile-to-runtime step) has no ADR yet — its governance lives in `docs/platform/scoring/SCORING_CONSTITUTION.md`; the ADR is tracked in #19.
+**Related ADRs:** ADR-0001 (foundational decisions — §9 LiftWing as supplementary ML scoring provider). The scoring/ranking *contract* itself (the composite-score shape, the policy-file schema, the compile-to-runtime step) has no ADR yet — its governance lives in `docs/platform/scoring/SCORING_CONSTITUTION.md`, and the contract is [ADR-0021](../../../platform/adr/0021-scoring-and-ranking-contract.md).
 **Discussion:** https://github.com/schiste/SP42/pull/4
 
 ## Scope boundary
 
 This PRD characterizes **what a score, a signal, and a rank MEAN to the operator** — the user-facing semantics of how SP42 decides what to look at first, why an edit surfaced where it did, and what action might fit. Scoring/ranking semantics are themselves a PRD trigger (`docs/process/prd-protocol.md`). It deliberately excludes two adjacent concerns:
 
-- **How the score is computed** — the signal catalogue and its weights, the base/accumulate/clamp arithmetic, the composite-score and signal-contribution internal types, the priority-queue mechanism, the queue-policy override pass, and the way a human-readable policy file is parsed and compiled into the runtime config — is *implementation*, governed by the scoring charter (`docs/platform/scoring/SCORING_CONSTITUTION.md`) and, for the LiftWing input, ADR-0001 §9. This PRD references those mechanisms; it does not specify them. (There is no ADR for the scoring *contract* itself yet — tracked in #19.)
+- **How the score is computed** — the signal catalogue and its weights, the base/accumulate/clamp arithmetic, the composite-score and signal-contribution internal types, the priority-queue mechanism, the queue-policy override pass, and the way a human-readable policy file is parsed and compiled into the runtime config — is *implementation*, governed by the scoring charter (`docs/platform/scoring/SCORING_CONSTITUTION.md`) and, for the LiftWing input, ADR-0001 §9. This PRD references those mechanisms; it does not specify them. (The scoring *contract* is [ADR-0021](../../../platform/adr/0021-scoring-and-ranking-contract.md).)
 - **What the operator does with the ranked queue** — opening the live view, walking it one revision at a time, and choosing a disposition — is the review *workflow*, owned by **PRD-0002**. What a chosen disposition then does on the wiki is owned by **PRD-0004**. This PRD owns only the meaning of the numbers and reasons that drive those decisions, including the score-gated *suggestion* of a disposition.
 
 ## Problem
@@ -40,7 +40,7 @@ What the shipped feature lets an operator understand and do. *(How each is compu
 
 ## Definition of Done
 
-Re-framed as characterization. Each item is an operator-observable behavior that is already true and bound to an existing test. *(The pure scoring **mechanism** — weight compilation, clamp arithmetic, policy parsing, queue internals — is additionally unit- and property-tested in `scoring_engine.rs`, `scoring_policy.rs`, `queue_builder.rs`, and `priority_queue.rs`; those mechanism tests back the scoring contract (no ADR yet — tracked in #19). The items below are the operator-facing outcomes.)*
+Re-framed as characterization. Each item is an operator-observable behavior that is already true and bound to an existing test. *(The pure scoring **mechanism** — weight compilation, clamp arithmetic, policy parsing, queue internals — is additionally unit- and property-tested in `scoring_engine.rs`, `scoring_policy.rs`, `queue_builder.rs`, and `priority_queue.rs`; those mechanism tests back the scoring contract ([ADR-0021](../../../platform/adr/0021-scoring-and-ranking-contract.md)). The items below are the operator-facing outcomes.)*
 
 - [x] An edit accumulates multiple weighted signals into one composite score with itemized reasons the operator can read — verified by `scoring_engine.rs::scores_multiple_positive_signals`.
 - [x] A bot-like (maintenance-shaped) edit sinks via a strong negative weight that reduces the total — verified by `scoring_engine.rs::bot_signal_reduces_total`.

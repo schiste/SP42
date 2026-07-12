@@ -3,6 +3,7 @@
 **Status:** Accepted
 **Date:** 2026-06-29
 **Author:** Luis Villa
+**Summary:** All outbound source fetching goes through one read-only, rules-compliant fetch edge in a dependency-light `sp42-fetch` crate, so robots/rate/redirect and anti-bot policy is enforced in a single audited place and nothing else fetches arbitrary URLs directly.
 
 SP42 fetches two kinds of URL while verifying citations: the **arbitrary
 cited-source URL** (any host on the internet, and attacker-influenceable, since

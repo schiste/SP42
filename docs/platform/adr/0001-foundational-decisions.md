@@ -3,6 +3,7 @@
 **Status:** Accepted
 **Date:** 2026-03-23
 **Author:** Christophe Henner
+**Summary:** SP42's founding architectural choices — a bundle of ten independent decisions (stack, license, first wiki, hosting, I/O posture, data source, ML provider); foundational enough that contributors and tools should read it in full rather than rely on this line.
 
 ## Context
 

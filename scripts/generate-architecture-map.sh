@@ -95,11 +95,14 @@ def scan_doc(path):
     title_m = re.search(r"^# ((?:ADR|PRD)-\d{4}): (.+)$", text, re.M)
     # ADRs carry **Status:**, PRDs carry **State:** (see docs/process/prd-template.md)
     status_m = re.search(r"^\*\*(?:Status|State):\*\*\s*(.+)$", text, re.M)
+    # ADRs carry a one-line **Summary:** (see docs/process/adr-protocol.md); PRDs do not.
+    summary_m = re.search(r"^\*\*Summary:\*\*\s*(.+)$", text, re.M)
     mentions = sorted({m for m in mention_re.findall(text) if m in crate_set})
     return {
         "id": title_m.group(1) if title_m else None,
         "title": title_m.group(2).strip() if title_m else None,
         "status": status_m.group(1).strip() if status_m else "—",
+        "summary": summary_m.group(1).strip() if summary_m else "—",
         "crates": mentions,
         "path": path,
         "adr_refs": sorted({f"ADR-{n}" for n in re.findall(r"ADR-(\d{4})", text)}),
@@ -297,13 +300,14 @@ lines += [
     "",
     "## ADR index",
     "",
-    "| ADR | Title | Status | Home | Crates it names |",
-    "|---|---|---|---|---|",
+    "| ADR | Title | Summary | Status | Home | Crates it names |",
+    "|---|---|---|---|---|---|",
 ]
 for a in adrs:
     home = a["domain"] or "platform"
     names = ", ".join(f"`{c}`" for c in a["crates"]) or "—"
-    lines.append(f"| {doc_link(a)} | {a['title']} | {a['status']} | {home} | {names} |")
+    summary = a["summary"].replace("|", "\\|")
+    lines.append(f"| {doc_link(a)} | {a['title']} | {summary} | {a['status']} | {home} | {names} |")
 
 lines += [
     "",

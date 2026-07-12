@@ -381,7 +381,6 @@ async fn recv_coordination_message(
     }
 }
 
-
 async fn expect_no_coordination_message(socket: &mut TestWebSocket) {
     let no_message =
         tokio::time::timeout(std::time::Duration::from_millis(75), socket.next()).await;
@@ -2711,8 +2710,7 @@ async fn invalid_coordination_payload_is_counted_without_mutating_state() {
     // Fail-closed (#146): the undecodable payload is dropped, never fanned out.
     // Bob must not receive it — an undecodable payload bypasses the authenticated
     // actor-rewrite, so relaying it verbatim would be a spoofing path.
-    let no_relay =
-        tokio::time::timeout(std::time::Duration::from_millis(75), bob.next()).await;
+    let no_relay = tokio::time::timeout(std::time::Duration::from_millis(75), bob.next()).await;
     assert!(
         no_relay.is_err(),
         "undecodable coordination payload must not be relayed to peers"

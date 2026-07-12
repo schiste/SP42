@@ -71,7 +71,7 @@ impl CoordinationRegistry {
 
     pub async fn publish(&self, wiki_id: &str, envelope: CoordinationEnvelope) -> usize {
         let sender = self.room_sender(wiki_id).await;
-        {
+        let decoded = {
             let mut rooms = self.rooms.write().await;
             let current_time_ms = self.current_time_ms();
             prune_inactive_rooms(&mut rooms, current_time_ms);
@@ -83,12 +83,27 @@ impl CoordinationRegistry {
                     track_presence_heartbeat(room, &message, current_time_ms);
                     let _applied = room.state.apply(message);
                     prune_stale_presence(room, current_time_ms);
+                    true
                 } else {
                     room.invalid_messages = room.invalid_messages.saturating_add(1);
+                    false
                 }
+            } else {
+                false
             }
+        };
+        // Fail-closed (#146): only relay a payload the server itself decoded.
+        // The authenticated actor-rewrite (`sanitize_coordination_payload`) runs
+        // on the same `decode_message`; a payload the server can't decode never
+        // passed that rewrite, so fanning it out verbatim would let a client
+        // smuggle an unsanitized `actor`/`winning_actor` to peers that decode
+        // more leniently — a spoofing path. Drop it; `invalid_messages` already
+        // recorded it for observability.
+        if decoded {
+            sender.send(envelope).unwrap_or(0)
+        } else {
+            0
         }
-        sender.send(envelope).unwrap_or(0)
     }
 
     pub async fn connect_client(&self, wiki_id: &str) {
@@ -359,12 +374,20 @@ mod tests {
         let registry = CoordinationRegistry::default();
         let mut receiver = registry.subscribe("frwiki").await;
 
+        // A decodable payload is relayed verbatim (fail-closed only drops
+        // undecodable payloads — see `drops_undecodable_payload_without_relaying`).
+        let payload = encode_message(&CoordinationMessage::EditClaim(EditClaim {
+            wiki_id: "frwiki".to_string(),
+            rev_id: 4242,
+            actor: "Alice".to_string(),
+        }))
+        .expect("message should encode");
         let delivered = registry
             .publish(
                 "frwiki",
                 CoordinationEnvelope {
                     sender_id: 7,
-                    payload: vec![1, 2, 3],
+                    payload: payload.clone(),
                 },
             )
             .await;
@@ -372,7 +395,42 @@ mod tests {
 
         assert_eq!(delivered, 1);
         assert_eq!(envelope.sender_id, 7);
-        assert_eq!(envelope.payload, vec![1, 2, 3]);
+        assert_eq!(envelope.payload, payload);
+    }
+
+    #[tokio::test]
+    async fn drops_undecodable_payload_without_relaying() {
+        // Fail-closed (#146): an undecodable payload is counted but never fanned
+        // out, so it cannot bypass the authenticated actor-rewrite.
+        let registry = CoordinationRegistry::default();
+        registry.connect_client("frwiki").await;
+        let mut receiver = registry.subscribe("frwiki").await;
+
+        let delivered = registry
+            .publish(
+                "frwiki",
+                CoordinationEnvelope {
+                    sender_id: 3,
+                    payload: b"not-msgpack".to_vec(),
+                },
+            )
+            .await;
+
+        assert_eq!(delivered, 0, "undecodable payload must not be relayed");
+        assert!(
+            matches!(
+                receiver.try_recv(),
+                Err(tokio::sync::broadcast::error::TryRecvError::Empty)
+            ),
+            "subscriber must receive nothing"
+        );
+
+        let inspection = registry
+            .room_inspection("frwiki")
+            .await
+            .expect("inspection should exist");
+        assert_eq!(inspection.metrics.invalid_messages, 1);
+        assert_eq!(inspection.metrics.accepted_messages, 0);
     }
 
     #[tokio::test]

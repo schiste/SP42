@@ -5,7 +5,7 @@
 **Date:** 2026-06-05
 **State:** Implemented
 **As-built:** retroactive characterization of an already-shipped feature (no forward "closing PR").
-**Related ADRs:** ADR-0003 (node-anchored wikitext editing — governs the *mechanism* of the content-edit dispositions; the action contract itself has no ADR yet — tracked in #20)
+**Related ADRs:** ADR-0003 (node-anchored wikitext editing — governs the *mechanism* of the content-edit dispositions; the action contract itself is [ADR-0022](../../../platform/adr/0022-reviewer-action-contract.md))
 **Discussion:** https://github.com/schiste/SP42/pull/4
 
 ## Scope boundary
@@ -13,7 +13,7 @@
 This PRD characterizes **what each reviewer disposition means on the wiki** and **how the operator knows it landed** — the user-facing semantics of acting on a reviewed revision. It deliberately excludes two adjacent concerns:
 
 - **Choosing a disposition** — the action toolbar, the one-key shortcuts, and the remove-from-queue-and-advance cadence — is the review *workflow*, characterized in **PRD-0002**. This PRD picks up at "the operator has decided" and describes what the decision does.
-- **How a disposition is carried out** — the action contract (`SessionActionKind` and the execute-action route), token acquisition, the CSRF/`baserevid` enforcement, request building, and the content-edit text replacement — is *implementation*, not user-facing meaning. The content-edit *editing mechanism* is governed by **ADR-0003**; the broader action contract has **no ADR of its own yet** (tracked in #20). This PRD references that mechanism, it does not specify it.
+- **How a disposition is carried out** — the action contract (`SessionActionKind` and the execute-action route), token acquisition, the CSRF/`baserevid` enforcement, request building, and the content-edit text replacement — is *implementation*, not user-facing meaning. The content-edit *editing mechanism* is governed by **ADR-0003**; the broader action contract is **[ADR-0022](../../../platform/adr/0022-reviewer-action-contract.md)**. This PRD references that mechanism, it does not specify it.
 
 ## Problem
 
@@ -37,7 +37,7 @@ The operator can dispose of the selected revision in five ways. Each has a disti
 
 ## Definition of Done
 
-Each item is an operator-observable behavior that is **already true**, bound to an existing test. (The underlying action-execution *contract* — request construction, token acquisition, payload serialization — is additionally unit-tested in `crates/sp42-core/src/action_executor.rs`, but is mechanism owned by the action contract (no ADR yet — tracked in #20).)
+Each item is an operator-observable behavior that is **already true**, bound to an existing test. (The underlying action-execution *contract* — request construction, token acquisition, payload serialization — is additionally unit-tested in `crates/sp42-core/src/action_executor.rs`, but is mechanism owned by the action contract ([ADR-0022](../../../platform/adr/0022-reviewer-action-contract.md)).)
 
 - [x] A chosen disposition (rollback, undo, patrol, page-save) actually executes against the wiki and a success body is accepted — verified by `crates/sp42-core/src/action_executor.rs::executes_rollback_through_http_trait`, `::executes_patrol_through_http_trait`, `::executes_undo_through_http_trait`, `::executes_page_save_through_http_trait`.
 - [x] A non-success HTTP status is surfaced to the operator as a failure, not a silent accept — verified by `…action_executor.rs::rejects_non_success_http_status`.

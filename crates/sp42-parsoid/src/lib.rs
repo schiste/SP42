@@ -237,7 +237,7 @@ struct RefSources {
 /// templates. Preserves document order: template-derived sources first, then
 /// bare-ExtLink sources. Alongside, each cite template carrying a validated book
 /// identifier (`isbn`/`oclc`/`lccn`/`ol`) yields one `BookSource`, whether or not
-/// it also carries a URL (ADR-0018 Decision 1).
+/// it also carries a URL (ADR-0024 Decision 1).
 fn sources_in_reference(reference: &Reference) -> RefSources {
     let contents = reference.contents();
     let mut sources = Vec::new();
@@ -417,7 +417,7 @@ fn push_template_sources(
 /// their uppercase aliases) and cited page (`page`/`p`/`pages`/`pp`), each
 /// validated/normalized by the `BookIdentifier` constructors. `None` when no
 /// parameter yields a valid identifier — an invalid ISBN is "no identifier",
-/// never a guess (ADR-0018 Decision 1).
+/// never a guess (ADR-0024 Decision 1).
 fn template_book_source(params: &serde_json::Value) -> Option<BookSource> {
     type Constructor = fn(&str) -> Option<BookIdentifier>;
 
@@ -809,8 +809,9 @@ mod tests {
         // must extract just like `chapter-url=` (SP42#62).
         let data_mw = r#"{"parts":[{"template":{"target":{"wt":"cite book"},"params":{"chapterurl":{"wt":"https://example.org/chapter"},"title":{"wt":"A Book"}},"i":0}}]}"#;
         let mut sources = Vec::new();
+        let mut books = Vec::new();
         let mut seen_urls = std::collections::HashSet::new();
-        super::push_template_sources(data_mw, &mut sources, &mut seen_urls);
+        super::push_template_sources(data_mw, &mut sources, &mut books, &mut seen_urls);
         assert_eq!(sources.len(), 1, "chapterurl should produce one source");
         assert_eq!(sources[0].url.as_str(), "https://example.org/chapter");
     }
@@ -870,7 +871,7 @@ mod tests {
     #[test]
     fn invalid_identifier_values_yield_no_book_source() {
         // A garbled ISBN (bad checksum) and an author OLID are "no identifier",
-        // never sent upstream (ADR-0018 Decision 1).
+        // never sent upstream (ADR-0024 Decision 1).
         let data_mw = r#"{"parts":[{"template":{"target":{"wt":"cite book"},"params":{"isbn":{"wt":"978-0-14-032872-2"},"ol":{"wt":"23919A"},"title":{"wt":"Garbled"}},"i":0}}]}"#;
         let mut sources = Vec::new();
         let mut books = Vec::new();

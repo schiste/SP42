@@ -11,7 +11,7 @@ pipeline shipped (source fetch, body classification, page report; PRs
 Draft until it lands or is descoped.
 **Discussion:** design conversation 2026-07-01 (Internet Archive editable book
 metadata → SP42 integration); no tracking issue yet.
-**Spawned ADRs:** ADR-0018 (Open Library / Internet Archive read contract:
+**Spawned ADRs:** ADR-0024 (Open Library / Internet Archive read contract:
 resolve + full-text grounding). If the enrichment lane ships, a second ADR
 reusing ADR-0010's propose/confirm apply discipline against a non-wiki target
 is still expected.

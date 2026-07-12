@@ -288,6 +288,7 @@ mod tests {
                     url: url.parse().expect("url parses"),
                     archive_urls: vec![archive_url.parse().expect("archive url parses")],
                 }],
+                book_sources: vec![],
                 ref_text: "Example".to_owned(),
                 named: false,
                 is_bare_url_ref: false,

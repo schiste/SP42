@@ -1,4 +1,4 @@
-# ADR-0018: Open Library / Internet Archive read contract
+# ADR-0024: Open Library / Internet Archive read contract
 
 **Status:** Proposed
 **Date:** 2026-07-07

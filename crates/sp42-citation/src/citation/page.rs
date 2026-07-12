@@ -141,6 +141,7 @@ pub fn apply_reverified_finding(
         &report.findings,
         report.stats.skipped,
         report.stats.extraction_failures,
+        &report.book_resolutions,
     );
     true
 }
@@ -686,7 +687,7 @@ where
             } else {
                 // Resolved, but no exact-edition scan (similar-only, none, or
                 // availability unknown): grounding degrades to
-                // `SourceUnavailable` (ADR-0018 Decision 3); the Books section
+                // `SourceUnavailable` (ADR-0024 Decision 3); the Books section
                 // carries the scan state.
                 BookVerdict::Finding(Box::new(book_no_model_finding(
                     &site,
@@ -953,6 +954,7 @@ mod orchestrator_tests {
             preceding_context: Vec::new(),
             archive_of: None,
             is_bare_url_ref: false,
+            book_scan: None,
             schema_version: crate::citation::verify::SCHEMA_VERSION,
         }
     }
@@ -970,6 +972,7 @@ mod orchestrator_tests {
             ],
             skipped: Vec::new(),
             extraction_failures: Vec::new(),
+            book_resolutions: Vec::new(),
             stats: tally_stats(
                 2,
                 &[
@@ -978,6 +981,7 @@ mod orchestrator_tests {
                 ],
                 0,
                 0,
+                &[],
             ),
         };
         assert_eq!(report.stats.not_supported, 1);
@@ -1015,6 +1019,7 @@ mod orchestrator_tests {
             )],
             skipped: Vec::new(),
             extraction_failures: Vec::new(),
+            book_resolutions: Vec::new(),
             stats: PageVerificationStats::default(),
         };
         let replaced = apply_reverified_finding(
@@ -1182,6 +1187,7 @@ mod orchestrator_tests {
                 }],
                 ref_text: "[1]".into(),
                 named: false,
+                is_bare_url_ref: false,
             }],
             block_kind: BlockKind::Paragraph,
             block_ordinal: 0,

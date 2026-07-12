@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Live read-contract smoke for the PRD-0009 book lane (ADR-0018).
+# Live read-contract smoke for the PRD-0009 book lane (ADR-0024).
 #
 # MANUAL, NETWORK-TOUCHING — never wired into CI (ADR-0009: tests replay
 # fixtures; this script is how a human refreshes confidence in them). It
@@ -16,7 +16,7 @@
 #            fixture material and names the drifted contract.
 #
 # By construction this script never touches the import-on-miss
-# `/isbn/{isbn}.json` path or any write endpoint (ADR-0018 Decision 2).
+# `/isbn/{isbn}.json` path or any write endpoint (ADR-0024 Decision 2).
 #
 # Note: Open Library fronts with bot protection that can 403 datacenter IPs.
 # Run this from a residential/developer connection; a Cloudflare challenge

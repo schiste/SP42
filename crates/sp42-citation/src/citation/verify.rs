@@ -838,7 +838,7 @@ fn unusable_source_outcome(
 
 /// A no-model, no-quote `SourceUnavailable` outcome — the book lane's
 /// short-circuit when a scan cannot be used at all (PRD-0009 Layer 2 /
-/// ADR-0018 Decision 4: no exact-edition scan, no full-text index, or the
+/// ADR-0024 Decision 4: no exact-edition scan, no full-text index, or the
 /// item metadata was unreachable). Unreachable-vs-unusable is derived from
 /// `provenance.http_status` exactly like the fetched-web path (`0` →
 /// unreachable, 2xx → unusable).
@@ -859,7 +859,7 @@ pub fn book_scan_unavailable_outcome(
     }
 }
 
-/// The searched-and-found-nothing outcome (PRD-0009 resolved Q4 / ADR-0018
+/// The searched-and-found-nothing outcome (PRD-0009 resolved Q4 / ADR-0024
 /// Decision 4): the scan **is** indexed and search-inside ran, but returned
 /// zero snippets after both the cited-page and whole-book passes. That is
 /// `not_supported`, not `SourceUnavailable` — the source exists and was
@@ -897,7 +897,7 @@ pub struct FetchedSource {
     /// `true` only for a body assembled from Internet Archive search-inside
     /// snippets by the book-grounding path (PRD-0009 Layer 2). Provenance for
     /// the usability gate: a snippet body bypasses **only** the generic
-    /// short-body floor (ADR-0018 Decision 4) — arbitrary short web pages
+    /// short-body floor (ADR-0024 Decision 4) — arbitrary short web pages
     /// still short-circuit. Never set by [`fetch_source`].
     pub book_snippet: bool,
 }
@@ -1082,7 +1082,7 @@ where
         fetched.raw_html.as_deref(),
         body,
     );
-    // ADR-0018 Decision 4: a search-inside snippet body bypasses ONLY the
+    // ADR-0024 Decision 4: a search-inside snippet body bypasses ONLY the
     // generic short-body floor — a verbatim OCR snippet is a valid grounding
     // body well below the web-page floor. Every other unusability reason
     // still applies, and an empty snippet (`body == None`) stays unusable.
@@ -2501,7 +2501,7 @@ mod tests {
 
     #[test]
     fn book_snippet_bypasses_only_the_short_body_floor() {
-        // ADR-0018 Decision 4: a search-inside snippet body well below the
+        // ADR-0024 Decision 4: a search-inside snippet body well below the
         // 300-char web-page floor still reaches the panel...
         let snippet = "Matilda longed for her parents to be good and loving.";
         assert!(snippet.chars().count() < 300, "test premise: short body");

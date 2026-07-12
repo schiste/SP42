@@ -1,4 +1,4 @@
-//! Open Library resolution for book citations (PRD-0009 Layer 1, ADR-0018).
+//! Open Library resolution for book citations (PRD-0009 Layer 1, ADR-0024).
 //!
 //! Two strictly read-only lookups, both keyed on a validated
 //! [`BookIdentifier`] and both pure `build_*`/`parse_*` pairs over the
@@ -10,13 +10,13 @@
 //!   edition exist, and what does its record say. A miss is `None`, never a
 //!   create: the `/isbn/{isbn}.json` endpoint is documented under *Import by
 //!   ISBN* and can import-on-miss, so this module **must not** address it
-//!   (ADR-0018 Decision 2).
+//!   (ADR-0024 Decision 2).
 //! - **Scan availability** via the Read API
 //!   (`/api/volumes/brief/{scheme}/{value}.json`) — consulted only *after*
 //!   catalog resolution, and only for readable/borrowable scan discovery.
 //!   Items are partitioned by their `match` field: only `exact` matches may
 //!   ever feed grounding; a `similar` match is a different edition and is
-//!   surfaced as context only (ADR-0018 Decision 3). An empty `items` list
+//!   surfaced as context only (ADR-0024 Decision 3). An empty `items` list
 //!   means "no usable scan", **not** "no catalog record".
 
 use std::collections::BTreeMap;
@@ -30,10 +30,10 @@ use crate::types::{HttpMethod, HttpRequest};
 use crate::wikitext_editor::{BookIdentifier, BookSource};
 use sp42_types::HttpClient;
 
-/// The side-effect-free Books API catalog lookup (ADR-0018 Decision 2).
+/// The side-effect-free Books API catalog lookup (ADR-0024 Decision 2).
 pub const OPEN_LIBRARY_BOOKS_API: &str = "https://openlibrary.org/api/books";
 
-/// The Read API scan-availability base (ADR-0018 Decision 3).
+/// The Read API scan-availability base (ADR-0024 Decision 3).
 pub const OPEN_LIBRARY_READ_API_BASE: &str = "https://openlibrary.org/api/volumes/brief";
 
 /// The Books API endpoint parsed once, for the (unreachable) fallback when a
@@ -79,7 +79,7 @@ fn identifier_value(identifier: &BookIdentifier) -> &str {
 /// Build the (read-only GET) Books API catalog lookup for one identifier.
 ///
 /// This is the **only** catalog-resolution request the resolve lane issues:
-/// never `/isbn/{isbn}.json` (import-on-miss; ADR-0018 Decision 2).
+/// never `/isbn/{isbn}.json` (import-on-miss; ADR-0024 Decision 2).
 #[must_use]
 pub fn build_catalog_lookup_request(identifier: &BookIdentifier) -> HttpRequest {
     let url = Url::parse_with_params(
@@ -136,7 +136,7 @@ pub struct OpenLibraryEdition {
 
 /// Parse a Books API `jscmd=data` response for the identifier it was queried
 /// with. `None` is a **catalog miss** ("no record found" — never a create) or
-/// an unparseable body; per ADR-0018 Decision 2 no import or write follows.
+/// an unparseable body; per ADR-0024 Decision 2 no import or write follows.
 #[must_use]
 pub fn parse_catalog_lookup(
     identifier: &BookIdentifier,
@@ -203,7 +203,7 @@ pub fn parse_catalog_lookup(
 
 /// Build the (read-only GET) Read API scan-availability request.
 ///
-/// Consulted only **after** catalog resolution (ADR-0018 Decision 3): its
+/// Consulted only **after** catalog resolution (ADR-0024 Decision 3): its
 /// answer is "is there a usable online scan", never "does the record exist".
 #[must_use]
 pub fn build_scan_availability_request(identifier: &BookIdentifier) -> HttpRequest {
@@ -239,7 +239,7 @@ pub struct ScanItem {
 
 /// Scan availability for a resolved edition, partitioned by match quality.
 ///
-/// Only `exact` items may feed grounding (PRD-0009 / ADR-0018 Decision 3): a
+/// Only `exact` items may feed grounding (PRD-0009 / ADR-0024 Decision 3): a
 /// `similar` item is a scan of a *different edition* of the same work and is
 /// surfaced to the operator as context only — never verified against. Both
 /// lists empty means the catalog record has no usable online scan, which is
@@ -313,7 +313,7 @@ pub enum BookResolutionOutcome {
         scan: Option<ScanAvailability>,
     },
     /// Every identifier was looked up cleanly and none has a catalog record.
-    /// Never a create (ADR-0018 Decision 2).
+    /// Never a create (ADR-0024 Decision 2).
     NotFound,
     /// A lookup failed in transport before a clean answer; whether a record
     /// exists is unknown, which is different from `NotFound`.
@@ -331,7 +331,7 @@ pub struct BookResolution {
     /// The identifiers the ref carried, in template order (what was tried).
     pub identifiers: Vec<BookIdentifier>,
     /// Verbatim cited page from the template, for the future search-inside
-    /// pass (ADR-0018 Decision 4).
+    /// pass (ADR-0024 Decision 4).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cited_page: Option<String>,
     pub outcome: BookResolutionOutcome,
@@ -442,7 +442,7 @@ mod tests {
     const READ_API_EXACT: &str = r#"{"items": [{"match": "exact", "status": "full access", "itemURL": "https://archive.org/details/matilda00dahl"}]}"#;
 
     /// A stub that also records every requested URL, so tests can assert the
-    /// resolve lane addresses only the two read endpoints (ADR-0018 Decision 2).
+    /// resolve lane addresses only the two read endpoints (ADR-0024 Decision 2).
     struct RecordingHttpClient {
         urls: Mutex<Vec<String>>,
         responses: Mutex<VecDeque<Result<HttpResponse, HttpClientError>>>,
@@ -483,7 +483,7 @@ mod tests {
             request.url.as_str(),
             "https://openlibrary.org/api/books?bibkeys=ISBN%3A9780140328721&jscmd=data&format=json"
         );
-        // The side-effect-free rule (ADR-0018 Decision 2): the import-on-miss
+        // The side-effect-free rule (ADR-0024 Decision 2): the import-on-miss
         // endpoint must never be addressed by the resolve lane.
         assert!(!request.url.path().starts_with("/isbn/"));
     }
@@ -611,7 +611,7 @@ mod tests {
     #[test]
     fn empty_items_is_no_scan_not_no_record() {
         // A well-formed response with no items parses to an empty availability:
-        // the catalog record still exists (ADR-0018 Decision 3).
+        // the catalog record still exists (ADR-0024 Decision 3).
         let availability = parse_scan_availability(br#"{"records": {}, "items": []}"#)
             .expect("well-formed response parses");
         assert_eq!(availability, ScanAvailability::default());

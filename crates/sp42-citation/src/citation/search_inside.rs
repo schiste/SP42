@@ -1,5 +1,5 @@
 //! Internet Archive search-inside grounding source (PRD-0009 Layer 2,
-//! ADR-0018 Decision 4).
+//! ADR-0024 Decision 4).
 //!
 //! Turns a resolved exact-edition scan into a **book-snippet source body** the
 //! existing verifier can judge: read the item's metadata for its designated

@@ -43,7 +43,7 @@ pub enum SkippedReason {
     /// The ref carries no URL but does carry a validated book identifier
     /// (ISBN/OCLC/LCCN/OLID) that did **not** resolve to an Open Library
     /// record (catalog miss or failed lookup) — assigned by the page
-    /// orchestrator after resolution (PRD-0009 Layer 1, ADR-0018). A resolved
+    /// orchestrator after resolution (PRD-0009 Layer 1, ADR-0024). A resolved
     /// book ref becomes a finding instead (Layer 2).
     BookSource,
 }

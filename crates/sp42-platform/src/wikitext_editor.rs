@@ -94,7 +94,7 @@ pub struct CitedSource {
 }
 
 /// A positive book identifier read from a cite template's parameters
-/// (PRD-0009 Layer 1, ADR-0018 Decision 1). Values are normalized and
+/// (PRD-0009 Layer 1, ADR-0024 Decision 1). Values are normalized and
 /// shape-validated at construction — the constructors return `None` for a
 /// value that fails validation, so catalog resolution is gated on genuinely
 /// positive identifiers and never guesses.
@@ -231,7 +231,7 @@ impl std::fmt::Display for BookIdentifier {
 
 /// The book identifiers carried by one cite template (PRD-0009 Layer 1):
 /// the positive identifiers that gate catalog resolution, plus the cited
-/// page for the future search-inside pass (ADR-0018 Decision 4).
+/// page for the future search-inside pass (ADR-0024 Decision 4).
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct BookSource {
     /// Validated identifiers, in template order (`isbn`, `oclc`, `lccn`, `ol`).

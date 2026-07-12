@@ -20,11 +20,11 @@ underlying crate-to-crate dependencies, drawn in full in the next diagram.
 
 ```mermaid
 flowchart LR
-  G_shell["Shells — composition roots<br/>7 crates"]:::shell
+  G_shell["Shells — composition roots<br/>6 crates"]:::shell
   G_patrolling["patrolling domain<br/>1 crate"]:::domain
   G_references["references domain<br/>1 crate"]:::domain
   G_hybrid["sp42-core — hybrid, being retired (ADR-0013)"]:::hybrid
-  G_platform["Platform — mechanisms, primitives, contracts<br/>9 crates"]:::platform
+  G_platform["Platform — mechanisms, primitives, contracts<br/>10 crates"]:::platform
   G_hybrid -->|1 dep| G_patrolling
   G_hybrid -->|2 deps| G_platform
   G_hybrid -->|1 dep| G_references
@@ -33,7 +33,7 @@ flowchart LR
   G_references -->|3 deps| G_platform
   G_shell -->|5 deps| G_hybrid
   G_shell -->|5 deps| G_patrolling
-  G_shell -->|28 deps| G_platform
+  G_shell -->|29 deps| G_platform
   G_shell -->|3 deps| G_references
   classDef shell fill:#fef3c7,stroke:#b45309,color:#111
   classDef domain fill:#dcfce7,stroke:#15803d,color:#111
@@ -52,7 +52,6 @@ flowchart TB
     sp42_devtools["sp42-devtools<br/>ADR-0004, ADR-0013"]:::shell
     sp42_mcp["sp42-mcp<br/>ADR-0016"]:::shell
     sp42_server["sp42-server<br/>ADR-0003 … +6 more ADRs"]:::shell
-    sp42_ui["sp42-ui<br/>ADR-0005"]:::shell
   end
   subgraph DOMAINS["Domains — policy, config, workflow"]
     subgraph DOM_patrolling["patrolling"]
@@ -74,6 +73,7 @@ flowchart TB
     sp42_platform["sp42-platform<br/>ADR-0013, ADR-0016, ADR-0017"]:::platform
     sp42_reporting["sp42-reporting<br/>ADR-0004 … +4 more ADRs"]:::platform
     sp42_types["sp42-types<br/>ADR-0004 … +8 more ADRs"]:::platform
+    sp42_ui["sp42-ui<br/>ADR-0005"]:::platform
     sp42_wiki["sp42-wiki<br/>ADR-0004 … +3 more ADRs"]:::platform
   end
   sp42_app --> sp42_citation
@@ -166,7 +166,7 @@ Reading notes:
 | `sp42-reporting` | platform | [ADR-0004](adr/0004-crate-boundary-collaboration-model.md), [ADR-0008](../domains/references/adr/0008-citation-verification-contract.md), [ADR-0009](../domains/references/adr/0009-citation-source-snapshot-storage.md), [ADR-0013](adr/0013-layered-platform-domain-architecture.md), [ADR-0016](adr/0016-wikidata-entity-content-model.md) | [PRD-0002](../domains/patrolling/prd/0002-patrol-review-workflow.md), [PRD-0016](../domains/assessment/prd/0016-ga-evidence-appendix-renderer.md) |  |
 | `sp42-server` | shell | [ADR-0003](adr/0003-node-anchored-wikitext-editing.md), [ADR-0004](adr/0004-crate-boundary-collaboration-model.md), [ADR-0005](adr/0005-design-system-shared-component-layer.md), [ADR-0008](../domains/references/adr/0008-citation-verification-contract.md), [ADR-0009](../domains/references/adr/0009-citation-source-snapshot-storage.md), [ADR-0013](adr/0013-layered-platform-domain-architecture.md), [ADR-0015](../domains/references/adr/0015-rules-compliant-read-only-fetch-edge.md) | [PRD-0001](../domains/references/prd/0001-citation-verification.md), [PRD-0002](../domains/patrolling/prd/0002-patrol-review-workflow.md), [PRD-0003](../domains/patrolling/prd/0003-edit-scoring-and-queue-ranking.md), [PRD-0004](../domains/patrolling/prd/0004-reviewer-actions-on-wikimedia.md), [PRD-0005](../domains/patrolling/prd/0005-operator-identity-and-session.md), [PRD-0006](../domains/patrolling/prd/0006-multi-operator-coordination.md), [PRD-0008](../domains/references/prd/0008-bare-url-repair.md), [PRD-0014](../domains/references/prd/0014-citation-repair-insertion-browser-surface.md) |  |
 | `sp42-types` | platform | [ADR-0004](adr/0004-crate-boundary-collaboration-model.md), [ADR-0005](adr/0005-design-system-shared-component-layer.md), [ADR-0008](../domains/references/adr/0008-citation-verification-contract.md), [ADR-0009](../domains/references/adr/0009-citation-source-snapshot-storage.md), [ADR-0011](../domains/references/adr/0011-article-citation-verification.md), [ADR-0013](adr/0013-layered-platform-domain-architecture.md), [ADR-0015](../domains/references/adr/0015-rules-compliant-read-only-fetch-edge.md), [ADR-0016](adr/0016-wikidata-entity-content-model.md), [ADR-0017](adr/0017-wikidata-statement-proposal-write-contract.md) | — |  |
-| `sp42-ui` | shell | [ADR-0005](adr/0005-design-system-shared-component-layer.md) | — |  |
+| `sp42-ui` | platform | [ADR-0005](adr/0005-design-system-shared-component-layer.md) | — |  |
 | `sp42-wiki` | platform | [ADR-0004](adr/0004-crate-boundary-collaboration-model.md), [ADR-0005](adr/0005-design-system-shared-component-layer.md), [ADR-0013](adr/0013-layered-platform-domain-architecture.md), [ADR-0014](adr/0014-wikimedia-oauth-and-any-project.md) | [PRD-0005](../domains/patrolling/prd/0005-operator-identity-and-session.md) | Still depends on `sp42-core`; edge disappears when the facade is retired ([ADR-0013](adr/0013-layered-platform-domain-architecture.md)) |
 
 ## ADR index

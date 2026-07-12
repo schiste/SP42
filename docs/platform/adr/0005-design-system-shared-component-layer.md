@@ -11,6 +11,13 @@ truth this ADR centers on — a bundled `tokens.css` with closed `Color`/`Space`
 still gates `static/style.css`). Status stays Proposed until the token layer
 ships or the decision is revised.
 
+**Layer note (2026-07-11, #128):** `sp42-ui` is classified **platform** in the
+layer check, not a shell — it is a reusable presentation library, and the
+classification mechanically enforces this ADR's rule that `sp42-ui` takes no
+domain dependency (§"Shells depend on the typed API": a domain-typed component
+like `ActionBar` lives in the consuming shell). The layer check now fails if
+`sp42-ui` ever gains a domain or shell dependency.
+
 ## Context
 
 `docs/platform/FRONTEND_DESIGN_CONTRACT.md` is a binding design spec, but it is prose with

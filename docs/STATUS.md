@@ -87,12 +87,12 @@ PWA packaging and offline installability are now effectively complete for local 
   and the honest `not_supported` vs `SourceUnavailable` split; unresolved books
   stay skipped with a refined reason and a Books report section shows every
   resolution; the enrichment lane (Layer 3) is
-  implemented as mechanism + fixture tests per ADR-0019 — deterministic
+  implemented as mechanism + fixture tests per ADR-0025 — deterministic
   ISBN-completion candidates listed read-only in the Books section, and the
   apply machinery (per-operator S3-key login, REST lane with 403 fallback to
   a fail-closed edit-form adapter, per-session lane cache, client-side
   refuse-on-drift, post-apply read-back) — with the write lane disabled and
-  unwired until the ADR-0019 enablement gate passes
+  unwired until the ADR-0025 enablement gate passes
 
 ## Current Verification
 

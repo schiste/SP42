@@ -2,9 +2,9 @@
 
 **Date:** 2026-07-08
 **Author:** Luis Villa (researched by Claude Code)
-**Status:** Research note — the findings ADR-0019 (Open Library apply
+**Status:** Research note — the findings ADR-0025 (Open Library apply
 contract, PRD-0009 resolved Q6(b)) is drafted from. No write code exists or
-is enabled; Layers 1–2 (ADR-0018) are unaffected.
+is enabled; Layers 1–2 (ADR-0024) are unaffected.
 
 ## The question
 
@@ -105,7 +105,7 @@ human-paced by construction.
 
 ## Implication for the apply-contract ADR
 
-*(Adopted: ADR-0019 records this contract.)* The ADR can be drafted with a
+*(Adopted: ADR-0025 records this contract.)* The ADR can be drafted with a
 **two-lane apply contract**, both per-operator:
 
 1. **Default lane — authenticated form POST** (`/books/OL…M/edit`): works for
@@ -116,7 +116,7 @@ human-paced by construction.
    "controlled browser/form-backed submit path" PRD-0009 reserved.
 2. **Privileged lane — REST `PUT` with `_comment`** for operators whose
    account is in `/usergroup/api`: cleaner JSON contract, the officially
-   recommended machine lane. (As adopted, ADR-0019 selects the lane from the
+   recommended machine lane. (As adopted, ADR-0025 selects the lane from the
    server's own pre-mutation 403 answer with per-session caching, rather
    than reading the `/usergroup/api.json` membership list — the list read
    remains a valid display-only capability hint, but the write path never

@@ -1,6 +1,6 @@
-//! The Open Library apply mechanism (ADR-0019). **The write lane is
+//! The Open Library apply mechanism (ADR-0025). **The write lane is
 //! disabled**: no server route or CLI surface calls [`execute_enrichment_apply`]
-//! until ADR-0019's enablement gate passes (live form spike, upstream
+//! until ADR-0025's enablement gate passes (live form spike, upstream
 //! courtesy contact, capability report) — until then this module is
 //! mechanism + fixture tests only, and [`ENRICHMENT_WRITE_LANE_ENABLED`]
 //! is the constant any future surface must check.
@@ -21,7 +21,7 @@
 //!
 //! The form-lane field naming (`edition--{field}--0`, infogami's `--`
 //! unflatten convention) is **adapter contract v0**: pinned by synthetic
-//! fixtures until the ADR-0019 enablement spike replays the real form and
+//! fixtures until the ADR-0025 enablement spike replays the real form and
 //! refreshes them.
 
 use std::collections::BTreeMap;
@@ -35,7 +35,7 @@ use crate::citation::enrich::{EnrichmentProposal, OpenLibraryRecord, parse_recor
 use crate::types::{HttpMethod, HttpRequest, HttpResponse};
 use sp42_types::HttpClient;
 
-/// ADR-0019 Decision 6: the write lane ships disabled. Any future surface
+/// ADR-0025 Decision 6: the write lane ships disabled. Any future surface
 /// that wires [`execute_enrichment_apply`] to an operator action must gate
 /// on this constant, which flips only in the PR that records the enablement
 /// gate (live form spike + upstream contact + capability report).
@@ -50,14 +50,14 @@ static ORIGIN_BASE: LazyLock<Url> =
     LazyLock::new(|| OPEN_LIBRARY_ORIGIN.parse().expect("static origin parses"));
 
 /// The operator's Open Library session: the cookie from `/account/login`,
-/// held per-operator (ADR-0019 Decision 2).
+/// held per-operator (ADR-0025 Decision 2).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct OpenLibrarySession {
     /// The `Cookie:` header value subsequent requests carry.
     pub cookie: String,
 }
 
-/// The lane an operator session discovered (ADR-0019 Decision 1). Cached by
+/// The lane an operator session discovered (ADR-0025 Decision 1). Cached by
 /// the caller per session; a stale cache is benign in both directions.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ApplyLane {
@@ -118,7 +118,7 @@ pub fn build_record_request(record_key: &str) -> HttpRequest {
 }
 
 /// The record document with exactly the proposal's field replaced — the
-/// verbatim replay both lanes write (ADR-0019 Decision 3: apply never
+/// verbatim replay both lanes write (ADR-0025 Decision 3: apply never
 /// recomputes the change).
 #[must_use]
 pub fn apply_proposal_to_record(
@@ -283,13 +283,13 @@ pub fn parse_edit_form(html: &str, record_key: &str) -> Option<EditForm> {
 
 /// The form-lane input name for a proposal's field — adapter contract v0
 /// (infogami's `--` unflatten convention, first slot). Confirmed/adjusted by
-/// the ADR-0019 enablement spike before any live write.
+/// the ADR-0025 enablement spike before any live write.
 #[must_use]
 pub fn form_field_name(field: &str) -> String {
     format!("edition--{field}--0")
 }
 
-/// Apply the proposal to a parsed form, fail-closed (ADR-0019 Decision 4):
+/// Apply the proposal to a parsed form, fail-closed (ADR-0025 Decision 4):
 /// the target field's (empty) slot and the `_comment` slot must both already
 /// exist in the form — a form without them is not the form this adapter
 /// version knows, and inventing fields risks a mangled public record.
@@ -356,7 +356,7 @@ pub fn form_submit_succeeded(response: &HttpResponse, record_key: &str) -> bool 
 }
 
 /// `true` iff the record now carries exactly the proposal's value in the
-/// proposal's field — the post-apply read-back check (ADR-0019 Decision 4).
+/// proposal's field — the post-apply read-back check (ADR-0025 Decision 4).
 #[must_use]
 pub fn verify_applied(record: &OpenLibraryRecord, proposal: &EnrichmentProposal) -> bool {
     record.raw.get(&proposal.field) == Some(&proposal.proposed)
@@ -372,13 +372,13 @@ pub enum ApplyOutcome {
         /// The record revision observed by the read-back.
         new_revision: u64,
     },
-    /// The record moved since the proposal (ADR-0019 Decision 3): refused,
+    /// The record moved since the proposal (ADR-0025 Decision 3): refused,
     /// re-propose against the current record.
     RefusedDrift {
         base_revision: u64,
         current_revision: u64,
     },
-    /// The form no longer matches the adapter's contract (ADR-0019
+    /// The form no longer matches the adapter's contract (ADR-0025
     /// Decision 4): refused; enrichment is proposal-only until the adapter
     /// is updated.
     RefusedContractDrift { detail: String },
@@ -402,7 +402,7 @@ where
     parse_record(&response.body).ok_or_else(|| "record read was unparseable".to_string())
 }
 
-/// Execute one confirmed apply (ADR-0019 Decisions 1/3/4): drift re-read,
+/// Execute one confirmed apply (ADR-0025 Decisions 1/3/4): drift re-read,
 /// REST attempt with 403 fallback to the form lane, per-session lane cache,
 /// and post-apply read-back. **Not wired to any operator surface** — see
 /// [`ENRICHMENT_WRITE_LANE_ENABLED`].
@@ -524,7 +524,7 @@ where
     read_back(client, proposal, ApplyLane::Form).await
 }
 
-/// The post-apply read-back (ADR-0019 Decision 4): verify the proposed value
+/// The post-apply read-back (ADR-0025 Decision 4): verify the proposed value
 /// actually landed before reporting success.
 async fn read_back<C>(client: &C, proposal: &EnrichmentProposal, lane: ApplyLane) -> ApplyOutcome
 where
@@ -613,11 +613,11 @@ mod tests {
 
     #[test]
     fn write_lane_ships_disabled() {
-        // ADR-0019 Decision 6: flipped only by the enablement-gate PR.
+        // ADR-0025 Decision 6: flipped only by the enablement-gate PR.
         // A constant on purpose: this test is the tripwire that makes
         // flipping the gate a visible, reviewed act.
         #[allow(clippy::assertions_on_constants)]
-        // https://github.com/schiste/SP42 ADR-0019 enablement-gate tripwire
+        // https://github.com/schiste/SP42 ADR-0025 enablement-gate tripwire
         {
             assert!(!ENRICHMENT_WRITE_LANE_ENABLED);
         }

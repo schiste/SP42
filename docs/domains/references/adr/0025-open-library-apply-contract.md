@@ -1,11 +1,11 @@
-# ADR-0019: Open Library apply contract (operator-confirmed enrichment writes)
+# ADR-0025: Open Library apply contract (operator-confirmed enrichment writes)
 
 **Status:** Proposed
 **Date:** 2026-07-08
 **Author:** Luis Villa (drafted by Claude Code)
 
 Spawned by PRD-0009 resolved Q6(b): the **apply-contract** ADR for the
-enrichment lane (Layer 3). ADR-0018 owns the read side (resolve + grounding);
+enrichment lane (Layer 3). ADR-0024 owns the read side (resolve + grounding);
 this ADR owns how a confirmed field-level improvement to an existing Open
 Library record actually reaches openlibrary.org — and under what gates it is
 allowed to. It transfers ADR-0010's propose/confirm/refuse-on-drift
@@ -254,12 +254,12 @@ Until the gate passes, everything above exists as mechanism + tests only.
 - **Author-record enrichment** — Open Library's own Wikidata integration owns
   author-level sync (PRD-0009 de-duplication rule).
 - **Work/edition creation** — no lane here may create a record; a resolve
-  miss stays a miss (ADR-0018 Decision 2).
+  miss stays a miss (ADR-0024 Decision 2).
 
 ## References
 
 - PRD-0009 (Layer 3, resolved Q1/Q2/Q6), ADR-0010 (propose/confirm
-  discipline), ADR-0018 (read contract), ADR-0015 (fetch edge), ADR-0002
+  discipline), ADR-0024 (read contract), ADR-0015 (fetch edge), ADR-0002
   (per-operator local session posture), ADR-0009 (fixture replay).
 - `docs/design-plans/2026-07-08-open-library-apply-path-research.md` — the
   primary-source findings every mechanism claim above rests on (infogami

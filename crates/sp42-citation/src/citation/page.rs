@@ -667,7 +667,7 @@ where
     };
     if let BookResolutionOutcome::Resolved { edition, .. } = &resolution.outcome {
         // Read-only proposal listing (PRD-0009 Layer 3): what an operator
-        // could confirm once ADR-0019's write lane is enabled.
+        // could confirm once ADR-0025's write lane is enabled.
         resolution.enrichment_candidates =
             crate::citation::enrich::enrichment_candidates(edition, &resolution.identifiers);
     }

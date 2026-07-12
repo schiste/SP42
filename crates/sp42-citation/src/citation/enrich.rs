@@ -1,4 +1,4 @@
-//! Open Library enrichment proposals (PRD-0009 Layer 3, ADR-0019).
+//! Open Library enrichment proposals (PRD-0009 Layer 3, ADR-0025).
 //!
 //! Pure proposal computation — no I/O, no writes. Two stages:
 //!
@@ -12,7 +12,7 @@
 //!    synthesized description in particular is gated on rich Wikidata
 //!    book-level context per PRD-0009 resolved Q3 and is future work.
 //! 2. **Proposals** ([`propose_from_candidate`]): a candidate bound to a raw
-//!    record read — the record key and `revision` pinned in (ADR-0019
+//!    record read — the record key and `revision` pinned in (ADR-0025
 //!    Decision 3), the exact replacement value for the field, and the edit
 //!    comment. A proposal is inert data; only the apply mechanism
 //!    ([`crate::citation::openlibrary_apply`]) can carry one to the site,
@@ -192,7 +192,7 @@ pub fn parse_record(body: &[u8]) -> Option<OpenLibraryRecord> {
 }
 
 /// One confirmed-or-confirmable field change, pinned to the record revision
-/// it was computed against (ADR-0019 Decision 3). Inert data: nothing here
+/// it was computed against (ADR-0025 Decision 3). Inert data: nothing here
 /// performs I/O, and the apply mechanism replays exactly this.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct EnrichmentProposal {
@@ -218,7 +218,7 @@ pub struct EnrichmentProposal {
 }
 
 impl EnrichmentProposal {
-    /// Content hash the operator's confirmation binds to (ADR-0019
+    /// Content hash the operator's confirmation binds to (ADR-0025
     /// Decision 3): any change to what would be written changes the hash,
     /// so a confirmation can never authorize anything but this proposal.
     #[must_use]

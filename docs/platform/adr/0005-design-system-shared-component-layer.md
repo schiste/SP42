@@ -3,6 +3,7 @@
 **Status:** Proposed
 **Date:** 2026-06-07
 **Author:** SP42
+**Summary:** A presentation-only `sp42-ui` crate is the single source of the design system (tokens, atoms, primitives) that shells consume; it takes no domain dependency, and the design contract is enforced mechanically rather than by prose.
 
 **Implementation note (2026-07-10):** Partially implemented. The `sp42-ui`
 crate, its primitives, and `theme.rs` shipped, but the token single source of

@@ -3,6 +3,7 @@
 **Status:** Proposed
 **Date:** 2026-07-01
 **Author:** Luis Villa (drafted by Claude Code)
+**Summary:** Wikidata statement writes reuse ADR-0010's propose/confirm shape with a Wikidata-specific locator and statement payload, so proposing and confirming a statement change follows the same operator-confirmed, nothing-written-on-proposal path as wikitext edits.
 
 Spawned by PRD-0011 (Q5/Q6). This ADR fixes the **write contract** shape for
 proposing referenced Wikidata statements; the concrete fact-extraction workflow that

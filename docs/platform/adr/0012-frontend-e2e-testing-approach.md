@@ -3,6 +3,7 @@
 **Status:** Proposed
 **Date:** 2026-06-26
 **Author:** Christophe Henner (drafted with Claude)
+**Summary:** Frontend end-to-end tests use a Rust-native browser harness rather than Playwright/Node, keeping the E2E stack inside the all-Rust toolchain (ADR-0001).
 
 ## Context
 

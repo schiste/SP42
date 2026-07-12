@@ -3,6 +3,7 @@
 **Status:** Accepted
 **Date:** 2026-06-06
 **Author:** SP42
+**Summary:** SP42 uses Rust workspace crates as bounded-context and code-review ownership boundaries, so large features are developed and reviewed along crate seams.
 
 **Implementation note:** Accepted after PR #15 landed the initial crate-boundary
 batch and closed issues #6-#13. Follow-up work should use this ADR as the

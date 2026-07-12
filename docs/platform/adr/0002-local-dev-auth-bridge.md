@@ -3,6 +3,7 @@
 **Status:** Accepted
 **Date:** 2026-03-24
 **Author:** SP42
+**Summary:** In local development, operator identity comes from a dev-auth bridge whose session is minted by a canonical empty-JSON `POST /dev/auth/session/bootstrap`, standing in for Wikimedia OAuth so the rest of the stack sees a real server-derived session.
 
 ## Context
 

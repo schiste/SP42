@@ -92,7 +92,7 @@ impl CoordinationRegistry {
                 false
             }
         };
-        // Fail-closed (#146): only relay a payload the server itself decoded.
+        // Fail-closed (SP42#146): only relay a payload the server itself decoded.
         // The authenticated actor-rewrite (`sanitize_coordination_payload`) runs
         // on the same `decode_message`; a payload the server can't decode never
         // passed that rewrite, so fanning it out verbatim would let a client
@@ -400,7 +400,7 @@ mod tests {
 
     #[tokio::test]
     async fn drops_undecodable_payload_without_relaying() {
-        // Fail-closed (#146): an undecodable payload is counted but never fanned
+        // Fail-closed (SP42#146): an undecodable payload is counted but never fanned
         // out, so it cannot bypass the authenticated actor-rewrite.
         let registry = CoordinationRegistry::default();
         registry.connect_client("frwiki").await;

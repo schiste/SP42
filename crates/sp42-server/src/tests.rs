@@ -2707,7 +2707,7 @@ async fn invalid_coordination_payload_is_counted_without_mutating_state() {
         .send(WebSocketMessage::Binary(b"not-msgpack".to_vec().into()))
         .await
         .expect("invalid binary payload should send");
-    // Fail-closed (#146): the undecodable payload is dropped, never fanned out.
+    // Fail-closed (SP42#146): the undecodable payload is dropped, never fanned out.
     // Bob must not receive it — an undecodable payload bypasses the authenticated
     // actor-rewrite, so relaying it verbatim would be a spoofing path.
     let no_relay = tokio::time::timeout(std::time::Duration::from_millis(75), bob.next()).await;

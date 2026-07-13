@@ -1,6 +1,8 @@
 //! Every GA-facing English string in the appendix, in one place (PRD-0016:
 //! reader-facing vocabulary; enables later localization / `{{GAList}}` idiom
 //! swap as a copy change, not an architecture change).
+//!
+//! Vocabulary here renders on-wiki; keep docs/domains/assessment/what-is-this-appendix.md in sync.
 
 use sp42_citation::{BodyUsabilityReason, GroundingStatus, SupportLevel};
 

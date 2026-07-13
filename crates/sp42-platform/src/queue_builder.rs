@@ -158,6 +158,7 @@ mod tests {
     fn ranks_highest_score_first() {
         let events = vec![
             EditEvent {
+                content_model: None,
                 wiki_id: "frwiki".to_string(),
                 title: "Trusted".to_string(),
                 namespace: 0,
@@ -176,6 +177,7 @@ mod tests {
                 is_patrolled: false.into(),
             },
             EditEvent {
+                content_model: None,
                 wiki_id: "frwiki".to_string(),
                 title: "Risky".to_string(),
                 namespace: 0,
@@ -207,6 +209,7 @@ mod tests {
         let events = vec![
             (
                 EditEvent {
+                    content_model: None,
                     wiki_id: "frwiki".to_string(),
                     title: "Without context".to_string(),
                     namespace: 0,
@@ -228,6 +231,7 @@ mod tests {
             ),
             (
                 EditEvent {
+                    content_model: None,
                     wiki_id: "frwiki".to_string(),
                     title: "With context".to_string(),
                     namespace: 0,
@@ -268,6 +272,7 @@ mod tests {
     fn trusted_user_policy_suppresses_registered_editor() {
         let events = vec![
             EditEvent {
+                content_model: None,
                 wiki_id: "frwiki".to_string(),
                 title: "Trusted".to_string(),
                 namespace: 0,
@@ -286,6 +291,7 @@ mod tests {
                 is_patrolled: false.into(),
             },
             EditEvent {
+                content_model: None,
                 wiki_id: "frwiki".to_string(),
                 title: "Risky".to_string(),
                 namespace: 0,
@@ -329,6 +335,7 @@ mod tests {
     fn duplicate_cluster_boost_applies_to_newcomer_patterns() {
         let events = vec![
             EditEvent {
+                content_model: None,
                 wiki_id: "frwiki".to_string(),
                 title: "Same".to_string(),
                 namespace: 0,
@@ -347,6 +354,7 @@ mod tests {
                 is_patrolled: false.into(),
             },
             EditEvent {
+                content_model: None,
                 wiki_id: "frwiki".to_string(),
                 title: "Same".to_string(),
                 namespace: 0,

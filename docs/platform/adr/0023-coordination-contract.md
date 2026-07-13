@@ -93,6 +93,10 @@ is transport-injectable and fixture-testable.
 - The user-facing collaboration behavior and workflow — PRD-0006.
 - The WebSocket transport implementation itself — the `WebSocket` trait
   (`sp42-types`); this contract is generic over it.
-- Invalid payloads are counted and still fanned out verbatim (the raw bytes reach
-  peers even when the server cannot decode them) — a deliberate
-  forward-compatibility choice, not a validation gate.
+- Invalid payloads are **fail-closed**: the relay counts them
+  (`invalid_messages`) but does **not** fan them out (#146). An undecodable
+  payload never passed the authenticated actor-rewrite (§3), so relaying it
+  verbatim would let a client smuggle an unsanitized actor to leniently-decoding
+  peers — a spoofing path. A real forward-compatibility/versioning story, if
+  needed later, would carry an explicit version field and a decode path rather
+  than relaying bytes the server does not understand.

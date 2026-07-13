@@ -2664,3 +2664,46 @@ body {
     gap: 6px;
   }
 }
+
+/* Entity diff (ADR-0016 / PRD-0011): classified change rows for Wikibase
+   revisions. Tones reuse the text-diff insert/delete classes. */
+.sp42-entity-diff {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  padding: 0.75rem;
+  overflow-y: auto;
+}
+
+.sp42-entity-diff-section h3 {
+  margin: 0 0 0.375rem;
+  font-size: 0.85rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+}
+
+.sp42-entity-diff-rows {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.sp42-entity-diff-row {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  padding: 0.25rem 0.5rem;
+  border-radius: 4px;
+  overflow-wrap: anywhere;
+}
+
+.sp42-entity-diff-badge {
+  flex: none;
+  width: 1.25rem;
+  text-align: center;
+  font-weight: 600;
+}

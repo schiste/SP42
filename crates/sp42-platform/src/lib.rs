@@ -60,6 +60,7 @@ pub mod traits;
 pub mod types;
 pub mod user_analyzer;
 pub mod wiki_storage;
+pub mod wikibase;
 pub mod wikitext_editor;
 
 pub use action_contracts::{
@@ -172,6 +173,19 @@ pub use wiki_storage::{
     build_wiki_storage_plan, load_wiki_storage_document, parse_wiki_storage_document_response,
     parse_wiki_storage_payload_envelope, render_wiki_storage_document_page,
     render_wiki_storage_index_page, resolve_wiki_storage_document, save_wiki_storage_document,
+};
+pub use wikibase::{
+    AliasChange, ContentDiff, ContentDiffReport, ContentModelCapabilities, ContentModelClass,
+    EntityChangeKind, EntityChangeRowReport, EntityDiff, EntityDiffReport, EntityDiffSectionReport,
+    REFERENCE_URL_PROPERTY, RevisionContent, SitelinkChange, StatementChange, StatementChangeParts,
+    StatementRank, TermChange, UnknownEntityChange, ValueDisplay, WIKIBASE_ITEM_CONTENT_MODEL,
+    WIKIBASE_PROPERTY_CONTENT_MODEL, WIKITEXT_CONTENT_MODEL, WikibaseEntity, WikibaseError,
+    WikibaseLabels, WikibaseReference, WikibaseSnak, WikibaseSnakKind, WikibaseStatement,
+    WikibaseValue, build_entity_request, build_label_request, classify_content_model,
+    collect_label_ids, default_namespace_content_model, default_namespace_content_model_for_wiki,
+    derive_content_model_capabilities, diff_entities, parse_entity, parse_entity_content,
+    parse_labels, parse_revision_contents, render_entity_diff_report, render_snak_value,
+    render_statement_claim, route_content_diff,
 };
 pub use wikitext_editor::{
     BlockKind, BlockRef, BookIdentifier, BookSource, CitedSource, ParsoidBlock,

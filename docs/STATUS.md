@@ -88,6 +88,30 @@ PWA packaging and offline installability are now effectively complete for local 
   stay skipped with a refined reason and a Books report section shows every
   resolution; the enrichment lane (Layer 3) awaits the Open Library
   apply-contract ADR
+- the shared Wikidata entity read model (ADR-0016) is implemented as the
+  platform `wikibase` module: endpoint-agnostic entity/statement parsing,
+  label lookup and claim rendering (promoted from `sp42-mcp`'s
+  `verify_wikidata_statement`, which now consumes it), a full-depth
+  `EntityDiff` with the never-a-no-op honesty invariant, the `ContentDiff`
+  routing sum, per-revision content-model classification/capabilities, and an
+  additive `EditEvent.content_model`. The patrol surface is wired end to end
+  (PRD-0011 MVP read path): the server revision fetch carries
+  `rvprop=contentmodel` and serves a content-model-routed
+  `/operator/content-diff` route (entity pairs carry an `EntityDiff` with
+  labels resolved server-side in one batched `wbgetentities` call;
+  media-reference extraction is not invoked for entity content), and the
+  browser diff pane renders entity revisions through an `EntityDiffViewer`
+  (classified label/description/alias/sitelink/statement change rows) while
+  wikitext revisions keep the existing viewer unchanged. The queue-level
+  gates are in place: ingestion seeds `EditEvent.content_model` from the
+  site's per-namespace defaults (Wikidata ns 0/120 → item/property; talk
+  pages stay wikitext), entity events score a uniform base with no wikitext
+  heuristics — so Wikidata queues order chronologically over the
+  bot-excluded-by-default stream — and no LiftWing revertrisk request is
+  built for entity content. Reviewer patrol/rollback on `testwikidatawiki`
+  is covered by a mock-write-path test; the **live** action acceptance gate
+  on test.wikidata.org remains a manual dogfood step to record in the
+  closing PR (PRD-0011).
 
 ## Current Verification
 

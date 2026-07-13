@@ -186,6 +186,28 @@ recorded contract rather than ad-hoc client code:
 - **Queue-scale book discovery** — this contract serves the revision under
   review (ADR-0011 footprint), not cross-article scanning.
 
+## Contract drift log
+
+- **2026-07-12** (live contract smoke, pre-merge): two Read API/IA behavior
+  changes since this ADR was drafted.
+  1. **`items[].itemURL` no longer names the scan.** Lendable items carry an
+     `openlibrary.org/books/<OLID>/…/borrow` URL, not
+     `archive.org/details/<ocaid>`. The ocaid is still present in the
+     response's records arm (`details.details.ocaid`,
+     `data.ebooks[].preview_url`); `parse_scan_availability` now resolves it
+     at parse time (itemURL form first for pre-drift replays, then the
+     item's `fromRecord` record, then a sole ocaid-bearing record).
+  2. **Fulltext search-inside is gated by access status.** The BookReader
+     `inside.php` endpoint returns 403 for `lendable` (print-disabled)
+     items and 200 for `full access` ones. `groundable_scan()` therefore
+     prefers a full-access exact scan; an exact-but-lendable-only book
+     degrades to the honest `search-inside returned 403` lookup failure.
+     Practical consequence: grounding coverage is bounded by full-access
+     exact-edition scans, which live probing suggests are rare for
+     post-1970 trade books (most carry only `similar` matches). Whether to
+     ground against similar-edition scans with a disclosed caveat is an open
+     product question for PRD-0009, out of scope here.
+
 ## References
 
 - PRD-0009 (book-citation grounding and Open Library enrichment; resolved

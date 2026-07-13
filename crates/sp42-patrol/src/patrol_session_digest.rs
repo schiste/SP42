@@ -302,6 +302,7 @@ mod tests {
     fn builds_digest_from_scenario_report() {
         let config = frwiki_config();
         let event = EditEvent {
+            content_model: None,
             wiki_id: "frwiki".to_string(),
             title: "Example".to_string(),
             namespace: 0,
@@ -385,6 +386,7 @@ mod tests {
     fn renders_digest_in_text_and_markdown() {
         let config = frwiki_config();
         let event = EditEvent {
+            content_model: None,
             wiki_id: "frwiki".to_string(),
             title: "Example".to_string(),
             namespace: 0,

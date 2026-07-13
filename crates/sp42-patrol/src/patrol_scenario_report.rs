@@ -632,6 +632,7 @@ mod tests {
                     }
                 };
                 let event = EditEvent {
+                    content_model: None,
                     wiki_id: "frwiki".to_string(),
                     title: format!("Article {rev_id}"),
                     namespace: 0,

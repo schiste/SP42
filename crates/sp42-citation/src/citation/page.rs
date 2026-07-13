@@ -677,7 +677,11 @@ where
             let groundable_ocaid = scan
                 .as_ref()
                 .and_then(|availability| availability.groundable_scan())
-                .and_then(|item| extract_ocaid(&item.item_url));
+                .and_then(|item| {
+                    // Parse-time ocaid first (live 2026-07 Read API shape);
+                    // itemURL derivation kept for replayed pre-drift records.
+                    item.ocaid.clone().or_else(|| extract_ocaid(&item.item_url))
+                });
             if let Some(ocaid) = groundable_ocaid {
                 ground_resolved_book(
                     fetch_client,

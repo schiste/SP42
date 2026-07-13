@@ -1,4 +1,4 @@
-use sp42_core::{MediaDiffReport, RenderedHunkPreview, StructuredDiff, routes};
+use sp42_core::{ContentDiffReport, MediaDiffReport, RenderedHunkPreview, StructuredDiff, routes};
 use sp42_patrol::LiveOperatorView;
 
 use crate::components::filter_bar::PatrolFilterParams;
@@ -71,6 +71,26 @@ pub async fn fetch_diff(
     _old_rev_id: u64,
 ) -> Result<Option<StructuredDiff>, String> {
     Err("Diff fetch is only available in the browser runtime.".to_string())
+}
+
+#[cfg(target_arch = "wasm32")]
+pub async fn fetch_content_diff(
+    wiki_id: &str,
+    rev_id: u64,
+    old_rev_id: u64,
+) -> Result<Option<ContentDiffReport>, String> {
+    let url = routes::operator_content_diff_path(wiki_id, rev_id, old_rev_id);
+    let bytes = get_bytes(&api_url(&url), "fetch content diff").await?;
+    serde_json::from_slice(&bytes).map_err(|error| format!("parse content diff: {error}"))
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub async fn fetch_content_diff(
+    _wiki_id: &str,
+    _rev_id: u64,
+    _old_rev_id: u64,
+) -> Result<Option<ContentDiffReport>, String> {
+    Err("Content diff fetch is only available in the browser runtime.".to_string())
 }
 
 #[cfg(target_arch = "wasm32")]

@@ -492,7 +492,10 @@ fn short_cite_candidates(part: &serde_json::Value) -> Vec<String> {
         return vec![ref_param.to_string()];
     }
     let mut concat = String::new();
-    for i in 1..=4 {
+    // Up to four author names plus the year: five positional params
+    // ({{sfn|Smith|Jones|Brown|Black|1994}} → CITEREFSmithJonesBrownBlack1994,
+    // Codex round 7, PR 153).
+    for i in 1..=5 {
         if let Some(param) = part
             .pointer(&format!("/template/params/{i}/wt"))
             .and_then(|v| v.as_str())
@@ -1652,6 +1655,25 @@ mod tests {
             vec![BookIdentifier::isbn("978-0-306-40615-7").expect("valid")]
         );
         assert_eq!(r.book_sources[0].cited_page.as_deref(), Some("33"));
+    }
+
+    #[test]
+    fn four_author_short_cites_reconstruct_with_the_year() {
+        // Codex round 7 (PR 153): the year is the FIFTH positional param on
+        // four-author short cites.
+        let part: serde_json::Value = serde_json::json!({
+            "template": {"target": {"wt": "sfn"}, "params": {
+                "1": {"wt": "Smith"}, "2": {"wt": "Jones"},
+                "3": {"wt": "Brown"}, "4": {"wt": "Black"}, "5": {"wt": "1994"}
+            }}
+        });
+        assert_eq!(
+            short_cite_candidates(&part),
+            vec![
+                "CITEREFSmithJonesBrownBlack1994".to_string(),
+                "SmithJonesBrownBlack1994".to_string()
+            ]
+        );
     }
 
     #[test]

@@ -183,7 +183,10 @@ pub fn render_ga_appendix(
             let ordinal = u32::try_from(skip.block_ordinal).unwrap_or(0);
             output.push_str(&ref_label(&skip.ref_id, ordinal));
             output.push_str(": ");
-            output.push_str(crate::copy::SKIPPED_NON_URL);
+            output.push_str(match skip.reason {
+                sp42_citation::SkippedReason::NonUrlSource => crate::copy::SKIPPED_NON_URL,
+                sp42_citation::SkippedReason::BookSource => crate::copy::SKIPPED_BOOK_UNRESOLVED,
+            });
             output.push('\n');
         }
     }
@@ -482,6 +485,7 @@ mod fixtures {
                 None
             },
             is_bare_url_ref: false,
+            book_scan: None,
             schema_version: 1,
         }
     }
@@ -601,11 +605,13 @@ mod fixtures {
                 ref_id: "cite_ref-9".to_string(),
                 reason: SkippedReason::NonUrlSource,
                 block_ordinal: 0,
+                book_sources: Vec::new(),
             }],
             extraction_failures: vec![BlockFailure {
                 block_ordinal: 1,
                 reason: "ref cite_ref-64 has no resolvable claim text".to_string(),
             }],
+            book_resolutions: Vec::new(),
             stats: PageVerificationStats {
                 refs_seen: 10,
                 use_sites_verified: 8,
@@ -616,6 +622,9 @@ mod fixtures {
                 not_supported: 1,
                 source_unavailable: 3,
                 source_unavailable_unreachable: 1,
+                books_resolved: 0,
+                books_not_found: 0,
+                book_lookups_failed: 0,
                 source_unavailable_unusable: 2,
             },
         }
@@ -668,6 +677,7 @@ mod fixtures {
             findings,
             skipped: Vec::new(),
             extraction_failures: Vec::new(),
+            book_resolutions: Vec::new(),
             stats: PageVerificationStats {
                 refs_seen: 3,
                 use_sites_verified: 3,
@@ -678,6 +688,9 @@ mod fixtures {
                 not_supported: 1,
                 source_unavailable: 0,
                 source_unavailable_unreachable: 0,
+                books_resolved: 0,
+                books_not_found: 0,
+                book_lookups_failed: 0,
                 source_unavailable_unusable: 0,
             },
         }
@@ -716,6 +729,7 @@ mod fixtures {
             findings,
             skipped: Vec::new(),
             extraction_failures: Vec::new(),
+            book_resolutions: Vec::new(),
             stats: PageVerificationStats {
                 refs_seen: 1,
                 use_sites_verified: 2,
@@ -726,6 +740,9 @@ mod fixtures {
                 not_supported: 0,
                 source_unavailable: 0,
                 source_unavailable_unreachable: 0,
+                books_resolved: 0,
+                books_not_found: 0,
+                book_lookups_failed: 0,
                 source_unavailable_unusable: 0,
             },
         }
@@ -859,6 +876,7 @@ mod bucket_tests {
                 None
             },
             is_bare_url_ref: false,
+            book_scan: None,
             schema_version: 1,
         }
     }

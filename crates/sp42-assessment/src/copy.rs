@@ -97,8 +97,13 @@ pub fn unusable_reason(reason: BodyUsabilityReason) -> &'static str {
 /// Generic unreadable wording when the report carries no specific reason.
 pub const UNUSABLE_GENERIC: &str = "a page the tool fetched but could not use";
 
-/// Skip reason (single contract variant today: non-URL source).
+/// Skip reason: a ref with no URL and no usable book identifier.
 pub const SKIPPED_NON_URL: &str = "cites a book or offline source the tool does not verify";
+
+/// Skip reason: a book identifier was found but no catalog record resolved
+/// (or the lookup failed) — distinct from "not machine-verified at all".
+pub const SKIPPED_BOOK_UNRESOLVED: &str =
+    "cites a book whose identifier matched no catalog record the tool could use";
 
 #[cfg(test)]
 mod tests {

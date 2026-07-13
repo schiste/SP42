@@ -275,7 +275,7 @@ impl BookSnippetBody {
     /// not a raw `contains`: the verifier grounds quotes
     /// case/punctuation-insensitively, so page attribution must accept the
     /// same matches or it silently points at the wrong page (Codex P2,
-    /// PR #147).
+    /// PR 147).
     #[must_use]
     pub fn page_of_passage(&self, passage: Option<&str>) -> Option<u32> {
         use super::locate_quote::{locate_quote, locate_quote_fuzzy};

@@ -513,7 +513,7 @@ where
             // The pre-verdict request URL was built with page_of_passage(None)
             // (first snippet); now that the verifier has picked the passage,
             // re-anchor the provenance deep link to the page that actually
-            // carries it (Codex P2, PR #147). The grounded bytes are the
+            // carries it (Codex P2, PR 147). The grounded bytes are the
             // assembled snippet body, so content_hash is unaffected.
             if let Ok(anchored) =
                 scan_deep_link(ocaid, scanned_page, &body.query).parse::<url::Url>()
@@ -910,7 +910,7 @@ where
     // Book findings were appended after the URL lane; restore document order
     // (the MCP wrapper documents `findings` as document-ordered, and book and
     // URL use-sites share one ordinal sequence). Stable sort keeps each
-    // lane's internal order (Codex P2, PR #147).
+    // lane's internal order (Codex P2, PR 147).
     findings.sort_by_key(|finding| finding.use_site_ordinal);
 
     // 4. Stats.

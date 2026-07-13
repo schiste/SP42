@@ -154,7 +154,7 @@ where
     let mut extract = extract_use_sites(&blocks, request);
     // Book use-sites fan out through the same panel (resolve → ground →
     // verdict), so the agent-facing cost guard counts them alongside URL
-    // use-sites (Codex P1, PR #147): the estimate reports the full width and
+    // use-sites (Codex P1, PR 147): the estimate reports the full width and
     // the cap bounds the combined fan-out.
     let use_site_count = extract.use_sites.len() + extract.book_use_sites.len();
     let skipped_count = extract.skipped.len();
@@ -342,7 +342,7 @@ mod tests {
 
     #[tokio::test]
     async fn estimate_and_cap_count_book_use_sites() {
-        // Codex P1 (PR #147): book use-sites fan out through the same panel,
+        // Codex P1 (PR 147): book use-sites fan out through the same panel,
         // so the cost estimate must count them and the fan-out cap must bound
         // them — an ISBN-only page must never report zero implied work.
         let fetch = StubHttpClient::new([]);

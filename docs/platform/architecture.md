@@ -66,7 +66,7 @@ flowchart TB
   end
   subgraph PLATFORM["Platform — mechanisms, primitives, contracts"]
     sp42_coordination["sp42-coordination<br/>ADR-0004, ADR-0013, ADR-0023"]:::platform
-    sp42_fetch["sp42-fetch<br/>ADR-0013, ADR-0015"]:::platform
+    sp42_fetch["sp42-fetch<br/>ADR-0013, ADR-0015, ADR-0024"]:::platform
     sp42_inference["sp42-inference<br/>ADR-0011, ADR-0013, ADR-0015"]:::platform
     sp42_live["sp42-live<br/>ADR-0004, ADR-0013, ADR-0020"]:::platform
     sp42_parsoid["sp42-parsoid"]:::platform
@@ -156,7 +156,7 @@ Reading notes:
 | `sp42-core` | hybrid | [ADR-0001](adr/0001-foundational-decisions.md), [ADR-0003](adr/0003-node-anchored-wikitext-editing.md), [ADR-0004](adr/0004-crate-boundary-collaboration-model.md), [ADR-0005](adr/0005-design-system-shared-component-layer.md), [ADR-0006](adr/0006-using-llms.md), [ADR-0007](../domains/references/adr/0007-citation-verification-semantics.md), [ADR-0008](../domains/references/adr/0008-citation-verification-contract.md), [ADR-0009](../domains/references/adr/0009-citation-source-snapshot-storage.md), [ADR-0010](adr/0010-operator-confirmed-content-proposals.md), [ADR-0011](../domains/references/adr/0011-article-citation-verification.md), [ADR-0013](adr/0013-layered-platform-domain-architecture.md), [ADR-0015](../domains/references/adr/0015-rules-compliant-read-only-fetch-edge.md), [ADR-0021](adr/0021-scoring-and-ranking-contract.md) | [PRD-0001](../domains/references/prd/0001-citation-verification.md), [PRD-0002](../domains/patrolling/prd/0002-patrol-review-workflow.md), [PRD-0004](../domains/patrolling/prd/0004-reviewer-actions-on-wikimedia.md), [PRD-0005](../domains/patrolling/prd/0005-operator-identity-and-session.md), [PRD-0007](../domains/references/prd/0007-llm-output-benchmarking.md), [PRD-0015](../domains/assessment/prd/0015-article-stability-signal.md), [PRD-0016](../domains/assessment/prd/0016-ga-evidence-appendix-renderer.md) | Hybrid exemption — re-export facade being split into platform/domain crates and retired ([ADR-0013](adr/0013-layered-platform-domain-architecture.md)) |
 | `sp42-desktop` | shell | [ADR-0004](adr/0004-crate-boundary-collaboration-model.md), [ADR-0005](adr/0005-design-system-shared-component-layer.md), [ADR-0013](adr/0013-layered-platform-domain-architecture.md) | — |  |
 | `sp42-devtools` | shell | [ADR-0004](adr/0004-crate-boundary-collaboration-model.md), [ADR-0013](adr/0013-layered-platform-domain-architecture.md) | [PRD-0006](../domains/patrolling/prd/0006-multi-operator-coordination.md) |  |
-| `sp42-fetch` | platform | [ADR-0013](adr/0013-layered-platform-domain-architecture.md), [ADR-0015](../domains/references/adr/0015-rules-compliant-read-only-fetch-edge.md) | — |  |
+| `sp42-fetch` | platform | [ADR-0013](adr/0013-layered-platform-domain-architecture.md), [ADR-0015](../domains/references/adr/0015-rules-compliant-read-only-fetch-edge.md), [ADR-0024](../domains/references/adr/0024-open-library-internet-archive-read-contract.md) | — |  |
 | `sp42-inference` | platform | [ADR-0011](../domains/references/adr/0011-article-citation-verification.md), [ADR-0013](adr/0013-layered-platform-domain-architecture.md), [ADR-0015](../domains/references/adr/0015-rules-compliant-read-only-fetch-edge.md) | — | Still depends on `sp42-core`; edge disappears when the facade is retired ([ADR-0013](adr/0013-layered-platform-domain-architecture.md)) |
 | `sp42-live` | platform | [ADR-0004](adr/0004-crate-boundary-collaboration-model.md), [ADR-0013](adr/0013-layered-platform-domain-architecture.md), [ADR-0020](../domains/patrolling/adr/0020-live-operator-view-contract.md) | [PRD-0002](../domains/patrolling/prd/0002-patrol-review-workflow.md), [PRD-0004](../domains/patrolling/prd/0004-reviewer-actions-on-wikimedia.md) |  |
 | `sp42-mcp` | shell | [ADR-0016](adr/0016-wikidata-entity-content-model.md) | [PRD-0001](../domains/references/prd/0001-citation-verification.md), [PRD-0010](../domains/references/prd/0010-citation-verification-mcp-surface.md) |  |
@@ -194,6 +194,7 @@ Reading notes:
 | [ADR-0021](adr/0021-scoring-and-ranking-contract.md) | Scoring and ranking contract — composite score, policy schema, compile step | Accepted | platform | `sp42-core`, `sp42-patrol`, `sp42-platform` |
 | [ADR-0022](adr/0022-reviewer-action-contract.md) | Reviewer-action contract — dispositions, execute route, tokens, CSRF/baserevid | Accepted | platform | `sp42-platform`, `sp42-server` |
 | [ADR-0023](adr/0023-coordination-contract.md) | Coordination contract — message kinds, relay, room state, wire codec | Accepted | platform | `sp42-coordination`, `sp42-platform`, `sp42-server`, `sp42-types` |
+| [ADR-0024](../domains/references/adr/0024-open-library-internet-archive-read-contract.md) | Open Library / Internet Archive read contract | Proposed | references | `sp42-fetch` |
 
 ## PRD index
 
@@ -207,7 +208,7 @@ Reading notes:
 | [PRD-0006](../domains/patrolling/prd/0006-multi-operator-coordination.md) | Multi-operator coordination | Implemented | patrolling | ADR-0001, ADR-0023 |
 | [PRD-0007](../domains/references/prd/0007-llm-output-benchmarking.md) | LLM output-quality benchmarking | Accepted | references | ADR-0007, ADR-0010 |
 | [PRD-0008](../domains/references/prd/0008-bare-url-repair.md) | Bare-URL repair | Accepted | references | ADR-0002, ADR-0003, ADR-0010 |
-| [PRD-0009](../domains/references/prd/0009-book-citation-grounding-and-open-library-enrichment.md) | Book-citation grounding and Open Library enrichment | Draft | references | ADR-0004, ADR-0006, ADR-0007, ADR-0009, ADR-0010, ADR-0011, ADR-0017 |
+| [PRD-0009](../domains/references/prd/0009-book-citation-grounding-and-open-library-enrichment.md) | Book-citation grounding and Open Library enrichment | Draft | references | ADR-0004, ADR-0006, ADR-0007, ADR-0009, ADR-0010, ADR-0011, ADR-0017, ADR-0024 |
 | [PRD-0010](../domains/references/prd/0010-citation-verification-mcp-surface.md) | Citation-verification agent surface (MCP) | Draft | references | ADR-0007, ADR-0008 |
 | [PRD-0011](../domains/wikidata/prd/0011-wikidata-first-class-target.md) | Wikidata as a first-class SP42 target | Draft | wikidata | ADR-0003, ADR-0007, ADR-0009, ADR-0010, ADR-0014, ADR-0016, ADR-0017 |
 | [PRD-0012](../domains/references/prd/0012-citation-insertion.md) | Citation insertion for unsourced claims | Discussion | references | ADR-0002, ADR-0003, ADR-0006, ADR-0010 |

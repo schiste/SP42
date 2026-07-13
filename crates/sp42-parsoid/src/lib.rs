@@ -492,7 +492,7 @@ fn resolve_short_cite(
 }
 
 /// Process {{ISBN}} templates in a reference transclusion.
-/// Extracts ISBNs from positional params and adds them as BookSources,
+/// Extracts ISBNs from positional params and adds them as `BookSource`s,
 /// deduping against already-collected identifiers.
 fn process_isbn_template(
     data_mw: &str,
@@ -534,41 +534,6 @@ fn process_isbn_template(
 
 /// Process short-cite marker data from a reference.
 /// Resolves sfn/harvsp/etc templates to bibliography-indexed book sources.
-fn process_short_cite_marker(
-    marker_data: &str,
-    index: &BiblioIndex,
-    books: &mut Vec<BookSource>,
-    seen_identifiers: &mut std::collections::HashSet<String>,
-    contents: &impl WikinodeIterator,
-) -> bool {
-    let Ok(value) = serde_json::from_str::<serde_json::Value>(marker_data) else {
-        return false;
-    };
-    let Some(parts) = value.get("parts").and_then(|p| p.as_array()) else {
-        return false;
-    };
-
-    let mut found_short_cite = false;
-    for part in parts {
-        let Some(target_wt) = part.pointer("/template/target/wt").and_then(|v| v.as_str()) else {
-            continue;
-        };
-        let template_name = target_wt.trim().to_ascii_lowercase();
-        if SHORT_CITE_TEMPLATES.contains(&template_name.as_str()) {
-            found_short_cite = true;
-            if let Some(resolved_book) = resolve_short_cite(part, contents, index, seen_identifiers) {
-                books.push(resolved_book.clone());
-                for ident in &resolved_book.identifiers {
-                    seen_identifiers.insert(ident.to_string());
-                }
-            } else {
-                return true; // Unresolved short-cite
-            }
-        }
-    }
-    false
-}
-
 /// Cited source extraction from a reference's contents.
 /// Returns one `CitedSource` per cite-template (primary url + archive fallbacks),
 /// plus `CitedSource` entries for *literal* bare `ExtLink`s not already present in
@@ -577,7 +542,7 @@ fn process_short_cite_marker(
 /// identifier (`isbn`/`oclc`/`lccn`/`ol`) yields one `BookSource`, whether or not
 /// it also carries a URL (ADR-0024 Decision 1). Short-cite templates (sfn/harvsp/etc)
 /// resolve to bibliography-indexed book sources via fragment matching.
-#[allow(clippy::too_many_lines)]
+#[allow(clippy::too_many_lines)] // https://github.com/schiste/SP42/issues/TODO bibliography-indirection phase 1
 fn sources_in_reference(
     reference: &Reference,
     index: &BiblioIndex,

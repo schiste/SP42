@@ -1165,4 +1165,25 @@ mod renderer_tests {
             );
         }
     }
+
+    #[test]
+    fn demo_fixture_renders_the_full_appendix_shape() {
+        let raw = include_str!("../../../fixtures/page_report_ga_demo.json");
+        let report: sp42_citation::PageVerificationReport =
+            serde_json::from_str(raw).expect("fixture parses as a saved report");
+        let out = super::render_ga_appendix(&report, 1_752_300_000_000, "0.1.0");
+        for heading in [
+            crate::copy::BUCKET_DISAGREEMENTS,
+            crate::copy::BUCKET_RECOVERED,
+            crate::copy::BUCKET_DEAD_LINKS,
+            crate::copy::BUCKET_UNREADABLE,
+            crate::copy::BUCKET_UNCONFIRMED,
+            crate::copy::BUCKET_SUPPORTED,
+            crate::copy::BUCKET_SKIPPED,
+            crate::copy::BUCKET_EXTRACTION_FAILURES,
+        ] {
+            assert!(out.contains(heading), "missing bucket: {heading}");
+        }
+        assert!(!out.contains("cite_ref-"), "raw id leaked from fixture");
+    }
 }

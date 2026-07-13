@@ -28,7 +28,7 @@ use sp42_patrol::{
     build_shell_state_model, render_patrol_scenario_markdown, render_patrol_scenario_text,
     render_shell_state_markdown, render_shell_state_text,
 };
-use sp42_types::{HttpMethod, HttpRequest, HttpResponse, ModelRef};
+use sp42_types::{Clock, HttpMethod, HttpRequest, HttpResponse, ModelRef};
 use std::collections::BTreeMap;
 
 const LOCAL_SERVER_BASE_URL: &str = "http://127.0.0.1:8788";
@@ -39,6 +39,29 @@ enum OutputFormat {
     Text,
     Json,
     Markdown,
+}
+
+/// Output formats for the page-report commands (`verify-page`,
+/// `render-report`) only. Command-local on purpose: the shared
+/// [`OutputFormat`] is flattened into commands that cannot produce a GA
+/// appendix and must not advertise it (PRD-0016).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+#[value(rename_all = "lowercase")]
+enum PageReportFormat {
+    Text,
+    Json,
+    Markdown,
+    /// GA evidence appendix wikitext (PRD-0016).
+    #[value(name = "ga-appendix")]
+    GaAppendix,
+}
+
+/// Shared `--format` flag for the page-report commands.
+#[derive(Debug, Args)]
+struct PageReportFormatArg {
+    /// Output format.
+    #[arg(long, value_enum, default_value = "text")]
+    format: PageReportFormat,
 }
 
 /// Which bare-URL flag-mode was selected (PRD-0008 CLI surface).
@@ -332,7 +355,7 @@ struct VerifyPageArgs {
     #[arg(long, default_value = LOCAL_SERVER_BASE_URL)]
     bridge_base_url: String,
     #[command(flatten)]
-    fmt: FormatArg,
+    fmt: PageReportFormatArg,
 }
 
 #[derive(Debug, Args)]
@@ -2957,7 +2980,7 @@ async fn fetch_bare_url_proposals(
 fn render_verify_page(
     options: &VerifyPageCliOptions,
     bridge_base_url: &str,
-    format: OutputFormat,
+    format: PageReportFormat,
 ) -> Result<String, String> {
     // `reqwest` needs a Tokio reactor; drive the bridge calls on a real runtime
     // (mirrors `run_verify`), not `futures::executor::block_on`.
@@ -2965,13 +2988,18 @@ fn render_verify_page(
         .map_err(|error| format!("failed to start async runtime: {error}"))?;
     let report = runtime.block_on(fetch_page_report_via_bridge(bridge_base_url, options))?;
     match format {
-        OutputFormat::Json => {
+        PageReportFormat::Json => {
             serde_json::to_string_pretty(&report).map_err(|error| error.to_string())
         }
         // The shared renderer already emits a full markdown document (`# Page citation
         // report`), so it is not wrapped in render_markdown_section.
-        OutputFormat::Markdown => Ok(render_page_verification_markdown(&report)),
-        OutputFormat::Text => Ok(render_page_verification_text(&report)),
+        PageReportFormat::Markdown => Ok(render_page_verification_markdown(&report)),
+        PageReportFormat::Text => Ok(render_page_verification_text(&report)),
+        PageReportFormat::GaAppendix => Ok(sp42_assessment::render_ga_appendix(
+            &report,
+            SystemClock.now_ms(),
+            env!("CARGO_PKG_VERSION"),
+        )),
     }
 }
 
@@ -3466,12 +3494,12 @@ mod tests {
 
     use super::{
         ActionKind, BareUrlAction, BareUrlCliMode, BareUrlCliOptions, BareUrlExecuteReport, Cli,
-        CliOptions, Command, ContextPreviewOptions, LOCAL_SERVER_BASE_URL, OutputFormat, ShellMode,
-        VerifyPageCliOptions, WorkbenchOptions, render_action_preview, render_backlog_preview,
-        render_bare_url_execute, render_bare_url_proposals, render_context_preview,
-        render_coordination_preview, render_parity_report, render_queue, render_scenario_report,
-        render_session_digest, render_stream_preview, render_workbench, select_bare_url_proposal,
-        server_report_lines,
+        CliOptions, Command, ContextPreviewOptions, LOCAL_SERVER_BASE_URL, OutputFormat,
+        PageReportFormat, ShellMode, VerifyPageCliOptions, WorkbenchOptions, render_action_preview,
+        render_backlog_preview, render_bare_url_execute, render_bare_url_proposals,
+        render_context_preview, render_coordination_preview, render_parity_report, render_queue,
+        render_scenario_report, render_session_digest, render_stream_preview, render_workbench,
+        select_bare_url_proposal, server_report_lines,
     };
     use clap::Parser;
     use serde_json::json;
@@ -3622,6 +3650,55 @@ mod tests {
     #[test]
     fn verify_page_requires_title() {
         assert!(command_from(&["verify-page", "--wiki", "enwiki"]).is_err());
+    }
+
+    #[test]
+    fn verify_page_accepts_ga_appendix_format() {
+        // Parse-level check only: the flag value is accepted and maps to the enum.
+        let cli = Cli::try_parse_from([
+            "sp42-cli",
+            "verify-page",
+            "--title",
+            "X",
+            "--format",
+            "ga-appendix",
+        ])
+        .expect("ga-appendix parses");
+        let Command::VerifyPage(args) = cli.command else {
+            panic!("expected verify-page");
+        };
+        assert_eq!(args.fmt.format, PageReportFormat::GaAppendix);
+    }
+
+    #[test]
+    fn ga_appendix_is_rejected_on_commands_that_cannot_produce_it() {
+        for argv in [
+            vec![
+                "sp42-cli",
+                "verify",
+                "--claim",
+                "c",
+                "--source-url",
+                "https://x",
+                "--format",
+                "ga-appendix",
+            ],
+            vec![
+                "sp42-cli",
+                "bare-url",
+                "preview",
+                "--title",
+                "X",
+                "--format",
+                "ga-appendix",
+            ],
+            vec!["sp42-cli", "preview", "--format", "ga-appendix"],
+        ] {
+            assert!(
+                Cli::try_parse_from(argv.clone()).is_err(),
+                "{argv:?} must reject ga-appendix"
+            );
+        }
     }
 
     #[test]

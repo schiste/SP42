@@ -459,7 +459,12 @@ fn resolve_book_from_index(
 /// (Codex round 3, PR 153).
 fn fragment_keys_in_order(contents: &impl WikinodeIterator) -> std::collections::VecDeque<String> {
     let mut keys = std::collections::VecDeque::new();
-    for elem in contents.select("a[href*=\"#\"]") {
+    // Only same-page fragment links qualify as bibliography targets: Parsoid
+    // marks them `mw-selflink-fragment` (verified on the en/fr probes). An
+    // external URL that merely contains `#` (a cite-web `…/page#section`
+    // rendered before the short cite) must not poison the association
+    // (Codex round 4, PR 153).
+    for elem in contents.select("a.mw-selflink-fragment[href*=\"#\"]") {
         if let Some(element) = elem.as_node().as_element()
             && let Some(href) = element.attributes.borrow().get("href")
             && let Some(frag) = href.split('#').nth(1)

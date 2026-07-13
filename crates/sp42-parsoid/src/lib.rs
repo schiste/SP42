@@ -14,11 +14,28 @@
 
 use parsoid::prelude::*;
 use parsoid::{Client, ImmutableWikicode};
+use percent_encoding::percent_decode_str;
 use sp42_platform::{
     BlockKind, BlockRef, BookIdentifier, BookSource, CitedSource, ParsoidBlock, WikiConfig,
     WikitextEditorError, WikitextPageRef,
 };
 use std::collections::HashMap;
+
+/// Shortened-footnote template families whose refs cite a bibliography entry
+/// by anchor (design sketch 2026-07-13). Cross-wiki constant on purpose —
+/// the *anchor* is followed literally, so per-wiki id conventions (enwiki's
+/// CITEREF prefix, frwiki's bare name+year) need no configuration; only the
+/// template names would ever need a per-wiki override, and none does yet.
+const SHORT_CITE_TEMPLATES: &[&str] = &[
+    "sfn",
+    "sfnp",
+    "sfnm",
+    "harvsp",
+    "harvnb",
+    "harv",
+    "harvtxt",
+    "harvcoltxt",
+];
 
 /// Build a Parsoid REST client for `config`'s `parsoid_url`.
 ///
@@ -202,6 +219,22 @@ pub fn blocks_from_revision(
 ) -> Result<Vec<ParsoidBlock>, WikitextEditorError> {
     let code = Wikicode::new(revision.html());
 
+    // Build document-level bibliography index (for short-cite resolution).
+    let index = biblio_index(&code);
+
+    // Extract ref marker data-mw by body id for short-cite detection.
+    // Each ref marker points to its reference list item via the body.id field.
+    let mut ref_marker_data: HashMap<String, String> = HashMap::new();
+    for marker in code.select("[typeof~=\"mw:Extension/ref\"]") {
+        if let Some(element) = marker.as_node().as_element()
+            && let Some(data_mw) = element.attributes.borrow().get("data-mw")
+            && let Ok(value) = serde_json::from_str::<serde_json::Value>(data_mw)
+            && let Some(body_id) = value.pointer("/body/id").and_then(|v| v.as_str())
+        {
+            ref_marker_data.insert(body_id.to_string(), data_mw.to_string());
+        }
+    }
+
     // Map Reference.id() -> cited sources (primary URL + archive fallbacks) and
     // book identifiers (PRD-0009), read structurally from cite templates and
     // bare ExtLinks inside each reference's contents.
@@ -210,7 +243,10 @@ pub fn blocks_from_revision(
     // URL (a bare-URL-repair target). Keyed the same way so `collect_block` can stamp it per marker.
     let mut ref_bare: HashMap<String, bool> = HashMap::new();
     for reference in code.filter_references() {
-        ref_sources.insert(reference.id(), sources_in_reference(&reference));
+        ref_sources.insert(
+            reference.id(),
+            sources_in_reference(&reference, &index, &ref_marker_data),
+        );
         ref_bare.insert(reference.id(), reference_is_bare_url(&reference));
     }
 
@@ -311,6 +347,7 @@ fn collect_block(
                 ref_text: child.text_contents(),
                 named: ref_link.name().ok().flatten().is_some(),
                 is_bare_url_ref: ref_bare.get(&reference_id).copied().unwrap_or(false),
+                short_cite_unresolved: sources.short_cite_unresolved,
             });
             continue; // skip the marker's own text
         }
@@ -332,6 +369,114 @@ struct RefSources {
     cited: Vec<CitedSource>,
     /// Book identifiers from cite templates, independent of any URL.
     books: Vec<BookSource>,
+    /// `true` when a short-cite template pointed to a bibliography entry
+    /// that was not found in the document index.
+    short_cite_unresolved: bool,
+}
+
+/// Extract the `cited_page` override from a short-cite template's params.
+fn get_short_cite_page(part: &serde_json::Value) -> Option<String> {
+    ["p", "pp", "page", "pages", "loc"]
+        .iter()
+        .find_map(|param_name| {
+            part.pointer(&format!("/template/params/{param_name}/wt"))
+                .and_then(|v| v.as_str())
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+        })
+}
+
+/// Use an indexed book source for a short-cite resolution, applying page overrides.
+fn resolve_book_from_index(
+    part: &serde_json::Value,
+    indexed_book: &BookSource,
+    seen_identifiers: &std::collections::HashSet<String>,
+) -> Option<BookSource> {
+    // Override cited_page with short-cite params if present
+    let cited_page = get_short_cite_page(part);
+
+    // Filter out identifiers we've already seen in this ref
+    let new_identifiers: Vec<_> = indexed_book
+        .identifiers
+        .iter()
+        .filter(|ident| !seen_identifiers.contains(&ident.to_string()))
+        .cloned()
+        .collect();
+
+    // Return a BookSource with identifiers and the overridden page
+    let identifiers = if new_identifiers.is_empty() {
+        indexed_book.identifiers.clone()
+    } else {
+        new_identifiers
+    };
+
+    Some(BookSource {
+        identifiers,
+        cited_page,
+    })
+}
+
+/// Resolve a short-cite template to a bibliography-indexed `BookSource`.
+/// Returns the resolved `BookSource` with identifiers from the index and `cited_page`
+/// from the short-cite params, or None if the anchor is not found in the index.
+fn resolve_short_cite(
+    part: &serde_json::Value,
+    contents: &impl WikinodeIterator,
+    index: &BiblioIndex,
+    seen_identifiers: &std::collections::HashSet<String>,
+) -> Option<BookSource> {
+    // Resolution key, in order:
+    // (a) Fragment of first descendant <a> whose href contains # (percent-decoded)
+    let fragment_key = contents
+        .select("a[href*=\"#\"]")
+        .first()
+        .and_then(|elem| elem.as_node().as_element())
+        .and_then(|elem| {
+            elem.attributes
+                .borrow()
+                .get("href")
+                .map(std::string::ToString::to_string)
+        })
+        .and_then(|href| href.split('#').nth(1).map(std::string::ToString::to_string))
+        .map(|encoded_frag| {
+            percent_decode_str(&encoded_frag)
+                .decode_utf8_lossy()
+                .to_string()
+        });
+
+    // (b) Reconstructed key from positional params 1..=4
+    let mut param_keys = Vec::new();
+    for i in 1..=4 {
+        if let Some(param) = part
+            .pointer(&format!("/template/params/{i}/wt"))
+            .and_then(|v| v.as_str())
+        {
+            param_keys.push(param.trim().to_string());
+        }
+    }
+    let reconstructed_key = if param_keys.is_empty() {
+        String::new()
+    } else {
+        param_keys.join("")
+    };
+
+    // Try fragment key first, then reconstructed keys (with and without CITEREF prefix)
+    if let Some(key) = &fragment_key
+        && let Some(indexed_book) = index.get(key)
+    {
+        return resolve_book_from_index(part, indexed_book, seen_identifiers);
+    }
+
+    let citeref_key = format!("CITEREF{reconstructed_key}");
+    if let Some(indexed_book) = index.get(&citeref_key) {
+        return resolve_book_from_index(part, indexed_book, seen_identifiers);
+    }
+
+    if let Some(indexed_book) = index.get(&reconstructed_key) {
+        return resolve_book_from_index(part, indexed_book, seen_identifiers);
+    }
+
+    None
 }
 
 /// Cited source extraction from a reference's contents.
@@ -340,12 +485,49 @@ struct RefSources {
 /// templates. Preserves document order: template-derived sources first, then
 /// bare-ExtLink sources. Alongside, each cite template carrying a validated book
 /// identifier (`isbn`/`oclc`/`lccn`/`ol`) yields one `BookSource`, whether or not
-/// it also carries a URL (ADR-0024 Decision 1).
-fn sources_in_reference(reference: &Reference) -> RefSources {
+/// it also carries a URL (ADR-0024 Decision 1). Short-cite templates (sfn/harvsp/etc)
+/// resolve to bibliography-indexed book sources via fragment matching.
+fn sources_in_reference(
+    reference: &Reference,
+    index: &BiblioIndex,
+    ref_marker_data: &HashMap<String, String>,
+) -> RefSources {
     let contents = reference.contents();
     let mut sources = Vec::new();
     let mut books = Vec::new();
     let mut seen_urls = std::collections::HashSet::new();
+    let mut seen_identifiers: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut short_cite_unresolved = false;
+
+    // First, check if this reference has a short-cite marker (sfn/harvsp/etc).
+    // The ref marker's data-mw is keyed by the reference body id.
+    // Reference.id() returns the full body id (e.g., "mw-reference-text-cite_note-FOOTNOTERoxburgh2014113–116-4").
+    let body_id = reference.id();
+    if let Some(marker_data) = ref_marker_data.get(&body_id)
+        && let Ok(value) = serde_json::from_str::<serde_json::Value>(marker_data)
+        && let Some(parts) = value.get("parts").and_then(|p| p.as_array())
+    {
+        for part in parts {
+            if let Some(target_wt) = part.pointer("/template/target/wt").and_then(|v| v.as_str()) {
+                let template_name = target_wt.trim().to_ascii_lowercase();
+                if SHORT_CITE_TEMPLATES.contains(&template_name.as_str()) {
+                    // This is a short-cite template - try to resolve it
+                    if let Some(resolved_book) =
+                        resolve_short_cite(part, &contents, index, &seen_identifiers)
+                    {
+                        books.push(resolved_book.clone());
+                        // Track identifiers we've added
+                        for ident in &resolved_book.identifiers {
+                            seen_identifiers.insert(ident.to_string());
+                        }
+                    } else {
+                        // Resolution failed - flag this ref as unresolved
+                        short_cite_unresolved = true;
+                    }
+                }
+            }
+        }
+    }
 
     // Cite-template params via data-mw. The transclusion `data-mw` is carried on
     // whichever element starts the transclusion — in real Parsoid output for a
@@ -358,11 +540,52 @@ fn sources_in_reference(reference: &Reference) -> RefSources {
     // that group but are not the `url=` param, so the bare-ExtLink pass below must
     // exclude them — they are template output, not literal bare URLs in the ref.
     let mut transclusion_abouts = std::collections::HashSet::new();
-    for span in contents.select("[typeof~=\"mw:Transclusion\"]") {
+    let transclusions = contents.select("[typeof~=\"mw:Transclusion\"]");
+    for span in transclusions {
         if let Some(element) = span.as_node().as_element() {
             let attributes = element.attributes.borrow();
             if let Some(data_mw) = attributes.get("data-mw") {
-                push_template_sources(data_mw, &mut sources, &mut books, &mut seen_urls);
+                // Check if this is a short-cite template (harvsp/etc in the reference contents)
+                let mut is_short_cite = false;
+                if let Ok(value) = serde_json::from_str::<serde_json::Value>(data_mw)
+                    && let Some(parts) = value.get("parts").and_then(|p| p.as_array())
+                {
+                    for part in parts {
+                        if let Some(target_wt) =
+                            part.pointer("/template/target/wt").and_then(|v| v.as_str())
+                        {
+                            let template_name = target_wt.trim().to_ascii_lowercase();
+                            if SHORT_CITE_TEMPLATES.contains(&template_name.as_str()) {
+                                is_short_cite = true;
+                                // Try to resolve the short-cite
+                                if let Some(resolved_book) =
+                                    resolve_short_cite(part, &contents, index, &seen_identifiers)
+                                {
+                                    books.push(resolved_book.clone());
+                                    // Track identifiers we've added
+                                    for ident in &resolved_book.identifiers {
+                                        seen_identifiers.insert(ident.to_string());
+                                    }
+                                } else {
+                                    // Resolution failed - flag this ref as unresolved
+                                    short_cite_unresolved = true;
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // If not a short-cite, process as a regular template
+                if !is_short_cite {
+                    push_template_sources(data_mw, &mut sources, &mut books, &mut seen_urls);
+                }
+
+                // Track book identifiers we've collected so far for deduplication
+                for book in &books {
+                    for ident in &book.identifiers {
+                        seen_identifiers.insert(ident.to_string());
+                    }
+                }
             }
             if let Some(about) = attributes.get("about") {
                 transclusion_abouts.insert(about.to_string());
@@ -389,9 +612,18 @@ fn sources_in_reference(reference: &Reference) -> RefSources {
         }
     }
 
+    // Deduplicate identical BookSources within this ref
+    books.sort_by(|a, b| {
+        let a_str = format!("{:?}", a.identifiers);
+        let b_str = format!("{:?}", b.identifiers);
+        a_str.cmp(&b_str)
+    });
+    books.dedup_by(|a, b| a.identifiers == b.identifiers && a.cited_page == b.cited_page);
+
     RefSources {
         cited: sources,
         books,
+        short_cite_unresolved,
     }
 }
 
@@ -1045,5 +1277,96 @@ mod tests {
         let html = include_str!("../tests/fixtures/parsoid_cats.html");
         let code = Wikicode::new(html);
         assert!(biblio_index(&code).is_empty());
+    }
+
+    /// Helper: load a fixture by name and return parsed blocks.
+    fn blocks_from_fixture(name: &str) -> Vec<ParsoidBlock> {
+        let html = match name {
+            "parsoid_sfn_enwiki.html" => include_str!("../tests/fixtures/parsoid_sfn_enwiki.html"),
+            "parsoid_harvsp_frwiki.html" => {
+                include_str!("../tests/fixtures/parsoid_harvsp_frwiki.html")
+            }
+            "parsoid_magiclink_dewiki.html" => {
+                include_str!("../tests/fixtures/parsoid_magiclink_dewiki.html")
+            }
+            _ => panic!("unknown fixture: {name}"),
+        };
+        let revision = ImmutableWikicode::new(html);
+        blocks_from_revision(&revision).expect("blocks_from_revision")
+    }
+
+    #[test]
+    fn sfn_ref_resolves_to_the_bibliography_book_source_with_its_own_pages() {
+        let blocks = blocks_from_fixture("parsoid_sfn_enwiki.html");
+        let block = blocks.first().expect("at least one block");
+        // Find the sfn ref by ref_id containing "Roxburgh"
+        let r = block
+            .refs
+            .iter()
+            .find(|ref_item| ref_item.ref_id.contains("Roxburgh2014"))
+            .expect("should find Roxburgh2014 ref");
+
+        assert_eq!(
+            r.book_sources.len(),
+            1,
+            "sfn should resolve to bibliography entry"
+        );
+        assert_eq!(
+            r.book_sources[0].identifiers,
+            vec![BookIdentifier::isbn("978-1-84583-093-9").expect("valid")]
+        );
+        // The page range comes from the sfn's own pp param, NOT the cite book's.
+        assert_eq!(r.book_sources[0].cited_page.as_deref(), Some("113–116"));
+    }
+
+    #[test]
+    fn harvsp_ref_resolves_a_percent_encoded_prefixless_fragment() {
+        let blocks = blocks_from_fixture("parsoid_harvsp_frwiki.html");
+        let block = blocks.first().expect("at least one block");
+        // The frwiki fixture should have a harvsp ref
+        let r = block.refs.first().expect("should find a ref");
+
+        assert_eq!(
+            r.book_sources.len(),
+            1,
+            "harvsp should resolve to bibliography entry"
+        );
+        assert_eq!(
+            r.book_sources[0].identifiers[0],
+            BookIdentifier::isbn("978-2-85822-660-3").expect("valid")
+        );
+    }
+
+    #[test]
+    fn unresolvable_short_cite_yields_no_book_source_and_flags_the_ref() {
+        let blocks = blocks_from_fixture("parsoid_sfn_enwiki.html");
+        let block = blocks.first().expect("at least one block");
+        // Find the sfn ref that points to CITEREFNowhere2020 (unresolved)
+        let r = block
+            .refs
+            .iter()
+            .find(|ref_item| ref_item.ref_id.contains("Nowhere2020"))
+            .expect("should find Nowhere2020 ref");
+
+        assert!(r.book_sources.is_empty(), "never a guessed identifier");
+        assert!(r.short_cite_unresolved, "should flag unresolved short-cite");
+    }
+
+    #[test]
+    fn direct_cite_book_extraction_is_unchanged() {
+        let blocks = blocks_from_fixture("parsoid_sfn_enwiki.html");
+        let block = blocks.first().expect("at least one block");
+        // Find the direct cite-book ref (not a short-cite, should extract directly)
+        let r = block
+            .refs
+            .iter()
+            .find(|ref_item| ref_item.ref_id.contains("direct"))
+            .expect("should find direct cite-book ref");
+
+        assert_eq!(r.book_sources.len(), 1, "direct lane regression");
+        assert!(
+            !r.short_cite_unresolved,
+            "direct cites should not be flagged"
+        );
     }
 }

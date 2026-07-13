@@ -1148,6 +1148,7 @@ mod orchestrator_tests {
                     ref_text: "[1]".into(),
                     named: false,
                     is_bare_url_ref: false,
+                    short_cite_unresolved: false,
                 },
                 BlockRef {
                     offset: 17,
@@ -1157,6 +1158,7 @@ mod orchestrator_tests {
                     ref_text: "[2]".into(),
                     named: false,
                     is_bare_url_ref: false,
+                    short_cite_unresolved: false,
                 },
             ],
             block_kind: BlockKind::Paragraph,

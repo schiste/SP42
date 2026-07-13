@@ -289,6 +289,7 @@ mod tests {
             ref_text: "[1]".into(),
             named: false,
             is_bare_url_ref: false,
+            short_cite_unresolved: false,
         }
     }
 
@@ -304,6 +305,7 @@ mod tests {
             ref_text: "[1]".into(),
             named: false,
             is_bare_url_ref: false,
+            short_cite_unresolved: false,
         }
     }
 

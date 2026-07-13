@@ -6,7 +6,6 @@
 /// safety rule): entity-encode `&`, `<`, `>` inside the content — which makes
 /// an embedded `</nowiki>` terminator inert — then wrap in `<nowiki>` so
 /// braces, brackets, and pipes stay display-only.
-#[allow(dead_code)]
 fn escape_verbatim(text: &str) -> String {
     let inner = text
         .replace('&', "&amp;")
@@ -19,7 +18,6 @@ fn escape_verbatim(text: &str) -> String {
 /// report carries no rendered marker; never print the raw `cite_ref-…` id).
 /// Named `MediaWiki` refs produce `cite_ref-<name>_<seq>-<use>`; unnamed refs
 /// produce `cite_ref-<n>`. The `ordinal` is the finding's `use_site_ordinal`.
-#[allow(dead_code)]
 fn ref_label(ref_id: &str, ordinal: u32) -> String {
     let fallback = format!("ref #{}", ordinal + 1);
     let Some(rest) = ref_id.strip_prefix("cite_ref-") else {
@@ -48,7 +46,6 @@ fn ref_label(ref_id: &str, ordinal: u32) -> String {
 /// `YYYY-MM-DD` (UTC) from epoch milliseconds. Civil-from-days per Howard
 /// Hinnant's algorithm — the workspace carries no date crate, and the footer
 /// needs only a date (cf. the private helpers in `sp42-live`).
-#[allow(dead_code)]
 fn format_utc_date(epoch_ms: i64) -> String {
     let days = epoch_ms.div_euclid(86_400_000);
     let z = days + 719_468;
@@ -68,7 +65,6 @@ fn format_utc_date(epoch_ms: i64) -> String {
 /// partitions; grounding and `archive_of` annotate. Every finding lands in
 /// exactly one bucket.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[allow(dead_code)]
 enum Bucket {
     Disagreement,
     Recovered,
@@ -78,7 +74,6 @@ enum Bucket {
     Supported,
 }
 
-#[allow(dead_code)]
 fn bucket_for(finding: &sp42_citation::CitationFinding) -> Bucket {
     use sp42_citation::{CitationVerdict, GroundingStatus, SourceUnavailableReason, SupportLevel};
 
@@ -172,8 +167,7 @@ pub fn render_ga_appendix(
         output.push('\n');
         for skip in &report.skipped {
             output.push_str("* ");
-            #[allow(clippy::cast_possible_truncation)]
-            let ordinal = skip.block_ordinal as u32;
+            let ordinal = u32::try_from(skip.block_ordinal).unwrap_or(0);
             output.push_str(&ref_label(&skip.ref_id, ordinal));
             output.push_str(": ");
             output.push_str(crate::copy::SKIPPED_NON_URL);
@@ -189,7 +183,7 @@ pub fn render_ga_appendix(
         for failure in &report.extraction_failures {
             output.push_str("* ");
             let rewritten = sanitize_reason(&failure.reason);
-            output.push_str(&rewritten);
+            output.push_str(&escape_verbatim(&rewritten));
             output.push('\n');
         }
     }
@@ -282,19 +276,18 @@ fn render_disagreement_line(output: &mut String, finding: &sp42_citation::Citati
         output.push('.');
     }
 
-    #[allow(clippy::collapsible_if)]
-    if let Some(annotation) = crate::copy::grounding_annotation(finding.grounding_status) {
-        if matches!(
+    if let Some(annotation) = crate::copy::grounding_annotation(finding.grounding_status)
+        && matches!(
             finding.verdict,
             CitationVerdict::Judged(SupportLevel::Partial)
-        ) {
-            output.push(' ');
-            output.push_str(annotation);
-            output.push('.');
-        }
+        )
+    {
+        output.push(' ');
+        output.push_str(annotation);
+        output.push('.');
     }
 
-    if finding.agreement.winner_votes * 2 <= finding.agreement.panel_size {
+    if u32::from(finding.agreement.winner_votes) * 2 <= u32::from(finding.agreement.panel_size) {
         output.push_str(" (");
         output.push_str(crate::copy::PANEL_SPLIT_LINE);
         output.push(')');
@@ -391,8 +384,9 @@ fn render_supported_line(output: &mut String, finding: &sp42_citation::CitationF
 }
 
 fn truncate_claim(text: &str, max_len: usize) -> String {
+    let char_count = text.chars().count();
     let truncated: String = text.chars().take(max_len).collect();
-    if text.len() > max_len {
+    if char_count > max_len {
         truncated + "…"
     } else {
         truncated
@@ -401,25 +395,24 @@ fn truncate_claim(text: &str, max_len: usize) -> String {
 
 fn sanitize_reason(reason: &str) -> String {
     let mut result = String::new();
-    let mut i = 0;
-    let bytes = reason.as_bytes();
+    let mut remaining = reason;
 
-    while i < bytes.len() {
-        if i + 9 <= bytes.len() && &reason[i..i + 9] == "cite_ref-" {
-            let start = i;
-            let mut end = i + 9;
-            while end < bytes.len() && !reason[end..].starts_with(|c: char| c.is_whitespace()) {
-                end += 1;
-            }
-            let cite_id = &reason[start..end];
-            result.push_str(&ref_label(cite_id, 0));
-            i = end;
-        } else {
-            result.push(reason[i..].chars().next().unwrap());
-            i += reason[i..].chars().next().unwrap().len_utf8();
-        }
+    while let Some(pos) = remaining.find("cite_ref-") {
+        result.push_str(&remaining[..pos]);
+        let after_prefix = &remaining[pos + "cite_ref-".len()..];
+
+        // Find end of token (whitespace or end of string)
+        let token_end = after_prefix
+            .find(|c: char| c.is_whitespace())
+            .unwrap_or(after_prefix.len());
+
+        let cite_id = &remaining[pos..pos + "cite_ref-".len() + token_end];
+        result.push_str(&ref_label(cite_id, 0));
+
+        remaining = &remaining[pos + "cite_ref-".len() + token_end..];
     }
 
+    result.push_str(remaining);
     result
 }
 
@@ -605,7 +598,7 @@ mod fixtures {
                 use_sites_verified: 8,
                 skipped: 1,
                 extraction_failures: 1,
-                supported: 2,
+                supported: 3,
                 partial: 1,
                 not_supported: 1,
                 source_unavailable: 3,
@@ -767,6 +760,43 @@ mod helper_tests {
     fn utc_date_formats_from_epoch_ms() {
         assert_eq!(format_utc_date(1_783_886_599_386), "2026-07-12");
         assert_eq!(format_utc_date(0), "1970-01-01");
+    }
+
+    #[test]
+    fn truncate_claim_char_boundary_safe() {
+        use super::truncate_claim;
+
+        // Simple ASCII under limit
+        assert_eq!(truncate_claim("hello", 10), "hello");
+
+        // Simple ASCII over limit
+        assert_eq!(truncate_claim("hello world", 5), "hello…");
+
+        // Multibyte chars (accents) under limit — should not add ellipsis
+        assert_eq!(truncate_claim("café", 10), "café");
+
+        // Multibyte chars over limit
+        let result = truncate_claim("café café café", 5);
+        assert!(result.ends_with('…'));
+        assert_eq!(result.chars().count(), 6); // 5 chars + '…'
+    }
+
+    #[test]
+    fn sanitize_reason_char_boundary_safe() {
+        use super::sanitize_reason;
+
+        // Multibyte text with cite_ref should not panic
+        let reason = "cite_ref-64café and more text";
+        let result = sanitize_reason(reason);
+        assert!(result.contains("and more text"));
+
+        // Multiple cite_refs with multibyte
+        let reason = "cite_ref-1 and cite_ref-2café near cite_ref-3";
+        let result = sanitize_reason(reason);
+        assert!(result.contains("and"));
+        assert!(result.contains("near"));
+        // Each cite_ref should be rewritten
+        assert!(result.matches("ref").count() >= 3);
     }
 }
 
@@ -1061,5 +1091,78 @@ mod renderer_tests {
     fn bundled_ref_supported_lines_are_distinguishable() {
         let out = render_ga_appendix(&fixtures::bundled_ref_report(), 0, "0.1.0");
         assert!(out.contains("https://example.org/one") && out.contains("https://example.org/two"));
+    }
+
+    #[test]
+    fn truncate_claim_handles_multibyte_chars_correctly() {
+        // Multibyte claim under the cap should not get ellipsis
+        let claim_with_accents = "café résumé naïve"; // 17 chars
+        let truncated = truncate_claim(claim_with_accents, 20);
+        assert_eq!(truncated, claim_with_accents);
+        assert!(!truncated.ends_with('…'));
+
+        // Multibyte claim over the cap should truncate at char boundary + ellipsis
+        let long_claim = "café café café café café café café café café"; // 43 chars with spaces
+        let truncated = truncate_claim(long_claim, 20);
+        assert_eq!(truncated.chars().count(), 21); // 20 chars + '…'
+        assert!(truncated.ends_with('…'));
+        // Verify no panic and proper char boundary (not in middle of é)
+        assert!(truncated.chars().all(|c| !c.is_control()));
+    }
+
+    #[test]
+    fn sanitize_reason_handles_multibyte_cite_refs() {
+        // Regression: "cite_ref-64café" should not panic on byte slicing
+        let reason = "Error in cite_ref-64café during extraction";
+        let result = sanitize_reason(reason);
+        // Should rewrite cite_ref-64café part and not panic
+        assert!(result.contains("Error in"));
+        assert!(result.contains("during extraction"));
+        // The cite_ref should be rewritten to ref #0 format (since "64café" is not all digits)
+        assert!(result.contains("ref"));
+    }
+
+    #[test]
+    fn extraction_failure_reason_with_hostile_content_is_escaped() {
+        let mut report = fixtures::full_report();
+        // Replace the extraction failure with a hostile one
+        report.extraction_failures = vec![sp42_citation::BlockFailure {
+            block_ordinal: 1,
+            reason: "cite_ref-64 has {{Template}} and </nowiki> injected".to_string(),
+        }];
+
+        let out = render_ga_appendix(&report, 0, "0.1.0");
+
+        // The reason should be escaped and thus inert
+        // Templates should be preserved but wrapped in <nowiki>
+        assert!(out.contains("{{Template}}"));
+        // Angle brackets should be entity-encoded
+        assert!(out.contains("&lt;/nowiki&gt;"));
+        // The outer <nowiki> wrappers should balance
+        assert_eq!(
+            out.matches("<nowiki>").count(),
+            out.matches("</nowiki>").count()
+        );
+    }
+
+    #[test]
+    fn recovered_bucket_line_contains_archive_url() {
+        let report = fixtures::full_report();
+        let out = render_ga_appendix(&report, 0, "0.1.0");
+
+        // The Recovered finding (index 3) has archive_of: Some(url::Url::parse("https://web.archive.org/x").unwrap())
+        // Find the Recovered section and verify it contains the archive URL
+        if let Some(recovered_idx) = out.find(crate::copy::BUCKET_RECOVERED) {
+            let recovered_section = &out[recovered_idx..];
+            // Look for the archive URL in the Recovered section (up to next bucket)
+            let recovered_end = recovered_section
+                .find(crate::copy::BUCKET_DEAD_LINKS)
+                .unwrap_or(recovered_section.len());
+            let recovered_text = &recovered_section[..recovered_end];
+            assert!(
+                recovered_text.contains("https://web.archive.org/x"),
+                "Recovered bucket should contain the archive URL"
+            );
+        }
     }
 }

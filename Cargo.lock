@@ -3268,6 +3268,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "sp42-assessment"
+version = "0.1.0"
+dependencies = [
+ "serde_json",
+ "sp42-citation",
+ "url",
+]
+
+[[package]]
 name = "sp42-citation"
 version = "0.1.0"
 dependencies = [

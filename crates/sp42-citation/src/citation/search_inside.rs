@@ -191,7 +191,7 @@ pub fn parse_search_inside(body: &[u8]) -> Option<SearchInsideResult> {
 
 /// A conservative full-text query from a claim sentence: the distinct longer
 /// words (≥ 5 chars, falling back to ≥ 4, then the trimmed claim), in claim
-/// order, capped at [`MAX_QUERY_TERMS`]. Deliberately simple — term selection
+/// order, capped at `MAX_QUERY_TERMS`. Deliberately simple — term selection
 /// quality only affects recall, never grounding (the snippet bytes are what
 /// the gate locates quotes in); smarter selection can come later.
 #[must_use]

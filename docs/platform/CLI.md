@@ -67,9 +67,10 @@ maps to `preview parity-report`.
 | `-h`, `--help` | Print help (top-level or per-command) and exit. |
 | `-V`, `--version` | Print version and exit. |
 
-`--format` (default `text`) is available on every command that renders: `verify`,
-`batch`, `locate-probe`, `bare-url`, and `preview` support `text|json|markdown`;
-`verify-page` and `render-report` add `ga-appendix` (wikitext, PRD-0016).
+`--format` (default `text`) is available on the commands that render: `verify`,
+`bare-url`, and `preview` support `text|json|markdown`; `verify-page` and
+`render-report` add `ga-appendix` (wikitext, PRD-0016). (`batch` emits JSONL and
+`locate-probe` a fixed report; neither takes `--format`.)
 `--bridge-base-url <URL>` (default `http://127.0.0.1:8788`) is available on the
 server-backed commands (`verify-page`, `bare-url execute`, `preview`).
 

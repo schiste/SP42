@@ -46,6 +46,11 @@ pub enum SkippedReason {
     /// orchestrator after resolution (PRD-0009 Layer 1, ADR-0024). A resolved
     /// book ref becomes a finding instead (Layer 2).
     BookSource,
+    /// The ref is a shortened footnote whose bibliography target could not
+    /// be resolved to a book identifier (PRD-0009 Layer-1 amendment,
+    /// 2026-07-13): the anchor matched nothing, or the matched entry carried
+    /// no validated identifier. Never guessed — disclosed.
+    UnresolvedShortCite,
 }
 
 /// A ref that was intentionally not verified.
@@ -135,10 +140,16 @@ pub fn extract_use_sites(
         let sentences = segment_sentences(&block.text);
         for r in &block.refs {
             if r.sources.is_empty() && r.book_sources.is_empty() {
-                // Nothing fetchable and nothing to resolve.
+                // Nothing fetchable and nothing to resolve. Distinguish unresolved
+                // short-cite footnotes from other offline sources.
+                let reason = if r.short_cite_unresolved {
+                    SkippedReason::UnresolvedShortCite
+                } else {
+                    SkippedReason::NonUrlSource
+                };
                 skipped.push(SkippedRef {
                     ref_id: r.ref_id.clone(),
-                    reason: SkippedReason::NonUrlSource,
+                    reason,
                     block_ordinal: block.block_ordinal,
                     book_sources: Vec::new(),
                 });
@@ -495,5 +506,41 @@ mod tests {
         assert_eq!(us.archive_urls.len(), 2);
         assert_eq!(us.archive_urls[0], url(archive1));
         assert_eq!(us.archive_urls[1], url(archive2));
+    }
+
+    #[test]
+    fn unresolved_short_cite_ref_gets_the_refined_skip_reason() {
+        let mut r = bref(10, &[]);
+        r.short_cite_unresolved = true;
+        let b = block("Cats purr.", vec![r]);
+        let out = extract_use_sites(&[b], &page());
+        assert_eq!(out.skipped.len(), 1);
+        assert_eq!(out.skipped[0].reason, SkippedReason::UnresolvedShortCite);
+    }
+
+    #[test]
+    fn resolved_short_cite_ref_is_a_book_use_site_not_a_skip() {
+        // A short-cite that resolved carries book_sources (Phase 1 sets the flag
+        // false); belt-and-braces: with both set, book_sources win.
+        let mut r = bref(10, &[]);
+        r.short_cite_unresolved = true;
+        r.book_sources = vec![crate::wikitext_editor::BookSource {
+            identifiers: vec![BookIdentifier::Isbn("9780140328721".to_string())],
+            cited_page: None,
+        }];
+        let b = block("Cats purr.", vec![r]);
+        let out = extract_use_sites(&[b], &page());
+        assert_eq!(out.book_use_sites.len(), 1);
+        assert!(out.skipped.is_empty());
+    }
+
+    #[test]
+    fn skip_reason_round_trips_serde() {
+        let json = serde_json::to_string(&SkippedReason::UnresolvedShortCite).expect("serializes");
+        assert_eq!(json, "\"unresolved_short_cite\"");
+        assert_eq!(
+            serde_json::from_str::<SkippedReason>(&json).expect("parses"),
+            SkippedReason::UnresolvedShortCite
+        );
     }
 }

@@ -87,6 +87,109 @@ pub async fn fetch_page_blocks(
     blocks_from_revision(&revision)
 }
 
+/// Document-level index of bibliography-entry book sources, keyed by DOM id
+/// (the `#CITEREF…`-style anchor targets of shortened footnotes; frwiki ids
+/// carry no CITEREF prefix, so keys are stored verbatim).
+#[allow(dead_code)] // https://github.com/schiste/SP42/issues/TODO bibliography-indirection phase 1
+type BiblioIndex = std::collections::HashMap<String, BookSource>;
+
+/// Extract ISBN identifiers from descendant ISBN magiclink elements.
+/// For each `a.mw-magiclink-isbn` found, extract the last path segment of the href
+/// (which is the normalized ISBN digits), validate via `BookIdentifier::isbn`,
+/// and collect all valid ISBNs into a vec.
+#[allow(dead_code)] // https://github.com/schiste/SP42/issues/TODO bibliography-indirection phase 1
+pub(crate) fn magiclink_isbns(node: &impl WikinodeIterator) -> Vec<BookIdentifier> {
+    let mut isbns = Vec::new();
+    let selected = node.select("[class~=\"mw-magiclink-isbn\"]");
+    for link in selected {
+        if let Some(link_elem) = link.as_node().as_element()
+            && let Some(href) = link_elem.attributes.borrow().get("href")
+            && let Some(last_segment) = href.rsplit('/').next()
+            && let Some(isbn) = BookIdentifier::isbn(last_segment)
+        {
+            isbns.push(isbn);
+        }
+    }
+    isbns
+}
+
+/// Build a document-level bibliography index from transclusion elements.
+/// Maps DOM `id` attributes to their corresponding `BookSource`s from either:
+/// - Template params (data-mw `isbn`, `oclc`, `lccn`, `ol` params)
+/// - Descendant ISBN magiclinks
+#[allow(dead_code)] // https://github.com/schiste/SP42/issues/TODO bibliography-indirection phase 1
+pub(crate) fn biblio_index(code: &Wikicode) -> BiblioIndex {
+    let mut index = BiblioIndex::new();
+    let mut about_to_book: HashMap<String, BookSource> = HashMap::new();
+
+    // First pass: walk all transclusion elements to extract book sources
+    let selected = code.select("[typeof~=\"mw:Transclusion\"]");
+    for elem in selected {
+        // Try to extract book source from data-mw template params
+        let mut book_source = None;
+        if let Some(element) = elem.as_node().as_element()
+            && let Some(data_mw) = element.attributes.borrow().get("data-mw")
+            && let Ok(value) = serde_json::from_str::<serde_json::Value>(data_mw)
+            && let Some(parts) = value.get("parts").and_then(|p| p.as_array())
+        {
+            for part in parts {
+                if let Some(params) = part.pointer("/template/params")
+                    && let Some(book) = template_book_source(params)
+                {
+                    book_source = Some(book);
+                    break; // First matching template wins
+                }
+            }
+        }
+
+        // If no template book source, try magiclinks in this element
+        if book_source.is_none() {
+            let isbns = magiclink_isbns(&elem);
+            if !isbns.is_empty() {
+                book_source = Some(BookSource {
+                    identifiers: isbns,
+                    cited_page: None,
+                });
+            }
+        }
+
+        // Store the book source by its about attribute for later indexing
+        if let Some(book) = book_source
+            && let Some(element) = elem.as_node().as_element()
+        {
+            let attrs = element.attributes.borrow();
+            // Shape 1: id on this element itself (frwiki shape)
+            if let Some(id) = attrs.get("id")
+                && !index.contains_key(id)
+            {
+                index.insert(id.to_string(), book.clone());
+            }
+            // Shape 2: about-indirection (enwiki shape) — store by about for second pass
+            if let Some(about) = attrs.get("about") {
+                about_to_book.insert(about.to_string(), book);
+            }
+        }
+    }
+
+    // Second pass: walk ALL elements looking for ids with matching about values
+    // This handles enwiki's shape where id is on a different element than data-mw
+    let all_elems = code.descendants();
+    for node in all_elems {
+        if let Some(element) = node.as_element() {
+            let attrs = element.attributes.borrow();
+            if let Some(id) = attrs.get("id")
+                && let Some(about) = attrs.get("about")
+                && let Some(book) = about_to_book.get(about)
+                && !index.contains_key(id)
+            {
+                index.insert(id.to_string(), book.clone());
+            }
+        }
+    }
+
+    index
+}
+
 /// Extract prose-bearing blocks from a Parsoid revision, in document order.
 ///
 /// # Errors
@@ -913,5 +1016,34 @@ mod tests {
             vec![BookIdentifier::Isbn("9780140328721".to_string())]
         );
         assert_eq!(r.book_sources[0].cited_page.as_deref(), Some("42"));
+    }
+
+    #[test]
+    fn biblio_index_maps_citeref_ids_to_book_sources() {
+        let html = include_str!("../tests/fixtures/parsoid_sfn_enwiki.html");
+        let code = Wikicode::new(html);
+        let index = biblio_index(&code);
+        let source = index.get("CITEREFRoxburgh2014").expect("indexed");
+        assert_eq!(
+            source.identifiers,
+            vec![BookIdentifier::isbn("978-1-84583-093-9").expect("valid isbn")]
+        );
+    }
+
+    #[test]
+    fn biblio_index_reads_data_mw_on_the_id_element_itself() {
+        // frwiki: {{Ouvrage}} puts data-mw directly on the id-bearing span,
+        // and the id has no CITEREF prefix.
+        let html = include_str!("../tests/fixtures/parsoid_harvsp_frwiki.html");
+        let code = Wikicode::new(html);
+        let index = biblio_index(&code);
+        assert!(index.contains_key("CaillouHofbauer2007"));
+    }
+
+    #[test]
+    fn biblio_index_ignores_idless_and_bookless_elements() {
+        let html = include_str!("../tests/fixtures/parsoid_cats.html");
+        let code = Wikicode::new(html);
+        assert!(biblio_index(&code).is_empty());
     }
 }

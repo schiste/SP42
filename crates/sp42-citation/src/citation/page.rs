@@ -666,13 +666,29 @@ where
     M: ModelClient + ?Sized,
 {
     let outcome = resolve_book_source(fetch_client, &site.book).await;
-    let resolution = BookResolution {
+    let mut resolution = BookResolution {
         ref_id: site.ref_id.clone(),
         block_ordinal: site.block_ordinal,
         identifiers: site.book.identifiers.clone(),
         cited_page: site.book.cited_page.clone(),
         outcome,
+        enrichment_candidates: Vec::new(),
     };
+    if let BookResolutionOutcome::Resolved {
+        edition,
+        identifier,
+        ..
+    } = &resolution.outcome
+    {
+        // Read-only proposal listing (PRD-0009 Layer 3): what an operator
+        // could confirm once ADR-0025's write lane is enabled. PR 148 P2: use
+        // only the resolved ISBN for enrichment proposals, not all cited
+        // identifiers (which haven't been verified against the resolved record).
+        resolution.enrichment_candidates = crate::citation::enrich::enrichment_candidates(
+            edition,
+            std::slice::from_ref(identifier),
+        );
+    }
 
     let verdict = match &resolution.outcome {
         BookResolutionOutcome::Resolved {

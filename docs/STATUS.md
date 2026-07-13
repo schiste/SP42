@@ -86,8 +86,13 @@ PWA packaging and offline installability are now effectively complete for local 
   bypass), cited-page-first with whole-book fallback, page-anchored deep links,
   and the honest `not_supported` vs `SourceUnavailable` split; unresolved books
   stay skipped with a refined reason and a Books report section shows every
-  resolution; the enrichment lane (Layer 3) awaits the Open Library
-  apply-contract ADR
+  resolution; the enrichment lane (Layer 3) is
+  implemented as mechanism + fixture tests per ADR-0025 — deterministic
+  ISBN-completion candidates listed read-only in the Books section, and the
+  apply machinery (per-operator S3-key login, REST lane with 403 fallback to
+  a fail-closed edit-form adapter, per-session lane cache, client-side
+  refuse-on-drift, post-apply read-back) — with the write lane disabled and
+  unwired until the ADR-0025 enablement gate passes
 - the shared Wikidata entity read model (ADR-0016) is implemented as the
   platform `wikibase` module: endpoint-agnostic entity/statement parsing,
   label lookup and claim rendering (promoted from `sp42-mcp`'s

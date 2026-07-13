@@ -26,6 +26,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use url::Url;
 
+use crate::citation::enrich::EnrichmentCandidate;
 use crate::types::{HttpMethod, HttpRequest};
 use crate::wikitext_editor::{BookIdentifier, BookSource};
 use sp42_types::HttpClient;
@@ -393,6 +394,12 @@ pub struct BookResolution {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cited_page: Option<String>,
     pub outcome: BookResolutionOutcome,
+    /// Read-only enrichment candidates for a resolved record (PRD-0009
+    /// Layer 3's proposal listing): deterministic field-gap fills the
+    /// operator could confirm once the write lane is enabled (ADR-0025).
+    /// Always empty for unresolved outcomes.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub enrichment_candidates: Vec<EnrichmentCandidate>,
 }
 
 /// Resolve one book source: try its identifiers in template order against the

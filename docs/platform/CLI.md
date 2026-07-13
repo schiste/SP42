@@ -29,6 +29,7 @@ quick one.
 | --- | --- | --- |
 | `verify` | Verify one claim against one source URL (runs the model in-process). | no |
 | `verify-page` | Verify every citation on a revision via the bridge. | no |
+| `render-report` | Render a saved verify-page JSON report locally (no server). | no |
 | `batch` | Verify a JSONL batch (one case per line), one result line out. | JSONL cases (or `--file`) |
 | `locate-probe` | Offline check whether a quote locates in a source body. | source body |
 | `bare-url preview` / `bare-url execute` | Preview or apply bare-URL repairs. | no |
@@ -66,10 +67,11 @@ maps to `preview parity-report`.
 | `-h`, `--help` | Print help (top-level or per-command) and exit. |
 | `-V`, `--version` | Print version and exit. |
 
-`--format <text\|json\|markdown>` (default `text`) is available on every command
-that renders. `--bridge-base-url <URL>` (default `http://127.0.0.1:8788`) is
-available on the server-backed commands (`verify-page`, `bare-url execute`,
-`preview`).
+`--format` (default `text`) is available on every command that renders: `verify`,
+`batch`, `locate-probe`, `bare-url`, and `preview` support `text|json|markdown`;
+`verify-page` and `render-report` add `ga-appendix` (wikitext, PRD-0016).
+`--bridge-base-url <URL>` (default `http://127.0.0.1:8788`) is available on the
+server-backed commands (`verify-page`, `bare-url execute`, `preview`).
 
 ## `verify` — ad-hoc claim + source (PRD-0001)
 
@@ -124,6 +126,24 @@ The route is session + CSRF gated, so the CLI bootstraps a bridge session
 
 ```sh
 sp42-cli verify-page --wiki enwiki --title "Museum" --format markdown
+```
+
+## `render-report` — replay a saved report (PRD-0016)
+
+Transform a saved page-verification report JSON file (the exact output of
+`verify-page --format json`) without any bridge, session, or network — pure
+local computation for reproducible reruns and offline archival. The input is
+fully self-contained; it may be rendered with any `sp42-cli` version, producing
+deterministic output except for the footer timestamp.
+
+| Flag | Description |
+| --- | --- |
+| `file` | Path to a saved report JSON (required, positional). |
+| `--format <FORMAT>` | Output format; `ga-appendix` produces pasteable wikitext. |
+
+```sh
+sp42-cli verify-page --title "Example" --wiki enwiki --format json > report.json
+sp42-cli render-report report.json --format ga-appendix
 ```
 
 ## `batch` — JSONL batch verify

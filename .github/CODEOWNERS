@@ -24,6 +24,7 @@
 # Each domain folder is owned by that domain's maintainer. Until sp42-patrol /
 # sp42-citation are extracted (migration phases 3-4) the patrol and citation code
 # lives in sp42-core above. Add the owner here when the domain crate lands:
+/crates/sp42-assessment/            @schiste
 /crates/sp42-citation/             @schiste
 /crates/sp42-patrol/               @schiste
 # /crates/domains/patrolling/        @patrol-owner

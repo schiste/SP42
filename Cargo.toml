@@ -1,6 +1,7 @@
 [workspace]
 members = [
     "crates/sp42-app",
+    "crates/sp42-assessment",
     "crates/sp42-citation",
     "crates/sp42-cli",
     "crates/sp42-coordination",

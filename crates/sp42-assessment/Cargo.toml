@@ -1,0 +1,16 @@
+[package]
+name = "sp42-assessment"
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+version.workspace = true
+
+[dependencies]
+sp42-citation = { path = "../sp42-citation" }
+
+[dev-dependencies]
+serde_json.workspace = true
+url.workspace = true
+
+[lints]
+workspace = true

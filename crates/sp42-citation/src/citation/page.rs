@@ -674,11 +674,20 @@ where
         outcome,
         enrichment_candidates: Vec::new(),
     };
-    if let BookResolutionOutcome::Resolved { edition, .. } = &resolution.outcome {
+    if let BookResolutionOutcome::Resolved {
+        edition,
+        identifier,
+        ..
+    } = &resolution.outcome
+    {
         // Read-only proposal listing (PRD-0009 Layer 3): what an operator
-        // could confirm once ADR-0025's write lane is enabled.
-        resolution.enrichment_candidates =
-            crate::citation::enrich::enrichment_candidates(edition, &resolution.identifiers);
+        // could confirm once ADR-0025's write lane is enabled. PR 148 P2: use
+        // only the resolved ISBN for enrichment proposals, not all cited
+        // identifiers (which haven't been verified against the resolved record).
+        resolution.enrichment_candidates = crate::citation::enrich::enrichment_candidates(
+            edition,
+            std::slice::from_ref(identifier),
+        );
     }
 
     let verdict = match &resolution.outcome {

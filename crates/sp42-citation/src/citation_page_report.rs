@@ -188,7 +188,13 @@ fn book_line(resolution: &BookResolution) -> String {
                 let joined = resolution
                     .enrichment_candidates
                     .iter()
-                    .map(|candidate| format!("{}:{}", candidate.field, candidate.proposed))
+                    // PR 148 P2: show enrichment provenance in proposal text.
+                    .map(|candidate| {
+                        format!(
+                            "{}:{} ({})",
+                            candidate.field, candidate.proposed, candidate.source
+                        )
+                    })
                     .collect::<Vec<_>>()
                     .join(",");
                 format!(" propose={joined}")

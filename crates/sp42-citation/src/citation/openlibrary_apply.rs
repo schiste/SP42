@@ -35,6 +35,65 @@ use crate::citation::enrich::{EnrichmentProposal, OpenLibraryRecord, parse_recor
 use crate::types::{HttpMethod, HttpRequest, HttpResponse};
 use sp42_types::HttpClient;
 
+/// Decode common HTML entities in form field values. Handles `&amp;`, `&lt;`,
+/// `&gt;`, `&quot;`, `&#123;` (decimal), and `&#x1a;` (hex) forms.
+fn decode_html_entities(s: &str) -> String {
+    let mut result = String::with_capacity(s.len());
+    let mut chars = s.chars().peekable();
+    while let Some(ch) = chars.next() {
+        if ch == '&' {
+            let mut entity = String::new();
+            while let Some(&next) = chars.peek() {
+                if next == ';' {
+                    chars.next(); // consume the semicolon
+                    break;
+                }
+                entity.push(chars.next().expect("peek succeeded, next should not fail"));
+            }
+            match entity.as_str() {
+                "amp" => result.push('&'),
+                "lt" => result.push('<'),
+                "gt" => result.push('>'),
+                "quot" => result.push('"'),
+                "apos" => result.push('\''),
+                other if other.starts_with('#') => {
+                    // Decimal: &#123; or hex: &#x1a;
+                    let num_str = if other.starts_with("#x") || other.starts_with("#X") {
+                        &other[2..]
+                    } else {
+                        &other[1..]
+                    };
+                    if let Ok(code) = if other.starts_with("#x") || other.starts_with("#X") {
+                        u32::from_str_radix(num_str, 16)
+                    } else {
+                        num_str.parse::<u32>()
+                    } {
+                        if let Some(ch) = char::from_u32(code) {
+                            result.push(ch);
+                        } else {
+                            result.push('&');
+                            result.push_str(other);
+                            result.push(';');
+                        }
+                    } else {
+                        result.push('&');
+                        result.push_str(other);
+                        result.push(';');
+                    }
+                }
+                _ => {
+                    result.push('&');
+                    result.push_str(&entity);
+                    result.push(';');
+                }
+            }
+        } else {
+            result.push(ch);
+        }
+    }
+    result
+}
+
 /// ADR-0025 Decision 6: the write lane ships disabled. Any future surface
 /// that wires [`execute_enrichment_apply`] to an operator action must gate
 /// on this constant, which flips only in the PR that records the enablement
@@ -209,11 +268,15 @@ static SELECT_BLOCK: LazyLock<Regex> = LazyLock::new(|| {
 static SELECTED_OPTION: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r#"(?is)<option\b[^>]*\bselected\b[^>]*\bvalue="([^"]*)""#).expect("valid regex")
 });
+static OPTION_VALUE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r#"(?is)<option\b[^>]*\bvalue="([^"]*)""#).expect("valid regex"));
+static RADIO_TAG: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r#"(?is)<input\b[^>]*\btype="radio"[^>]*>"#).expect("valid regex"));
 
 /// Parse the edition/work edit form out of the page, fail-closed: `None`
 /// for anything that is not recognizably the edit form SP42 knows how to
 /// replay — a login redirect body, a redesigned page, an unparseable form,
-/// or a `<select>` whose selection cannot be read faithfully.
+/// or any widget whose state cannot be faithfully represented.
 #[must_use]
 pub fn parse_edit_form(html: &str, record_key: &str) -> Option<EditForm> {
     // The form must post back to the record's own /edit path.
@@ -229,21 +292,52 @@ pub fn parse_edit_form(html: &str, record_key: &str) -> Option<EditForm> {
 
     let mut fields: Vec<(String, String)> = Vec::new();
 
-    // Selects first: a select whose selection is ambiguous is contract
-    // drift (a blind replay could silently change it).
+    // Selects first: capture the selected option if one exists, else the
+    // first option (which the browser would submit). PR 148 P2: replay
+    // browser-default option instead of refusing.
     for caps in SELECT_BLOCK.captures_iter(form_html) {
         let name = caps[1].to_string();
         let options = &caps[2];
-        match SELECTED_OPTION.captures(options) {
-            Some(selected) => fields.push((name, selected[1].to_string())),
-            // No explicitly selected option: a browser would submit the
-            // first option, which this adapter cannot verify faithfully.
-            None => return None,
+        let value = if let Some(selected) = SELECTED_OPTION.captures(options) {
+            decode_html_entities(&selected[1])
+        } else if let Some(first_option) = OPTION_VALUE.captures(options) {
+            // No explicit selection: use the first option (browser default).
+            decode_html_entities(&first_option[1])
+        } else {
+            // No options in the select: contract drift.
+            return None;
+        };
+        fields.push((name, value));
+    }
+
+    // Textareas: preserve exact content including leading/trailing whitespace.
+    // PR 148 P2: preserve textarea contents when replaying.
+    for caps in TEXTAREA_BLOCK.captures_iter(form_html) {
+        let content = &caps[2];
+        fields.push((caps[1].to_string(), decode_html_entities(content)));
+    }
+
+    // Radio button groups: capture the checked radio's value if one is checked.
+    // PR 148 P2: handle radio controls before enabling form fallback.
+    // We track which radio groups we've seen to handle multiple radios.
+    let mut radio_groups_seen = std::collections::HashSet::new();
+    for caps in RADIO_TAG.captures_iter(form_html) {
+        let tag = caps.get(0).map(|m| m.as_str())?;
+        let Some(name) = ATTR_NAME.captures(tag).map(|c| c[1].to_string()) else {
+            continue;
+        };
+        // Only process if this radio is checked and we haven't seen this group yet.
+        if tag.to_lowercase().contains("checked") && !radio_groups_seen.contains(&name) {
+            radio_groups_seen.insert(name.clone());
+            let value = ATTR_VALUE
+                .captures(tag)
+                .map(|c| decode_html_entities(&c[1]))
+                .unwrap_or_default();
+            fields.push((name, value));
         }
     }
-    for caps in TEXTAREA_BLOCK.captures_iter(form_html) {
-        fields.push((caps[1].to_string(), caps[2].trim().to_string()));
-    }
+
+    // Regular inputs (text, hidden, etc.). Skip submit buttons and handled radios.
     for caps in INPUT_TAG.captures_iter(form_html) {
         if &caps[1].to_lowercase() != "input" {
             continue; // textarea/select handled above
@@ -256,17 +350,16 @@ pub fn parse_edit_form(html: &str, record_key: &str) -> Option<EditForm> {
             .captures(tag)
             .map_or_else(|| "text".to_string(), |c| c[1].to_lowercase());
         match input_type.as_str() {
-            // Buttons submit nothing unless clicked.
-            "submit" | "button" | "image" | "reset" => {}
-            // A checkbox/radio replay cannot be verified faithfully by this
-            // adapter version; their presence in the edit form is contract
-            // drift until the spike teaches us their semantics.
-            "checkbox" | "radio" | "file" => return None,
+            // Buttons and radios submit nothing unless clicked/selected (handled above).
+            "submit" | "button" | "image" | "reset" | "radio" => {}
+            // Checkboxes and file inputs are contract drift (fail-closed).
+            "checkbox" | "file" => return None,
             _ => {
                 let value = ATTR_VALUE
                     .captures(tag)
-                    .map(|c| c[1].to_string())
+                    .map(|c| decode_html_entities(&c[1]))
                     .unwrap_or_default();
+                // PR 148 P2: decode form values before replaying.
                 fields.push((name, value));
             }
         }
@@ -282,11 +375,18 @@ pub fn parse_edit_form(html: &str, record_key: &str) -> Option<EditForm> {
 }
 
 /// The form-lane input name for a proposal's field — adapter contract v0
-/// (infogami's `--` unflatten convention, first slot). Confirmed/adjusted by
-/// the ADR-0025 enablement spike before any live write.
+/// (infogami's `--` unflatten convention). Confirmed/adjusted by the ADR-0025
+/// enablement spike before any live write.
+///
+/// PR 148 P2: Open Library's current edition template renders ISBNs through
+/// the identifier editor (`edition--identifiers--...`), not the direct field.
 #[must_use]
 pub fn form_field_name(field: &str) -> String {
-    format!("edition--{field}--0")
+    // ISBN fields live in the identifier-list editor, not as direct fields.
+    match field {
+        "isbn_13" | "isbn_10" => format!("edition--identifiers--{field}"),
+        _ => format!("edition--{field}--0"),
+    }
 }
 
 /// Apply the proposal to a parsed form, fail-closed (ADR-0025 Decision 4):
@@ -406,7 +506,31 @@ where
 /// REST attempt with 403 fallback to the form lane, per-session lane cache,
 /// and post-apply read-back. **Not wired to any operator surface** — see
 /// [`ENRICHMENT_WRITE_LANE_ENABLED`].
+///
+/// PR 148 P2: enforce the disabled write gate at the apply entry point.
 pub async fn execute_enrichment_apply<C>(
+    client: &C,
+    session: &OpenLibrarySession,
+    proposal: &EnrichmentProposal,
+    lane_cache: &mut Option<ApplyLane>,
+) -> ApplyOutcome
+where
+    C: HttpClient + ?Sized,
+{
+    // Enforce the disabled-gate guarantee: if the constant is false, no Open
+    // Library write can be issued, not even advisory to future callers.
+    if !ENRICHMENT_WRITE_LANE_ENABLED {
+        return ApplyOutcome::Failed {
+            message: "enrichment write lane is disabled (ADR-0025 Decision 6)".to_string(),
+        };
+    }
+
+    execute_enrichment_apply_unchecked(client, session, proposal, lane_cache).await
+}
+
+/// Internal apply helper without the disabled-gate check. Used by the public
+/// function and fixture tests only (see ADR-0025 Decision 6).
+async fn execute_enrichment_apply_unchecked<C>(
     client: &C,
     session: &OpenLibrarySession,
     proposal: &EnrichmentProposal,
@@ -553,8 +677,9 @@ mod tests {
     use super::{
         ApplyLane, ApplyOutcome, ENRICHMENT_WRITE_LANE_ENABLED, EditForm, OpenLibrarySession,
         build_form_submit_request, build_login_request, build_record_request,
-        build_rest_apply_request, execute_enrichment_apply, fill_edit_form, form_field_name,
-        form_submit_succeeded, parse_edit_form, parse_login_response, verify_applied,
+        build_rest_apply_request, execute_enrichment_apply, execute_enrichment_apply_unchecked,
+        fill_edit_form, form_field_name, form_submit_succeeded, parse_edit_form,
+        parse_login_response, verify_applied,
     };
     use crate::citation::enrich::{EnrichmentProposal, parse_record};
     use crate::types::{HttpMethod, HttpResponse};
@@ -588,8 +713,8 @@ mod tests {
 <form method="post" action="/books/OL7826547M/edit" id="addbook">
 <input type="hidden" name="v" value="7"/>
 <input type="text" name="edition--title--0" value="Matilda"/>
-<input type="text" name="edition--isbn_10--0" value="0140328726"/>
-<input type="text" name="edition--isbn_13--0" value=""/>
+<input type="text" name="edition--identifiers--isbn_10" value="0140328726"/>
+<input type="text" name="edition--identifiers--isbn_13" value=""/>
 <textarea name="edition--notes--0"></textarea>
 <input type="text" name="_comment" value=""/>
 <input type="submit" value="Save"/>
@@ -706,13 +831,14 @@ mod tests {
 
         // Fail-closed: a form missing the target slot or the comment slot
         // refuses rather than inventing fields.
-        let missing_slot = EDIT_FORM_HTML.replace("edition--isbn_13--0", "edition--renamed--0");
+        let missing_slot =
+            EDIT_FORM_HTML.replace("edition--identifiers--isbn_13", "edition--renamed--isbn_13");
         let form = parse_edit_form(&missing_slot, "/books/OL7826547M").expect("parses");
         assert_eq!(fill_edit_form(&form, &proposal()), None);
         // Fail-closed: an occupied target slot is a closed gap.
         let occupied = EDIT_FORM_HTML.replace(
-            r#"name="edition--isbn_13--0" value="""#,
-            r#"name="edition--isbn_13--0" value="9789999999991""#,
+            r#"name="edition--identifiers--isbn_13" value="""#,
+            r#"name="edition--identifiers--isbn_13" value="9789999999991""#,
         );
         let form = parse_edit_form(&occupied, "/books/OL7826547M").expect("parses");
         assert_eq!(fill_edit_form(&form, &proposal()), None);
@@ -763,7 +889,7 @@ mod tests {
             Ok(response(200, RECORD_REV8_APPLIED)),
         ]);
         let mut lane_cache = None;
-        let outcome = block_on(execute_enrichment_apply(
+        let outcome = block_on(execute_enrichment_apply_unchecked(
             &client,
             &session(),
             &proposal(),
@@ -792,7 +918,7 @@ mod tests {
             Ok(response(200, RECORD_REV8_APPLIED)),
         ]);
         let mut lane_cache = None;
-        let outcome = block_on(execute_enrichment_apply(
+        let outcome = block_on(execute_enrichment_apply_unchecked(
             &client,
             &session(),
             &proposal(),
@@ -819,7 +945,7 @@ mod tests {
             Ok(response(200, RECORD_REV8_APPLIED)),
         ]);
         let mut lane_cache = Some(ApplyLane::Form);
-        let outcome = block_on(execute_enrichment_apply(
+        let outcome = block_on(execute_enrichment_apply_unchecked(
             &client,
             &session(),
             &proposal(),
@@ -843,7 +969,7 @@ mod tests {
             r#"{"key": "/books/OL7826547M", "revision": 9, "isbn_10": ["0140328726"]}"#,
         ))]);
         let mut lane_cache = None;
-        let outcome = block_on(execute_enrichment_apply(
+        let outcome = block_on(execute_enrichment_apply_unchecked(
             &client,
             &session(),
             &proposal(),
@@ -873,7 +999,7 @@ mod tests {
             )),
         ]);
         let mut lane_cache = None;
-        let outcome = block_on(execute_enrichment_apply(
+        let outcome = block_on(execute_enrichment_apply_unchecked(
             &client,
             &session(),
             &proposal(),
@@ -891,7 +1017,7 @@ mod tests {
             Ok(response(200, RECORD_REV7)), // unchanged!
         ]);
         let mut lane_cache = None;
-        let outcome = block_on(execute_enrichment_apply(
+        let outcome = block_on(execute_enrichment_apply_unchecked(
             &client,
             &session(),
             &proposal(),
@@ -916,6 +1042,129 @@ mod tests {
         assert_eq!(
             build_record_request("/books/OL7826547M").url.as_str(),
             "https://openlibrary.org/books/OL7826547M.json"
+        );
+    }
+
+    #[test]
+    fn decode_html_entities_in_form_values() {
+        // PR 148 P2: decode form values before replaying.
+        let form_with_entities = r#"<html><body>
+<form method="post" action="/books/OL7826547M/edit" id="addbook">
+<input type="hidden" name="v" value="7"/>
+<input type="text" name="edition--title--0" value="Tom &amp; Jerry"/>
+<input type="text" name="edition--isbn_10--0" value="0140328726"/>
+<input type="text" name="edition--isbn_13--0" value=""/>
+<textarea name="edition--notes--0"></textarea>
+<input type="text" name="_comment" value=""/>
+<input type="submit" value="Save"/>
+</form></body></html>"#;
+        let form = parse_edit_form(form_with_entities, "/books/OL7826547M")
+            .expect("parses form with entities");
+        assert!(
+            form.fields
+                .iter()
+                .any(|(n, v)| n == "edition--title--0" && v == "Tom & Jerry"),
+            "entity should be decoded to &"
+        );
+    }
+
+    #[test]
+    fn preserve_textarea_whitespace_in_form() {
+        // PR 148 P2: preserve textarea contents when replaying.
+        let form_with_textarea = r#"<html><body>
+<form method="post" action="/books/OL7826547M/edit">
+<textarea name="edition--notes--0">  leading and trailing spaces  </textarea>
+<input type="text" name="_comment" value=""/>
+<input type="submit" value="Save"/>
+</form></body></html>"#;
+        let form = parse_edit_form(form_with_textarea, "/books/OL7826547M")
+            .expect("parses form with textarea");
+        assert!(
+            form.fields
+                .iter()
+                .any(|(n, v)| n == "edition--notes--0" && v == "  leading and trailing spaces  "),
+            "textarea whitespace should be preserved"
+        );
+    }
+
+    #[test]
+    fn handle_radio_controls() {
+        // PR 148 P2: handle radio controls before enabling form fallback.
+        let form_with_radio = r#"<html><body>
+<form method="post" action="/books/OL7826547M/edit">
+<input type="radio" name="edition--weight_units--0" value="pounds"/>
+<input type="radio" name="edition--weight_units--0" value="kg" checked/>
+<input type="text" name="_comment" value=""/>
+<input type="submit" value="Save"/>
+</form></body></html>"#;
+        let form =
+            parse_edit_form(form_with_radio, "/books/OL7826547M").expect("parses form with radio");
+        assert!(
+            form.fields
+                .iter()
+                .any(|(n, v)| n == "edition--weight_units--0" && v == "kg"),
+            "checked radio value should be captured"
+        );
+    }
+
+    #[test]
+    fn handle_select_default_option() {
+        // PR 148 P2: replay default select values instead of refusing.
+        let form_with_select = r#"<html><body>
+<form method="post" action="/books/OL7826547M/edit">
+<select name="edition--language--0">
+<option value="eng">English</option>
+<option value="fra">French</option>
+</select>
+<input type="text" name="_comment" value=""/>
+<input type="submit" value="Save"/>
+</form></body></html>"#;
+        let form = parse_edit_form(form_with_select, "/books/OL7826547M")
+            .expect("parses form with select default");
+        assert!(
+            form.fields
+                .iter()
+                .any(|(n, v)| n == "edition--language--0" && v == "eng"),
+            "first option should be used as browser default"
+        );
+    }
+
+    #[test]
+    fn isbn_form_field_name_targets_identifiers_list() {
+        // PR 148 P2: target the form's identifier-list fields.
+        assert_eq!(
+            form_field_name("isbn_13"),
+            "edition--identifiers--isbn_13",
+            "isbn_13 should map to identifiers list"
+        );
+        assert_eq!(
+            form_field_name("isbn_10"),
+            "edition--identifiers--isbn_10",
+            "isbn_10 should map to identifiers list"
+        );
+        assert_eq!(
+            form_field_name("title"),
+            "edition--title--0",
+            "other fields use direct slot"
+        );
+    }
+
+    #[test]
+    fn gate_disabled_when_write_lane_disabled() {
+        // PR 148 P2: enforce the disabled write gate at the apply entry point.
+        // With the gate disabled, execute_enrichment_apply returns Failed
+        // immediately without issuing any client requests.
+        let client = StubHttpClient::new([]);
+        let mut lane_cache = None;
+        let outcome = block_on(execute_enrichment_apply(
+            &client,
+            &session(),
+            &proposal(),
+            &mut lane_cache,
+        ));
+        assert!(
+            matches!(outcome, ApplyOutcome::Failed { message } if message.contains("disabled")),
+            "apply should refuse immediately when gate is disabled"
         );
     }
 }

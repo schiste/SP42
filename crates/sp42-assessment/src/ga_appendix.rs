@@ -327,12 +327,15 @@ fn render_disagreement_line(output: &mut String, finding: &sp42_citation::Citati
 fn render_recovered_line(output: &mut String, finding: &sp42_citation::CitationFinding) {
     output.push_str("* ");
     output.push_str(&ref_label(&finding.ref_id, finding.use_site_ordinal));
+    // Contract semantics: `provenance.url` is the archive copy that was
+    // actually read; `archive_of` is the dead live URL it stands in for
+    // (Codex P1, PR 154 — the fields were previously swapped here).
     output.push_str(": supported via an archive copy — update the citation to [");
-    if let Some(archive) = &finding.archive_of {
-        output.push_str(archive.as_str());
-    }
-    output.push_str("] (live link: [");
     output.push_str(finding.provenance.url.as_str());
+    output.push_str("] (replacing the dead link: [");
+    if let Some(dead_live) = &finding.archive_of {
+        output.push_str(dead_live.as_str());
+    }
     output.push_str("]). Claim: ");
     output.push_str(&escape_verbatim(&truncate_claim(&finding.claim, 120)));
     output.push('.');
@@ -465,7 +468,11 @@ mod fixtures {
                 None
             },
             provenance: SourceProvenance {
-                url: url::Url::parse("https://example.org/source").unwrap(),
+                url: if archived {
+                    url::Url::parse("https://web.archive.org/x").unwrap()
+                } else {
+                    url::Url::parse("https://example.org/source").unwrap()
+                },
                 content_hash: String::new(),
                 fetched_at: 0,
                 http_status: Some(200),
@@ -480,7 +487,7 @@ mod fixtures {
             claim: claim.to_string(),
             preceding_context: Vec::new(),
             archive_of: if archived {
-                Some(url::Url::parse("https://web.archive.org/x").unwrap())
+                Some(url::Url::parse("https://example.org/dead-live").unwrap())
             } else {
                 None
             },
@@ -856,7 +863,11 @@ mod bucket_tests {
             agreement: PanelAgreement::new(3, 3),
             passage: None,
             provenance: SourceProvenance {
-                url: url::Url::parse("https://example.org/a").unwrap(),
+                url: if archived {
+                    url::Url::parse("https://web.archive.org/x").unwrap()
+                } else {
+                    url::Url::parse("https://example.org/a").unwrap()
+                },
                 content_hash: String::new(),
                 fetched_at: 0,
                 http_status: Some(200),
@@ -871,7 +882,7 @@ mod bucket_tests {
             claim: String::new(),
             preceding_context: Vec::new(),
             archive_of: if archived {
-                Some(url::Url::parse("https://web.archive.org/x").unwrap())
+                Some(url::Url::parse("https://example.org/dead-live").unwrap())
             } else {
                 None
             },
@@ -1195,6 +1206,26 @@ mod renderer_tests {
         assert!(
             recovered_text.contains("https://web.archive.org/x"),
             "Recovered bucket should contain the archive URL"
+        );
+    }
+
+    #[test]
+    fn recovered_line_updates_to_the_archive_and_names_the_dead_link() {
+        // Codex P1 (PR 154): provenance.url is the archive actually read;
+        // archive_of is the dead live URL. The repair instruction must point
+        // at the archive, never the dead link.
+        let out = render_ga_appendix(&fixtures::full_report(), 0, "0.1.0");
+        assert!(
+            out.contains("update the citation to [https://web.archive.org/x]"),
+            "repair handle must target the archive"
+        );
+        assert!(
+            out.contains("replacing the dead link: [https://example.org/dead-live]"),
+            "the dead live URL is named as dead"
+        );
+        assert!(
+            !out.contains("update the citation to [https://example.org/dead-live]"),
+            "never instruct citing the dead URL"
         );
     }
 

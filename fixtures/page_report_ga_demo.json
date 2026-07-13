@@ -14,7 +14,7 @@
       },
       "passage": null,
       "provenance": {
-        "url": "https://example.org/source",
+        "url": "https://web.archive.org/web/2020/https://example.org/source",
         "content_hash": "",
         "fetched_at": 0,
         "http_status": 200
@@ -26,7 +26,7 @@
       "use_site_ordinal": 0,
       "ref_id": "cite_ref-source1_0-0",
       "claim": "The wiki bridge was completed in {{Infobox}} during the 1920s",
-      "archive_of": "https://web.archive.org/x",
+      "archive_of": "https://example.org/source",
       "is_bare_url_ref": false,
       "schema_version": 1
     },
@@ -71,7 +71,7 @@
         "offset": 100
       },
       "provenance": {
-        "url": "https://example.org/source",
+        "url": "https://web.archive.org/web/2020/https://example.org/source",
         "content_hash": "",
         "fetched_at": 0,
         "http_status": 200
@@ -83,7 +83,7 @@
       "use_site_ordinal": 2,
       "ref_id": "cite_ref-partial_2-0",
       "claim": "The bridge was declared historic in 1985",
-      "archive_of": "https://web.archive.org/x",
+      "archive_of": "https://example.org/source",
       "is_bare_url_ref": false,
       "schema_version": 1
     },
@@ -101,7 +101,7 @@
         "offset": 0
       },
       "provenance": {
-        "url": "https://example.org/source",
+        "url": "https://web.archive.org/web/2020/https://example.org/source",
         "content_hash": "",
         "fetched_at": 0,
         "http_status": 200
@@ -113,7 +113,7 @@
       "use_site_ordinal": 3,
       "ref_id": "cite_ref-archived_3-0",
       "claim": "The original design documentation was archived in 2010",
-      "archive_of": "https://web.archive.org/x",
+      "archive_of": "https://example.org/source",
       "is_bare_url_ref": false,
       "schema_version": 1
     },

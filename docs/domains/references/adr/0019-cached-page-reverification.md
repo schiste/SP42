@@ -26,12 +26,19 @@ a full rescan.
 
 Two facts make a cheap refresh possible:
 
-- **A verdict is content-addressable.** It is a function of the **source content**
-  and the **claim sentence** (and the model panel). **ADR-0009** already defines a
-  content-addressed verdict record keyed by `(snapshot_hash, claim)`
+- **A verdict is content-addressable.** It is a function of the **source content**,
+  the **claim sentence**, and the **surrounding article context** the page verifier
+  renders into the prompt — ADR-0011's `verify_citation_use_site` passes the
+  use-site's context and metadata into the prompt builder, so the verdict is not
+  solely a function of source bytes and the claim sentence — plus the model panel.
+  **ADR-0009** already defines a content-addressed verdict record
   (`verdict_storage_key`, `store_verdict`, `load_verdict` over the `Storage`
-  trait) — but built it for *reproducibility* and left it **dormant**: nothing in
-  the verify pipeline (**ADR-0011**) reads or writes it.
+  trait), keyed by `(snapshot_hash, claim)` — sufficient for the *reproducibility*
+  path it was built for, which does not render surrounding context — but left it
+  **dormant**: nothing in the verify pipeline (**ADR-0011**) reads or writes it.
+  Activating it on the page path (below) must **extend that identity to bind the
+  rendered context too**, or a context-only article edit would reuse a stale
+  verdict.
 - **Within one session almost nothing an external source says changes.** The
   thing the operator changes is the **article** (their own edit); the external
   sources are stable across a few-minute session.
@@ -47,28 +54,37 @@ The verify pipeline consults the cache before spending inference. Per use-site,
 after the source body is in hand:
 
 1. Compute `snapshot_hash` from the fetched source content (ADR-0009's snapshot).
-2. `load_verdict(snapshot_hash, claim)` — on a hit, reuse the stored verdict; no
-   panel is called.
-3. On a miss, run the model panel as today, then `store_verdict`.
+2. Compute `context_hash` over the rendered use-site context and metadata the
+   prompt builder consumes (ADR-0011) — the inputs beyond source and claim that
+   still move the verdict.
+3. `load_verdict(snapshot_hash, claim, context_hash)` — on a hit, reuse the stored
+   verdict; no panel is called.
+4. On a miss, run the model panel as today, then `store_verdict`.
 
 Invalidation is **automatic and correct by construction**: a changed source
-hashes differently and a reworded claim keys differently, so either naturally
-misses. There is no separate invalidation path to get wrong.
+hashes differently, a reworded claim keys differently, and an edit to the
+surrounding context (the operator's article edit near a citation) changes
+`context_hash` — so any input that can move the verdict naturally misses. There is
+no separate invalidation path to get wrong. The cost consequence is honest and
+small: editing context adjacent to a citation re-runs that citation too, not only
+the one whose claim changed — still far cheaper than a full-page rescan, and
+correct.
 
 ### 2. The cache is in-memory, process-scoped, for now
 
 The `Storage` backend behind the cache is an **in-memory** map for this pass — no
 persistence, no external store. It is content-addressed, so sharing it across
-sessions in one process is safe (a `(snapshot_hash, claim)` entry means the same
-thing to everyone), but this ADR promises only *within-session* reuse. A
+sessions in one process is safe (a `(snapshot_hash, claim, context_hash)` entry
+means the same thing to everyone), but this ADR promises only *within-session*
+reuse. A
 persistent or shared backend is a later decision (Non-Goals).
 
 ### 3. The cache key does **not** include a panel fingerprint
 
 A verdict also depends on which models formed the panel. Because the panel is
 **fixed for the life of a session** (it is read once from the `SP42_INFERENCE_*`
-seam and does not change under the operator), `(snapshot_hash, claim)` is a
-sufficient key within the in-memory scope this ADR covers. If a persistent or
+seam and does not change under the operator), `(snapshot_hash, claim, context_hash)`
+is a sufficient key within the in-memory scope this ADR covers. If a persistent or
 cross-panel cache is introduced later, it MUST fold the panel fingerprint (e.g.
 ADR-0006's `prompt_hash` / `ModelRef` set) into the key; that obligation is
 recorded here so the in-memory shortcut is not silently promoted.
@@ -100,7 +116,15 @@ Re-verify does **not** offer a "re-run this one regardless" bypass. Every case
 that warrants fresh inference busts the content-addressed cache on its own:
 
 - operator edited the claim → new `claim` → miss → fresh;
-- source content changed → new `snapshot_hash` → miss → fresh;
+- operator edited the surrounding context near a citation → new `context_hash` →
+  miss → fresh;
+- source content changed **and the source is (re)fetched** — a newly-cited source,
+  or any source after the session caches drop → new `snapshot_hash` → miss → fresh.
+  A source served from the promoted session body cache is **not** refetched
+  (Decision 4), so a purely external mid-session change is **not** observed until a
+  fresh page load or new session — the deliberate session-staleness trade recorded
+  in Consequences. This bullet is about a fetch producing a new hash, not about
+  detecting drift on an already-cached body;
 - operator repaired a bare URL into a cite template → the **source** is unchanged
   (same URL, same content), only the citation wikitext changed → **hit**, and
   reusing the verdict is *correct* (formatting does not change whether the source

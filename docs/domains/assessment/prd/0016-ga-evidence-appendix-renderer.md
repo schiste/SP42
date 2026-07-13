@@ -121,6 +121,18 @@ the design sketch, and a machine-readable task-graph arm is roadmap there too.
   `Recovered` lines carry one archive URL; disagreement and unconfirmed lines
   annotate via `ARCHIVE_HANDLE_PREFIX`, yielding two handles in the demo
   fixture (not the plan's 3, because recovery semantics unify the URL surface).
+  **DoD #15/#16 hold by construction, not by a named test:** the saved-report
+  and verify-page surfaces are byte-identical because both call the same pure
+  `render_ga_appendix` (differing only in the shell-injected clock, so
+  wall-clock runs differ by the footer date alone, by design; byte-level
+  determinism is pinned by `rendering_is_deterministic`), and `render-report`
+  takes no client parameters — there is no network or inference path to mock
+  (exercised end-to-end by
+  `render_report_renders_a_saved_report_without_any_server`). **For the alpha
+  copy review:** the stats line's two denominators (references seen vs.
+  citation use-sites checked) are both stated but not reconciled for the cold
+  reader; revisit the phrasing with real GA reviewers alongside the
+  `{{GAList}}` idiom question.
 
 ## Scope boundary
 

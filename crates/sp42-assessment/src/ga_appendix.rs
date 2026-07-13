@@ -61,6 +61,11 @@ fn format_utc_date(epoch_ms: i64) -> String {
     format!("{year:04}-{month:02}-{day:02}")
 }
 
+/// Count-matched noun for the stats line ("1 dead link" / "2 dead links").
+const fn plural<'a>(count: usize, singular: &'a str, plural: &'a str) -> &'a str {
+    if count == 1 { singular } else { plural }
+}
+
 /// The consequence-ordered criterion-2 sublists (PRD-0016). Verdict
 /// partitions; grounding and `archive_of` annotate. Every finding lands in
 /// exactly one bucket.
@@ -136,7 +141,7 @@ pub fn render_ga_appendix(
         .count();
 
     let stats_line = format!(
-        "Of {} references, {} citation use-sites were machine-checked: {} supported ({} of them unconfirmed), {} partially supported, {} where claim and source disagree, {} dead links, {} sources the tool could not read; {} book/offline refs and {} unprocessable refs were not checked.",
+        "Of {} references, {} citation use-sites were machine-checked: {} supported ({} of them unconfirmed), {} partially supported, {} where claim and source disagree, {} dead {}, {} {} the tool could not read; {} book/offline {} and {} unprocessable {} were not checked.",
         report.stats.refs_seen,
         report.stats.use_sites_verified,
         report.stats.supported,
@@ -144,9 +149,17 @@ pub fn render_ga_appendix(
         report.stats.partial,
         report.stats.not_supported,
         report.stats.source_unavailable_unreachable,
+        plural(report.stats.source_unavailable_unreachable, "link", "links"),
         report.stats.source_unavailable_unusable,
+        plural(
+            report.stats.source_unavailable_unusable,
+            "source",
+            "sources"
+        ),
         report.stats.skipped,
-        report.stats.extraction_failures
+        plural(report.stats.skipped, "ref", "refs"),
+        report.stats.extraction_failures,
+        plural(report.stats.extraction_failures, "ref", "refs")
     );
     output.push('\'');
     output.push_str(&stats_line);
@@ -1152,18 +1165,19 @@ mod renderer_tests {
 
         // The Recovered finding (index 3) has archive_of: Some(url::Url::parse("https://web.archive.org/x").unwrap())
         // Find the Recovered section and verify it contains the archive URL
-        if let Some(recovered_idx) = out.find(crate::copy::BUCKET_RECOVERED) {
-            let recovered_section = &out[recovered_idx..];
-            // Look for the archive URL in the Recovered section (up to next bucket)
-            let recovered_end = recovered_section
-                .find(crate::copy::BUCKET_DEAD_LINKS)
-                .unwrap_or(recovered_section.len());
-            let recovered_text = &recovered_section[..recovered_end];
-            assert!(
-                recovered_text.contains("https://web.archive.org/x"),
-                "Recovered bucket should contain the archive URL"
-            );
-        }
+        let recovered_idx = out
+            .find(crate::copy::BUCKET_RECOVERED)
+            .expect("recovered bucket present");
+        let recovered_section = &out[recovered_idx..];
+        // Look for the archive URL in the Recovered section (up to next bucket)
+        let recovered_end = recovered_section
+            .find(crate::copy::BUCKET_DEAD_LINKS)
+            .unwrap_or(recovered_section.len());
+        let recovered_text = &recovered_section[..recovered_end];
+        assert!(
+            recovered_text.contains("https://web.archive.org/x"),
+            "Recovered bucket should contain the archive URL"
+        );
     }
 
     #[test]

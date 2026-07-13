@@ -3305,6 +3305,7 @@ dependencies = [
  "reqwest 0.12.28",
  "serde",
  "serde_json",
+ "sp42-assessment",
  "sp42-citation",
  "sp42-core",
  "sp42-devtools",

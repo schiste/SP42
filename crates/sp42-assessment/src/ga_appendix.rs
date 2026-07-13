@@ -104,6 +104,625 @@ fn bucket_for(finding: &sp42_citation::CitationFinding) -> Bucket {
     }
 }
 
+/// Render the GA evidence appendix (PRD-0016) — pure and deterministic.
+///
+/// `rendered_at_ms` is the shell-injected render time (the report contract
+/// carries no verification timestamp today; the footer labels the date as the
+/// render date). `sp42_version` is the shell's crate version.
+#[must_use]
+pub fn render_ga_appendix(
+    report: &sp42_citation::PageVerificationReport,
+    rendered_at_ms: i64,
+    sp42_version: &str,
+) -> String {
+    use sp42_citation::{CitationVerdict, GroundingStatus, SupportLevel};
+
+    let mut output = String::new();
+
+    // Header
+    output.push_str(crate::copy::APPENDIX_HEADING);
+    output.push_str("\n\n");
+    output.push_str(crate::copy::ASSESSED_LINE);
+    output.push('\n');
+
+    // Criterion-2 heading and stats line
+    output.push('\n');
+    output.push_str(crate::copy::CRITERION_2_HEADING);
+    output.push('\n');
+
+    // Calculate supported split
+    let unconfirmed_supported = report
+        .findings
+        .iter()
+        .filter(|f| {
+            matches!(f.verdict, CitationVerdict::Judged(SupportLevel::Supported))
+                && f.grounding_status != GroundingStatus::Located
+        })
+        .count();
+
+    let stats_line = format!(
+        "Of {} references, {} citation use-sites were machine-checked: {} supported ({} of them unconfirmed), {} partially supported, {} where claim and source disagree, {} dead links, {} sources the tool could not read; {} book/offline refs and {} unprocessable refs were not checked.",
+        report.stats.refs_seen,
+        report.stats.use_sites_verified,
+        report.stats.supported,
+        unconfirmed_supported,
+        report.stats.partial,
+        report.stats.not_supported,
+        report.stats.source_unavailable_unreachable,
+        report.stats.source_unavailable_unusable,
+        report.stats.skipped,
+        report.stats.extraction_failures
+    );
+    output.push('\'');
+    output.push_str(&stats_line);
+    output.push_str("'\n");
+
+    // Render buckets
+    render_bucket(&mut output, report, Bucket::Disagreement);
+    render_bucket(&mut output, report, Bucket::Recovered);
+    render_bucket(&mut output, report, Bucket::DeadLink);
+    render_bucket(&mut output, report, Bucket::Unreadable);
+    render_bucket(&mut output, report, Bucket::Unconfirmed);
+    render_bucket(&mut output, report, Bucket::Supported);
+
+    // Skipped section
+    if !report.skipped.is_empty() {
+        output.push('\n');
+        output.push_str(crate::copy::BUCKET_SKIPPED);
+        output.push('\n');
+        for skip in &report.skipped {
+            output.push_str("* ");
+            #[allow(clippy::cast_possible_truncation)]
+            let ordinal = skip.block_ordinal as u32;
+            output.push_str(&ref_label(&skip.ref_id, ordinal));
+            output.push_str(": ");
+            output.push_str(crate::copy::SKIPPED_NON_URL);
+            output.push('\n');
+        }
+    }
+
+    // Extraction failures
+    if !report.extraction_failures.is_empty() {
+        output.push('\n');
+        output.push_str(crate::copy::BUCKET_EXTRACTION_FAILURES);
+        output.push('\n');
+        for failure in &report.extraction_failures {
+            output.push_str("* ");
+            let rewritten = sanitize_reason(&failure.reason);
+            output.push_str(&rewritten);
+            output.push('\n');
+        }
+    }
+
+    // Footer
+    output.push_str("\n----\n");
+    output.push_str("''");
+    output.push_str(&report.title);
+    output.push_str(" at rev ");
+    output.push_str(&report.rev_id.to_string());
+    output.push_str(" · rendered ");
+    output.push_str(&format_utc_date(rendered_at_ms));
+    output.push_str(" (render date, not verification date) · SP42 ");
+    output.push_str(sp42_version);
+    output.push_str(" · ");
+    output.push_str(crate::copy::FRAMING_LINE);
+    output.push_str(" [");
+    output.push_str(crate::copy::EXPLAINER_URL);
+    output.push_str(" What is this?]''");
+
+    output
+}
+
+fn render_bucket(
+    output: &mut String,
+    report: &sp42_citation::PageVerificationReport,
+    bucket: Bucket,
+) {
+    let findings: Vec<_> = report
+        .findings
+        .iter()
+        .filter(|f| bucket_for(f) == bucket)
+        .collect();
+
+    if findings.is_empty() {
+        return;
+    }
+
+    output.push('\n');
+    match bucket {
+        Bucket::Disagreement => output.push_str(crate::copy::BUCKET_DISAGREEMENTS),
+        Bucket::Recovered => output.push_str(crate::copy::BUCKET_RECOVERED),
+        Bucket::DeadLink => output.push_str(crate::copy::BUCKET_DEAD_LINKS),
+        Bucket::Unreadable => output.push_str(crate::copy::BUCKET_UNREADABLE),
+        Bucket::Unconfirmed => output.push_str(crate::copy::BUCKET_UNCONFIRMED),
+        Bucket::Supported => output.push_str(crate::copy::BUCKET_SUPPORTED),
+    }
+    output.push('\n');
+
+    for finding in findings {
+        match bucket {
+            Bucket::Disagreement => render_disagreement_line(output, finding),
+            Bucket::Recovered => render_recovered_line(output, finding),
+            Bucket::DeadLink => render_dead_link_line(output, finding),
+            Bucket::Unreadable => render_unreadable_line(output, finding),
+            Bucket::Unconfirmed => render_unconfirmed_line(output, finding),
+            Bucket::Supported => render_supported_line(output, finding),
+        }
+    }
+}
+
+fn render_disagreement_line(output: &mut String, finding: &sp42_citation::CitationFinding) {
+    use sp42_citation::{CitationVerdict, SupportLevel};
+
+    output.push_str("* ");
+    output.push_str(&ref_label(&finding.ref_id, finding.use_site_ordinal));
+    output.push_str(": ");
+
+    if let CitationVerdict::Judged(level) = finding.verdict {
+        output.push_str(crate::copy::disagreement_verdict(level));
+    }
+
+    output.push_str(". Claim: ");
+    output.push_str(&escape_verbatim(&truncate_claim(&finding.claim, 200)));
+    output.push('.');
+
+    if let Some(passage) = &finding.passage {
+        output.push_str(" The panel located: ");
+        output.push_str(&escape_verbatim(&passage.quote));
+        output.push('.');
+    } else if let Some(excerpt) = &finding.source_excerpt {
+        output.push(' ');
+        output.push_str(crate::copy::EXCERPT_CONTEXT_LABEL);
+        output.push_str(": ");
+        output.push_str(&escape_verbatim(&truncate_claim(excerpt, 200)));
+        output.push('.');
+    } else {
+        output.push(' ');
+        output.push_str(crate::copy::NO_PASSAGE_LINE);
+        output.push('.');
+    }
+
+    #[allow(clippy::collapsible_if)]
+    if let Some(annotation) = crate::copy::grounding_annotation(finding.grounding_status) {
+        if matches!(finding.verdict, CitationVerdict::Judged(SupportLevel::Partial)) {
+            output.push(' ');
+            output.push_str(annotation);
+            output.push('.');
+        }
+    }
+
+    if finding.agreement.winner_votes * 2 <= finding.agreement.panel_size {
+        output.push_str(" (");
+        output.push_str(crate::copy::PANEL_SPLIT_LINE);
+        output.push(')');
+    }
+
+    output.push_str(" — [");
+    output.push_str(finding.provenance.url.as_str());
+    output.push(']');
+
+    if let Some(archive) = &finding.archive_of {
+        output.push_str(" (");
+        output.push_str(crate::copy::ARCHIVE_HANDLE_PREFIX);
+        output.push_str(" [");
+        output.push_str(archive.as_str());
+        output.push_str("])");
+    }
+
+    output.push('\n');
+}
+
+fn render_recovered_line(output: &mut String, finding: &sp42_citation::CitationFinding) {
+    output.push_str("* ");
+    output.push_str(&ref_label(&finding.ref_id, finding.use_site_ordinal));
+    output.push_str(": supported via an archive copy — update the citation to [");
+    if let Some(archive) = &finding.archive_of {
+        output.push_str(archive.as_str());
+    }
+    output.push_str("] (live link: [");
+    output.push_str(finding.provenance.url.as_str());
+    output.push_str("]). Claim: ");
+    output.push_str(&escape_verbatim(&truncate_claim(&finding.claim, 120)));
+    output.push('.');
+    output.push('\n');
+}
+
+fn render_dead_link_line(output: &mut String, finding: &sp42_citation::CitationFinding) {
+    output.push_str("* ");
+    output.push_str(&ref_label(&finding.ref_id, finding.use_site_ordinal));
+    output.push_str(": the source could not be fetched (link may be dead): [");
+    output.push_str(finding.provenance.url.as_str());
+    output.push_str("]\n");
+}
+
+fn render_unreadable_line(output: &mut String, finding: &sp42_citation::CitationFinding) {
+    output.push_str("* ");
+    output.push_str(&ref_label(&finding.ref_id, finding.use_site_ordinal));
+    output.push_str(": the tool fetched [");
+    output.push_str(finding.provenance.url.as_str());
+    output.push_str("] but read ");
+
+    let reason_text = if let Some(reason) = finding.unusable_reason {
+        crate::copy::unusable_reason(reason)
+    } else {
+        crate::copy::UNUSABLE_GENERIC
+    };
+    output.push_str(reason_text);
+    output.push_str(" — the citation may be fine.\n");
+}
+
+fn render_unconfirmed_line(output: &mut String, finding: &sp42_citation::CitationFinding) {
+    output.push_str("* ");
+    output.push_str(&ref_label(&finding.ref_id, finding.use_site_ordinal));
+    output.push_str(": judged supported, but ");
+
+    if let Some(annotation) = crate::copy::grounding_annotation(finding.grounding_status) {
+        output.push_str(annotation);
+    }
+
+    output.push_str(". Claim: ");
+    output.push_str(&escape_verbatim(&truncate_claim(&finding.claim, 80)));
+    output.push_str(". — [");
+    output.push_str(finding.provenance.url.as_str());
+    output.push(']');
+
+    if let Some(archive) = &finding.archive_of {
+        output.push_str(" (");
+        output.push_str(crate::copy::ARCHIVE_HANDLE_PREFIX);
+        output.push_str(" [");
+        output.push_str(archive.as_str());
+        output.push_str("])");
+    }
+
+    output.push('\n');
+}
+
+fn render_supported_line(output: &mut String, finding: &sp42_citation::CitationFinding) {
+    output.push_str("* ");
+    output.push_str(&ref_label(&finding.ref_id, finding.use_site_ordinal));
+    output.push_str(": supported — ");
+    output.push_str(&escape_verbatim(&truncate_claim(&finding.claim, 80)));
+    output.push_str(" — [");
+    output.push_str(finding.provenance.url.as_str());
+    output.push_str("] (quote located)\n");
+}
+
+fn truncate_claim(text: &str, max_len: usize) -> String {
+    let truncated: String = text.chars().take(max_len).collect();
+    if text.len() > max_len {
+        truncated + "…"
+    } else {
+        truncated
+    }
+}
+
+fn sanitize_reason(reason: &str) -> String {
+    let mut result = String::new();
+    let mut i = 0;
+    let bytes = reason.as_bytes();
+
+    while i < bytes.len() {
+        if i + 9 <= bytes.len() && &reason[i..i + 9] == "cite_ref-" {
+            let start = i;
+            let mut end = i + 9;
+            while end < bytes.len() && !reason[end..].starts_with(|c: char| c.is_whitespace()) {
+                end += 1;
+            }
+            let cite_id = &reason[start..end];
+            result.push_str(&ref_label(cite_id, 0));
+            i = end;
+        } else {
+            result.push(reason[i..].chars().next().unwrap());
+            i += reason[i..].chars().next().unwrap().len_utf8();
+        }
+    }
+
+    result
+}
+
+#[cfg(test)]
+mod fixtures {
+    use sp42_citation::{
+        BlockFailure, CitationFinding, CitationFindingKind, CitationVerdict, GroundingAssertion,
+        GroundingStatus, LocatedPassage, PageVerificationReport, PageVerificationStats,
+        PanelAgreement, SkippedRef, SkippedReason, SourceProvenance, SourceUnavailableReason,
+        SupportLevel,
+    };
+
+    fn base_finding(
+        verdict: CitationVerdict,
+        grounding: GroundingStatus,
+        archived: bool,
+        use_site_ordinal: u32,
+        ref_id: &str,
+        claim: &str,
+    ) -> CitationFinding {
+        CitationFinding {
+            kind: CitationFindingKind::default(),
+            verdict,
+            grounding_status: grounding,
+            source_unavailable_reason: None,
+            unusable_reason: None,
+            agreement: PanelAgreement::new(3, 3),
+            passage: if grounding == GroundingStatus::Located {
+                Some(LocatedPassage {
+                    quote: "supporting quote text".to_string(),
+                    offset: 0,
+                })
+            } else {
+                None
+            },
+            provenance: SourceProvenance {
+                url: url::Url::parse("https://example.org/source").unwrap(),
+                content_hash: String::new(),
+                fetched_at: 0,
+                http_status: Some(200),
+            },
+            source_excerpt: None,
+            metadata: None,
+            grounding: GroundingAssertion::SourceFetched {
+                source_hash: String::new(),
+            },
+            use_site_ordinal,
+            ref_id: ref_id.to_string(),
+            claim: claim.to_string(),
+            preceding_context: Vec::new(),
+            archive_of: if archived {
+                Some(url::Url::parse("https://web.archive.org/x").unwrap())
+            } else {
+                None
+            },
+            is_bare_url_ref: false,
+            schema_version: 1,
+        }
+    }
+
+    #[allow(clippy::too_many_lines)]
+    pub fn full_report() -> PageVerificationReport {
+        let mut findings = vec![];
+
+        // Disagreement with archive and minority panel
+        let mut f = base_finding(
+            CitationVerdict::Judged(SupportLevel::NotSupported),
+            GroundingStatus::NotApplicable,
+            true,
+            0,
+            "cite_ref-1",
+            "This claim is disputed",
+        );
+        f.agreement = PanelAgreement::new(3, 1);
+        findings.push(f);
+
+        // Disagreement without archive, with excerpt
+        let mut f = base_finding(
+            CitationVerdict::Judged(SupportLevel::NotSupported),
+            GroundingStatus::NotApplicable,
+            false,
+            1,
+            "cite_ref-1b",
+            "Another disputed claim",
+        );
+        f.source_excerpt = Some("source text excerpt".to_string());
+        findings.push(f);
+
+        // Disagreement without archive (Partial)
+        findings.push(base_finding(
+            CitationVerdict::Judged(SupportLevel::Partial),
+            GroundingStatus::Located,
+            false,
+            2,
+            "cite_ref-2",
+            "Partially supported claim",
+        ));
+
+        // Recovered (Supported + Located + Archive)
+        findings.push(base_finding(
+            CitationVerdict::Judged(SupportLevel::Supported),
+            GroundingStatus::Located,
+            true,
+            3,
+            "cite_ref-3",
+            "This was supported via archive",
+        ));
+
+        // Dead link
+        let mut f = base_finding(
+            CitationVerdict::SourceUnavailable,
+            GroundingStatus::NotApplicable,
+            false,
+            4,
+            "cite_ref-4",
+            "Dead link claim",
+        );
+        f.source_unavailable_reason = Some(SourceUnavailableReason::Unreachable);
+        findings.push(f);
+
+        // Unreadable (PdfBody)
+        let mut f = base_finding(
+            CitationVerdict::SourceUnavailable,
+            GroundingStatus::NotApplicable,
+            false,
+            5,
+            "cite_ref-5",
+            "PDF claim",
+        );
+        f.source_unavailable_reason = Some(SourceUnavailableReason::Unusable);
+        f.unusable_reason = Some(sp42_citation::BodyUsabilityReason::PdfBody);
+        findings.push(f);
+
+        // Unreadable (ViewerShell)
+        let mut f = base_finding(
+            CitationVerdict::SourceUnavailable,
+            GroundingStatus::NotApplicable,
+            false,
+            6,
+            "cite_ref-6",
+            "Viewer shell claim",
+        );
+        f.source_unavailable_reason = Some(SourceUnavailableReason::Unusable);
+        f.unusable_reason = Some(sp42_citation::BodyUsabilityReason::ViewerShell);
+        findings.push(f);
+
+        // Unconfirmed (Supported + Unlocated + Archive)
+        findings.push(base_finding(
+            CitationVerdict::Judged(SupportLevel::Supported),
+            GroundingStatus::Unlocated,
+            true,
+            7,
+            "cite_ref-7",
+            "Unconfirmed with archive",
+        ));
+
+        // Supported (exact match, no archive)
+        findings.push(base_finding(
+            CitationVerdict::Judged(SupportLevel::Supported),
+            GroundingStatus::Located,
+            false,
+            8,
+            "cite_ref-8",
+            "Cleanly supported claim",
+        ));
+
+        PageVerificationReport {
+            wiki_id: "test_page".to_string(),
+            rev_id: 12345,
+            title: "Test Article".to_string(),
+            findings,
+            skipped: vec![SkippedRef {
+                ref_id: "cite_ref-9".to_string(),
+                reason: SkippedReason::NonUrlSource,
+                block_ordinal: 0,
+            }],
+            extraction_failures: vec![BlockFailure {
+                block_ordinal: 1,
+                reason: "ref cite_ref-64 has no resolvable claim text".to_string(),
+            }],
+            stats: PageVerificationStats {
+                refs_seen: 10,
+                use_sites_verified: 8,
+                skipped: 1,
+                extraction_failures: 1,
+                supported: 2,
+                partial: 1,
+                not_supported: 1,
+                source_unavailable: 3,
+                source_unavailable_unreachable: 1,
+                source_unavailable_unusable: 2,
+            },
+        }
+    }
+
+    pub fn hostile_report() -> PageVerificationReport {
+        let mut findings = vec![];
+
+        // Finding with hostile claim
+        let f = base_finding(
+            CitationVerdict::Judged(SupportLevel::Partial),
+            GroundingStatus::Located,
+            false,
+            0,
+            "cite_ref-10",
+            "Claim with {{Infobox}} template",
+        );
+        findings.push(f);
+
+        // Finding with hostile quote
+        let mut f = base_finding(
+            CitationVerdict::Judged(SupportLevel::Partial),
+            GroundingStatus::Located,
+            false,
+            1,
+            "cite_ref-11",
+            "Normal claim",
+        );
+        if let Some(ref mut p) = f.passage {
+            p.quote = "Quote with <ref>tag</ref> inside".to_string();
+        }
+        findings.push(f);
+
+        // Finding with hostile excerpt
+        let mut f = base_finding(
+            CitationVerdict::Judged(SupportLevel::NotSupported),
+            GroundingStatus::NotApplicable,
+            false,
+            2,
+            "cite_ref-12",
+            "Normal claim",
+        );
+        f.source_excerpt = Some("Excerpt with </nowiki> terminator".to_string());
+        findings.push(f);
+
+        PageVerificationReport {
+            wiki_id: "hostile_page".to_string(),
+            rev_id: 99999,
+            title: "Hostile Test".to_string(),
+            findings,
+            skipped: Vec::new(),
+            extraction_failures: Vec::new(),
+            stats: PageVerificationStats {
+                refs_seen: 3,
+                use_sites_verified: 3,
+                skipped: 0,
+                extraction_failures: 0,
+                supported: 0,
+                partial: 2,
+                not_supported: 1,
+                source_unavailable: 0,
+                source_unavailable_unreachable: 0,
+                source_unavailable_unusable: 0,
+            },
+        }
+    }
+
+    pub fn bundled_ref_report() -> PageVerificationReport {
+        let mut findings = vec![];
+
+        // Two supported findings with same ref_id but different URLs
+        let mut f = base_finding(
+            CitationVerdict::Judged(SupportLevel::Supported),
+            GroundingStatus::Located,
+            false,
+            0,
+            "cite_ref-shared",
+            "First use of shared ref",
+        );
+        f.provenance.url = url::Url::parse("https://example.org/one").unwrap();
+        findings.push(f);
+
+        let mut f = base_finding(
+            CitationVerdict::Judged(SupportLevel::Supported),
+            GroundingStatus::Located,
+            false,
+            1,
+            "cite_ref-shared",
+            "Second use of shared ref",
+        );
+        f.provenance.url = url::Url::parse("https://example.org/two").unwrap();
+        findings.push(f);
+
+        PageVerificationReport {
+            wiki_id: "bundled_page".to_string(),
+            rev_id: 77777,
+            title: "Bundled Refs Test".to_string(),
+            findings,
+            skipped: Vec::new(),
+            extraction_failures: Vec::new(),
+            stats: PageVerificationStats {
+                refs_seen: 1,
+                use_sites_verified: 2,
+                skipped: 0,
+                extraction_failures: 0,
+                supported: 2,
+                partial: 0,
+                not_supported: 0,
+                source_unavailable: 0,
+                source_unavailable_unreachable: 0,
+                source_unavailable_unusable: 0,
+            },
+        }
+    }
+}
+
 #[cfg(test)]
 mod helper_tests {
     use super::{escape_verbatim, format_utc_date, ref_label};
@@ -228,5 +847,119 @@ mod bucket_tests {
             let f = finding(verdict, grounding, archived, unavailable);
             assert_eq!(bucket_for(&f), expected, "{verdict:?}/{grounding:?}/archived={archived}");
         }
+    }
+}
+
+#[cfg(test)]
+mod renderer_tests {
+    use super::*;
+
+    #[test]
+    fn appendix_renders_the_full_criterion_2_structure() {
+        let report = fixtures::full_report();
+        let out = render_ga_appendix(&report, 1_783_886_599_386, "0.1.0");
+        // Section + heading structure, consequence order.
+        let idx = |needle: &str| out.find(needle).unwrap_or_else(|| panic!("missing: {needle}"));
+        assert!(idx(crate::copy::BUCKET_DISAGREEMENTS) < idx(crate::copy::BUCKET_RECOVERED));
+        assert!(idx(crate::copy::BUCKET_RECOVERED) < idx(crate::copy::BUCKET_DEAD_LINKS));
+        assert!(idx(crate::copy::BUCKET_DEAD_LINKS) < idx(crate::copy::BUCKET_UNREADABLE));
+        assert!(idx(crate::copy::BUCKET_UNREADABLE) < idx(crate::copy::BUCKET_UNCONFIRMED));
+        assert!(idx(crate::copy::BUCKET_UNCONFIRMED) < idx(crate::copy::BUCKET_SUPPORTED));
+        assert!(idx(crate::copy::BUCKET_SUPPORTED) < idx(crate::copy::BUCKET_SKIPPED));
+        // Honesty arms.
+        assert!(out.contains(crate::copy::ASSESSED_LINE));
+        assert!(out.contains(crate::copy::FRAMING_LINE) && out.contains(crate::copy::EXPLAINER_URL));
+        assert!(out.contains("2026-07-12"), "footer render date");
+        assert!(out.contains("rev 12345"), "footer rev_id");
+        // Stats line states the grounded/unconfirmed split within supported.
+        assert!(out.contains("of them unconfirmed"));
+    }
+
+    #[test]
+    fn no_raw_contract_identifiers_anywhere() {
+        let out = render_ga_appendix(&fixtures::full_report(), 0, "0.1.0");
+        for token in [
+            "NotSupported", "SourceUnavailable", "Unlocated", "LocatedFuzzy",
+            "NotApplicable", "cite_ref-", "ShortBody", "PdfBody", "snake_case",
+            "not_supported", "source_unavailable",
+        ] {
+            assert!(!out.contains(token), "raw identifier leaked: {token}");
+        }
+    }
+
+    #[test]
+    fn no_pass_fail_wording_in_the_assembled_appendix() {
+        let out = render_ga_appendix(&fixtures::full_report(), 0, "0.1.0")
+            .to_lowercase();
+        let banned = ["pass", "passed", "passes", "fail", "failed", "fails", "failure"];
+        for word in out.split(|c: char| !c.is_ascii_alphabetic()) {
+            assert!(!banned.contains(&word), "pass/fail wording leaked: {word}");
+        }
+    }
+
+    #[test]
+    fn unusable_reasons_wire_to_their_own_findings() {
+        let out = render_ga_appendix(&fixtures::full_report(), 0, "0.1.0");
+        assert!(out.contains(crate::copy::unusable_reason(sp42_citation::BodyUsabilityReason::PdfBody)));
+        assert!(out.contains(crate::copy::unusable_reason(sp42_citation::BodyUsabilityReason::ViewerShell)));
+    }
+
+    #[test]
+    fn rendering_is_deterministic() {
+        let report = fixtures::full_report();
+        let a = render_ga_appendix(&report, 1_700_000_000_000, "0.1.0");
+        let b = render_ga_appendix(&report, 1_700_000_000_000, "0.1.0");
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn hostile_verbatim_fields_render_inert() {
+        let report = fixtures::hostile_report();
+        let out = render_ga_appendix(&report, 0, "0.1.0");
+        // Count opens and closes: every <nowiki> the renderer opens, it closes,
+        // and no embedded terminator adds an extra close.
+        assert_eq!(out.matches("<nowiki>").count(), out.matches("</nowiki>").count());
+        // The embedded terminator survives only entity-encoded.
+        assert!(out.contains("&lt;/nowiki&gt;"));
+        // The ref tag never appears live.
+        assert!(!out.contains("<ref>"));
+    }
+
+    #[test]
+    fn no_quote_disagreement_states_no_passage_and_excerpt_is_labeled_context() {
+        let report = fixtures::full_report();
+        let out = render_ga_appendix(&report, 0, "0.1.0");
+        assert!(out.contains(crate::copy::NO_PASSAGE_LINE));
+        assert!(out.contains(crate::copy::EXCERPT_CONTEXT_LABEL));
+    }
+
+    #[test]
+    fn archive_handle_renders_in_every_bucket_that_carries_it() {
+        let out = render_ga_appendix(&fixtures::full_report(), 0, "0.1.0");
+        // Disagreement and Unconfirmed buckets carry archive handles;
+        // Recovered embeds the URL directly in the description.
+        assert_eq!(out.matches(crate::copy::ARCHIVE_HANDLE_PREFIX).count(), 2);
+    }
+
+    #[test]
+    fn skips_and_extraction_failures_render_with_rewritten_ids() {
+        let out = render_ga_appendix(&fixtures::full_report(), 0, "0.1.0");
+        assert!(out.contains(crate::copy::SKIPPED_NON_URL));
+        // BlockFailure.reason "ref cite_ref-64 has no resolvable claim text"
+        // renders with the raw id rewritten (covered by the identifier scan too;
+        // assert the line survived the rewrite rather than being dropped).
+        assert!(out.contains("has no resolvable claim text"));
+    }
+
+    #[test]
+    fn panel_split_annotation_renders_on_minority_verdicts_only() {
+        let out = render_ga_appendix(&fixtures::full_report(), 0, "0.1.0");
+        assert_eq!(out.matches(crate::copy::PANEL_SPLIT_LINE).count(), 1);
+    }
+
+    #[test]
+    fn bundled_ref_supported_lines_are_distinguishable() {
+        let out = render_ga_appendix(&fixtures::bundled_ref_report(), 0, "0.1.0");
+        assert!(out.contains("https://example.org/one") && out.contains("https://example.org/two"));
     }
 }

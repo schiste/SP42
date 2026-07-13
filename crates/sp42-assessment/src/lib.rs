@@ -7,3 +7,5 @@
 
 pub mod copy;
 pub mod ga_appendix;
+
+pub use ga_appendix::render_ga_appendix;

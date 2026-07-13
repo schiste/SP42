@@ -510,6 +510,16 @@ where
                 .clone_from(&site.context.preceding_sentences);
             let scanned_page =
                 body.page_of_passage(finding.passage.as_ref().map(|p| p.quote.as_str()));
+            // The pre-verdict request URL was built with page_of_passage(None)
+            // (first snippet); now that the verifier has picked the passage,
+            // re-anchor the provenance deep link to the page that actually
+            // carries it (Codex P2, PR #147). The grounded bytes are the
+            // assembled snippet body, so content_hash is unaffected.
+            if let Ok(anchored) =
+                scan_deep_link(ocaid, scanned_page, &body.query).parse::<url::Url>()
+            {
+                finding.provenance.url = anchored;
+            }
             finding.book_scan = Some(BookScanProvenance {
                 ocaid: ocaid.to_string(),
                 scanned_page,
@@ -897,6 +907,11 @@ where
             BookVerdict::Failure(failure) => extraction_failures.push(failure),
         }
     }
+    // Book findings were appended after the URL lane; restore document order
+    // (the MCP wrapper documents `findings` as document-ordered, and book and
+    // URL use-sites share one ordinal sequence). Stable sort keeps each
+    // lane's internal order (Codex P2, PR #147).
+    findings.sort_by_key(|finding| finding.use_site_ordinal);
 
     // 4. Stats.
     let stats = tally_stats(

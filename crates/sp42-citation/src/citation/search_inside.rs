@@ -270,13 +270,23 @@ impl BookSnippetBody {
     /// The scanned page of the match containing `passage`, falling back to
     /// the first match's page. Scan pagination often differs from the cited
     /// edition, so the report shows where the passage was actually found.
+    ///
+    /// Matching uses the grounding locator (exact, then normalized fuzzy),
+    /// not a raw `contains`: the verifier grounds quotes
+    /// case/punctuation-insensitively, so page attribution must accept the
+    /// same matches or it silently points at the wrong page (Codex P2,
+    /// PR #147).
     #[must_use]
     pub fn page_of_passage(&self, passage: Option<&str>) -> Option<u32> {
+        use super::locate_quote::{locate_quote, locate_quote_fuzzy};
         passage
             .and_then(|quote| {
                 self.matches
                     .iter()
-                    .find(|entry| entry.text.contains(quote))
+                    .find(|entry| {
+                        locate_quote(quote, &entry.text).is_some()
+                            || locate_quote_fuzzy(quote, &entry.text).is_some()
+                    })
                     .and_then(|entry| entry.page)
             })
             .or_else(|| self.matches.first().and_then(|entry| entry.page))

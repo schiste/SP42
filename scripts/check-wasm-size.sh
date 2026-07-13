@@ -31,8 +31,12 @@ dist="${1:-target/dist/sp42-app}"
 # headroom: 872 KiB (recorded decision, Art. 5.2). Ratchet back DOWN as the
 # bundle shrinks (e.g. moving inline styles to CSS), never up without a
 # recorded decision.
-max_raw="${SP42_WASM_MAX_RAW_BYTES:-3407872}"   # 3328 KiB
-max_gz="${SP42_WASM_MAX_GZIP_BYTES:-892928}"    # 872 KiB
+# PR #147 (book-citation grounding): the Books report section and its types
+# render in the browser Citations tab, growing the measured bundle to
+# 3461702 raw / 908535 gzip in CI. Recorded decision (Art. 5.2): ceilings
+# move to the next 64-KiB multiples above those measurements.
+max_raw="${SP42_WASM_MAX_RAW_BYTES:-3473408}"   # 3392 KiB
+max_gz="${SP42_WASM_MAX_GZIP_BYTES:-917504}"    # 896 KiB
 
 wasm=""
 for f in "$dist"/*.wasm; do

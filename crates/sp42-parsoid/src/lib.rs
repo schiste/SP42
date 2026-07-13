@@ -26,10 +26,14 @@ use std::collections::HashMap;
 /// the *anchor* is followed literally, so per-wiki id conventions (enwiki's
 /// CITEREF prefix, frwiki's bare name+year) need no configuration; only the
 /// template names would ever need a per-wiki override, and none does yet.
+// `sfnm` is deliberately absent: one {{sfnm}} renders SEVERAL bibliography
+// anchors from one template part, so neither one-link-per-part association
+// nor 1..=4 positional reconstruction fits it — handling it wrongly would
+// misattribute sources (Codex round 3, PR 153). Dedicated multi-source
+// handling is a follow-up; until then sfnm refs ride the existing lanes.
 const SHORT_CITE_TEMPLATES: &[&str] = &[
     "sfn",
     "sfnp",
-    "sfnm",
     "harvsp",
     "harvnb",
     "harv",
@@ -449,31 +453,29 @@ fn resolve_book_from_index(
 /// Resolve a short-cite template to a bibliography-indexed `BookSource`.
 /// Returns the resolved `BookSource` with identifiers from the index and `cited_page`
 /// from the short-cite params, or None if the anchor is not found in the index.
+/// The percent-decoded fragments of every same-page link in a ref body, in
+/// document order — consumed one per short-cite part, so bundled short
+/// citations bind to their own targets instead of all taking the first link
+/// (Codex round 3, PR 153).
+fn fragment_keys_in_order(contents: &impl WikinodeIterator) -> std::collections::VecDeque<String> {
+    let mut keys = std::collections::VecDeque::new();
+    for elem in contents.select("a[href*=\"#\"]") {
+        if let Some(element) = elem.as_node().as_element()
+            && let Some(href) = element.attributes.borrow().get("href")
+            && let Some(frag) = href.split('#').nth(1)
+        {
+            keys.push_back(percent_decode_str(frag).decode_utf8_lossy().to_string());
+        }
+    }
+    keys
+}
+
 fn resolve_short_cite(
     part: &serde_json::Value,
-    contents: &impl WikinodeIterator,
+    fragment_key: Option<&str>,
     index: &BiblioIndex,
     seen_identifiers: &std::collections::HashSet<String>,
 ) -> Option<BookSource> {
-    // Resolution key, in order:
-    // (a) Fragment of first descendant <a> whose href contains # (percent-decoded)
-    let fragment_key = contents
-        .select("a[href*=\"#\"]")
-        .first()
-        .and_then(|elem| elem.as_node().as_element())
-        .and_then(|elem| {
-            elem.attributes
-                .borrow()
-                .get("href")
-                .map(std::string::ToString::to_string)
-        })
-        .and_then(|href| href.split('#').nth(1).map(std::string::ToString::to_string))
-        .map(|encoded_frag| {
-            percent_decode_str(&encoded_frag)
-                .decode_utf8_lossy()
-                .to_string()
-        });
-
     // (b) Reconstructed key from positional params 1..=4
     let mut param_keys = Vec::new();
     for i in 1..=4 {
@@ -495,7 +497,7 @@ fn resolve_short_cite(
     // entry (custom ref= anchors, disambiguated 2014a-style keys) — a
     // guessed identifier, which the design forbids (Codex round 2, PR 153).
     // Reconstruction is only for refs whose body carries no fragment link.
-    if let Some(key) = &fragment_key {
+    if let Some(key) = fragment_key {
         return index
             .get(key)
             .map(|indexed_book| resolve_book_from_index(part, indexed_book, seen_identifiers));
@@ -584,6 +586,9 @@ fn sources_in_reference(
     let mut seen_urls = std::collections::HashSet::new();
     let mut seen_identifiers: std::collections::HashSet<String> = std::collections::HashSet::new();
     let mut short_cite_unresolved = false;
+    // Same-page links in the ref body, in order: each short-cite part consumes
+    // the next one, so bundled short citations bind to their own targets.
+    let mut fragment_keys = fragment_keys_in_order(&contents);
 
     // First, check if this reference has a short-cite marker (sfn/harvsp/etc).
     // The ref marker's data-mw is keyed by the reference body id.
@@ -598,8 +603,9 @@ fn sources_in_reference(
                 let template_name = target_wt.trim().to_ascii_lowercase();
                 if SHORT_CITE_TEMPLATES.contains(&template_name.as_str()) {
                     // This is a short-cite template - try to resolve it
+                    let fragment = fragment_keys.pop_front();
                     if let Some(resolved_book) =
-                        resolve_short_cite(part, &contents, index, &seen_identifiers)
+                        resolve_short_cite(part, fragment.as_deref(), index, &seen_identifiers)
                     {
                         books.push(resolved_book.clone());
                         // Track identifiers we've added
@@ -631,8 +637,8 @@ fn sources_in_reference(
         if let Some(element) = span.as_node().as_element() {
             let attributes = element.attributes.borrow();
             if let Some(data_mw) = attributes.get("data-mw") {
-                // Check if this is a short-cite template (harvsp/etc in the reference contents)
-                let mut is_short_cite = false;
+                // Short-cite templates rendered in the ref body (harvsp/etc):
+                // resolve each part against its own consumed fragment link.
                 if let Ok(value) = serde_json::from_str::<serde_json::Value>(data_mw)
                     && let Some(parts) = value.get("parts").and_then(|p| p.as_array())
                 {
@@ -642,11 +648,13 @@ fn sources_in_reference(
                         {
                             let template_name = target_wt.trim().to_ascii_lowercase();
                             if SHORT_CITE_TEMPLATES.contains(&template_name.as_str()) {
-                                is_short_cite = true;
-                                // Try to resolve the short-cite
-                                if let Some(resolved_book) =
-                                    resolve_short_cite(part, &contents, index, &seen_identifiers)
-                                {
+                                let fragment = fragment_keys.pop_front();
+                                if let Some(resolved_book) = resolve_short_cite(
+                                    part,
+                                    fragment.as_deref(),
+                                    index,
+                                    &seen_identifiers,
+                                ) {
                                     books.push(resolved_book.clone());
                                     // Track identifiers we've added
                                     for ident in &resolved_book.identifiers {
@@ -664,10 +672,12 @@ fn sources_in_reference(
                 // Check if this is an {{ISBN|...}} template
                 process_isbn_template(data_mw, &mut books, &mut seen_identifiers);
 
-                // If not a short-cite, process as a regular template
-                if !is_short_cite {
-                    push_template_sources(data_mw, &mut sources, &mut books, &mut seen_urls);
-                }
+                // Regular cite templates in the same data-mw still collect:
+                // a parts array can mix a short cite with a normal cite/URL
+                // template, and short-cite parts are harmless here (they carry
+                // no url/identifier params), so nothing is suppressed
+                // (Codex round 3, PR 153).
+                push_template_sources(data_mw, &mut sources, &mut books, &mut seen_urls);
 
                 // Track book identifiers we've collected so far for deduplication
                 for book in &books {
@@ -714,13 +724,11 @@ fn sources_in_reference(
         }
     }
 
-    // Deduplicate identical BookSources within this ref
-    books.sort_by(|a, b| {
-        let a_str = format!("{:?}", a.identifiers);
-        let b_str = format!("{:?}", b.identifiers);
-        a_str.cmp(&b_str)
-    });
-    books.dedup_by(|a, b| a.identifiers == b.identifiers && a.cited_page == b.cited_page);
+    // Deduplicate identical BookSources within this ref, preserving document
+    // order (bundled short cites must keep their in-body sequence; a sort
+    // here previously reordered them — Codex round 3, PR 153).
+    let mut seen_books = std::collections::HashSet::new();
+    books.retain(|book| seen_books.insert(format!("{:?}|{:?}", book.identifiers, book.cited_page)));
 
     RefSources {
         cited: sources,
@@ -1548,6 +1556,59 @@ mod tests {
             .find(|ref_item| ref_item.ref_id.contains("isbn-template"))
             .expect("should find ISBN-template ref");
         assert_eq!(r.book_sources.len(), 1);
+    }
+
+    #[test]
+    fn bundled_short_cites_bind_to_their_own_targets_in_order() {
+        // Codex round 3 (PR 153): a ref bundling two {{sfn}} parts must
+        // resolve each against its own body link, in order — not bind both
+        // to the first link or dedupe the second away.
+        let blocks = blocks_from_fixture("parsoid_sfn_enwiki.html");
+        let block = blocks.first().expect("prose block");
+        let r = block
+            .refs
+            .iter()
+            .find(|r| r.ref_id.contains("bundled"))
+            .expect("bundled ref");
+        assert!(!r.short_cite_unresolved);
+        assert_eq!(r.book_sources.len(), 2, "one source per short cite");
+        assert_eq!(
+            r.book_sources[0].identifiers,
+            vec![BookIdentifier::isbn("978-1-84583-093-9").expect("valid")]
+        );
+        assert_eq!(r.book_sources[0].cited_page.as_deref(), Some("12"));
+        assert_eq!(
+            r.book_sources[1].identifiers,
+            vec![BookIdentifier::isbn("978-0-306-40615-7").expect("valid")]
+        );
+        assert_eq!(r.book_sources[1].cited_page.as_deref(), Some("99"));
+    }
+
+    #[test]
+    fn mixed_transclusion_keeps_the_non_short_parts() {
+        // Codex round 3 (PR 153): one data-mw whose parts mix a short cite
+        // and a normal cite template must collect BOTH — the short cite via
+        // the bibliography, the direct template via its own params.
+        let blocks = blocks_from_fixture("parsoid_harvsp_frwiki.html");
+        let block = blocks.first().expect("prose block");
+        let r = block
+            .refs
+            .iter()
+            .find(|r| r.ref_id.contains("mixed"))
+            .expect("mixed ref");
+        assert!(!r.short_cite_unresolved);
+        assert_eq!(r.book_sources.len(), 2, "indexed + direct");
+        assert_eq!(
+            r.book_sources[0].identifiers,
+            vec![BookIdentifier::isbn("978-2-85822-660-3").expect("valid")],
+            "harvsp resolves the indexed Ouvrage"
+        );
+        assert_eq!(r.book_sources[0].cited_page.as_deref(), Some("77"));
+        assert_eq!(
+            r.book_sources[1].identifiers,
+            vec![BookIdentifier::isbn("2-85822-000-X").expect("valid")],
+            "direct Ouvrage part still collected"
+        );
     }
 
     #[test]

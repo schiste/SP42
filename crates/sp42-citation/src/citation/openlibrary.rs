@@ -260,24 +260,21 @@ pub struct ScanAvailability {
 }
 
 impl ScanAvailability {
-    /// The scan eligible to enter grounding: an **exact** match, preferring
-    /// (1) a usable `ocaid` — an exact item whose scan identity could not be
-    /// recovered cannot ground at all (Codex round 2, PR 147) — then
-    /// (2) `full access` status — IA's fulltext search 403s lendable
-    /// (print-disabled) items (observed 2026-07-12), so a full-access scan
-    /// grounds where a lendable one cannot. `None` when only similar-edition
-    /// scans (or none) exist — grounding then degrades to
-    /// `SourceUnavailable` rather than verifying a page-specific citation
-    /// against a different edition.
+    /// The scan eligible to enter grounding: an **exact** match with a
+    /// recovered `ocaid` — an item whose scan identity could not be
+    /// recovered cannot ground, and reporting it as groundable would
+    /// misstate the scan state to reviewers (Codex rounds 2-3, PR 147) —
+    /// preferring `full access` status, because IA's fulltext search 403s
+    /// lendable (print-disabled) items (observed 2026-07-12). `None` when no
+    /// exact item carries an ocaid, or only similar-edition scans (or none)
+    /// exist — grounding then degrades to `SourceUnavailable` rather than
+    /// verifying a page-specific citation against a different edition.
     #[must_use]
     pub fn groundable_scan(&self) -> Option<&ScanItem> {
-        let rank = |item: &&ScanItem| {
-            (
-                item.ocaid.is_none(),
-                !item.status.eq_ignore_ascii_case("full access"),
-            )
-        };
-        self.exact.iter().min_by_key(rank)
+        self.exact
+            .iter()
+            .filter(|item| item.ocaid.is_some())
+            .min_by_key(|item| !item.status.eq_ignore_ascii_case("full access"))
     }
 }
 
@@ -732,6 +729,24 @@ mod tests {
         let availability = parse_scan_availability(body).expect("parses");
         let scan = availability.groundable_scan().expect("grounds");
         assert_eq!(scan.ocaid.as_deref(), Some("usable0001"));
+    }
+
+    #[test]
+    fn exact_items_without_any_ocaid_are_not_groundable() {
+        // Codex round 3: the Books renderer reports groundable_scan() as an
+        // exact groundable scan; an item whose scan identity could not be
+        // recovered must not masquerade as one.
+        let body = br#"{
+            "items": [
+                {"match": "exact", "status": "full access", "itemURL": "http://openlibrary.org/books/OL1M/X/borrow"}
+            ]
+        }"#;
+        let availability = parse_scan_availability(body).expect("parses");
+        assert_eq!(availability.exact.len(), 1, "still reported as exact");
+        assert!(
+            availability.groundable_scan().is_none(),
+            "but never groundable without a scan identity"
+        );
     }
 
     #[test]

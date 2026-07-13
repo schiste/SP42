@@ -386,19 +386,18 @@ enum BookVerdict {
 }
 
 /// The finding-side provenance URL for a resolved book: the human-facing Open
-/// Library record when the edition names one, else the catalog lookup itself.
-fn book_record_url(edition: &OpenLibraryEdition, resolution: &BookResolution) -> url::Url {
+/// Library record when the edition names one, else the catalog lookup for the
+/// identifier that actually resolved — not the ref's first identifier, which
+/// may be one that missed (Codex round 3, PR 147).
+fn book_record_url(
+    edition: &OpenLibraryEdition,
+    resolved_identifier: &crate::wikitext_editor::BookIdentifier,
+) -> url::Url {
     edition
         .record_url
         .as_deref()
         .and_then(|record| record.parse().ok())
-        .unwrap_or_else(|| {
-            let identifier = resolution
-                .identifiers
-                .first()
-                .expect("book sources carry at least one identifier by construction");
-            build_catalog_lookup_request(identifier).url
-        })
+        .unwrap_or_else(|| build_catalog_lookup_request(resolved_identifier).url)
 }
 
 /// A no-model book finding (unavailable / searched-and-nothing-found), with
@@ -683,7 +682,11 @@ where
     }
 
     let verdict = match &resolution.outcome {
-        BookResolutionOutcome::Resolved { edition, scan, .. } => {
+        BookResolutionOutcome::Resolved {
+            identifier,
+            edition,
+            scan,
+        } => {
             let groundable_ocaid = scan
                 .as_ref()
                 .and_then(|availability| availability.groundable_scan())
@@ -712,7 +715,7 @@ where
                 // carries the scan state.
                 BookVerdict::Finding(Box::new(book_no_model_finding(
                     &site,
-                    book_record_url(edition, &resolution),
+                    book_record_url(edition, identifier),
                     sha256_hex(b""),
                     200,
                     clock,

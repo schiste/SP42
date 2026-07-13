@@ -284,7 +284,10 @@ fn render_disagreement_line(output: &mut String, finding: &sp42_citation::Citati
 
     #[allow(clippy::collapsible_if)]
     if let Some(annotation) = crate::copy::grounding_annotation(finding.grounding_status) {
-        if matches!(finding.verdict, CitationVerdict::Judged(SupportLevel::Partial)) {
+        if matches!(
+            finding.verdict,
+            CitationVerdict::Judged(SupportLevel::Partial)
+        ) {
             output.push(' ');
             output.push_str(annotation);
             output.push('.');
@@ -425,7 +428,7 @@ mod fixtures {
     use sp42_citation::{
         BlockFailure, CitationFinding, CitationFindingKind, CitationVerdict, GroundingAssertion,
         GroundingStatus, LocatedPassage, PageVerificationReport, PageVerificationStats,
-        PanelAgreement, SkippedRef, SkippedReason, SourceProvenance, SourceUnavailableReason,
+        PanelAgreement, SkippedReason, SkippedRef, SourceProvenance, SourceUnavailableReason,
         SupportLevel,
     };
 
@@ -744,16 +747,16 @@ mod helper_tests {
     #[test]
     fn escape_round_trips_preexisting_entities_faithfully() {
         // `&lt;` in the source text must not collapse into a live `<`.
-        assert_eq!(
-            escape_verbatim("a &lt; b"),
-            "<nowiki>a &amp;lt; b</nowiki>"
-        );
+        assert_eq!(escape_verbatim("a &lt; b"), "<nowiki>a &amp;lt; b</nowiki>");
     }
 
     #[test]
     fn ref_label_derives_names_and_falls_back_to_ordinal() {
         // Named ref: cite_ref-<name>_<seq>-<use>
-        assert_eq!(ref_label("cite_ref-Lux_history_1-0", 4), "ref \"Lux history\"");
+        assert_eq!(
+            ref_label("cite_ref-Lux_history_1-0", 4),
+            "ref \"Lux history\""
+        );
         // Unnamed ref: cite_ref-<n> — n is internal, use the per-report ordinal.
         assert_eq!(ref_label("cite_ref-6", 4), "ref #5");
         // Unparseable / empty id: ordinal fallback, never the raw id.
@@ -824,28 +827,104 @@ mod bucket_tests {
         use SupportLevel as L;
         let cases = [
             // (verdict, grounding, archived, unavailable_reason) -> bucket
-            (V::Judged(L::NotSupported), G::NotApplicable, false, None, Bucket::Disagreement),
-            (V::Judged(L::Partial), G::Located, false, None, Bucket::Disagreement),
+            (
+                V::Judged(L::NotSupported),
+                G::NotApplicable,
+                false,
+                None,
+                Bucket::Disagreement,
+            ),
+            (
+                V::Judged(L::Partial),
+                G::Located,
+                false,
+                None,
+                Bucket::Disagreement,
+            ),
             // Non-exact grounding on Partial stays a disagreement (annotated).
-            (V::Judged(L::Partial), G::Unlocated, false, None, Bucket::Disagreement),
+            (
+                V::Judged(L::Partial),
+                G::Unlocated,
+                false,
+                None,
+                Bucket::Disagreement,
+            ),
             // Archive-backed disagreement stays a disagreement (with handle).
-            (V::Judged(L::NotSupported), G::NotApplicable, true, None, Bucket::Disagreement),
+            (
+                V::Judged(L::NotSupported),
+                G::NotApplicable,
+                true,
+                None,
+                Bucket::Disagreement,
+            ),
             // Supported + exact + archive -> recovered.
-            (V::Judged(L::Supported), G::Located, true, None, Bucket::Recovered),
+            (
+                V::Judged(L::Supported),
+                G::Located,
+                true,
+                None,
+                Bucket::Recovered,
+            ),
             // Supported + exact, no archive -> spot-check record.
-            (V::Judged(L::Supported), G::Located, false, None, Bucket::Supported),
+            (
+                V::Judged(L::Supported),
+                G::Located,
+                false,
+                None,
+                Bucket::Supported,
+            ),
             // Grounding caveat wins the bucket, archive annotates.
-            (V::Judged(L::Supported), G::LocatedFuzzy, true, None, Bucket::Unconfirmed),
-            (V::Judged(L::Supported), G::Unlocated, false, None, Bucket::Unconfirmed),
-            (V::Judged(L::Supported), G::NotApplicable, false, None, Bucket::Unconfirmed),
-            (V::SourceUnavailable, G::NotApplicable, false, Some(SourceUnavailableReason::Unreachable), Bucket::DeadLink),
-            (V::SourceUnavailable, G::NotApplicable, false, Some(SourceUnavailableReason::Unusable), Bucket::Unreadable),
+            (
+                V::Judged(L::Supported),
+                G::LocatedFuzzy,
+                true,
+                None,
+                Bucket::Unconfirmed,
+            ),
+            (
+                V::Judged(L::Supported),
+                G::Unlocated,
+                false,
+                None,
+                Bucket::Unconfirmed,
+            ),
+            (
+                V::Judged(L::Supported),
+                G::NotApplicable,
+                false,
+                None,
+                Bucket::Unconfirmed,
+            ),
+            (
+                V::SourceUnavailable,
+                G::NotApplicable,
+                false,
+                Some(SourceUnavailableReason::Unreachable),
+                Bucket::DeadLink,
+            ),
+            (
+                V::SourceUnavailable,
+                G::NotApplicable,
+                false,
+                Some(SourceUnavailableReason::Unusable),
+                Bucket::Unreadable,
+            ),
             // Legacy record with no reason: dead link (the conservative read).
-            (V::SourceUnavailable, G::NotApplicable, false, None, Bucket::DeadLink),
+            (
+                V::SourceUnavailable,
+                G::NotApplicable,
+                false,
+                None,
+                Bucket::DeadLink,
+            ),
         ];
         for (verdict, grounding, archived, unavailable, expected) in cases {
             let f = finding(verdict, grounding, archived, unavailable);
-            assert_eq!(bucket_for(&f), expected, "{verdict:?}/{grounding:?}/archived={archived}");
+            assert_eq!(
+                bucket_for(&f),
+                expected,
+                "{verdict:?}/{grounding:?}/archived={archived}"
+            );
         }
     }
 }
@@ -859,7 +938,10 @@ mod renderer_tests {
         let report = fixtures::full_report();
         let out = render_ga_appendix(&report, 1_783_886_599_386, "0.1.0");
         // Section + heading structure, consequence order.
-        let idx = |needle: &str| out.find(needle).unwrap_or_else(|| panic!("missing: {needle}"));
+        let idx = |needle: &str| {
+            out.find(needle)
+                .unwrap_or_else(|| panic!("missing: {needle}"))
+        };
         assert!(idx(crate::copy::BUCKET_DISAGREEMENTS) < idx(crate::copy::BUCKET_RECOVERED));
         assert!(idx(crate::copy::BUCKET_RECOVERED) < idx(crate::copy::BUCKET_DEAD_LINKS));
         assert!(idx(crate::copy::BUCKET_DEAD_LINKS) < idx(crate::copy::BUCKET_UNREADABLE));
@@ -868,7 +950,9 @@ mod renderer_tests {
         assert!(idx(crate::copy::BUCKET_SUPPORTED) < idx(crate::copy::BUCKET_SKIPPED));
         // Honesty arms.
         assert!(out.contains(crate::copy::ASSESSED_LINE));
-        assert!(out.contains(crate::copy::FRAMING_LINE) && out.contains(crate::copy::EXPLAINER_URL));
+        assert!(
+            out.contains(crate::copy::FRAMING_LINE) && out.contains(crate::copy::EXPLAINER_URL)
+        );
         assert!(out.contains("2026-07-12"), "footer render date");
         assert!(out.contains("rev 12345"), "footer rev_id");
         // Stats line states the grounded/unconfirmed split within supported.
@@ -879,9 +963,17 @@ mod renderer_tests {
     fn no_raw_contract_identifiers_anywhere() {
         let out = render_ga_appendix(&fixtures::full_report(), 0, "0.1.0");
         for token in [
-            "NotSupported", "SourceUnavailable", "Unlocated", "LocatedFuzzy",
-            "NotApplicable", "cite_ref-", "ShortBody", "PdfBody", "snake_case",
-            "not_supported", "source_unavailable",
+            "NotSupported",
+            "SourceUnavailable",
+            "Unlocated",
+            "LocatedFuzzy",
+            "NotApplicable",
+            "cite_ref-",
+            "ShortBody",
+            "PdfBody",
+            "snake_case",
+            "not_supported",
+            "source_unavailable",
         ] {
             assert!(!out.contains(token), "raw identifier leaked: {token}");
         }
@@ -889,9 +981,10 @@ mod renderer_tests {
 
     #[test]
     fn no_pass_fail_wording_in_the_assembled_appendix() {
-        let out = render_ga_appendix(&fixtures::full_report(), 0, "0.1.0")
-            .to_lowercase();
-        let banned = ["pass", "passed", "passes", "fail", "failed", "fails", "failure"];
+        let out = render_ga_appendix(&fixtures::full_report(), 0, "0.1.0").to_lowercase();
+        let banned = [
+            "pass", "passed", "passes", "fail", "failed", "fails", "failure",
+        ];
         for word in out.split(|c: char| !c.is_ascii_alphabetic()) {
             assert!(!banned.contains(&word), "pass/fail wording leaked: {word}");
         }
@@ -900,8 +993,12 @@ mod renderer_tests {
     #[test]
     fn unusable_reasons_wire_to_their_own_findings() {
         let out = render_ga_appendix(&fixtures::full_report(), 0, "0.1.0");
-        assert!(out.contains(crate::copy::unusable_reason(sp42_citation::BodyUsabilityReason::PdfBody)));
-        assert!(out.contains(crate::copy::unusable_reason(sp42_citation::BodyUsabilityReason::ViewerShell)));
+        assert!(out.contains(crate::copy::unusable_reason(
+            sp42_citation::BodyUsabilityReason::PdfBody
+        )));
+        assert!(out.contains(crate::copy::unusable_reason(
+            sp42_citation::BodyUsabilityReason::ViewerShell
+        )));
     }
 
     #[test]
@@ -918,7 +1015,10 @@ mod renderer_tests {
         let out = render_ga_appendix(&report, 0, "0.1.0");
         // Count opens and closes: every <nowiki> the renderer opens, it closes,
         // and no embedded terminator adds an extra close.
-        assert_eq!(out.matches("<nowiki>").count(), out.matches("</nowiki>").count());
+        assert_eq!(
+            out.matches("<nowiki>").count(),
+            out.matches("</nowiki>").count()
+        );
         // The embedded terminator survives only entity-encoded.
         assert!(out.contains("&lt;/nowiki&gt;"));
         // The ref tag never appears live.

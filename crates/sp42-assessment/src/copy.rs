@@ -9,10 +9,13 @@ pub const APPENDIX_HEADING: &str = "== SP42 evidence appendix ==";
 pub const CRITERION_2_HEADING: &str =
     "=== Criterion 2 (verifiable) — [[Wikipedia:Good article criteria|GA criteria]] ===";
 pub const BUCKET_DISAGREEMENTS: &str = "==== Claim–source disagreements ====";
-pub const BUCKET_RECOVERED: &str = "==== Supported via archive copy (citation update suggested) ====";
+pub const BUCKET_RECOVERED: &str =
+    "==== Supported via archive copy (citation update suggested) ====";
 pub const BUCKET_DEAD_LINKS: &str = "==== Dead links (no archive copy found) ====";
-pub const BUCKET_UNREADABLE: &str = "==== Sources the tool could not read (tool limitation — the citations may be fine) ====";
-pub const BUCKET_UNCONFIRMED: &str = "==== Unconfirmed supports (judged supported, quote not re-located) ====";
+pub const BUCKET_UNREADABLE: &str =
+    "==== Sources the tool could not read (tool limitation — the citations may be fine) ====";
+pub const BUCKET_UNCONFIRMED: &str =
+    "==== Unconfirmed supports (judged supported, quote not re-located) ====";
 pub const BUCKET_SUPPORTED: &str = "==== Supported spot-checks ====";
 pub const BUCKET_SKIPPED: &str = "==== Not machine-verified (book and offline sources) ====";
 pub const BUCKET_EXTRACTION_FAILURES: &str = "==== Refs the tool could not process ====";
@@ -34,7 +37,9 @@ pub const EXPLAINER_URL: &str =
 #[must_use]
 pub fn disagreement_verdict(level: SupportLevel) -> &'static str {
     match level {
-        SupportLevel::NotSupported => "the source and this claim disagree — the panel found no support for the claim in the source",
+        SupportLevel::NotSupported => {
+            "the source and this claim disagree — the panel found no support for the claim in the source"
+        }
         SupportLevel::Partial => "the source only partially supports this claim",
         SupportLevel::Supported => "the source supports this claim",
     }
@@ -91,8 +96,7 @@ pub fn unusable_reason(reason: BodyUsabilityReason) -> &'static str {
 pub const UNUSABLE_GENERIC: &str = "a page the tool fetched but could not use";
 
 /// Skip reason (single contract variant today: non-URL source).
-pub const SKIPPED_NON_URL: &str =
-    "cites a book or offline source the tool does not verify";
+pub const SKIPPED_NON_URL: &str = "cites a book or offline source the tool does not verify";
 
 #[cfg(test)]
 mod tests {
@@ -103,7 +107,10 @@ mod tests {
         for level in [SupportLevel::Partial, SupportLevel::NotSupported] {
             let text = super::disagreement_verdict(level);
             assert!(!text.contains("NotSupported") && !text.contains("Partial"));
-            assert!(!text.to_lowercase().contains("fail"), "mismatch framing, not failure: {text}");
+            assert!(
+                !text.to_lowercase().contains("fail"),
+                "mismatch framing, not failure: {text}"
+            );
         }
     }
 

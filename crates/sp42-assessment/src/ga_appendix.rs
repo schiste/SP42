@@ -64,6 +64,46 @@ fn format_utc_date(epoch_ms: i64) -> String {
     format!("{year:04}-{month:02}-{day:02}")
 }
 
+/// The consequence-ordered criterion-2 sublists (PRD-0016). Verdict
+/// partitions; grounding and `archive_of` annotate. Every finding lands in
+/// exactly one bucket.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(dead_code)]
+enum Bucket {
+    Disagreement,
+    Recovered,
+    DeadLink,
+    Unreadable,
+    Unconfirmed,
+    Supported,
+}
+
+#[allow(dead_code)]
+fn bucket_for(finding: &sp42_citation::CitationFinding) -> Bucket {
+    use sp42_citation::{CitationVerdict, GroundingStatus, SourceUnavailableReason, SupportLevel};
+
+    match finding.verdict {
+        CitationVerdict::Judged(SupportLevel::NotSupported | SupportLevel::Partial) => {
+            Bucket::Disagreement
+        }
+        CitationVerdict::Judged(SupportLevel::Supported) => {
+            if finding.grounding_status == GroundingStatus::Located {
+                if finding.archive_of.is_some() {
+                    Bucket::Recovered
+                } else {
+                    Bucket::Supported
+                }
+            } else {
+                Bucket::Unconfirmed
+            }
+        }
+        CitationVerdict::SourceUnavailable => match finding.source_unavailable_reason {
+            Some(SourceUnavailableReason::Unusable) => Bucket::Unreadable,
+            Some(SourceUnavailableReason::Unreachable) | None => Bucket::DeadLink,
+        },
+    }
+}
+
 #[cfg(test)]
 mod helper_tests {
     use super::{escape_verbatim, format_utc_date, ref_label};
@@ -105,5 +145,88 @@ mod helper_tests {
     fn utc_date_formats_from_epoch_ms() {
         assert_eq!(format_utc_date(1_783_886_599_386), "2026-07-12");
         assert_eq!(format_utc_date(0), "1970-01-01");
+    }
+}
+
+#[cfg(test)]
+mod bucket_tests {
+    use super::{Bucket, bucket_for};
+    use sp42_citation::{
+        CitationFinding, CitationFindingKind, CitationVerdict, GroundingAssertion, GroundingStatus,
+        PanelAgreement, SourceProvenance, SourceUnavailableReason, SupportLevel,
+    };
+
+    // Fixture helper: house style is programmatic construction with defaults
+    // (cf. citation_page_report.rs:212). Reuse via a shared `fn finding()` in
+    // this module; fields not under test take neutral values.
+    fn finding(
+        verdict: CitationVerdict,
+        grounding: GroundingStatus,
+        archived: bool,
+        unavailable: Option<SourceUnavailableReason>,
+    ) -> CitationFinding {
+        CitationFinding {
+            kind: CitationFindingKind::default(),
+            verdict,
+            grounding_status: grounding,
+            source_unavailable_reason: unavailable,
+            unusable_reason: None,
+            agreement: PanelAgreement::new(3, 3),
+            passage: None,
+            provenance: SourceProvenance {
+                url: url::Url::parse("https://example.org/a").unwrap(),
+                content_hash: String::new(),
+                fetched_at: 0,
+                http_status: Some(200),
+            },
+            source_excerpt: None,
+            metadata: None,
+            grounding: GroundingAssertion::SourceFetched {
+                source_hash: String::new(),
+            },
+            use_site_ordinal: 0,
+            ref_id: String::new(),
+            claim: String::new(),
+            preceding_context: Vec::new(),
+            archive_of: if archived {
+                Some(url::Url::parse("https://web.archive.org/x").unwrap())
+            } else {
+                None
+            },
+            is_bare_url_ref: false,
+            schema_version: 1,
+        }
+    }
+
+    #[test]
+    fn verdict_partitions_and_grounding_annotates() {
+        use CitationVerdict as V;
+        use GroundingStatus as G;
+        use SupportLevel as L;
+        let cases = [
+            // (verdict, grounding, archived, unavailable_reason) -> bucket
+            (V::Judged(L::NotSupported), G::NotApplicable, false, None, Bucket::Disagreement),
+            (V::Judged(L::Partial), G::Located, false, None, Bucket::Disagreement),
+            // Non-exact grounding on Partial stays a disagreement (annotated).
+            (V::Judged(L::Partial), G::Unlocated, false, None, Bucket::Disagreement),
+            // Archive-backed disagreement stays a disagreement (with handle).
+            (V::Judged(L::NotSupported), G::NotApplicable, true, None, Bucket::Disagreement),
+            // Supported + exact + archive -> recovered.
+            (V::Judged(L::Supported), G::Located, true, None, Bucket::Recovered),
+            // Supported + exact, no archive -> spot-check record.
+            (V::Judged(L::Supported), G::Located, false, None, Bucket::Supported),
+            // Grounding caveat wins the bucket, archive annotates.
+            (V::Judged(L::Supported), G::LocatedFuzzy, true, None, Bucket::Unconfirmed),
+            (V::Judged(L::Supported), G::Unlocated, false, None, Bucket::Unconfirmed),
+            (V::Judged(L::Supported), G::NotApplicable, false, None, Bucket::Unconfirmed),
+            (V::SourceUnavailable, G::NotApplicable, false, Some(SourceUnavailableReason::Unreachable), Bucket::DeadLink),
+            (V::SourceUnavailable, G::NotApplicable, false, Some(SourceUnavailableReason::Unusable), Bucket::Unreadable),
+            // Legacy record with no reason: dead link (the conservative read).
+            (V::SourceUnavailable, G::NotApplicable, false, None, Bucket::DeadLink),
+        ];
+        for (verdict, grounding, archived, unavailable, expected) in cases {
+            let f = finding(verdict, grounding, archived, unavailable);
+            assert_eq!(bucket_for(&f), expected, "{verdict:?}/{grounding:?}/archived={archived}");
+        }
     }
 }

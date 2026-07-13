@@ -3,7 +3,7 @@
 **Drafter:** Claude Code
 **Editor:** Luis Villa
 **Date:** 2026-07-10
-**State:** Discussion
+**State:** Implemented (MVP; criterion-5 arm staged on PRD-0015)
 **Discussion:** [PR #129](https://github.com/schiste/SP42/pull/129); design
 conversation 2026-07-10.
 **Spawned ADRs:** none expected — the renderer is pure composition over
@@ -92,6 +92,35 @@ the design sketch, and a machine-readable task-graph arm is roadmap there too.
   use-sites sharing one `ref_id`), and the no-raw-identifiers scan extends
   to skipped/extraction-failure lines, whose contract `reason` strings
   embed raw cite ids today.
+- 2026-07-12 (Phase 3, MVP implementation): **crates/sp42-assessment** ships
+  with the full-appendix fixture and CLI render surfaces (`verify-page
+  --format ga-appendix`, `render-report`). DoD coverage per test IDs:
+  [#1] appendix_renders_the_full_criterion_2_structure,
+  demo_fixture_renders_the_full_appendix_shape;
+  [#2] skips_and_extraction_failures_render_with_rewritten_ids;
+  [#3] no_pass_fail_wording_in_the_assembled_appendix,
+  no_quote_disagreement_states_no_passage_and_excerpt_is_labeled_context;
+  [#5] verdict_partitions_and_grounding_annotates;
+  [#6] archive_handle_renders_in_every_bucket_that_carries_it,
+  recovered_bucket_line_contains_archive_url;
+  [#8] unusable_reasons_wire_to_their_own_findings;
+  [#9] bundled_ref_supported_lines_are_distinguishable;
+  [#11] hostile_verbatim_fields_render_inert,
+  extraction_failure_reason_with_hostile_content_is_escaped;
+  [#13] no_raw_contract_identifiers_anywhere;
+  [#14] rendering_is_deterministic.
+  **Staged non-MVP:** Criterion 5 (stability signal) and its rendering remain
+  open per PRD-0015 deferral. **Panel-split annotation:** the code adds
+  `PanelAgreement` tracking and renders `PANEL_SPLIT_LINE` only on
+  disagreement-bucket lines where the winning verdict is a minority (the
+  annotation labels minority verdicts as low-confidence accusations the
+  reviewer may act on; supported/unavailable lines stay unannotated to keep
+  the spot-check record compact). Annotation scope is a one-const `copy.rs`
+  decision for Editor strike-or-keep; narrowing the scope (e.g., disagreements
+  only) requires only that flag change. The archived-handle count deviates:
+  `Recovered` lines carry one archive URL; disagreement and unconfirmed lines
+  annotate via `ARCHIVE_HANDLE_PREFIX`, yielding two handles in the demo
+  fixture (not the plan's 3, because recovery semantics unify the URL surface).
 
 ## Scope boundary
 

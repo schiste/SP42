@@ -49,6 +49,7 @@ if not LAYER:
 DOMAIN_OF = {
     "sp42-patrol": "patrolling",
     "sp42-citation": "references",
+    "sp42-assessment": "assessment",
 }
 
 # Curated per-crate notes for the decision-coverage table — the place for

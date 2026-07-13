@@ -3280,6 +3280,7 @@ dependencies = [
 name = "sp42-citation"
 version = "0.1.0"
 dependencies = [
+ "async-trait",
  "futures",
  "percent-encoding",
  "proptest",

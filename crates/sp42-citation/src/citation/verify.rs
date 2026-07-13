@@ -142,6 +142,27 @@ pub enum GroundingStatus {
     NotApplicable,
 }
 
+/// Book-scan provenance for a finding verified against an Internet Archive
+/// search-inside snippet (PRD-0009 Layer 2): which scan the snippet came
+/// from, the scanned page the passage was found on (which can differ from the
+/// cited page — reprints, front-matter offsets), and the cited page echoed so
+/// the mismatch surfaces to the operator instead of a false `not_supported`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BookScanProvenance {
+    /// The archive.org item id of the scan.
+    pub ocaid: String,
+    /// The scanned page the located passage was found on, when attributable.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scanned_page: Option<u32>,
+    /// The cite template's `page=` value, echoed for the mismatch signal.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cited_page: Option<String>,
+    /// Refined grounding note for the operator ("no full-text index",
+    /// "item metadata unreachable", …) when the scan could not be searched.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
+}
+
 /// Why a `SourceUnavailable` verdict was reached. Derived from the fetch
 /// status; lets a reviewer tell a dead link from a source we fetched but
 /// could not read (PDF / JS shell / wrong page).
@@ -245,6 +266,11 @@ pub struct CitationFinding {
     /// merely cites the same URL. Back-compatible (defaults `false`).
     #[serde(default)]
     pub is_bare_url_ref: bool,
+    /// Set when this verdict was produced against an Internet Archive
+    /// search-inside snippet (PRD-0009 Layer 2): which scan and scanned page.
+    /// `None` for every web-source finding. Back-compatible (ADR-0009 replay).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub book_scan: Option<BookScanProvenance>,
     /// Schema version (Art. 9.1).
     pub schema_version: u32,
 }
@@ -619,6 +645,7 @@ pub fn assemble_citation_finding(
                     preceding_context: Vec::new(),
                     archive_of: None,
                     is_bare_url_ref: false,
+                    book_scan: None,
                     schema_version: SCHEMA_VERSION,
                 }
             }
@@ -732,6 +759,7 @@ fn no_quote_finding(
         preceding_context: Vec::new(),
         archive_of: None,
         is_bare_url_ref: false,
+        book_scan: None,
         schema_version: SCHEMA_VERSION,
     }
 }
@@ -808,6 +836,54 @@ fn unusable_source_outcome(
     }
 }
 
+/// A no-model, no-quote `SourceUnavailable` outcome — the book lane's
+/// short-circuit when a scan cannot be used at all (PRD-0009 Layer 2 /
+/// ADR-0024 Decision 4: no exact-edition scan, no full-text index, or the
+/// item metadata was unreachable). Unreachable-vs-unusable is derived from
+/// `provenance.http_status` exactly like the fetched-web path (`0` →
+/// unreachable, 2xx → unusable).
+#[must_use]
+pub fn book_scan_unavailable_outcome(
+    provenance: &SourceProvenance,
+    use_site_ordinal: u32,
+) -> VerificationOutcome {
+    VerificationOutcome {
+        finding: no_quote_finding(
+            CitationVerdict::SourceUnavailable,
+            GroundingStatus::NotApplicable,
+            PanelAgreement::new(0, 0),
+            provenance,
+            use_site_ordinal,
+        ),
+        votes: Vec::new(),
+    }
+}
+
+/// The searched-and-found-nothing outcome (PRD-0009 resolved Q4 / ADR-0024
+/// Decision 4): the scan **is** indexed and search-inside ran, but returned
+/// zero snippets after both the cited-page and whole-book passes. That is
+/// `not_supported`, not `SourceUnavailable` — the source exists and was
+/// searched; it yielded no supporting passage. Deliberately a verdict without
+/// a model panel: the judgment IS the deterministic search outcome, grounded
+/// by the fetched search response (`SourceFetched` provenance), and it never
+/// fabricates a passage (`NotApplicable` grounding, no quote).
+#[must_use]
+pub fn book_searched_not_supported_outcome(
+    provenance: &SourceProvenance,
+    use_site_ordinal: u32,
+) -> VerificationOutcome {
+    VerificationOutcome {
+        finding: no_quote_finding(
+            CitationVerdict::Judged(SupportLevel::NotSupported),
+            GroundingStatus::NotApplicable,
+            PanelAgreement::new(0, 0),
+            provenance,
+            use_site_ordinal,
+        ),
+        votes: Vec::new(),
+    }
+}
+
 /// A fetched source body plus the HTTP status it came from.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FetchedSource {
@@ -818,6 +894,12 @@ pub struct FetchedSource {
     /// usability gate for structured paywall markers; consumed there and not
     /// retained downstream (grounding uses `text`).
     pub raw_html: Option<String>,
+    /// `true` only for a body assembled from Internet Archive search-inside
+    /// snippets by the book-grounding path (PRD-0009 Layer 2). Provenance for
+    /// the usability gate: a snippet body bypasses **only** the generic
+    /// short-body floor (ADR-0024 Decision 4) — arbitrary short web pages
+    /// still short-circuit. Never set by [`fetch_source`].
+    pub book_snippet: bool,
 }
 
 /// Fetch a source body (read-only GET), extracting text from HTML and recovering past a
@@ -857,6 +939,7 @@ where
             status: response.status,
             content_type: String::new(),
             raw_html: None,
+            book_snippet: false,
         });
     }
     let content_type = response
@@ -876,6 +959,7 @@ where
         status: response.status,
         content_type,
         raw_html,
+        book_snippet: false,
     })
 }
 
@@ -992,12 +1076,25 @@ where
     } else {
         Some(fetched.text.as_str())
     };
-    let usability = classify_source_usability(
+    let mut usability = classify_source_usability(
         request.source_url.as_str(),
         &fetched.content_type,
         fetched.raw_html.as_deref(),
         body,
     );
+    // ADR-0024 Decision 4: a search-inside snippet body bypasses ONLY the
+    // generic short-body floor — a verbatim OCR snippet is a valid grounding
+    // body well below the web-page floor. Every other unusability reason
+    // still applies, and an empty snippet (`body == None`) stays unusable.
+    if fetched.book_snippet
+        && body.is_some()
+        && usability.reason == super::body_classifier::BodyUsabilityReason::ShortBody
+    {
+        usability = super::body_classifier::BodyUsability {
+            usable: true,
+            reason: super::body_classifier::BodyUsabilityReason::Ok,
+        };
+    }
     if !usability.usable {
         return Ok(unusable_source_outcome(
             usability.reason,
@@ -1463,6 +1560,7 @@ mod tests {
             status: 200,
             content_type: String::new(),
             raw_html: None,
+            book_snippet: false,
         });
         let outcome = block_on(verify_citation_use_site(
             &http,
@@ -1512,6 +1610,7 @@ mod tests {
                     status: 200,
                     content_type: String::new(),
                     raw_html: None,
+                    book_snippet: false,
                 }),
                 metadata_sidecar: metadata,
                 ..VerifyOptions::default()
@@ -2397,6 +2496,117 @@ mod tests {
             outcome.finding.unusable_reason,
             Some(BodyUsabilityReason::ViewerShell)
         );
+        assert!(outcome.votes.is_empty());
+    }
+
+    #[test]
+    fn book_snippet_bypasses_only_the_short_body_floor() {
+        // ADR-0024 Decision 4: a search-inside snippet body well below the
+        // 300-char web-page floor still reaches the panel...
+        let snippet = "Matilda longed for her parents to be good and loving.";
+        assert!(snippet.chars().count() < 300, "test premise: short body");
+        let fetch = StubHttpClient::new([]); // prefetched → any fetch errors the test
+        let model_client = StubModelClient::new([Ok(sp42_types::ModelCompletion {
+            text: r#"{"verdict":"SUPPORTED","quote":"good and loving"}"#.to_string(),
+            served_model: None,
+        })]);
+        let options = VerifyOptions {
+            repair_turn: false,
+            prefetched: Some(super::FetchedSource {
+                text: snippet.to_string(),
+                status: 200,
+                content_type: "text/plain".to_string(),
+                raw_html: None,
+                book_snippet: true,
+            }),
+            ..VerifyOptions::default()
+        };
+        let outcome = block_on(verify_citation_use_site(
+            &fetch,
+            &model_client,
+            &FixedClock::new(1000),
+            &[model()],
+            &request(
+                "Matilda wished for loving parents",
+                "https://archive.org/details/matilda00dahl/page/42",
+            ),
+            None,
+            0,
+            options,
+        ))
+        .expect("verifies");
+        assert_eq!(
+            outcome.finding.verdict,
+            CitationVerdict::Judged(SupportLevel::Supported)
+        );
+        assert_eq!(outcome.finding.grounding_status, GroundingStatus::Located);
+
+        // ...while the same short body WITHOUT the snippet provenance still
+        // short-circuits as ShortBody with no model call.
+        let fetch = StubHttpClient::new([]);
+        let model_client = StubModelClient::new([]);
+        let options = VerifyOptions {
+            repair_turn: false,
+            prefetched: Some(super::FetchedSource {
+                text: snippet.to_string(),
+                status: 200,
+                content_type: "text/plain".to_string(),
+                raw_html: None,
+                book_snippet: false,
+            }),
+            ..VerifyOptions::default()
+        };
+        let outcome = block_on(verify_citation_use_site(
+            &fetch,
+            &model_client,
+            &FixedClock::new(1000),
+            &[model()],
+            &request(
+                "Matilda wished for loving parents",
+                "https://example.org/short-page",
+            ),
+            None,
+            0,
+            options,
+        ))
+        .expect("verifies");
+        assert_eq!(outcome.finding.verdict, CitationVerdict::SourceUnavailable);
+        assert_eq!(
+            outcome.finding.unusable_reason,
+            Some(BodyUsabilityReason::ShortBody)
+        );
+        assert!(outcome.votes.is_empty());
+
+        // The bypass is scoped to the floor: an EMPTY snippet stays unusable
+        // even with the book provenance flag.
+        let fetch = StubHttpClient::new([]);
+        let model_client = StubModelClient::new([]);
+        let options = VerifyOptions {
+            repair_turn: false,
+            prefetched: Some(super::FetchedSource {
+                text: String::new(),
+                status: 200,
+                content_type: "text/plain".to_string(),
+                raw_html: None,
+                book_snippet: true,
+            }),
+            ..VerifyOptions::default()
+        };
+        let outcome = block_on(verify_citation_use_site(
+            &fetch,
+            &model_client,
+            &FixedClock::new(1000),
+            &[model()],
+            &request(
+                "Matilda wished for loving parents",
+                "https://archive.org/details/matilda00dahl",
+            ),
+            None,
+            0,
+            options,
+        ))
+        .expect("verifies");
+        assert_eq!(outcome.finding.verdict, CitationVerdict::SourceUnavailable);
         assert!(outcome.votes.is_empty());
     }
 

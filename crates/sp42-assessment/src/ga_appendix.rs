@@ -490,7 +490,7 @@ mod fixtures {
         }
     }
 
-    #[allow(clippy::too_many_lines)]
+    #[allow(clippy::too_many_lines)] // https://github.com/schiste/SP42/blob/main/docs/domains/assessment/prd/0016-ga-evidence-appendix-renderer.md full-appendix fixture spans every bucket by design
     pub fn full_report() -> PageVerificationReport {
         let mut findings = vec![];
 

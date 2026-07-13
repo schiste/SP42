@@ -506,6 +506,11 @@ fn short_cite_candidates(part: &serde_json::Value) -> Vec<String> {
     if concat.is_empty() {
         return Vec::new();
     }
+    // MediaWiki normalizes spaces to underscores in anchor ids, on both the
+    // rendered fragment href and the bibliography element id
+    // ({{sfn|Museum of Modern Art|2024}} → #CITEREFMuseum_of_Modern_Art2024;
+    // Codex round 9, PR 153).
+    let concat = concat.replace(' ', "_");
     vec![format!("CITEREF{concat}"), concat]
 }
 
@@ -1655,6 +1660,23 @@ mod tests {
             vec![BookIdentifier::isbn("978-0-306-40615-7").expect("valid")]
         );
         assert_eq!(r.book_sources[0].cited_page.as_deref(), Some("33"));
+    }
+
+    #[test]
+    fn multi_word_authors_normalize_spaces_to_underscores() {
+        // Codex round 9 (PR 153): anchor ids underscore-normalize spaces.
+        let part: serde_json::Value = serde_json::json!({
+            "template": {"target": {"wt": "sfn"}, "params": {
+                "1": {"wt": "Museum of Modern Art"}, "2": {"wt": "2024"}
+            }}
+        });
+        assert_eq!(
+            short_cite_candidates(&part),
+            vec![
+                "CITEREFMuseum_of_Modern_Art2024".to_string(),
+                "Museum_of_Modern_Art2024".to_string()
+            ]
+        );
     }
 
     #[test]

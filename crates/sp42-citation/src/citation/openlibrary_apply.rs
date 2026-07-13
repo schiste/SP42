@@ -617,7 +617,7 @@ mod tests {
         // A constant on purpose: this test is the tripwire that makes
         // flipping the gate a visible, reviewed act.
         #[allow(clippy::assertions_on_constants)]
-        // https://github.com/schiste/SP42 ADR-0025 enablement-gate tripwire
+        // https://github.com/schiste/SP42/pull/148 — ADR-0025 enablement-gate tripwire
         {
             assert!(!ENRICHMENT_WRITE_LANE_ENABLED);
         }

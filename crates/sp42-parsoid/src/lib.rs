@@ -489,7 +489,12 @@ fn short_cite_candidates(part: &serde_json::Value) -> Vec<String> {
         .map(str::trim)
         .filter(|v| !v.is_empty())
     {
-        return vec![ref_param.to_string()];
+        // The ref= value is the anchor, verbatim (Module:Footnotes); a
+        // CITEREF-prefixed variant is accepted too for templates that prefix
+        // it (Codex round 10, PR 153). Both are this part's own namespace —
+        // positional reconstruction stays excluded.
+        let normalized = ref_param.replace(' ', "_");
+        return vec![format!("CITEREF{normalized}"), normalized];
     }
     let mut concat = String::new();
     // Up to four author names plus the year: five positional params

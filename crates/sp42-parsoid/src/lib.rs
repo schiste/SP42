@@ -204,6 +204,34 @@ pub(crate) fn biblio_index(code: &Wikicode) -> BiblioIndex {
         }
     }
 
+    // Third pass: hand-written (template-less) bibliography items — an
+    // id-bearing element whose descendants carry ISBN magiclinks but no
+    // transclusion wrapper (dewiki-style manual bibliographies; Codex P2 on
+    // PR 153). Template-derived entries above win; this only fills ids the
+    // first two passes left empty.
+    for node in code.descendants() {
+        let Some(element) = node.as_element() else {
+            continue;
+        };
+        let id = {
+            let attrs = element.attributes.borrow();
+            match attrs.get("id") {
+                Some(id) if !index.contains_key(id) => id.to_string(),
+                _ => continue,
+            }
+        };
+        let isbns = magiclink_isbns(&node);
+        if !isbns.is_empty() {
+            index.insert(
+                id,
+                BookSource {
+                    identifiers: isbns,
+                    cited_page: None,
+                },
+            );
+        }
+    }
+
     index
 }
 
@@ -392,8 +420,10 @@ fn resolve_book_from_index(
     indexed_book: &BookSource,
     seen_identifiers: &std::collections::HashSet<String>,
 ) -> BookSource {
-    // Override cited_page with short-cite params if present
-    let cited_page = get_short_cite_page(part);
+    // The short-cite's own page wins (per-use-site precision); when it names
+    // none, keep the bibliography entry's page rather than dropping to None
+    // (Codex P2 on PR 153).
+    let cited_page = get_short_cite_page(part).or_else(|| indexed_book.cited_page.clone());
 
     // Filter out identifiers we've already seen in this ref
     let new_identifiers: Vec<_> = indexed_book
@@ -1460,6 +1490,48 @@ mod tests {
             r.book_sources.iter().all(|b| b.cited_page.is_none()),
             "MVP: no free-text page parse"
         );
+    }
+
+    #[test]
+    fn short_cite_resolves_a_template_less_magiclink_bibliography_item() {
+        // Codex P2 (PR 153): a hand-written bibliography li with an id and a
+        // magiclink ISBN but no transclusion wrapper must still be indexed,
+        // so a short cite targeting it resolves instead of flagging.
+        let blocks = blocks_from_fixture("parsoid_magiclink_dewiki.html");
+        let block = blocks
+            .iter()
+            .find(|b| b.text.contains("erweitert"))
+            .expect("anchored-ref block");
+        let r = block.refs.first().expect("the harvnb ref");
+        assert!(!r.short_cite_unresolved, "must resolve, not flag");
+        assert_eq!(r.book_sources.len(), 1);
+        assert_eq!(
+            r.book_sources[0].identifiers,
+            vec![BookIdentifier::isbn("978-0-306-40615-7").expect("valid isbn")]
+        );
+    }
+
+    #[test]
+    fn short_cite_without_a_page_keeps_the_bibliography_entry_page() {
+        // Codex P2 (PR 153): the short-cite page wins when present, but its
+        // absence must not erase the bibliography template's own page.
+        let indexed = BookSource {
+            identifiers: vec![BookIdentifier::isbn("978-0-306-40615-7").expect("valid")],
+            cited_page: Some("42".to_string()),
+        };
+        let no_page_part: serde_json::Value = serde_json::json!({
+            "template": {"target": {"wt": "sfn"}, "params": {"1": {"wt": "Doe"}, "2": {"wt": "2001"}}}
+        });
+        let resolved =
+            resolve_book_from_index(&no_page_part, &indexed, &std::collections::HashSet::new());
+        assert_eq!(resolved.cited_page.as_deref(), Some("42"), "preserved");
+
+        let paged_part: serde_json::Value = serde_json::json!({
+            "template": {"target": {"wt": "sfn"}, "params": {"1": {"wt": "Doe"}, "2": {"wt": "2001"}, "pp": {"wt": "7–9"}}}
+        });
+        let resolved =
+            resolve_book_from_index(&paged_part, &indexed, &std::collections::HashSet::new());
+        assert_eq!(resolved.cited_page.as_deref(), Some("7–9"), "override wins");
     }
 
     #[test]

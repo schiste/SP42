@@ -260,7 +260,9 @@ pub struct ScanAvailability {
 
 impl ScanAvailability {
     /// The scan eligible to enter grounding: an **exact** match, preferring
-    /// `full access` status — IA's fulltext search 403s lendable
+    /// (1) a usable `ocaid` — an exact item whose scan identity could not be
+    /// recovered cannot ground at all (Codex round 2, PR 147) — then
+    /// (2) `full access` status — IA's fulltext search 403s lendable
     /// (print-disabled) items (observed 2026-07-12), so a full-access scan
     /// grounds where a lendable one cannot. `None` when only similar-edition
     /// scans (or none) exist — grounding then degrades to
@@ -268,10 +270,13 @@ impl ScanAvailability {
     /// against a different edition.
     #[must_use]
     pub fn groundable_scan(&self) -> Option<&ScanItem> {
-        self.exact
-            .iter()
-            .find(|item| item.status.eq_ignore_ascii_case("full access"))
-            .or_else(|| self.exact.first())
+        let rank = |item: &&ScanItem| {
+            (
+                item.ocaid.is_none(),
+                !item.status.eq_ignore_ascii_case("full access"),
+            )
+        };
+        self.exact.iter().min_by_key(rank)
     }
 }
 
@@ -704,6 +709,22 @@ mod tests {
         let availability = parse_scan_availability(body).expect("parses");
         let scan = availability.groundable_scan().expect("grounds");
         assert_eq!(scan.ocaid.as_deref(), Some("soleitem0001"));
+    }
+
+    #[test]
+    fn groundable_scan_prefers_a_usable_ocaid_over_status() {
+        // Codex round 2: an exact item with no recoverable ocaid cannot
+        // ground; a later exact item that carries one must win even when the
+        // ocaid-less item has better status.
+        let body = br#"{
+            "items": [
+                {"match": "exact", "status": "full access", "itemURL": "http://openlibrary.org/books/OL1M/X/borrow"},
+                {"match": "exact", "status": "lendable", "itemURL": "https://archive.org/details/usable0001"}
+            ]
+        }"#;
+        let availability = parse_scan_availability(body).expect("parses");
+        let scan = availability.groundable_scan().expect("grounds");
+        assert_eq!(scan.ocaid.as_deref(), Some("usable0001"));
     }
 
     #[test]

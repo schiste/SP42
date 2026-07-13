@@ -196,6 +196,10 @@ where
 
     let findings: Vec<PageFinding> = report.findings.into_iter().map(to_page_finding).collect();
     let verified_count = findings.len();
+    // Book resolution can add skips (NotFound / LookupFailed ISBN-only refs)
+    // inside verify_page, so the non-estimate count comes from the report,
+    // not the pre-resolution extract (Codex round 2, PR 147).
+    let skipped_count = report.skipped.len();
 
     PageVerifyResult {
         use_site_count,

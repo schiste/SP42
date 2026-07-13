@@ -499,11 +499,17 @@ fn fix_citation_route(finding: &CitationFinding) -> FixCitationRoute {
 
 /// An action row renders only for `Partial`/`NotSupported` findings;
 /// `Supported`/`SourceUnavailable` findings stay read-only (PRD-0014 `DoD`).
+///
+/// Book findings (`book_scan` present) stay read-only regardless of verdict:
+/// the server re-verify route selects from URL use-sites only, so a book
+/// Re-verify would always dead-end in `ref-not-found` (Codex round 2,
+/// PR 147). Book re-verify is an upstream follow-up on the reverify route.
 fn finding_has_action_row(finding: &CitationFinding) -> bool {
-    matches!(
-        finding.verdict,
-        CitationVerdict::Judged(SupportLevel::Partial | SupportLevel::NotSupported)
-    )
+    finding.book_scan.is_none()
+        && matches!(
+            finding.verdict,
+            CitationVerdict::Judged(SupportLevel::Partial | SupportLevel::NotSupported)
+        )
 }
 
 /// The concern kind SP42 suggests from `finding.verdict` (PRD-0014) — a
@@ -1470,6 +1476,16 @@ mod action_row_tests {
         assert!(!finding_has_action_row(&finding(
             CitationVerdict::SourceUnavailable
         )));
+        // Book findings stay read-only even on disagreement verdicts: the
+        // reverify route cannot select book use-sites yet (Codex round 2).
+        let mut book = finding(CitationVerdict::Judged(SupportLevel::NotSupported));
+        book.book_scan = Some(sp42_citation::BookScanProvenance {
+            ocaid: "item0001".to_string(),
+            scanned_page: Some(12),
+            cited_page: Some("12".to_string()),
+            note: None,
+        });
+        assert!(!finding_has_action_row(&book));
     }
 
     #[test]

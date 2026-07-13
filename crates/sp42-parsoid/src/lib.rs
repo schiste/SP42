@@ -475,65 +475,74 @@ fn fragment_keys_in_order(contents: &impl WikinodeIterator) -> std::collections:
     keys
 }
 
-/// Consume queued same-page fragments until one hits the bibliography index.
-/// Non-bibliography selflinks (section links like `#Notes`) are skipped, so
-/// they cannot steal a short cite's slot (Codex round 5, PR 153); consumed
-/// misses stay consumed, keeping later short cites aligned with later links.
-fn next_bibliography_hit(
-    queue: &mut std::collections::VecDeque<String>,
-    index: &BiblioIndex,
-) -> Option<String> {
-    while let Some(front) = queue.pop_front() {
-        if index.contains_key(&front) {
-            return Some(front);
-        }
+/// The anchor fragments a short-cite part can legitimately render, in
+/// preference order. An explicit `ref=` param fully determines the anchor
+/// (and positional reconstruction must NOT be tried — binding
+/// `CITEREF<author><year>` when the author wrote `ref=X` is a guessed
+/// identifier, Codex round 2, PR 153); otherwise the anchor is the
+/// positional 1..=4 concat, with and without the `CITEREF` prefix (enwiki
+/// vs frwiki conventions).
+fn short_cite_candidates(part: &serde_json::Value) -> Vec<String> {
+    if let Some(ref_param) = part
+        .pointer("/template/params/ref/wt")
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
+    {
+        return vec![ref_param.to_string()];
     }
-    None
-}
-
-/// Reconstruction-only resolution for a short cite whose ref body carried NO
-/// same-page fragment links at all. When links existed but none hit the
-/// index, the caller must NOT call this — an explicit link is authoritative
-/// and reconstruction could bind a different entry (Codex round 2, PR 153).
-fn resolve_short_cite(
-    part: &serde_json::Value,
-    index: &BiblioIndex,
-    seen_identifiers: &std::collections::HashSet<String>,
-) -> Option<BookSource> {
-    // Reconstructed key from positional params 1..=4
-    let mut param_keys = Vec::new();
+    let mut concat = String::new();
     for i in 1..=4 {
         if let Some(param) = part
             .pointer(&format!("/template/params/{i}/wt"))
             .and_then(|v| v.as_str())
         {
-            param_keys.push(param.trim().to_string());
+            concat.push_str(param.trim());
         }
     }
-    let reconstructed_key = if param_keys.is_empty() {
-        String::new()
-    } else {
-        param_keys.join("")
-    };
-
-    let citeref_key = format!("CITEREF{reconstructed_key}");
-    if let Some(indexed_book) = index.get(&citeref_key) {
-        return Some(resolve_book_from_index(
-            part,
-            indexed_book,
-            seen_identifiers,
-        ));
+    if concat.is_empty() {
+        return Vec::new();
     }
+    vec![format!("CITEREF{concat}"), concat]
+}
 
-    if let Some(indexed_book) = index.get(&reconstructed_key) {
-        return Some(resolve_book_from_index(
-            part,
-            indexed_book,
-            seen_identifiers,
-        ));
+/// Resolve one short-cite part against the ref body's same-page links and
+/// the bibliography index, by **expected-anchor matching** (Codex rounds
+/// 2/3/5/6, PR 153): the part binds only a link whose fragment equals one of
+/// its own candidate anchors — so bundled parts each find their own link,
+/// unrelated section links can never match, and a matched link whose target
+/// is not book-indexed stays an authoritative miss. With no matching link,
+/// the candidates are tried directly against the index (safe: the candidate
+/// IS this part's own anchor, never a different entry's).
+fn resolve_short_cite(
+    part: &serde_json::Value,
+    fragment_keys: &mut std::collections::VecDeque<String>,
+    index: &BiblioIndex,
+    seen_identifiers: &std::collections::HashSet<String>,
+) -> Option<BookSource> {
+    let candidates = short_cite_candidates(part);
+    if candidates.is_empty() {
+        return None;
     }
-
-    None
+    if let Some(position) = fragment_keys
+        .iter()
+        .position(|frag| candidates.iter().any(|c| c == frag))
+    {
+        let frag = fragment_keys
+            .remove(position)
+            .expect("position from iter is in bounds");
+        // The part's own rendered link: resolve it or fail — never fall
+        // through to a different key.
+        return index
+            .get(&frag)
+            .map(|book| resolve_book_from_index(part, book, seen_identifiers));
+    }
+    // No link rendered for this part (plain-text body): the candidates are
+    // the part's own anchor, so direct index lookup is not a guess.
+    candidates
+        .iter()
+        .find_map(|key| index.get(key))
+        .map(|book| resolve_book_from_index(part, book, seen_identifiers))
 }
 
 /// Process {{ISBN}} templates in a reference transclusion.
@@ -599,10 +608,9 @@ fn sources_in_reference(
     let mut seen_urls = std::collections::HashSet::new();
     let mut seen_identifiers: std::collections::HashSet<String> = std::collections::HashSet::new();
     let mut short_cite_unresolved = false;
-    // Same-page links in the ref body, in order: each short-cite part consumes
-    // the next one, so bundled short citations bind to their own targets.
+    // Same-page links in the ref body, in order: each short-cite part binds
+    // the link matching its own expected anchor (expected-anchor matching).
     let mut fragment_keys = fragment_keys_in_order(&contents);
-    let body_had_fragment_links = !fragment_keys.is_empty();
 
     // First, check if this reference has a short-cite marker (sfn/harvsp/etc).
     // The ref marker's data-mw is keyed by the reference body id.
@@ -617,15 +625,9 @@ fn sources_in_reference(
                 let template_name = target_wt.trim().to_ascii_lowercase();
                 if SHORT_CITE_TEMPLATES.contains(&template_name.as_str()) {
                     // This is a short-cite template - try to resolve it
-                    let resolved = match next_bibliography_hit(&mut fragment_keys, index) {
-                        Some(key) => index
-                            .get(&key)
-                            .map(|book| resolve_book_from_index(part, book, &seen_identifiers)),
-                        // Links existed but none (left) hit: authoritative miss.
-                        None if body_had_fragment_links => None,
-                        None => resolve_short_cite(part, index, &seen_identifiers),
-                    };
-                    if let Some(resolved_book) = resolved {
+                    if let Some(resolved_book) =
+                        resolve_short_cite(part, &mut fragment_keys, index, &seen_identifiers)
+                    {
                         books.push(resolved_book.clone());
                         // Track identifiers we've added
                         for ident in &resolved_book.identifiers {
@@ -667,16 +669,12 @@ fn sources_in_reference(
                         {
                             let template_name = target_wt.trim().to_ascii_lowercase();
                             if SHORT_CITE_TEMPLATES.contains(&template_name.as_str()) {
-                                let resolved =
-                                    match next_bibliography_hit(&mut fragment_keys, index) {
-                                        Some(key) => index.get(&key).map(|book| {
-                                            resolve_book_from_index(part, book, &seen_identifiers)
-                                        }),
-                                        // Links existed but none (left) hit: authoritative miss.
-                                        None if body_had_fragment_links => None,
-                                        None => resolve_short_cite(part, index, &seen_identifiers),
-                                    };
-                                if let Some(resolved_book) = resolved {
+                                if let Some(resolved_book) = resolve_short_cite(
+                                    part,
+                                    &mut fragment_keys,
+                                    index,
+                                    &seen_identifiers,
+                                ) {
                                     books.push(resolved_book.clone());
                                     // Track identifiers we've added
                                     for ident in &resolved_book.identifiers {
@@ -1631,6 +1629,29 @@ mod tests {
             vec![BookIdentifier::isbn("2-85822-000-X").expect("valid")],
             "direct Ouvrage part still collected"
         );
+    }
+
+    #[test]
+    fn bundled_first_target_missing_does_not_steal_the_second() {
+        // Codex round 6 (PR 153): part one's target is absent from the
+        // bibliography; part two's resolves. Expected-anchor matching must
+        // leave part one unresolved (its own link is an authoritative miss)
+        // and bind part two to its own entry with its own page — never shift
+        // the later hit onto the earlier template.
+        let blocks = blocks_from_fixture("parsoid_sfn_enwiki.html");
+        let block = blocks.first().expect("prose block");
+        let r = block
+            .refs
+            .iter()
+            .find(|r| r.ref_id.contains("halfbundled"))
+            .expect("half-bundled ref");
+        assert!(r.short_cite_unresolved, "part one is an honest miss");
+        assert_eq!(r.book_sources.len(), 1, "only part two resolves");
+        assert_eq!(
+            r.book_sources[0].identifiers,
+            vec![BookIdentifier::isbn("978-0-306-40615-7").expect("valid")]
+        );
+        assert_eq!(r.book_sources[0].cited_page.as_deref(), Some("33"));
     }
 
     #[test]

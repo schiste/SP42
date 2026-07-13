@@ -139,20 +139,29 @@ pub fn extract_use_sites(
     for block in blocks {
         let sentences = segment_sentences(&block.text);
         for r in &block.refs {
-            if r.sources.is_empty() && r.book_sources.is_empty() {
-                // Nothing fetchable and nothing to resolve. Distinguish unresolved
-                // short-cite footnotes from other offline sources.
-                let reason = if r.short_cite_unresolved {
-                    SkippedReason::UnresolvedShortCite
-                } else {
-                    SkippedReason::NonUrlSource
-                };
+            // An unresolved short cite is disclosed as a skip even when the
+            // same ref also resolved other sources (a partially-resolved
+            // bundled ref): the resolved parts proceed below, and the missing
+            // bibliography target still surfaces instead of vanishing
+            // (Codex round 8, PR 153).
+            if r.short_cite_unresolved {
                 skipped.push(SkippedRef {
                     ref_id: r.ref_id.clone(),
-                    reason,
+                    reason: SkippedReason::UnresolvedShortCite,
                     block_ordinal: block.block_ordinal,
                     book_sources: Vec::new(),
                 });
+            }
+            if r.sources.is_empty() && r.book_sources.is_empty() {
+                if !r.short_cite_unresolved {
+                    // Nothing fetchable and nothing to resolve.
+                    skipped.push(SkippedRef {
+                        ref_id: r.ref_id.clone(),
+                        reason: SkippedReason::NonUrlSource,
+                        block_ordinal: block.block_ordinal,
+                        book_sources: Vec::new(),
+                    });
+                }
                 continue;
             }
 
@@ -520,10 +529,9 @@ mod tests {
 
     #[test]
     fn resolved_short_cite_ref_is_a_book_use_site_not_a_skip() {
-        // A short-cite that resolved carries book_sources (Phase 1 sets the flag
-        // false); belt-and-braces: with both set, book_sources win.
+        // A fully-resolved short cite (flag false) is a book use-site with
+        // no skip disclosure.
         let mut r = bref(10, &[]);
-        r.short_cite_unresolved = true;
         r.book_sources = vec![crate::wikitext_editor::BookSource {
             identifiers: vec![BookIdentifier::Isbn("9780140328721".to_string())],
             cited_page: None,
@@ -532,6 +540,24 @@ mod tests {
         let out = extract_use_sites(&[b], &page());
         assert_eq!(out.book_use_sites.len(), 1);
         assert!(out.skipped.is_empty());
+    }
+
+    #[test]
+    fn partially_resolved_bundled_ref_discloses_the_unresolved_part() {
+        // Codex round 8 (PR 153): a ref that resolved one bundled short cite
+        // but not another emits BOTH the book use-site and an
+        // unresolved-short-cite skip — the missing target never vanishes.
+        let mut r = bref(10, &[]);
+        r.short_cite_unresolved = true;
+        r.book_sources = vec![crate::wikitext_editor::BookSource {
+            identifiers: vec![BookIdentifier::Isbn("9780140328721".to_string())],
+            cited_page: None,
+        }];
+        let b = block("Cats purr.", vec![r]);
+        let out = extract_use_sites(&[b], &page());
+        assert_eq!(out.book_use_sites.len(), 1, "resolved part proceeds");
+        assert_eq!(out.skipped.len(), 1, "unresolved part disclosed");
+        assert_eq!(out.skipped[0].reason, SkippedReason::UnresolvedShortCite);
     }
 
     #[test]

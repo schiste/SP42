@@ -475,13 +475,32 @@ fn fragment_keys_in_order(contents: &impl WikinodeIterator) -> std::collections:
     keys
 }
 
+/// Consume queued same-page fragments until one hits the bibliography index.
+/// Non-bibliography selflinks (section links like `#Notes`) are skipped, so
+/// they cannot steal a short cite's slot (Codex round 5, PR 153); consumed
+/// misses stay consumed, keeping later short cites aligned with later links.
+fn next_bibliography_hit(
+    queue: &mut std::collections::VecDeque<String>,
+    index: &BiblioIndex,
+) -> Option<String> {
+    while let Some(front) = queue.pop_front() {
+        if index.contains_key(&front) {
+            return Some(front);
+        }
+    }
+    None
+}
+
+/// Reconstruction-only resolution for a short cite whose ref body carried NO
+/// same-page fragment links at all. When links existed but none hit the
+/// index, the caller must NOT call this — an explicit link is authoritative
+/// and reconstruction could bind a different entry (Codex round 2, PR 153).
 fn resolve_short_cite(
     part: &serde_json::Value,
-    fragment_key: Option<&str>,
     index: &BiblioIndex,
     seen_identifiers: &std::collections::HashSet<String>,
 ) -> Option<BookSource> {
-    // (b) Reconstructed key from positional params 1..=4
+    // Reconstructed key from positional params 1..=4
     let mut param_keys = Vec::new();
     for i in 1..=4 {
         if let Some(param) = part
@@ -496,17 +515,6 @@ fn resolve_short_cite(
     } else {
         param_keys.join("")
     };
-
-    // An explicit fragment link is authoritative: resolve it or fail. Falling
-    // through to reconstruction here could bind a DIFFERENT bibliography
-    // entry (custom ref= anchors, disambiguated 2014a-style keys) — a
-    // guessed identifier, which the design forbids (Codex round 2, PR 153).
-    // Reconstruction is only for refs whose body carries no fragment link.
-    if let Some(key) = fragment_key {
-        return index
-            .get(key)
-            .map(|indexed_book| resolve_book_from_index(part, indexed_book, seen_identifiers));
-    }
 
     let citeref_key = format!("CITEREF{reconstructed_key}");
     if let Some(indexed_book) = index.get(&citeref_key) {
@@ -594,6 +602,7 @@ fn sources_in_reference(
     // Same-page links in the ref body, in order: each short-cite part consumes
     // the next one, so bundled short citations bind to their own targets.
     let mut fragment_keys = fragment_keys_in_order(&contents);
+    let body_had_fragment_links = !fragment_keys.is_empty();
 
     // First, check if this reference has a short-cite marker (sfn/harvsp/etc).
     // The ref marker's data-mw is keyed by the reference body id.
@@ -608,10 +617,15 @@ fn sources_in_reference(
                 let template_name = target_wt.trim().to_ascii_lowercase();
                 if SHORT_CITE_TEMPLATES.contains(&template_name.as_str()) {
                     // This is a short-cite template - try to resolve it
-                    let fragment = fragment_keys.pop_front();
-                    if let Some(resolved_book) =
-                        resolve_short_cite(part, fragment.as_deref(), index, &seen_identifiers)
-                    {
+                    let resolved = match next_bibliography_hit(&mut fragment_keys, index) {
+                        Some(key) => index
+                            .get(&key)
+                            .map(|book| resolve_book_from_index(part, book, &seen_identifiers)),
+                        // Links existed but none (left) hit: authoritative miss.
+                        None if body_had_fragment_links => None,
+                        None => resolve_short_cite(part, index, &seen_identifiers),
+                    };
+                    if let Some(resolved_book) = resolved {
                         books.push(resolved_book.clone());
                         // Track identifiers we've added
                         for ident in &resolved_book.identifiers {
@@ -653,13 +667,16 @@ fn sources_in_reference(
                         {
                             let template_name = target_wt.trim().to_ascii_lowercase();
                             if SHORT_CITE_TEMPLATES.contains(&template_name.as_str()) {
-                                let fragment = fragment_keys.pop_front();
-                                if let Some(resolved_book) = resolve_short_cite(
-                                    part,
-                                    fragment.as_deref(),
-                                    index,
-                                    &seen_identifiers,
-                                ) {
+                                let resolved =
+                                    match next_bibliography_hit(&mut fragment_keys, index) {
+                                        Some(key) => index.get(&key).map(|book| {
+                                            resolve_book_from_index(part, book, &seen_identifiers)
+                                        }),
+                                        // Links existed but none (left) hit: authoritative miss.
+                                        None if body_had_fragment_links => None,
+                                        None => resolve_short_cite(part, index, &seen_identifiers),
+                                    };
+                                if let Some(resolved_book) = resolved {
                                     books.push(resolved_book.clone());
                                     // Track identifiers we've added
                                     for ident in &resolved_book.identifiers {

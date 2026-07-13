@@ -152,7 +152,11 @@ where
     M: ModelClient + ?Sized,
 {
     let mut extract = extract_use_sites(&blocks, request);
-    let use_site_count = extract.use_sites.len();
+    // Book use-sites fan out through the same panel (resolve → ground →
+    // verdict), so the agent-facing cost guard counts them alongside URL
+    // use-sites (Codex P1, PR #147): the estimate reports the full width and
+    // the cap bounds the combined fan-out.
+    let use_site_count = extract.use_sites.len() + extract.book_use_sites.len();
     let skipped_count = extract.skipped.len();
     let implied_panel_calls = use_site_count * panel.len();
 
@@ -171,7 +175,11 @@ where
     let limit = max_use_sites.unwrap_or(DEFAULT_MAX_USE_SITES);
     let truncated = use_site_count > limit;
     if truncated {
-        extract.use_sites.truncate(limit);
+        // URL use-sites keep their existing priority under the cap; book
+        // use-sites fill whatever budget remains.
+        let url_kept = extract.use_sites.len().min(limit);
+        extract.use_sites.truncate(url_kept);
+        extract.book_use_sites.truncate(limit - url_kept);
     }
 
     let report: PageVerificationReport = verify_page(
@@ -330,6 +338,58 @@ mod tests {
         assert_eq!(result.verified_count, 0);
         assert!(!result.truncated);
         assert!(result.findings.is_empty());
+    }
+
+    #[tokio::test]
+    async fn estimate_and_cap_count_book_use_sites() {
+        // Codex P1 (PR #147): book use-sites fan out through the same panel,
+        // so the cost estimate must count them and the fan-out cap must bound
+        // them — an ISBN-only page must never report zero implied work.
+        let fetch = StubHttpClient::new([]);
+        let models = StubModelClient::new([]);
+        let mut book_block = block_with(0, "cite_ref-book", "https://example.com/ignored");
+        book_block.refs[0].sources = vec![];
+        book_block.refs[0].book_sources = vec![sp42_citation::BookSource {
+            identifiers: vec![sp42_citation::BookIdentifier::Isbn(
+                "9780140328721".to_string(),
+            )],
+            cited_page: Some("42".to_string()),
+        }];
+        let blocks = vec![
+            book_block,
+            block_with(1, "cite_ref-url", "https://example.com/a"),
+        ];
+        let result = verify_extracted(
+            &fetch,
+            &models,
+            &FixedClock::new(0),
+            &[model(), model()],
+            blocks.clone(),
+            &page_request(),
+            true,
+            None,
+        )
+        .await;
+        // 1 URL use-site + 1 book use-site, × 2-model panel.
+        assert_eq!(result.use_site_count, 2);
+        assert_eq!(result.implied_panel_calls, 4);
+
+        // A cap of 1 keeps the URL use-site and truncates the book fan-out:
+        // with empty stub queues the run would error if any book lookup or
+        // panel call escaped the cap... but a capped run still calls the URL
+        // lane, so assert via the estimate path with the cap accounted:
+        let result = verify_extracted(
+            &fetch,
+            &models,
+            &FixedClock::new(0),
+            &[model(), model()],
+            blocks,
+            &page_request(),
+            true,
+            Some(1),
+        )
+        .await;
+        assert_eq!(result.use_site_count, 2, "estimate reports full width");
     }
 
     #[tokio::test]

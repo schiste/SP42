@@ -23,7 +23,7 @@ sp42-citation = { path = "../sp42-citation" }
 sp42-patrol = { path = "../sp42-patrol" }
 sp42-reporting = { path = "../sp42-reporting" }
 sp42-types = { path = "../sp42-types" }
-tokio.workspace = true
+tokio = { workspace = true, features = ["time"] }
 
 [dev-dependencies]
 url.workspace = true

@@ -391,7 +391,7 @@ fn resolve_book_from_index(
     part: &serde_json::Value,
     indexed_book: &BookSource,
     seen_identifiers: &std::collections::HashSet<String>,
-) -> Option<BookSource> {
+) -> BookSource {
     // Override cited_page with short-cite params if present
     let cited_page = get_short_cite_page(part);
 
@@ -410,10 +410,10 @@ fn resolve_book_from_index(
         new_identifiers
     };
 
-    Some(BookSource {
+    BookSource {
         identifiers,
         cited_page,
-    })
+    }
 }
 
 /// Resolve a short-cite template to a bibliography-indexed `BookSource`.
@@ -464,19 +464,109 @@ fn resolve_short_cite(
     if let Some(key) = &fragment_key
         && let Some(indexed_book) = index.get(key)
     {
-        return resolve_book_from_index(part, indexed_book, seen_identifiers);
+        return Some(resolve_book_from_index(
+            part,
+            indexed_book,
+            seen_identifiers,
+        ));
     }
 
     let citeref_key = format!("CITEREF{reconstructed_key}");
     if let Some(indexed_book) = index.get(&citeref_key) {
-        return resolve_book_from_index(part, indexed_book, seen_identifiers);
+        return Some(resolve_book_from_index(
+            part,
+            indexed_book,
+            seen_identifiers,
+        ));
     }
 
     if let Some(indexed_book) = index.get(&reconstructed_key) {
-        return resolve_book_from_index(part, indexed_book, seen_identifiers);
+        return Some(resolve_book_from_index(
+            part,
+            indexed_book,
+            seen_identifiers,
+        ));
     }
 
     None
+}
+
+/// Process {{ISBN}} templates in a reference transclusion.
+/// Extracts ISBNs from positional params and adds them as BookSources,
+/// deduping against already-collected identifiers.
+fn process_isbn_template(
+    data_mw: &str,
+    books: &mut Vec<BookSource>,
+    seen_identifiers: &mut std::collections::HashSet<String>,
+) {
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(data_mw) else {
+        return;
+    };
+    let Some(parts) = value.get("parts").and_then(|p| p.as_array()) else {
+        return;
+    };
+
+    for part in parts {
+        let Some(target_wt) = part.pointer("/template/target/wt").and_then(|v| v.as_str()) else {
+            continue;
+        };
+        if !target_wt.trim().eq_ignore_ascii_case("isbn") {
+            continue;
+        }
+
+        let Some(params) = part.pointer("/template/params") else {
+            continue;
+        };
+        for i in 1..=10 {
+            if let Some(isbn_val) = params.pointer(&format!("/{i}/wt")).and_then(|v| v.as_str())
+                && let Some(isbn) = BookIdentifier::isbn(isbn_val.trim())
+                && !seen_identifiers.contains(&isbn.to_string())
+            {
+                books.push(BookSource {
+                    identifiers: vec![isbn.clone()],
+                    cited_page: None,
+                });
+                seen_identifiers.insert(isbn.to_string());
+            }
+        }
+    }
+}
+
+/// Process short-cite marker data from a reference.
+/// Resolves sfn/harvsp/etc templates to bibliography-indexed book sources.
+fn process_short_cite_marker(
+    marker_data: &str,
+    index: &BiblioIndex,
+    books: &mut Vec<BookSource>,
+    seen_identifiers: &mut std::collections::HashSet<String>,
+    contents: &impl WikinodeIterator,
+) -> bool {
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(marker_data) else {
+        return false;
+    };
+    let Some(parts) = value.get("parts").and_then(|p| p.as_array()) else {
+        return false;
+    };
+
+    let mut found_short_cite = false;
+    for part in parts {
+        let Some(target_wt) = part.pointer("/template/target/wt").and_then(|v| v.as_str()) else {
+            continue;
+        };
+        let template_name = target_wt.trim().to_ascii_lowercase();
+        if SHORT_CITE_TEMPLATES.contains(&template_name.as_str()) {
+            found_short_cite = true;
+            if let Some(resolved_book) = resolve_short_cite(part, contents, index, seen_identifiers) {
+                books.push(resolved_book.clone());
+                for ident in &resolved_book.identifiers {
+                    seen_identifiers.insert(ident.to_string());
+                }
+            } else {
+                return true; // Unresolved short-cite
+            }
+        }
+    }
+    false
 }
 
 /// Cited source extraction from a reference's contents.
@@ -487,6 +577,7 @@ fn resolve_short_cite(
 /// identifier (`isbn`/`oclc`/`lccn`/`ol`) yields one `BookSource`, whether or not
 /// it also carries a URL (ADR-0024 Decision 1). Short-cite templates (sfn/harvsp/etc)
 /// resolve to bibliography-indexed book sources via fragment matching.
+#[allow(clippy::too_many_lines)]
 fn sources_in_reference(
     reference: &Reference,
     index: &BiblioIndex,
@@ -575,6 +666,9 @@ fn sources_in_reference(
                     }
                 }
 
+                // Check if this is an {{ISBN|...}} template
+                process_isbn_template(data_mw, &mut books, &mut seen_identifiers);
+
                 // If not a short-cite, process as a regular template
                 if !is_short_cite {
                     push_template_sources(data_mw, &mut sources, &mut books, &mut seen_urls);
@@ -609,6 +703,19 @@ fn sources_in_reference(
                     archive_urls: vec![],
                 });
             }
+        }
+    }
+
+    // Extract ISBN magiclinks from the reference contents
+    let magiclink_isbns_in_ref = magiclink_isbns(&contents);
+    for isbn in magiclink_isbns_in_ref {
+        // Only add if not already collected
+        if !seen_identifiers.contains(&isbn.to_string()) {
+            books.push(BookSource {
+                identifiers: vec![isbn.clone()],
+                cited_page: None,
+            });
+            seen_identifiers.insert(isbn.to_string());
         }
     }
 
@@ -1368,5 +1475,37 @@ mod tests {
             !r.short_cite_unresolved,
             "direct cites should not be flagged"
         );
+    }
+
+    #[test]
+    fn ref_local_isbn_magiclinks_become_book_sources() {
+        let blocks = blocks_from_fixture("parsoid_magiclink_dewiki.html");
+        let r = blocks
+            .first()
+            .expect("at least one block")
+            .refs
+            .first()
+            .expect("at least one ref");
+        assert_eq!(r.book_sources.len(), 2, "both magiclinks, checksum-valid");
+        assert!(
+            r.book_sources.iter().all(|b| b.cited_page.is_none()),
+            "MVP: no free-text page parse"
+        );
+    }
+
+    #[test]
+    fn isbn_template_transclusion_in_a_ref_becomes_a_book_source() {
+        // {{ISBN|978-…}} renders as a transclusion whose target.wt is "ISBN";
+        // add a ref carrying one to the enwiki fixture (enwiki dropped magic
+        // links in 2017 — the template is its replacement).
+        let blocks = blocks_from_fixture("parsoid_sfn_enwiki.html");
+        let block = blocks.first().expect("at least one block");
+        // Find the ISBN-template ref (add it to the fixture in this task)
+        let r = block
+            .refs
+            .iter()
+            .find(|ref_item| ref_item.ref_id.contains("isbn-template"))
+            .expect("should find ISBN-template ref");
+        assert_eq!(r.book_sources.len(), 1);
     }
 }

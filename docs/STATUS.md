@@ -78,7 +78,9 @@ PWA packaging and offline installability are now effectively complete for local 
   report is in review (PR #81).
 - book-citation grounding (PRD-0009, ADR-0024) has its read-only resolve and
   grounding lanes: validated book identifiers (ISBN/OCLC/LCCN/OLID) are extracted
-  from cite-template `data-mw`, `verify-page` resolves each book ref through the
+  from cite-template `data-mw` and via bibliography indirection (shortened
+  footnotes resolving through bibliography sections via fragment-link matching and
+  ref-local structured identifiers), `verify-page` resolves each book ref through the
   side-effect-free Open Library lookups (Books API catalog + Read API
   exact-vs-similar scan availability), and a resolved book with an exact-edition
   scan is grounded against Internet Archive search-inside snippets — the snippet
@@ -86,7 +88,9 @@ PWA packaging and offline installability are now effectively complete for local 
   bypass), cited-page-first with whole-book fallback, page-anchored deep links,
   and the honest `not_supported` vs `SourceUnavailable` split; unresolved books
   stay skipped with a refined reason and a Books report section shows every
-  resolution; the enrichment lane (Layer 3) is
+  resolution; unresolved shortened footnotes (no matching bibliography entry,
+  or matched entry lacks a validated identifier) are disclosed with their own
+  distinct skip reason; the enrichment lane (Layer 3) is
   implemented as mechanism + fixture tests per ADR-0025 — deterministic
   ISBN-completion candidates listed read-only in the Books section, and the
   apply machinery (per-operator S3-key login, REST lane with 403 fallback to

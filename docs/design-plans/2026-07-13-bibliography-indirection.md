@@ -1,7 +1,7 @@
 # Bibliography-indirection book identifiers — design sketch
 
 **Date:** 2026-07-13
-**Status:** Sketch (pre-implementation)
+**Status:** Implemented (this branch)
 **Governs the *how* for:** the PRD-0009 Layer-1 amendment of the same date
 (identifiers carried by indirection). No new PRD: user-facing behavior,
 outcome semantics, and honesty rules are PRD-0009's unchanged; this widens
@@ -94,12 +94,26 @@ appendix's honesty arms name them.
 
 ## Done when
 
-- ESC 1973's `{{sfn}}` refs produce `BookSource`s with identifiers from the
+- [x] ESC 1973's `{{sfn}}` refs produce `BookSource`s with identifiers from the
   bibliography and per-ref `cited_page`s (fixture test on the trimmed en
   fragment; live smoke re-run recorded in the PR).
-- The fr fixture resolves without any CITEREF assumption (prefix-less id).
-- The de fixture yields ref-local magiclink `BookSource`s.
-- An unresolvable short-cite ref (no matching id) keeps a skip with a
+  **Test:** `sfn_ref_resolves_to_the_bibliography_book_source_with_its_own_pages` (sp42-parsoid)
+- [x] The fr fixture resolves without any CITEREF assumption (prefix-less id).
+  **Test:** `harvsp_ref_resolves_a_non_ascii_prefixless_fragment` (sp42-parsoid)
+- [x] The de fixture yields ref-local magiclink `BookSource`s.
+  **Test:** `ref_local_isbn_magiclinks_become_book_sources` (sp42-parsoid)
+- [x] An unresolvable short-cite ref (no matching id) keeps a skip with a
   refined reason, never a guessed identifier.
-- Existing direct-template extraction is byte-identically unaffected
+  **Tests:** `unresolvable_short_cite_yields_no_book_source_and_flags_the_ref` (sp42-parsoid);
+  `unresolved_short_cite_ref_gets_the_refined_skip_reason` (sp42-citation extract)
+- [x] Existing direct-template extraction is byte-identically unaffected
   (regression: the current book-lane tests all pass unchanged).
+  **Test:** `direct_cite_book_extraction_is_unchanged` (sp42-parsoid)
+
+## Follow-up (cross-branch)
+
+GA appendix copy for `unresolved_short_cite` (reader-facing vocabulary +
+explainer entry) lands when this branch and `claude/ga-appendix-renderer` meet
+— tracked in whichever merges second. The renderer's skip vocabulary and
+`what-is-this-appendix.md` explainer must gain the new reason's user-facing
+copy in the unmerged branch before the merge is complete.

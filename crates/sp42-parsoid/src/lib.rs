@@ -107,14 +107,12 @@ pub async fn fetch_page_blocks(
 /// Document-level index of bibliography-entry book sources, keyed by DOM id
 /// (the `#CITEREF…`-style anchor targets of shortened footnotes; frwiki ids
 /// carry no CITEREF prefix, so keys are stored verbatim).
-#[allow(dead_code)] // https://github.com/schiste/SP42/issues/TODO bibliography-indirection phase 1
 type BiblioIndex = std::collections::HashMap<String, BookSource>;
 
 /// Extract ISBN identifiers from descendant ISBN magiclink elements.
 /// For each `a.mw-magiclink-isbn` found, extract the last path segment of the href
 /// (which is the normalized ISBN digits), validate via `BookIdentifier::isbn`,
 /// and collect all valid ISBNs into a vec.
-#[allow(dead_code)] // https://github.com/schiste/SP42/issues/TODO bibliography-indirection phase 1
 pub(crate) fn magiclink_isbns(node: &impl WikinodeIterator) -> Vec<BookIdentifier> {
     let mut isbns = Vec::new();
     let selected = node.select("[class~=\"mw-magiclink-isbn\"]");
@@ -134,7 +132,6 @@ pub(crate) fn magiclink_isbns(node: &impl WikinodeIterator) -> Vec<BookIdentifie
 /// Maps DOM `id` attributes to their corresponding `BookSource`s from either:
 /// - Template params (data-mw `isbn`, `oclc`, `lccn`, `ol` params)
 /// - Descendant ISBN magiclinks
-#[allow(dead_code)] // https://github.com/schiste/SP42/issues/TODO bibliography-indirection phase 1
 pub(crate) fn biblio_index(code: &Wikicode) -> BiblioIndex {
     let mut index = BiblioIndex::new();
     let mut about_to_book: HashMap<String, BookSource> = HashMap::new();
@@ -189,7 +186,10 @@ pub(crate) fn biblio_index(code: &Wikicode) -> BiblioIndex {
     }
 
     // Second pass: walk ALL elements looking for ids with matching about values
-    // This handles enwiki's shape where id is on a different element than data-mw
+    // This handles enwiki's shape where id is on a different element than data-mw.
+    // Assumption: one cite template output carries one id-bearing element per about;
+    // multiple id descendants under one about all map to the same book by design
+    // (first-writer-wins on id collisions via the !index.contains_key check).
     let all_elems = code.descendants();
     for node in all_elems {
         if let Some(element) = node.as_element() {
@@ -542,7 +542,7 @@ fn process_isbn_template(
 /// identifier (`isbn`/`oclc`/`lccn`/`ol`) yields one `BookSource`, whether or not
 /// it also carries a URL (ADR-0024 Decision 1). Short-cite templates (sfn/harvsp/etc)
 /// resolve to bibliography-indexed book sources via fragment matching.
-#[allow(clippy::too_many_lines)] // https://github.com/schiste/SP42/issues/TODO bibliography-indirection phase 1
+#[allow(clippy::too_many_lines)] // https://github.com/schiste/SP42/blob/main/docs/design-plans/2026-07-13-bibliography-indirection.md sources_in_reference spans both lanes by design
 fn sources_in_reference(
     reference: &Reference,
     index: &BiblioIndex,
@@ -1337,11 +1337,11 @@ mod tests {
     #[test]
     fn biblio_index_reads_data_mw_on_the_id_element_itself() {
         // frwiki: {{Ouvrage}} puts data-mw directly on the id-bearing span,
-        // and the id has no CITEREF prefix.
+        // and the id has no CITEREF prefix. The fixture uses a literal UTF-8 accented id.
         let html = include_str!("../tests/fixtures/parsoid_harvsp_frwiki.html");
         let code = Wikicode::new(html);
         let index = biblio_index(&code);
-        assert!(index.contains_key("CaillouHofbauer2007"));
+        assert!(index.contains_key("Martin-Demézil1986"));
     }
 
     #[test]
@@ -1392,16 +1392,16 @@ mod tests {
     }
 
     #[test]
-    fn harvsp_ref_resolves_a_percent_encoded_prefixless_fragment() {
+    fn harvsp_ref_resolves_a_non_ascii_prefixless_fragment() {
         let blocks = blocks_from_fixture("parsoid_harvsp_frwiki.html");
         let block = blocks.first().expect("at least one block");
-        // The frwiki fixture should have a harvsp ref
+        // The frwiki fixture should have a harvsp ref with non-ASCII (literal UTF-8 accented) anchor
         let r = block.refs.first().expect("should find a ref");
 
         assert_eq!(
             r.book_sources.len(),
             1,
-            "harvsp should resolve to bibliography entry"
+            "harvsp should resolve to bibliography entry via literal UTF-8 fragment"
         );
         assert_eq!(
             r.book_sources[0].identifiers[0],
@@ -1451,7 +1451,11 @@ mod tests {
             .refs
             .first()
             .expect("at least one ref");
-        assert_eq!(r.book_sources.len(), 2, "both magiclinks, checksum-valid");
+        assert_eq!(
+            r.book_sources.len(),
+            3,
+            "all three magiclinks, checksum-valid"
+        );
         assert!(
             r.book_sources.iter().all(|b| b.cited_page.is_none()),
             "MVP: no free-text page parse"
@@ -1472,5 +1476,32 @@ mod tests {
             .find(|ref_item| ref_item.ref_id.contains("isbn-template"))
             .expect("should find ISBN-template ref");
         assert_eq!(r.book_sources.len(), 1);
+    }
+
+    #[test]
+    fn sfn_without_a_body_link_resolves_via_the_reconstructed_key() {
+        // Test that an sfn template without a fragment href in its body (plain text)
+        // can still resolve via the reconstructed CITEREF key from params.
+        // The fixture's fourth ref has params 1=Roxburgh 2=2014 which reconstructs
+        // to CITEREFRoxburgh2014, matching the existing bibliography entry.
+        let blocks = blocks_from_fixture("parsoid_sfn_enwiki.html");
+        let block = blocks.first().expect("at least one block");
+        // Find the fallback ref (no body link, reconstructed key resolution)
+        let r = block
+            .refs
+            .iter()
+            .find(|ref_item| ref_item.ref_id.contains("fallback-roxburgh"))
+            .expect("should find fallback-roxburgh ref");
+
+        assert_eq!(
+            r.book_sources.len(),
+            1,
+            "sfn without body link should resolve via reconstructed CITEREF key"
+        );
+        assert_eq!(
+            r.book_sources[0].identifiers[0],
+            BookIdentifier::isbn("978-1-84583-093-9").expect("valid"),
+            "should resolve to the Roxburgh 2014 bibliography entry"
+        );
     }
 }

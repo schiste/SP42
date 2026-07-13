@@ -490,15 +490,15 @@ fn resolve_short_cite(
         param_keys.join("")
     };
 
-    // Try fragment key first, then reconstructed keys (with and without CITEREF prefix)
-    if let Some(key) = &fragment_key
-        && let Some(indexed_book) = index.get(key)
-    {
-        return Some(resolve_book_from_index(
-            part,
-            indexed_book,
-            seen_identifiers,
-        ));
+    // An explicit fragment link is authoritative: resolve it or fail. Falling
+    // through to reconstruction here could bind a DIFFERENT bibliography
+    // entry (custom ref= anchors, disambiguated 2014a-style keys) — a
+    // guessed identifier, which the design forbids (Codex round 2, PR 153).
+    // Reconstruction is only for refs whose body carries no fragment link.
+    if let Some(key) = &fragment_key {
+        return index
+            .get(key)
+            .map(|indexed_book| resolve_book_from_index(part, indexed_book, seen_identifiers));
     }
 
     let citeref_key = format!("CITEREF{reconstructed_key}");
@@ -1548,6 +1548,24 @@ mod tests {
             .find(|ref_item| ref_item.ref_id.contains("isbn-template"))
             .expect("should find ISBN-template ref");
         assert_eq!(r.book_sources.len(), 1);
+    }
+
+    #[test]
+    fn explicit_fragment_miss_never_falls_back_to_reconstruction() {
+        // Codex round 2 (PR 153): a body link to an absent anchor (custom
+        // ref= / disambiguated keys) must stay unresolved, even when the
+        // template params would reconstruct to a DIFFERENT existing entry
+        // (Roxburgh/2014 here) — an explicit link is authoritative; anything
+        // else is a guessed identifier.
+        let blocks = blocks_from_fixture("parsoid_sfn_enwiki.html");
+        let block = blocks.first().expect("prose block");
+        let r = block
+            .refs
+            .iter()
+            .find(|r| r.ref_id.contains("custom-anchor"))
+            .expect("custom-anchor ref");
+        assert!(r.book_sources.is_empty(), "never a guessed identifier");
+        assert!(r.short_cite_unresolved, "explicit miss flags as unresolved");
     }
 
     #[test]

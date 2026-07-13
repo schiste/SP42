@@ -22,6 +22,12 @@
 # Run this from a residential/developer connection; a Cloudflare challenge
 # page here predicts the same for any cloud-hosted SP42 deployment.
 #
+# Note (2026-07-12, contract drift log in ADR-0024): IA's fulltext endpoint
+# 403s `lendable` (print-disabled) items — only `full access` scans complete
+# leg 4. A leg-4 403 on a lendable item is the documented gate, not drift.
+# The default ISBN's exact scan is lendable, so a full four-leg pass needs a
+# full-access exact-match ISBN as $1.
+#
 # Usage: scripts/openlibrary-contract-smoke.sh [ISBN13] ["search terms"]
 
 set -euo pipefail
@@ -110,15 +116,43 @@ import json
 import sys
 from urllib.parse import urlparse
 
-with open(sys.argv[1], "rb") as handle:
-    document = json.load(handle)
-for item in document.get("items", []):
-    if item.get("match") != "exact":
-        continue
-    url = urlparse(item["itemURL"])
+# Mirrors openlibrary.rs::parse_scan_availability: ocaid from the itemURL
+# details form (pre-2026 shape), else the item's fromRecord record
+# (details.details.ocaid / data.ebooks[].preview_url), else a sole
+# ocaid-bearing record (live shape since ~2026-07: itemURL is an
+# openlibrary.org /borrow link).
+
+def url_ocaid(url_string):
+    url = urlparse(url_string or "")
     parts = [p for p in url.path.split("/") if p]
     if url.hostname in ("archive.org", "www.archive.org") and parts[:1] == ["details"]:
-        print(parts[1])
+        return parts[1]
+    return None
+
+def record_ocaid(record):
+    ocaid = record.get("details", {}).get("details", {}).get("ocaid")
+    if ocaid:
+        return ocaid
+    for ebook in record.get("data", {}).get("ebooks", []):
+        found = url_ocaid(ebook.get("preview_url"))
+        if found:
+            return found
+    return None
+
+with open(sys.argv[1], "rb") as handle:
+    document = json.load(handle)
+records = document.get("records", {})
+record_ocaids = [o for o in (record_ocaid(r) for r in records.values()) if o]
+sole = record_ocaids[0] if len(set(record_ocaids)) == 1 and record_ocaids else None
+exact_items = [i for i in document.get("items", []) if i.get("match") == "exact"]
+# Mirror groundable_scan(): full-access exact scans first (lendable items 403
+# at the fulltext endpoint — ADR-0024 drift log).
+exact_items.sort(key=lambda i: i.get("status", "").lower() != "full access")
+for item in exact_items:
+    from_record = records.get(item.get("fromRecord", ""), {})
+    found = url_ocaid(item.get("itemURL")) or record_ocaid(from_record) or sole
+    if found:
+        print(found)
         break
 PY
 )"

@@ -230,11 +230,19 @@ pub fn build_scan_availability_request(identifier: &BookIdentifier) -> HttpReque
 pub struct ScanItem {
     /// Access level as reported (`full access`, `lendable`, …).
     pub status: String,
-    /// The archive.org item URL for the scan.
+    /// The item URL as reported. Historically `archive.org/details/<ocaid>`;
+    /// since mid-2026 lendable items carry an `openlibrary.org/…/borrow`
+    /// URL instead, so this is a display/link value, not the scan identity.
     pub item_url: String,
     /// Open Library edition id of the scanned volume, when reported.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ol_edition_id: Option<String>,
+    /// The archive.org scan identifier, resolved at parse time from the
+    /// `itemURL` (details form) or the response's records arm
+    /// (`details.details.ocaid` / `data.ebooks[].preview_url`). `None` means
+    /// the response named no scan this item can be grounded against.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ocaid: Option<String>,
 }
 
 /// Scan availability for a resolved edition, partitioned by match quality.
@@ -251,19 +259,52 @@ pub struct ScanAvailability {
 }
 
 impl ScanAvailability {
-    /// The scan eligible to enter grounding: the first **exact** match.
-    /// `None` when only similar-edition scans (or none) exist — grounding
-    /// then degrades to `SourceUnavailable` rather than verifying a
-    /// page-specific citation against a different edition.
+    /// The scan eligible to enter grounding: an **exact** match, preferring
+    /// `full access` status — IA's fulltext search 403s lendable
+    /// (print-disabled) items (observed 2026-07-12), so a full-access scan
+    /// grounds where a lendable one cannot. `None` when only similar-edition
+    /// scans (or none) exist — grounding then degrades to
+    /// `SourceUnavailable` rather than verifying a page-specific citation
+    /// against a different edition.
     #[must_use]
     pub fn groundable_scan(&self) -> Option<&ScanItem> {
-        self.exact.first()
+        self.exact
+            .iter()
+            .find(|item| item.status.eq_ignore_ascii_case("full access"))
+            .or_else(|| self.exact.first())
     }
+}
+
+/// The ocaid a Read API record names, from `details.details.ocaid` or the
+/// `data.ebooks[].preview_url` archive.org details link.
+fn record_ocaid(record: &Value) -> Option<String> {
+    if let Some(ocaid) = record
+        .pointer("/details/details/ocaid")
+        .and_then(Value::as_str)
+    {
+        return Some(ocaid.to_string());
+    }
+    record
+        .pointer("/data/ebooks")?
+        .as_array()?
+        .iter()
+        .find_map(|ebook| {
+            ebook
+                .get("preview_url")
+                .and_then(Value::as_str)
+                .and_then(crate::citation::search_inside::extract_ocaid)
+        })
 }
 
 /// Parse a Read API brief response into partitioned scan availability.
 /// `None` only for an unparseable body; a well-formed response with no items
 /// is `Some` with both lists empty ("record may exist, no scan").
+///
+/// The scan identity (`ocaid`) is resolved here: from the `itemURL` when it
+/// is an `archive.org/details/…` link (the pre-2026 shape), else from the
+/// item's `fromRecord` record — falling back to the response's sole
+/// ocaid-bearing record — because live responses now put an
+/// `openlibrary.org/…/borrow` URL in `itemURL` (contract smoke, 2026-07-12).
 #[must_use]
 pub fn parse_scan_availability(body: &[u8]) -> Option<ScanAvailability> {
     let parsed: Value = serde_json::from_slice(body).ok()?;
@@ -272,10 +313,24 @@ pub fn parse_scan_availability(body: &[u8]) -> Option<ScanAvailability> {
     let Some(items) = object.get("items") else {
         return Some(availability);
     };
+    let records = object.get("records").and_then(Value::as_object);
+    let sole_record_ocaid = records.and_then(|map| {
+        let mut found = map.values().filter_map(record_ocaid);
+        let first = found.next()?;
+        // Ambiguous (two records with different scans) → no fallback.
+        found.next().is_none().then_some(first)
+    });
     for item in items.as_array()? {
         let Some(item_url) = item.get("itemURL").and_then(Value::as_str) else {
             continue;
         };
+        let from_record_ocaid = || {
+            let key = item.get("fromRecord").and_then(Value::as_str)?;
+            record_ocaid(records?.get(key)?)
+        };
+        let ocaid = crate::citation::search_inside::extract_ocaid(item_url)
+            .or_else(from_record_ocaid)
+            .or_else(|| sole_record_ocaid.clone());
         let scan = ScanItem {
             status: item
                 .get("status")
@@ -287,6 +342,7 @@ pub fn parse_scan_availability(body: &[u8]) -> Option<ScanAvailability> {
                 .get("ol-edition-id")
                 .and_then(Value::as_str)
                 .map(ToString::to_string),
+            ocaid,
         };
         match item.get("match").and_then(Value::as_str) {
             Some("exact") => availability.exact.push(scan),
@@ -598,6 +654,77 @@ mod tests {
         assert_eq!(scan.item_url, "https://archive.org/details/matilda00dahl");
         assert_eq!(scan.status, "full access");
         assert_eq!(scan.ol_edition_id.as_deref(), Some("OL7826547M"));
+    }
+
+    #[test]
+    fn live_2026_07_shape_recovers_ocaid_from_the_records_arm() {
+        // Live drift caught by the contract smoke on 2026-07-12: exact-match
+        // items now carry an openlibrary.org /borrow itemURL (not
+        // archive.org/details/<ocaid>), so the ocaid must come from the
+        // records arm (details.details.ocaid, or data.ebooks preview_url).
+        // Shape taken from a live payload for ISBN 9780297833987.
+        let body = br#"{
+            "records": {
+                "/books/OL34854896M": {
+                    "recordURL": "https://openlibrary.org/books/OL34854896M",
+                    "data": {"ebooks": [{"preview_url": "https://archive.org/details/wessexbkpeopleon0000robi", "availability": "borrow"}]},
+                    "details": {"details": {"ocaid": "wessexbkpeopleon0000robi"}}
+                }
+            },
+            "items": [
+                {"match": "exact", "status": "lendable", "fromRecord": "/books/OL34854896M", "itemURL": "http://openlibrary.org/books/OL43436388M/Wessex/borrow", "ol-edition-id": "OL43436388M"}
+            ]
+        }"#;
+        let availability = parse_scan_availability(body).expect("parses");
+        let scan = availability.groundable_scan().expect("exact scan grounds");
+        assert_eq!(scan.ocaid.as_deref(), Some("wessexbkpeopleon0000robi"));
+    }
+
+    #[test]
+    fn archive_details_item_url_still_yields_the_ocaid() {
+        // The pre-drift shape keeps working: ocaid derived from the itemURL.
+        let body = br#"{"items": [{"match": "exact", "status": "full access", "itemURL": "https://archive.org/details/matilda00dahl"}]}"#;
+        let availability = parse_scan_availability(body).expect("parses");
+        let scan = availability.groundable_scan().expect("grounds");
+        assert_eq!(scan.ocaid.as_deref(), Some("matilda00dahl"));
+    }
+
+    #[test]
+    fn records_fallback_without_from_record_uses_a_sole_record() {
+        // Defensive: an exact item missing fromRecord still recovers the
+        // ocaid when exactly one record carries one (ambiguity yields None).
+        let body = br#"{
+            "records": {
+                "/books/OL1M": {"details": {"details": {"ocaid": "soleitem0001"}}}
+            },
+            "items": [
+                {"match": "exact", "status": "lendable", "itemURL": "http://openlibrary.org/books/OL2M/X/borrow"}
+            ]
+        }"#;
+        let availability = parse_scan_availability(body).expect("parses");
+        let scan = availability.groundable_scan().expect("grounds");
+        assert_eq!(scan.ocaid.as_deref(), Some("soleitem0001"));
+    }
+
+    #[test]
+    fn groundable_scan_prefers_full_access_over_lendable() {
+        // IA's fulltext endpoint 403s lendable (print-disabled) items since
+        // ~2026-07; a full-access exact scan grounds where a lendable one
+        // cannot, so it wins regardless of order.
+        let body = br#"{
+            "items": [
+                {"match": "exact", "status": "lendable", "itemURL": "https://archive.org/details/lendable0001"},
+                {"match": "exact", "status": "full access", "itemURL": "https://archive.org/details/fullaccess01"}
+            ]
+        }"#;
+        let availability = parse_scan_availability(body).expect("parses");
+        let scan = availability.groundable_scan().expect("grounds");
+        assert_eq!(scan.ocaid.as_deref(), Some("fullaccess01"));
+        // With only lendable exacts, still return one (honest 403 downstream
+        // beats silently skipping a scan that may regain access).
+        let body = br#"{"items": [{"match": "exact", "status": "lendable", "itemURL": "https://archive.org/details/lendable0001"}]}"#;
+        let availability = parse_scan_availability(body).expect("parses");
+        assert!(availability.groundable_scan().is_some());
     }
 
     #[test]

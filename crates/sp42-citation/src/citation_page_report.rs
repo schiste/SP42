@@ -436,6 +436,7 @@ mod tests {
                             status: "full access".to_string(),
                             item_url: "https://archive.org/details/matilda00dahl".to_string(),
                             ol_edition_id: None,
+                            ocaid: Some("matilda00dahl".to_string()),
                         }],
                         similar: vec![],
                     }),

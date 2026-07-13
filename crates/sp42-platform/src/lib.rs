@@ -188,8 +188,8 @@ pub use wikibase::{
     render_statement_claim, route_content_diff,
 };
 pub use wikitext_editor::{
-    BlockKind, BlockRef, CitedSource, ParsoidBlock, ScriptedEditorInvocation,
-    ScriptedWikitextEditor, ScriptedWikitextNode, WikitextEditOutcome, WikitextEditRefusal,
-    WikitextEditor, WikitextEditorError, WikitextNodeDescriptor, WikitextNodeKind,
-    WikitextNodeLocator, WikitextPageRef, normalize_anchor_text,
+    BlockKind, BlockRef, BookIdentifier, BookSource, CitedSource, ParsoidBlock,
+    ScriptedEditorInvocation, ScriptedWikitextEditor, ScriptedWikitextNode, WikitextEditOutcome,
+    WikitextEditRefusal, WikitextEditor, WikitextEditorError, WikitextNodeDescriptor,
+    WikitextNodeKind, WikitextNodeLocator, WikitextPageRef, normalize_anchor_text,
 };

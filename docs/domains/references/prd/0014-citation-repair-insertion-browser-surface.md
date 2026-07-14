@@ -16,6 +16,12 @@ rather than redefining either.
 
 ## Changelog
 
+- 2026-07-09: Amend the Re-verify contract to *cached page re-verification*
+  (new "Amendment (2026-07-09)" section) — Re-verify refreshes the whole page to
+  the current revision instead of folding one finding into a stale-revision
+  report, removing the mixed-revision display seam. Depends on **ADR-0019**
+  (in-memory verdict cache); the one-finding fold-and-regroup remains the interim
+  implementation with the mixed-revision display as a known limitation.
 - 2026-07-02: First implementation pass (this branch): the `CitationConcernKind`
   flag-citation mechanism, the Re-verify route, and the browser action row all
   land, with unit tests on the routing/gating logic. Not done: the
@@ -214,6 +220,48 @@ cost-ownership posture) — but it means checking whether an edit actually
 resolved a mismatch doesn't require leaving the card to re-run a full-page
 scan. It also doubles as a live check on how good the underlying rescan
 actually is, independent of whether any edit was made at all.
+
+### Amendment (2026-07-09): Re-verify is *cached page re-verification*
+
+The original design above re-verifies **one finding** and replaces its card in
+place. That is what the first implementation ships, but it has a seam that
+review surfaced: the report was loaded for revision *N*, and Re-verify checks
+the **current** article state (revision *N+1* after the operator's edit). Folding
+that *N+1* verdict back into an *N* report leaves the card's verdict fresh while
+the report header, the raw-text report, and the card's "show citation in
+article" link still read *N* — a **mixed-revision** display. The interim
+implementation carries this as a known limitation.
+
+The resolved contract is to make Re-verify **refresh the whole page to the
+current revision**, so header, links, per-verdict sections, and every card are
+consistently *as of N+1* and the mixed-revision state cannot arise. Re-running
+the entire page would normally be too expensive (a full model panel per
+citation), so this depends on the in-memory verdict cache specified in
+**ADR-0019 (Cached page re-verification)**:
+
+- A verdict is a function of the **source content** and the **claim sentence**
+  (the panel is fixed within a session). Cache it, content-addressed, by
+  `(snapshot_hash, claim)` — the primitive ADR-0009 already defines but leaves
+  dormant.
+- Re-verify re-fetches the **article** (that is the thing the operator changed —
+  the whole point), reuses **session-cached source bodies** (external sources are
+  stable across a few-minute session; no per-re-verify source re-fetch), and so
+  reuses cached verdicts for every citation whose source content and claim are
+  unchanged. Only the citation(s) the operator actually edited miss the cache and
+  spend fresh inference.
+- **No force-refresh control.** Every case that warrants fresh inference — an
+  edited claim, a changed source — busts the content-addressed cache
+  automatically; a case that hits is one where re-inferring could not legitimately
+  change the answer (e.g. repairing a bare URL into a cite template does not change
+  whether the source supports the claim). "Nothing changed ⇒ the same verdict" is
+  the honest outcome. A deliberate *second-opinion / re-roll on identical inputs*
+  is a **separate future control**, not Re-verify.
+
+Under this contract the operator-facing behavior of Re-verify becomes "bring this
+page up to date with the current article, cheaply," and the per-card verdict, its
+links, and the page's counts are always for the same revision. Mechanism, cache
+scope, and the fetch model are ADR-0019's to decide; this PRD owns only the
+contract.
 
 ## Definition of Done
 

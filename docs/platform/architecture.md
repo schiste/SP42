@@ -199,6 +199,7 @@ Reading notes:
 | [ADR-0015](../domains/references/adr/0015-rules-compliant-read-only-fetch-edge.md) | Rules-compliant read-only fetch edge | Accepted | references | `sp42-cli`, `sp42-core`, `sp42-fetch`, `sp42-inference`, `sp42-server`, `sp42-types` |
 | [ADR-0016](adr/0016-wikidata-entity-content-model.md) | Wikidata entity content-model — revision read, `EntityDiff`, and content-model routing | Proposed | platform | `sp42-mcp`, `sp42-platform`, `sp42-reporting`, `sp42-types` |
 | [ADR-0017](adr/0017-wikidata-statement-proposal-write-contract.md) | Wikidata statement-proposal write contract | Proposed | platform | `sp42-platform`, `sp42-types` |
+| [ADR-0019](../domains/references/adr/0019-cached-page-reverification.md) | Cached page re-verification | Proposed | references | — |
 | [ADR-0020](../domains/patrolling/adr/0020-live-operator-view-contract.md) | Live-operator-view contract — the server-assembled patrol payload | Accepted | patrolling | `sp42-live`, `sp42-patrol`, `sp42-platform`, `sp42-server` |
 | [ADR-0021](adr/0021-scoring-and-ranking-contract.md) | Scoring and ranking contract — composite score, policy schema, compile step | Accepted | platform | `sp42-core`, `sp42-patrol`, `sp42-platform` |
 | [ADR-0022](adr/0022-reviewer-action-contract.md) | Reviewer-action contract — dispositions, execute route, tokens, CSRF/baserevid | Accepted | platform | `sp42-platform`, `sp42-server` |
@@ -222,6 +223,6 @@ Reading notes:
 | [PRD-0010](../domains/references/prd/0010-citation-verification-mcp-surface.md) | Citation-verification agent surface (MCP) | Draft | references | ADR-0007, ADR-0008 |
 | [PRD-0011](../domains/wikidata/prd/0011-wikidata-first-class-target.md) | Wikidata as a first-class SP42 target | Draft | wikidata | ADR-0003, ADR-0007, ADR-0009, ADR-0010, ADR-0014, ADR-0016, ADR-0017 |
 | [PRD-0012](../domains/references/prd/0012-citation-insertion.md) | Citation insertion for unsourced claims | Discussion | references | ADR-0002, ADR-0003, ADR-0006, ADR-0010 |
-| [PRD-0014](../domains/references/prd/0014-citation-repair-insertion-browser-surface.md) | Citation repair and insertion — browser surface | Accepted | references | ADR-0003, ADR-0006, ADR-0010 |
+| [PRD-0014](../domains/references/prd/0014-citation-repair-insertion-browser-surface.md) | Citation repair and insertion — browser surface | Accepted | references | ADR-0003, ADR-0006, ADR-0009, ADR-0010, ADR-0019 |
 | [PRD-0015](../domains/assessment/prd/0015-article-stability-signal.md) | Article stability signal | Discussion | assessment | ADR-0006, ADR-0007, ADR-0009, ADR-0011, ADR-0014 |
 | [PRD-0016](../domains/assessment/prd/0016-ga-evidence-appendix-renderer.md) | GA evidence appendix renderer | Implemented (MVP; criterion-5 arm staged on PRD-0015) | assessment | ADR-0003, ADR-0007, ADR-0010, ADR-0011, ADR-0013, ADR-0018 |

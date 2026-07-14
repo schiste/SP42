@@ -326,6 +326,16 @@ if check:
     except FileNotFoundError:
         sys.exit(f"{OUT} does not exist — run scripts/generate-architecture-map.sh")
     if current != content:
+        # Print a unified diff so a CI-only mismatch is diagnosable from the
+        # log (local and CI have disagreed before; PR 154).
+        import difflib
+        diff = difflib.unified_diff(
+            current.splitlines(keepends=True),
+            content.splitlines(keepends=True),
+            fromfile=f"{OUT} (committed)",
+            tofile=f"{OUT} (regenerated)",
+        )
+        sys.stderr.writelines(diff)
         sys.exit(f"{OUT} is stale — run scripts/generate-architecture-map.sh and commit the result")
     print(f"SP42 architecture map: {OUT} is up to date.")
 else:

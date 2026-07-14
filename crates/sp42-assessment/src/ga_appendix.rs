@@ -40,7 +40,9 @@ fn ref_label(ref_id: &str, ordinal: u32) -> String {
     if name.is_empty() || !seq.chars().all(|c| c.is_ascii_digit()) {
         return fallback;
     }
-    format!("ref \"{}\"", name.replace('_', " "))
+    // Ref names are article-authored text (they ride the cite id); escape
+    // them like every other verbatim field (Codex round 9, PR 154).
+    format!("ref \"{}\"", escape_verbatim(&name.replace('_', " ")))
 }
 
 /// `YYYY-MM-DD` (UTC) from epoch milliseconds. Civil-from-days per Howard
@@ -1009,7 +1011,7 @@ mod helper_tests {
         // Named ref: cite_ref-<name>_<seq>-<use>
         assert_eq!(
             ref_label("cite_ref-Lux_history_1-0", 4),
-            "ref \"Lux history\""
+            "ref \"<nowiki>Lux history</nowiki>\""
         );
         // Unnamed ref: cite_ref-<n> — n is internal, use the per-report ordinal.
         assert_eq!(ref_label("cite_ref-6", 4), "ref #5");
@@ -1708,6 +1710,23 @@ mod renderer_tests {
             out.matches("<nowiki>").count(),
             out.matches("</nowiki>").count(),
             "wrappers balanced"
+        );
+    }
+
+    #[test]
+    fn hostile_ref_names_render_inert() {
+        // Codex round 9 (PR 154): a ref NAME carrying markup must escape.
+        let mut report = fixtures::full_report();
+        report.findings[0].ref_id = "cite_ref-{{evil}}_1-0".to_string();
+        let out = render_ga_appendix(&report, 0, "0.1.0");
+        assert!(
+            !out.contains("ref \"{{evil}}\""),
+            "template must not go live"
+        );
+        assert!(out.contains("ref \"<nowiki>{{evil}}</nowiki>\""));
+        assert_eq!(
+            out.matches("<nowiki>").count(),
+            out.matches("</nowiki>").count()
         );
     }
 

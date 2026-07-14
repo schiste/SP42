@@ -101,14 +101,13 @@ pub const UNUSABLE_GENERIC: &str = "a page the tool fetched but could not use";
 pub const SKIPPED_NON_URL: &str = "cites a book or offline source the tool does not verify";
 
 /// Skip reason: a book identifier was found but no catalog record resolved
-/// (or the lookup failed) — distinct from "not machine-verified at all".
+/// (or the lookup did not complete) — distinct from "not machine-verified at all".
 pub const SKIPPED_BOOK_UNRESOLVED: &str =
     "cites a book whose identifier matched no catalog record the tool could use";
 
 /// Skip reason: the catalog lookup never completed (a tool/transport
-/// failure) — the book may well have a record; nothing is implied about it.
-pub const SKIPPED_BOOK_LOOKUP_FAILED: &str =
-    "cites a book whose catalog lookup did not complete — a tool failure, not a catalog miss";
+/// problem) — the book may well have a record; nothing is implied about it.
+pub const SKIPPED_BOOK_LOOKUP_FAILED: &str = "cites a book whose catalog lookup did not complete — the tool could not reach the catalog; nothing is implied about the book";
 
 /// Books consulted section heading.
 pub const BUCKET_BOOKS_CONSULTED: &str = "==== Books consulted ====";
@@ -123,10 +122,10 @@ pub const BOOK_SCAN_SIMILAR_ONLY: &str = "scanned (similar edition only)";
 pub const BOOK_SCAN_NONE: &str = "not scanned in the tool's catalog";
 
 /// Reader-facing description when the tool could not verify scan availability.
-pub const BOOK_SCAN_UNKNOWN: &str = "scan availability unknown (lookup failed)";
+pub const BOOK_SCAN_UNKNOWN: &str = "scan availability unknown (the lookup did not complete)";
 
-/// Reader-facing description when a book catalog lookup never completed (transport failure).
-pub const BOOK_LOOKUP_FAILED: &str = "catalog lookup did not complete — a tool failure";
+/// Reader-facing description when a book catalog lookup never completed (transport problem).
+pub const BOOK_LOOKUP_FAILED: &str = "catalog lookup did not complete — a tool limitation";
 
 /// Reader-facing label for one validated book identifier.
 #[must_use]

@@ -209,6 +209,21 @@ pub fn render_ga_appendix(
     output
 }
 
+/// Label for a skipped ref: named cite ids keep the derived-name path; an
+/// unnamed id must NOT be numbered from `block_ordinal` (a paragraph index,
+/// not a citation number — Codex round 5, PR 154), so it renders
+/// block-anchored instead.
+fn skip_label(ref_id: &str, block_ordinal: usize) -> String {
+    let unnamed = ref_id
+        .strip_prefix("cite_ref-")
+        .is_none_or(|rest| rest.chars().all(|c| c.is_ascii_digit()));
+    if unnamed {
+        format!("an unnamed ref (block {block_ordinal})")
+    } else {
+        ref_label(ref_id, 0)
+    }
+}
+
 /// The skipped-refs section: reason-matched reader copy, with `BookSource`
 /// skips joined against `book_resolutions` so failed lookups are disclosed
 /// as tool failures (Codex rounds 2–3, PR 154).
@@ -248,8 +263,7 @@ fn render_skipped_section(output: &mut String, report: &sp42_citation::PageVerif
         output.push('\n');
         for skip in &report.skipped {
             output.push_str("* ");
-            let ordinal = u32::try_from(skip.block_ordinal).unwrap_or(0);
-            output.push_str(&ref_label(&skip.ref_id, ordinal));
+            output.push_str(&skip_label(&skip.ref_id, skip.block_ordinal));
             output.push_str(": ");
             output.push_str(match skip.reason {
                 sp42_citation::SkippedReason::NonUrlSource => crate::copy::SKIPPED_NON_URL,
@@ -563,17 +577,29 @@ fn sanitize_reason(reason: &str, block_ordinal: usize) -> String {
 
         let cite_id = &remaining[pos..pos + "cite_ref-".len() + token_end];
         let rest = cite_id.strip_prefix("cite_ref-").unwrap_or("");
+        // Reason strings punctuate ids ("verify … for cite_ref-64: …"); strip
+        // trailing punctuation before classifying (Codex round 5, PR 154).
+        let trailing_punct: usize = rest
+            .chars()
+            .rev()
+            .take_while(char::is_ascii_punctuation)
+            .map(char::len_utf8)
+            .sum();
+        let rest = &rest[..rest.len() - trailing_punct];
+        let cite_id = &cite_id[..cite_id.len() - trailing_punct];
 
         // For unnamed refs (all digits), use block-anchored label to distinguish
-        // multiple failures in the same output (Codex round 3, PR 154).
-        let label = if rest.chars().all(|c| c.is_ascii_digit()) {
+        // multiple failed extractions in the same output (Codex round 3, PR 154).
+        let label = if !rest.is_empty() && rest.chars().all(|c| c.is_ascii_digit()) {
             format!("an unnamed ref (block {block_ordinal})")
         } else {
             ref_label(cite_id, 0)
         };
         result.push_str(&label);
 
-        remaining = &remaining[pos + "cite_ref-".len() + token_end..];
+        // Re-emit stripped trailing punctuation ("cite_ref-64:" keeps its
+        // colon after the label).
+        remaining = &remaining[pos + "cite_ref-".len() + token_end - trailing_punct..];
     }
 
     result.push_str(remaining);
@@ -1477,6 +1503,66 @@ mod renderer_tests {
         let out = render_ga_appendix(&report, 0, "0.1.0");
         assert!(out.contains("ISBN 9780306406157"));
         assert!(out.contains("ISBN 9780140328721"));
+    }
+
+    #[test]
+    fn round5_regressions_labels_punctuation_and_copy() {
+        // Codex round 5 (PR 154), three regressions in one maximal render:
+        let mut report = fixtures::full_report();
+        // (1) unnamed skipped ref: block-anchored, never a fabricated number.
+        report.skipped.push(sp42_citation::SkippedRef {
+            ref_id: "cite_ref-9".to_string(),
+            reason: sp42_citation::SkippedReason::NonUrlSource,
+            block_ordinal: 4,
+            book_sources: Vec::new(),
+        });
+        // (2) punctuated unnamed id in a failure reason stays block-anchored.
+        report
+            .extraction_failures
+            .push(sp42_citation::BlockFailure {
+                block_ordinal: 7,
+                reason: "verify went wrong for cite_ref-64: connect timeout".to_string(),
+            });
+        // (3) lookup-not-completed path exercised so the pass/fail word scan
+        // covers ALL copy branches (the word "failure" slipped through when
+        // this path was untested by the scan).
+        report.skipped.push(sp42_citation::SkippedRef {
+            ref_id: "cite_ref-flaky_21-0".to_string(),
+            reason: sp42_citation::SkippedReason::BookSource,
+            block_ordinal: 5,
+            book_sources: vec![sp42_citation::BookSource {
+                identifiers: vec![
+                    sp42_citation::BookIdentifier::isbn("9780306406157").expect("valid"),
+                ],
+                cited_page: None,
+            }],
+        });
+        report.book_resolutions.push(sp42_citation::BookResolution {
+            ref_id: "cite_ref-flaky_21-0".to_string(),
+            block_ordinal: 5,
+            identifiers: vec![sp42_citation::BookIdentifier::isbn("9780306406157").expect("valid")],
+            cited_page: None,
+            outcome: sp42_citation::BookResolutionOutcome::LookupFailed {
+                message: "connect timeout".to_string(),
+            },
+            enrichment_candidates: Vec::new(),
+        });
+
+        let out = render_ga_appendix(&report, 0, "0.1.0");
+        assert!(out.contains("an unnamed ref (block 4)"), "skip label");
+        assert!(
+            out.contains("an unnamed ref (block 7): connect timeout"),
+            "punctuated token"
+        );
+        assert!(!out.contains("ref #1: connect"), "no fabricated numbering");
+        // The full-output word scan, over every copy branch this render hits.
+        let lower = out.to_lowercase();
+        let banned = [
+            "pass", "passed", "passes", "fail", "failed", "fails", "failure",
+        ];
+        for word in lower.split(|c: char| !c.is_ascii_alphabetic()) {
+            assert!(!banned.contains(&word), "pass/fail wording leaked: {word}");
+        }
     }
 
     #[test]

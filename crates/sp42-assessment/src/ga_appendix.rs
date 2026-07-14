@@ -263,6 +263,26 @@ fn render_skipped_section(output: &mut String, report: &sp42_citation::PageVerif
                     }
                 }
             });
+            // Which book: identifiers (and cited page) make multiple books
+            // under one ref distinguishable (Codex round 4, PR 154).
+            let identifiers = skip.book_identifiers();
+            if !identifiers.is_empty() {
+                let labels: Vec<String> = identifiers
+                    .iter()
+                    .map(|identifier| crate::copy::book_identifier(identifier))
+                    .collect();
+                output.push_str(" (");
+                output.push_str(&labels.join(", "));
+                if let Some(page) = skip
+                    .book_sources
+                    .iter()
+                    .find_map(|book| book.cited_page.as_deref())
+                {
+                    output.push_str(", p. ");
+                    output.push_str(&escape_verbatim(page));
+                }
+                output.push(')');
+            }
             output.push('\n');
         }
     }
@@ -1436,6 +1456,27 @@ mod renderer_tests {
             !out.contains("no catalog record the tool could use\n* ref \"flaky"),
             "the flaky ref must not read as a catalog miss"
         );
+    }
+
+    #[test]
+    fn book_skip_lines_name_their_identifiers() {
+        // Codex round 4 (PR 154): two missed books under one ref stay
+        // distinguishable by their identifiers.
+        let mut report = fixtures::full_report();
+        for isbn in ["9780306406157", "9780140328721"] {
+            report.skipped.push(sp42_citation::SkippedRef {
+                ref_id: "cite_ref-twobooks_30-0".to_string(),
+                reason: sp42_citation::SkippedReason::BookSource,
+                block_ordinal: 5,
+                book_sources: vec![sp42_citation::BookSource {
+                    identifiers: vec![sp42_citation::BookIdentifier::isbn(isbn).expect("valid")],
+                    cited_page: Some("9".to_string()),
+                }],
+            });
+        }
+        let out = render_ga_appendix(&report, 0, "0.1.0");
+        assert!(out.contains("ISBN 9780306406157"));
+        assert!(out.contains("ISBN 9780140328721"));
     }
 
     #[test]

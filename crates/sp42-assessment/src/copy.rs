@@ -128,6 +128,18 @@ pub const BOOK_SCAN_UNKNOWN: &str = "scan availability unknown (lookup failed)";
 /// Reader-facing description when a book catalog lookup never completed (transport failure).
 pub const BOOK_LOOKUP_FAILED: &str = "catalog lookup did not complete — a tool failure";
 
+/// Reader-facing label for one validated book identifier.
+#[must_use]
+pub fn book_identifier(identifier: &sp42_citation::BookIdentifier) -> String {
+    use sp42_citation::BookIdentifier;
+    match identifier {
+        BookIdentifier::Isbn(value) => format!("ISBN {value}"),
+        BookIdentifier::Oclc(value) => format!("OCLC {value}"),
+        BookIdentifier::Lccn(value) => format!("LCCN {value}"),
+        BookIdentifier::Olid(value) => format!("Open Library id {value}"),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use sp42_citation::{BodyUsabilityReason, SupportLevel};

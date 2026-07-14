@@ -105,6 +105,7 @@ pub const DEV_REVIEW_OPEN_PATH: &str = "/dev/review/open";
 pub const DEV_REVIEW_SESSIONS_PATH: &str = "/dev/review/sessions";
 pub const DEV_REVIEW_PROMPTS_PATH: &str = "/dev/review/prompts";
 pub const DEV_REVIEW_POLL_PATH: &str = "/dev/review/poll";
+pub const DEV_REVIEW_FINDINGS_PATH: &str = "/dev/review/findings";
 pub const DEV_REVIEW_REPLY_PATH: &str = "/dev/review/agent-reply";
 pub const DEV_REVIEW_END_PATH: &str = "/dev/review/end";
 

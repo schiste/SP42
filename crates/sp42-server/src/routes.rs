@@ -19,8 +19,8 @@ use crate::citation_routes::{
 };
 use crate::operator_live::get_live_operator_view;
 use crate::review_routes::{
-    get_review_sessions, post_review_end, post_review_open, post_review_poll, post_review_prompts,
-    post_review_reply,
+    get_review_sessions, post_review_end, post_review_findings, post_review_open,
+    post_review_poll, post_review_prompts, post_review_reply,
 };
 use crate::revision_artifacts::{
     get_rendered_hunk_preview, get_revision_diff, get_revision_media_diff,
@@ -111,6 +111,10 @@ fn review_session_routes(router: Router<AppState>) -> Router<AppState> {
         .route(
             route_contracts::DEV_REVIEW_POLL_PATH,
             axum::routing::post(post_review_poll),
+        )
+        .route(
+            route_contracts::DEV_REVIEW_FINDINGS_PATH,
+            axum::routing::post(post_review_findings),
         )
         .route(
             route_contracts::DEV_REVIEW_REPLY_PATH,

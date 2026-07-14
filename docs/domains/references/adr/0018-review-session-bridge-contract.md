@@ -59,8 +59,8 @@ contracts (Art. 9.1).
    persistence: this is a localhost dev-bridge surface (PRD-0017 Risks).
 
 4. **Routes under `/dev/review/*`, POSTs session+CSRF gated.** Path constants
-   in `sp42_platform::routes` like every other route contract. All five POST
-   routes (`open`, `prompts`, `poll`, `agent-reply`, `end`) require the
+   in `sp42_platform::routes` like every other route contract. All six POST
+   routes (`open`, `prompts`, `poll`, `findings`, `agent-reply`, `end`) require the
    bridge session cookie plus the CSRF header (ADR-0002) — open reads through
    the caller's wiki identity to pin the latest revision, and the rest mutate
    session state. `GET /dev/review/sessions` is an ungated read-only
@@ -79,8 +79,25 @@ contracts (Art. 9.1).
    `verify-page` (bootstrap → cookie + CSRF token). The poll loop keeps
    stdout reserved for one structured response and narrates waiting on
    stderr, mirroring the ported tool's agent ergonomics. MCP verbs are
-   deferred (PRD-0017 open question 3) because `sp42-mcp` has no
+   deferred (PRD-0017 open question 2) because `sp42-mcp` has no
    localhost-server client today.
+
+7. **The verification report overlays the outline as citation-agnostic
+   markers.** `sp42-platform` gains `ReviewFindingMarker` — `ref_id`,
+   verdict wire label, truncated claim, optional caveat — deliberately *not*
+   the citation domain's `CitationFinding`: the platform layer never depends
+   on report types (ADR-0013 layering), so the citation crate projects its
+   report into markers at the edge (`review_finding_markers`, which also
+   translates grounding caveats and unavailable reasons into prose and skips
+   ref-less standalone findings). Markers attach via `POST
+   /dev/review/findings` with replace-all semantics (one attach = one
+   verification run) and a revision gate — a report pinned to a different
+   revision returns 409 `review-findings-revision-mismatch`, and resuming a
+   session onto a new revision drops the stale overlay. On open, the pure
+   `annotate_outline` joins markers onto blocks by `ref_id` (the same
+   coordinate prompts anchor to); unmatched markers return as
+   `unanchored_findings` rather than dropping. Attaching wakes no poll —
+   findings are operator-surface input, not agent feedback.
 
 ## Consequences
 
@@ -88,6 +105,9 @@ contracts (Art. 9.1).
   exercise only glue (gating, wake-ups, status codes).
 - A browser Review panel needs no new contract — it consumes the same routes
   the CLI queueing surface uses.
+- The text report is no longer the only operator surface for verification
+  results: any consumer of the open response gets the report as an
+  in-article, per-block overlay for free.
 - Session state dies with the server process; if review sessions outgrow the
   dev bridge (multi-operator, cross-restart), persistence and eviction become
   a follow-up ADR alongside the deployment-mode gating question.

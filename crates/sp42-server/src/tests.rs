@@ -4159,6 +4159,86 @@ async fn review_session_loop_delivers_operator_feedback_to_the_agent() {
 }
 
 #[tokio::test]
+async fn review_findings_attach_and_overlay_the_next_open() {
+    let (router, cookie) = review_test_router().await;
+
+    // Attaching to a page with no session refuses.
+    let marker = serde_json::json!({
+        "ref_id": "cite_ref-a_1-0",
+        "verdict": "not_supported",
+        "claim": "Cats bark.",
+    });
+    let attach_body = serde_json::json!({
+        "wiki_id": "frwiki",
+        "title": "Exemple",
+        "rev_id": 42,
+        "findings": [marker],
+    });
+    let (status, refused) = post_review_json(
+        router.clone(),
+        &cookie,
+        sp42_core::routes::DEV_REVIEW_FINDINGS_PATH,
+        &attach_body,
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert_eq!(refused["code"], "review-session-not-found");
+
+    let (status, _) = post_review_json(
+        router.clone(),
+        &cookie,
+        sp42_core::routes::DEV_REVIEW_OPEN_PATH,
+        &serde_json::json!({"wiki_id": "frwiki", "target": "Exemple", "rev_id": 42}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+
+    // A report produced against another revision must not overlay this one.
+    let mut stale = attach_body.clone();
+    stale["rev_id"] = serde_json::json!(41);
+    let (status, refused) = post_review_json(
+        router.clone(),
+        &cookie,
+        sp42_core::routes::DEV_REVIEW_FINDINGS_PATH,
+        &stale,
+    )
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT);
+    assert_eq!(refused["code"], "review-findings-revision-mismatch");
+
+    let (status, attached) = post_review_json(
+        router.clone(),
+        &cookie,
+        sp42_core::routes::DEV_REVIEW_FINDINGS_PATH,
+        &attach_body,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(attached["attached"], 1);
+    assert_eq!(attached["session"]["findings"], 1);
+
+    // The next open carries the overlay. The scripted editor exposes no
+    // blocks, so the marker surfaces as unanchored rather than dropping;
+    // block-level joins are covered by the platform unit tests.
+    let (status, open) = post_review_json(
+        router.clone(),
+        &cookie,
+        sp42_core::routes::DEV_REVIEW_OPEN_PATH,
+        &serde_json::json!({"wiki_id": "frwiki", "target": "Exemple", "rev_id": 42}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(open["unanchored_findings"][0]["ref_id"], "cite_ref-a_1-0");
+    assert_eq!(open["unanchored_findings"][0]["verdict"], "not_supported");
+    assert!(
+        open["next_step"]
+            .as_str()
+            .expect("next_step should be a string")
+            .contains("1 verification finding"),
+    );
+}
+
+#[tokio::test]
 async fn review_reopen_gate_requires_explicit_reopen_after_operator_end() {
     let (router, cookie) = review_test_router().await;
 

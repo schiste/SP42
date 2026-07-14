@@ -200,6 +200,8 @@ actions ride the local bridge session (bootstrap → cookie + CSRF).
 sp42-cli review open "https://fr.wikipedia.org/wiki/Exemple" --wiki frwiki
 sp42-cli review poll "Exemple" --wiki frwiki --agent-reply "opened — start with the lede"
 sp42-cli review queue "Exemple" --wiki frwiki --message "check this ref" --block 3 --ref-id cite_ref-a_1-0
+sp42-cli verify-page --title "Exemple" --wiki frwiki --format json > report.json
+sp42-cli review findings "Exemple" --wiki frwiki --report report.json
 sp42-cli review end "Exemple" --wiki frwiki
 sp42-cli review sessions
 ```
@@ -209,6 +211,7 @@ sp42-cli review sessions
 | `open <TARGET>` | Open or resume a session; returns the article outline plus `next_step`. `--rev <REVID>` pins a revision (default: latest), `--reopen` resumes a session the operator explicitly ended. |
 | `poll <TARGET>` | Wait for feedback; re-arms bounded server waits until feedback, an end, or a missing session (stderr narrates the wait). `--agent-reply <TEXT>` posts a chat line first, `--once` returns after a single wait. |
 | `queue <TARGET>` | Queue one operator prompt (dev/test surface): `--message <TEXT>` plus optional anchors `--block <N>`, `--ref-id <ID>`, `--selected-text <TEXT>`; `--end` sends and ends in one action. |
+| `findings <TARGET>` | Attach a `verify-page --format json` report (`--report <PATH>`, `-` for stdin) so its findings overlay the outline by cite id — the report's in-article view. Refused when the report's revision differs from the session's (`review-findings-revision-mismatch`). |
 | `reply <TARGET>` | Send an agent chat reply (`--message <TEXT>`). |
 | `end <TARGET>` | End the session as the agent; a plain reopen stays allowed. |
 | `sessions` | List review sessions on the local server. |

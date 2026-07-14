@@ -55,6 +55,20 @@ User-facing behavior:
   or a missing session, narrating the wait on stderr while stdout stays a
   single structured response. `--agent-reply "<summary>"` posts a chat line
   to the operator surface before the wait starts.
+- **Findings overlay**: the session doubles as the *in-article frontend for
+  the verification report*. `sp42-cli review findings <title-or-URL>
+  --report <verify-page-json>` attaches a `PageVerificationReport`'s
+  findings to the session, projected onto the same anchors prompts use —
+  each finding joins its outline block by cite id, carrying the verdict, a
+  truncated claim, and a caveat (dead source, ungrounded support). The next
+  open returns the annotated outline, so the operator sees where the
+  problems are in the article instead of reading a detached text report,
+  and can queue prompts directly against them. Markers matching no block
+  surface as `unanchored_findings`, never silently dropped; a report
+  produced against a different revision than the session's pin is refused
+  (`review-findings-revision-mismatch`). Attaching spends no inference —
+  verification stays operator-triggered (PRD-0014 posture); the agent runs
+  `verify-page` explicitly and hands the result over.
 - **Session-end etiquette** (ported): feedback queued before an end still
   delivers first, flagged `session_ended`; only a later poll reports `ended`.
   An **operator**-ended session refuses a plain reopen (HTTP 409 with
@@ -94,8 +108,21 @@ lanes (re-verify, bare-URL repair, inline edit).
   ended `next_step` distinguishes operator-ended (do not reopen) from
   agent-ended, verified by `next_step_matches_the_loop_etiquette`
   (`sp42-platform`)
-- [ ] Session opens, feedback queueing, deliveries, and ends emit `tracing`
-  events, checkable in server logs
+- [ ] Attached findings overlay the next open's outline joined by cite id,
+  with unmatched markers surfaced (not dropped), verified by
+  `annotate_outline_joins_findings_onto_blocks_by_ref_id` (`sp42-platform`)
+  and `review_findings_attach_and_overlay_the_next_open` (`sp42-server`)
+- [ ] A report for a different revision than the session's pin refuses with
+  `review-findings-revision-mismatch`, and resuming to a new revision drops
+  the stale overlay, verified by `attach_findings_refuses_a_revision_mismatch`
+  and `resume_to_a_new_revision_drops_stale_findings` (`sp42-platform`)
+- [ ] Report findings project onto review anchors — verdict wire labels,
+  truncated claims, grounding/unavailable caveats, ref-less standalone
+  findings skipped — verified by
+  `review_finding_markers_project_the_report_onto_review_anchors`
+  (`sp42-citation`)
+- [ ] Session opens, feedback queueing, findings attaches, deliveries, and
+  ends emit `tracing` events, checkable in server logs
 
 ## Alternatives
 
@@ -130,14 +157,10 @@ lanes (re-verify, bare-URL repair, inline edit).
 ## Open questions
 
 1. **Where does the operator annotate?** Proposed: a Review panel in the
-   browser shell's article surface, listing outline blocks with per-block
-   queue actions and a session composer, reusing the `/dev/review` routes.
+   browser shell's article surface, listing outline blocks — with attached
+   findings rendered inline as per-block badges — plus per-block queue
+   actions and a session composer, reusing the `/dev/review` routes.
    Until then the CLI `review queue` command is the queueing surface.
-2. **Should the outline include verification findings** (merge
-   `PageVerificationReport` findings into the open response) so the operator
-   annotates findings rather than raw blocks? Proposed: yes, as an opt-in
-   flag once the browser panel exists; verification spends inference budget,
-   so it must stay operator-triggered (PRD-0014 posture).
-3. **MCP surface**: should `sp42-mcp` grow `review_open`/`review_poll` verbs?
+2. **MCP surface**: should `sp42-mcp` grow `review_open`/`review_poll` verbs?
    Proposed: yes, but the MCP server is standalone today (no localhost-server
    client); bridging it is its own small ADR.

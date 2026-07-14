@@ -19,9 +19,10 @@ use axum::{
 };
 use sp42_core::{
     REVIEW_SESSION_CONTRACT_VERSION, ReviewAckResponse, ReviewBlockOutline, ReviewEndRequest,
-    ReviewEndedBy, ReviewFeedbackTake, ReviewOpenRequest, ReviewOpenResponse, ReviewPollRequest,
-    ReviewPollResponse, ReviewPollStatus, ReviewQueueRequest, ReviewQueueResponse, ReviewSession,
-    ReviewSessionSnapshot, ReviewSessionsResponse, WikitextPageRef, build_article_outline,
+    ReviewEndedBy, ReviewFeedbackTake, ReviewFindingsRequest, ReviewFindingsResponse,
+    ReviewOpenRequest, ReviewOpenResponse, ReviewPollRequest, ReviewPollResponse, ReviewPollStatus,
+    ReviewQueueRequest, ReviewQueueResponse, ReviewSession, ReviewSessionSnapshot,
+    ReviewSessionsResponse, WikitextPageRef, annotate_outline, build_article_outline,
     open_next_step, poll_next_step, poll_status,
 };
 use tokio::sync::{Notify, RwLock};
@@ -168,8 +169,12 @@ pub(crate) async fn post_review_open(
 
     let mut store = state.review_sessions.write().await;
     let resumed = open_or_resume(store.get_mut(&key), payload.reopen, &title, rev_id, now_ms)?;
-    let session = if let Some(snapshot) = resumed {
-        snapshot
+    let (session, findings) = if let Some(snapshot) = resumed {
+        let findings = store
+            .get(&key)
+            .map(|entry| entry.session.findings.clone())
+            .unwrap_or_default();
+        (snapshot, findings)
     } else {
         let session = ReviewSession::open(&payload.wiki_id, &title, rev_id, now_ms);
         let snapshot = session.snapshot();
@@ -180,19 +185,25 @@ pub(crate) async fn post_review_open(
                 notify: Arc::new(Notify::new()),
             },
         );
-        snapshot
+        (snapshot, Vec::new())
     };
+    // Attached verification findings overlay the outline: each marker joins
+    // its block by ref_id, so the operator sees report problems in article
+    // context rather than as detached text.
+    let (outline, unanchored_findings) = annotate_outline(outline, &findings);
     info!(
         wiki_id = %session.wiki_id,
         title = %session.title,
         rev_id = session.rev_id,
+        findings = findings.len(),
         "review session opened"
     );
     Ok(Json(ReviewOpenResponse {
         contract_version: REVIEW_SESSION_CONTRACT_VERSION,
-        next_step: open_next_step(&session.title),
+        next_step: open_next_step(&session.title, findings.len()),
         session,
         outline,
+        unanchored_findings,
     }))
 }
 
@@ -241,6 +252,52 @@ pub(crate) async fn post_review_prompts(
         contract_version: REVIEW_SESSION_CONTRACT_VERSION,
         session: entry.session.snapshot(),
         queued,
+    }))
+}
+
+/// `POST /dev/review/findings` — the agent attaches a verification report's
+/// finding markers to the session (replace-all; a stale-revision report is
+/// refused). The markers overlay the outline on the next open and feed the
+/// operator surface; they are not agent feedback, so no poll is woken.
+pub(crate) async fn post_review_findings(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(payload): Json<ReviewFindingsRequest>,
+) -> Result<impl IntoResponse, RouteError> {
+    require_review_session(&state, &headers).await?;
+    let key = ReviewSession::canonical_key(&payload.wiki_id, &payload.title);
+    let now_ms = state.clock.now_ms();
+    let mut store = state.review_sessions.write().await;
+    let Some(entry) = store.get_mut(&key) else {
+        return Err(missing_session_error(&payload.wiki_id, &payload.title));
+    };
+    let attached = entry
+        .session
+        .attach_findings(payload.rev_id, payload.findings, now_ms)
+        .map_err(|mismatch| {
+            (
+                StatusCode::CONFLICT,
+                Json(serde_json::json!({
+                    "error": format!(
+                        "the findings were produced against revision {} but the review \
+                         session is pinned to revision {}; re-run verification (or reopen \
+                         the session) on one revision",
+                        payload.rev_id, mismatch.session_rev
+                    ),
+                    "code": "review-findings-revision-mismatch",
+                })),
+            )
+        })?;
+    info!(
+        wiki_id = %payload.wiki_id,
+        title = %payload.title,
+        attached,
+        "review findings attached"
+    );
+    Ok(Json(ReviewFindingsResponse {
+        contract_version: REVIEW_SESSION_CONTRACT_VERSION,
+        session: entry.session.snapshot(),
+        attached,
     }))
 }
 

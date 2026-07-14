@@ -128,12 +128,14 @@ pub use queue_builder::{
     build_ranked_queue, build_ranked_queue_with_contexts, build_ranked_queue_with_policy,
 };
 pub use review_session::{
-    REVIEW_SESSION_CONTRACT_VERSION, ReviewAckResponse, ReviewAnchor, ReviewBlockOutline,
-    ReviewChatEntry, ReviewChatRole, ReviewEndRequest, ReviewEndedBy, ReviewFeedbackTake,
+    FindingsRevisionMismatch, REVIEW_SESSION_CONTRACT_VERSION, ReviewAckResponse, ReviewAnchor,
+    ReviewBlockOutline, ReviewChatEntry, ReviewChatRole, ReviewEndRequest, ReviewEndedBy,
+    ReviewFeedbackTake, ReviewFindingMarker, ReviewFindingsRequest, ReviewFindingsResponse,
     ReviewOpenRequest, ReviewOpenResponse, ReviewPollRequest, ReviewPollResponse, ReviewPollStatus,
     ReviewPrompt, ReviewPromptKind, ReviewQueueRequest, ReviewQueueResponse, ReviewReplyRequest,
     ReviewSession, ReviewSessionSnapshot, ReviewSessionStatus, ReviewSessionsResponse,
-    build_article_outline, open_next_step, poll_next_step, poll_status,
+    annotate_outline, build_article_outline, open_next_step, poll_next_step, poll_status,
+    truncate_outline_text,
 };
 pub use review_workbench::{
     PreparedRequestPreview, ReviewWorkbench, build_review_workbench,

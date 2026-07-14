@@ -21,7 +21,7 @@ Operational guidance for the model panel is in [model-panel.md](model-panel.md).
 - [PRD-0010 — Citation-verification agent surface (MCP)](prd/0010-citation-verification-mcp-surface.md) — expose probe/verify verbs to agent clients via the `sp42-mcp` shell
 - [PRD-0012 — Citation insertion for unsourced claims](prd/0012-citation-insertion.md) — ground a candidate source against a sentence's atomic claims, then propose a `<ref>` insert
 - [PRD-0014 — Citation repair and insertion, browser surface](prd/0014-citation-repair-insertion-browser-surface.md) — per-finding action row in the Citations tab routing to text-edit or citation-fix, operator always chooses
-- [PRD-0017 — Interactive review sessions](prd/0017-interactive-review-sessions.md) — agent opens a session on a page, the operator queues anchored feedback, the agent polls for it (loop ported from lavish-axi, keyed to wiki pages)
+- [PRD-0017 — Interactive review sessions](prd/0017-interactive-review-sessions.md) — agent opens a session on a page, the operator queues anchored feedback, the agent polls for it (loop ported from lavish-axi, keyed to wiki pages); attached verify-page findings overlay the outline as the report's in-article view
 
 ## Architecture Decision Records
 

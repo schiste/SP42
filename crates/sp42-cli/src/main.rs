@@ -14,7 +14,8 @@ use sp42_core::{
     PageVerificationReport, PageVerificationRequest, QueuedEdit, ReviewAckResponse, ReviewAnchor,
     ReviewEndRequest, ReviewOpenRequest, ReviewOpenResponse, ReviewPollRequest, ReviewPollResponse,
     ReviewPollStatus, ReviewPrompt, ReviewPromptKind, ReviewQueueRequest, ReviewQueueResponse,
-    ReviewReplyRequest, ReviewSessionSnapshot, ReviewSessionsResponse,
+    ReviewFindingsRequest, ReviewFindingsResponse, ReviewReplyRequest, ReviewSessionSnapshot,
+    ReviewSessionsResponse, review_finding_markers,
     SessionActionExecutionRequest, SessionActionExecutionResponse, SessionActionKind, SystemClock,
     VerificationOutcome, VerifyOptions as CoreVerifyOptions, build_dev_auth_bootstrap_request,
     locate_quote, locate_quote_fuzzy, parse_dev_auth_status, verify_citation_use_site,
@@ -354,6 +355,9 @@ enum ReviewAction {
     Poll(ReviewPollArgs),
     /// Queue operator feedback from the command line (dev/test surface).
     Queue(ReviewQueueArgs),
+    /// Attach a verify-page report to the session so its findings overlay
+    /// the article outline (the report's in-article frontend).
+    Findings(ReviewFindingsArgs),
     /// Send an agent chat reply to the operator surface.
     Reply(ReviewReplyArgs),
     /// End a session as the agent (a plain reopen stays allowed).
@@ -424,6 +428,23 @@ struct ReviewQueueArgs {
     /// Queue and end the session in one action ("send & end").
     #[arg(long)]
     end: bool,
+    /// Local server base URL.
+    #[arg(long, default_value = LOCAL_SERVER_BASE_URL)]
+    bridge_base_url: String,
+    #[command(flatten)]
+    fmt: FormatArg,
+}
+
+#[derive(Debug, Args)]
+struct ReviewFindingsArgs {
+    /// Page target: bare title or pasted wiki URL.
+    target: String,
+    /// Path to a `verify-page --format json` report, or `-` for stdin.
+    #[arg(long)]
+    report: String,
+    /// Target wiki id.
+    #[arg(long, default_value = BARE_URL_DEFAULT_WIKI)]
+    wiki: String,
     /// Local server base URL.
     #[arg(long, default_value = LOCAL_SERVER_BASE_URL)]
     bridge_base_url: String,
@@ -3363,6 +3384,16 @@ fn dispatch_review(action: ReviewAction) -> Result<String, String> {
             );
             render_review_output(format, &response, text)
         }
+        ReviewAction::Findings(args) => {
+            let format = args.fmt.format;
+            let response = runtime.block_on(run_review_findings(&args))?;
+            let text = format!(
+                "attached {} finding marker(s)\n{}",
+                response.attached,
+                render_review_snapshot_line(&response.session)
+            );
+            render_review_output(format, &response, text)
+        }
         ReviewAction::Reply(args) => {
             let format = args.fmt.format;
             let response = runtime.block_on(run_review_reply(&args))?;
@@ -3498,6 +3529,42 @@ async fn run_review_queue(args: &ReviewQueueArgs) -> Result<ReviewQueueResponse,
     .await
 }
 
+/// Read a `verify-page --format json` report from a file or stdin (`-`).
+fn read_verification_report(path: &str) -> Result<PageVerificationReport, String> {
+    let raw = if path == "-" {
+        let mut buffer = String::new();
+        std::io::Read::read_to_string(&mut std::io::stdin(), &mut buffer)
+            .map_err(|error| format!("failed to read report from stdin: {error}"))?;
+        buffer
+    } else {
+        std::fs::read_to_string(path)
+            .map_err(|error| format!("failed to read report {path}: {error}"))?
+    };
+    serde_json::from_str(&raw)
+        .map_err(|error| format!("report is not a verify-page JSON report: {error}"))
+}
+
+/// Attach a verify-page report to the review session: project its findings
+/// onto review anchors (ref ids) and post them, pinned to the report's
+/// revision so a stale report cannot overlay a newer session.
+async fn run_review_findings(args: &ReviewFindingsArgs) -> Result<ReviewFindingsResponse, String> {
+    let report = read_verification_report(&args.report)?;
+    let bridge = bootstrap_bridge_session(&args.bridge_base_url).await?;
+    let request = ReviewFindingsRequest {
+        wiki_id: args.wiki.clone(),
+        title: sp42_core::parse_page_target(&args.target).title,
+        rev_id: report.rev_id,
+        findings: review_finding_markers(&report),
+    };
+    post_review_route(
+        &bridge,
+        &args.bridge_base_url,
+        route_contracts::DEV_REVIEW_FINDINGS_PATH,
+        &request,
+    )
+    .await
+}
+
 async fn run_review_reply(args: &ReviewReplyArgs) -> Result<ReviewAckResponse, String> {
     let bridge = bootstrap_bridge_session(&args.bridge_base_url).await?;
     let request = ReviewReplyRequest {
@@ -3584,10 +3651,20 @@ fn render_review_snapshot_line(session: &ReviewSessionSnapshot) -> String {
 }
 
 fn render_review_open_text(response: &ReviewOpenResponse) -> String {
+    let unanchored = if response.unanchored_findings.is_empty() {
+        String::new()
+    } else {
+        format!(
+            "\nunanchored findings: {} (attached but matching no outline block)",
+            response.unanchored_findings.len()
+        )
+    };
     format!(
-        "{}\noutline: {} block(s)\nnext: {}",
+        "{}\noutline: {} block(s), {} finding(s) attached{}\nnext: {}",
         render_review_snapshot_line(&response.session),
         response.outline.len(),
+        response.session.findings,
+        unanchored,
         response.next_step
     )
 }
@@ -3972,7 +4049,8 @@ mod tests {
         CliOptions, Command, ContextPreviewOptions, FormatArg, LOCAL_SERVER_BASE_URL, OutputFormat,
         ReviewAction, ReviewAnchor, ReviewPollResponse, ReviewPollStatus, ReviewPrompt,
         ReviewPromptKind, ReviewQueueArgs, ShellMode, VerifyPageCliOptions, WorkbenchOptions,
-        build_review_queue_prompt, render_action_preview, render_backlog_preview,
+        build_review_queue_prompt, read_verification_report, render_action_preview,
+        render_backlog_preview,
         render_bare_url_execute, render_bare_url_proposals, render_context_preview,
         render_coordination_preview, render_parity_report, render_queue, render_review_poll_text,
         render_scenario_report, render_session_digest, render_stream_preview, render_workbench,
@@ -4980,6 +5058,44 @@ mod tests {
         assert_eq!(open.rev, Some(5));
         assert!(open.reopen);
         assert_eq!(open.bridge_base_url, LOCAL_SERVER_BASE_URL);
+    }
+
+    #[test]
+    fn parses_review_findings_action() {
+        let cli = Cli::parse_from([
+            "sp42-cli",
+            "review",
+            "findings",
+            "Exemple",
+            "--report",
+            "report.json",
+            "--wiki",
+            "frwiki",
+        ]);
+        let Command::Review(args) = cli.command else {
+            panic!("expected review command");
+        };
+        let ReviewAction::Findings(findings) = args.action else {
+            panic!("expected findings action");
+        };
+        assert_eq!(findings.target, "Exemple");
+        assert_eq!(findings.report, "report.json");
+        assert_eq!(findings.wiki, "frwiki");
+    }
+
+    #[test]
+    fn read_verification_report_rejects_non_report_json() {
+        let dir = std::env::temp_dir().join(format!(
+            "sp42-cli-review-findings-{}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&dir).expect("temp dir should create");
+        let path = dir.join("not-a-report.json");
+        std::fs::write(&path, "{\"outcome\": true}").expect("temp file should write");
+
+        let error = read_verification_report(path.to_str().expect("utf-8 path"))
+            .expect_err("non-report JSON should be rejected");
+        assert!(error.contains("not a verify-page JSON report"));
     }
 
     #[test]

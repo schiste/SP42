@@ -75,6 +75,35 @@ pub struct ReviewAnchor {
     pub selected_text: Option<String>,
 }
 
+/// One verification finding projected onto review-session coordinates — the
+/// overlay marker that lets a review surface show a page verification
+/// report's problems *in the context of the article* instead of as detached
+/// report text. Markers are citation-agnostic here: the citation domain
+/// projects its report into this shape at the edges (`ref_id` is the join
+/// key onto outline blocks), so this crate never depends on report types.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ReviewFindingMarker {
+    /// The originating ref's marker id (e.g. `cite_ref-smith_3-0`) — the
+    /// same anchor coordinate prompts use.
+    pub ref_id: String,
+    /// Verdict wire label (e.g. `"unsupported"`, `"source_unavailable"`).
+    pub verdict: String,
+    /// The judged claim sentence, truncated like outline text.
+    pub claim: String,
+    /// Optional short qualifier — a grounding caveat or unavailable reason.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub detail: Option<String>,
+}
+
+/// Refusal reason when attached findings were produced against a different
+/// revision than the session is pinned to — a stale overlay would point at
+/// blocks that may no longer exist.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FindingsRevisionMismatch {
+    /// The revision the session is pinned to.
+    pub session_rev: u64,
+}
+
 /// One operator feedback item queued for the agent.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ReviewPrompt {
@@ -115,6 +144,10 @@ pub struct ReviewSession {
     pub status: ReviewSessionStatus,
     /// Prompts queued since the last successful poll delivery.
     pub queued_prompts: Vec<ReviewPrompt>,
+    /// Verification findings attached to this session's pinned revision —
+    /// the report overlay the open response joins onto the outline.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub findings: Vec<ReviewFindingMarker>,
     pub chat: Vec<ReviewChatEntry>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ended_by: Option<ReviewEndedBy>,
@@ -153,6 +186,7 @@ impl ReviewSession {
             rev_id,
             status: ReviewSessionStatus::Open,
             queued_prompts: Vec::new(),
+            findings: Vec::new(),
             chat: Vec::new(),
             ended_by: None,
             created_at_ms: now_ms,
@@ -183,6 +217,8 @@ impl ReviewSession {
     }
 
     /// Resume an ended session as open again (after [`Self::gate_reopen`]).
+    /// Re-pinning to a *different* revision drops the findings overlay: the
+    /// markers describe the old revision's blocks.
     pub fn resume(&mut self, rev_id: u64, now_ms: i64) {
         self.status = if self.queued_prompts.is_empty() {
             ReviewSessionStatus::Open
@@ -190,8 +226,37 @@ impl ReviewSession {
             ReviewSessionStatus::Feedback
         };
         self.ended_by = None;
+        if self.rev_id != rev_id {
+            self.findings.clear();
+        }
         self.rev_id = rev_id;
         self.updated_at_ms = now_ms;
+    }
+
+    /// Replace the session's findings overlay with one report's markers.
+    /// Findings do not accumulate across attaches — each attach describes
+    /// one verification run of the pinned revision.
+    ///
+    /// # Errors
+    ///
+    /// [`FindingsRevisionMismatch`] when `report_rev_id` differs from the
+    /// session's pinned revision — a stale overlay must not annotate blocks
+    /// it was not produced against.
+    pub fn attach_findings(
+        &mut self,
+        report_rev_id: u64,
+        findings: Vec<ReviewFindingMarker>,
+        now_ms: i64,
+    ) -> Result<usize, FindingsRevisionMismatch> {
+        if report_rev_id != self.rev_id {
+            return Err(FindingsRevisionMismatch {
+                session_rev: self.rev_id,
+            });
+        }
+        let attached = findings.len();
+        self.findings = findings;
+        self.updated_at_ms = now_ms;
+        Ok(attached)
     }
 
     /// Queue operator prompts; optionally close the session in the same
@@ -259,6 +324,7 @@ impl ReviewSession {
             rev_id: self.rev_id,
             status: self.status,
             pending_prompts: self.queued_prompts.len(),
+            findings: self.findings.len(),
             ended_by: self.ended_by,
             updated_at_ms: self.updated_at_ms,
         }
@@ -273,6 +339,9 @@ pub struct ReviewSessionSnapshot {
     pub rev_id: u64,
     pub status: ReviewSessionStatus,
     pub pending_prompts: usize,
+    /// Attached verification-finding markers (the report overlay).
+    #[serde(default)]
+    pub findings: usize,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ended_by: Option<ReviewEndedBy>,
     pub updated_at_ms: i64,
@@ -289,6 +358,10 @@ pub struct ReviewBlockOutline {
     pub text: String,
     /// Stable cite ids of the block's inline references, in order.
     pub ref_ids: Vec<String>,
+    /// Verification findings anchored to this block (the report overlay),
+    /// joined by `ref_id`. Empty when no report is attached.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub findings: Vec<ReviewFindingMarker>,
 }
 
 /// Build the outline for a decomposed page.
@@ -305,8 +378,39 @@ pub fn build_article_outline(blocks: &[ParsoidBlock]) -> Vec<ReviewBlockOutline>
                 .iter()
                 .map(|block_ref| block_ref.ref_id.clone())
                 .collect(),
+            findings: Vec::new(),
         })
         .collect()
+}
+
+/// Join finding markers onto outline blocks by `ref_id` — the projection
+/// that turns the verification report into an in-article overlay. Markers
+/// whose `ref_id` matches no block are returned, not dropped: the surface
+/// must be able to say "these findings could not be placed" rather than
+/// silently under-report.
+#[must_use]
+pub fn annotate_outline(
+    mut outline: Vec<ReviewBlockOutline>,
+    findings: &[ReviewFindingMarker],
+) -> (Vec<ReviewBlockOutline>, Vec<ReviewFindingMarker>) {
+    let mut unanchored = Vec::new();
+    for marker in findings {
+        match outline
+            .iter_mut()
+            .find(|block| block.ref_ids.iter().any(|ref_id| ref_id == &marker.ref_id))
+        {
+            Some(block) => block.findings.push(marker.clone()),
+            None => unanchored.push(marker.clone()),
+        }
+    }
+    (outline, unanchored)
+}
+
+/// Truncate text to the outline display limit — shared by outline blocks
+/// and by edge crates projecting report claims into [`ReviewFindingMarker`]s.
+#[must_use]
+pub fn truncate_outline_text(text: &str) -> String {
+    truncate_chars(text, REVIEW_OUTLINE_TEXT_LIMIT)
 }
 
 const fn block_kind_label(kind: BlockKind) -> &'static str {
@@ -343,13 +447,39 @@ pub struct ReviewOpenRequest {
     pub reopen: bool,
 }
 
-/// Open/resume response: session snapshot plus the article outline.
+/// Open/resume response: session snapshot plus the article outline. When a
+/// verification report is attached, outline blocks carry their findings and
+/// markers that matched no block surface in `unanchored_findings`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ReviewOpenResponse {
     pub contract_version: u32,
     pub session: ReviewSessionSnapshot,
     pub outline: Vec<ReviewBlockOutline>,
+    /// Attached findings whose `ref_id` matched no outline block.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub unanchored_findings: Vec<ReviewFindingMarker>,
     pub next_step: String,
+}
+
+/// Agent attaches a verification report's findings to the session (the
+/// report becomes an in-article overlay for the operator surface).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ReviewFindingsRequest {
+    pub wiki_id: String,
+    pub title: String,
+    /// Revision the findings were produced against; must match the
+    /// session's pinned revision.
+    #[serde(default)]
+    pub rev_id: u64,
+    pub findings: Vec<ReviewFindingMarker>,
+}
+
+/// Findings-attach acknowledgement.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ReviewFindingsResponse {
+    pub contract_version: u32,
+    pub session: ReviewSessionSnapshot,
+    pub attached: usize,
 }
 
 /// Operator queues prompts (the browser surface's send action).
@@ -438,12 +568,19 @@ pub struct ReviewSessionsResponse {
     pub sessions: Vec<ReviewSessionSnapshot>,
 }
 
-/// `next_step` for a fresh or resumed open.
+/// `next_step` for a fresh or resumed open. Mentions the findings overlay
+/// when one is attached so the agent tells the operator what to look at.
 #[must_use]
-pub fn open_next_step(title: &str) -> String {
+pub fn open_next_step(title: &str, findings: usize) -> String {
+    let overlay = if findings == 0 {
+        String::new()
+    } else {
+        format!(" The outline carries {findings} verification finding(s) anchored to blocks.")
+    };
     format!(
-        "Session open on \"{title}\". Ask the operator to review it in the SP42 browser shell, \
-         then run `sp42-cli review poll` and wait for their feedback before responding further."
+        "Session open on \"{title}\".{overlay} Ask the operator to review it in the SP42 browser \
+         shell, then run `sp42-cli review poll` and wait for their feedback before responding \
+         further."
     )
 }
 
@@ -498,8 +635,8 @@ pub fn poll_status(take: &ReviewFeedbackTake) -> ReviewPollStatus {
 mod tests {
     use super::{
         REVIEW_OUTLINE_TEXT_LIMIT, ReopenRefused, ReviewEndedBy, ReviewFeedbackTake, ReviewPrompt,
-        ReviewPromptKind, ReviewSession, ReviewSessionStatus, build_article_outline,
-        poll_next_step, poll_status,
+        ReviewPromptKind, ReviewSession, ReviewSessionStatus, annotate_outline,
+        build_article_outline, open_next_step, poll_next_step, poll_status,
     };
     use crate::wikitext_editor::{BlockKind, BlockRef, ParsoidBlock};
 
@@ -689,6 +826,121 @@ mod tests {
             }),
             ReviewPollStatus::Ended
         );
+    }
+
+    #[test]
+    fn attach_findings_replaces_the_overlay_and_counts() {
+        let mut session = ReviewSession::open("frwiki", "Exemple", 42, 1_000);
+
+        let attached = session
+            .attach_findings(42, vec![marker("cite_ref-a_1-0", "unsupported")], 2_000)
+            .expect("matching revision should attach");
+        assert_eq!(attached, 1);
+        assert_eq!(session.findings.len(), 1);
+        assert_eq!(session.updated_at_ms, 2_000);
+
+        // A later attach replaces the overlay wholesale — findings describe
+        // one report, they do not accumulate across runs.
+        let attached = session
+            .attach_findings(
+                42,
+                vec![
+                    marker("cite_ref-b_2-0", "partial"),
+                    marker("cite_ref-c_3-0", "source_unavailable"),
+                ],
+                3_000,
+            )
+            .expect("matching revision should attach");
+        assert_eq!(attached, 2);
+        assert_eq!(session.findings.len(), 2);
+        assert_eq!(session.findings[0].ref_id, "cite_ref-b_2-0");
+    }
+
+    #[test]
+    fn attach_findings_refuses_a_revision_mismatch() {
+        let mut session = ReviewSession::open("frwiki", "Exemple", 42, 1_000);
+
+        let refused = session
+            .attach_findings(41, vec![marker("cite_ref-a_1-0", "unsupported")], 2_000)
+            .expect_err("stale-revision findings must not overlay the outline");
+        assert_eq!(refused.session_rev, 42);
+        assert!(session.findings.is_empty());
+    }
+
+    #[test]
+    fn resume_to_a_new_revision_drops_stale_findings() {
+        let mut session = ReviewSession::open("frwiki", "Exemple", 42, 1_000);
+        session
+            .attach_findings(42, vec![marker("cite_ref-a_1-0", "unsupported")], 2_000)
+            .expect("attach");
+        session.end(ReviewEndedBy::Agent, 3_000);
+
+        session.resume(43, 4_000);
+        assert!(
+            session.findings.is_empty(),
+            "findings for revision 42 must not overlay revision 43"
+        );
+
+        let mut same_rev = ReviewSession::open("frwiki", "Exemple", 42, 1_000);
+        same_rev
+            .attach_findings(42, vec![marker("cite_ref-a_1-0", "unsupported")], 2_000)
+            .expect("attach");
+        same_rev.resume(42, 3_000);
+        assert_eq!(same_rev.findings.len(), 1, "same-revision resume keeps the overlay");
+    }
+
+    #[test]
+    fn annotate_outline_joins_findings_onto_blocks_by_ref_id() {
+        let outline = vec![
+            outline_block(0, vec!["cite_ref-a_1-0"]),
+            outline_block(1, vec!["cite_ref-b_2-0", "cite_ref-c_3-0"]),
+        ];
+        let findings = vec![
+            marker("cite_ref-c_3-0", "unsupported"),
+            marker("cite_ref-ghost_9-0", "partial"),
+        ];
+
+        let (annotated, unanchored) = annotate_outline(outline, &findings);
+
+        assert!(annotated[0].findings.is_empty());
+        assert_eq!(annotated[1].findings.len(), 1);
+        assert_eq!(annotated[1].findings[0].verdict, "unsupported");
+        assert_eq!(unanchored.len(), 1, "unmatched markers surface, never drop");
+        assert_eq!(unanchored[0].ref_id, "cite_ref-ghost_9-0");
+    }
+
+    #[test]
+    fn snapshot_counts_attached_findings() {
+        let mut session = ReviewSession::open("frwiki", "Exemple", 42, 1_000);
+        session
+            .attach_findings(42, vec![marker("cite_ref-a_1-0", "unsupported")], 2_000)
+            .expect("attach");
+        assert_eq!(session.snapshot().findings, 1);
+    }
+
+    #[test]
+    fn open_next_step_mentions_an_attached_overlay() {
+        assert!(!open_next_step("Exemple", 0).contains("finding"));
+        assert!(open_next_step("Exemple", 3).contains("3 verification finding"));
+    }
+
+    fn marker(ref_id: &str, verdict: &str) -> super::ReviewFindingMarker {
+        super::ReviewFindingMarker {
+            ref_id: ref_id.to_string(),
+            verdict: verdict.to_string(),
+            claim: "a claim".to_string(),
+            detail: None,
+        }
+    }
+
+    fn outline_block(block_ordinal: usize, ref_ids: Vec<&str>) -> super::ReviewBlockOutline {
+        super::ReviewBlockOutline {
+            block_ordinal,
+            kind: "paragraph".to_string(),
+            text: "text".to_string(),
+            ref_ids: ref_ids.into_iter().map(str::to_string).collect(),
+            findings: Vec::new(),
+        }
     }
 
     #[test]

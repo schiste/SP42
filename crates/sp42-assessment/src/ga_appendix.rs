@@ -173,7 +173,44 @@ pub fn render_ga_appendix(
     render_bucket(&mut output, report, Bucket::Unconfirmed);
     render_bucket(&mut output, report, Bucket::Supported);
 
-    // Skipped section
+    render_skipped_section(&mut output, report);
+
+    // Extraction failures
+    if !report.extraction_failures.is_empty() {
+        output.push('\n');
+        output.push_str(crate::copy::BUCKET_EXTRACTION_FAILURES);
+        output.push('\n');
+        for failure in &report.extraction_failures {
+            output.push_str("* ");
+            let rewritten = sanitize_reason(&failure.reason);
+            output.push_str(&escape_verbatim(&rewritten));
+            output.push('\n');
+        }
+    }
+
+    // Footer
+    output.push_str("\n----\n");
+    output.push_str("''");
+    output.push_str(&report.title);
+    output.push_str(" at rev ");
+    output.push_str(&report.rev_id.to_string());
+    output.push_str(" · rendered ");
+    output.push_str(&format_utc_date(rendered_at_ms));
+    output.push_str(" (render date, not verification date) · SP42 ");
+    output.push_str(sp42_version);
+    output.push_str(" · ");
+    output.push_str(crate::copy::FRAMING_LINE);
+    output.push_str(" [");
+    output.push_str(crate::copy::EXPLAINER_URL);
+    output.push_str(" What is this?]''");
+
+    output
+}
+
+/// The skipped-refs section: reason-matched reader copy, with `BookSource`
+/// skips joined against `book_resolutions` so failed lookups are disclosed
+/// as tool failures (Codex round 2, PR 154).
+fn render_skipped_section(output: &mut String, report: &sp42_citation::PageVerificationReport) {
     // A BookSource skip's detail (catalog miss vs failed lookup) lives in
     // the report's book_resolutions; join by ref id so a transport failure
     // is never presented as a catalog miss (Codex round 2, PR 154).
@@ -210,37 +247,6 @@ pub fn render_ga_appendix(
             output.push('\n');
         }
     }
-
-    // Extraction failures
-    if !report.extraction_failures.is_empty() {
-        output.push('\n');
-        output.push_str(crate::copy::BUCKET_EXTRACTION_FAILURES);
-        output.push('\n');
-        for failure in &report.extraction_failures {
-            output.push_str("* ");
-            let rewritten = sanitize_reason(&failure.reason);
-            output.push_str(&escape_verbatim(&rewritten));
-            output.push('\n');
-        }
-    }
-
-    // Footer
-    output.push_str("\n----\n");
-    output.push_str("''");
-    output.push_str(&report.title);
-    output.push_str(" at rev ");
-    output.push_str(&report.rev_id.to_string());
-    output.push_str(" · rendered ");
-    output.push_str(&format_utc_date(rendered_at_ms));
-    output.push_str(" (render date, not verification date) · SP42 ");
-    output.push_str(sp42_version);
-    output.push_str(" · ");
-    output.push_str(crate::copy::FRAMING_LINE);
-    output.push_str(" [");
-    output.push_str(crate::copy::EXPLAINER_URL);
-    output.push_str(" What is this?]''");
-
-    output
 }
 
 fn render_bucket(

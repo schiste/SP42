@@ -4146,6 +4146,68 @@ async fn review_session_loop_delivers_operator_feedback_to_the_agent() {
 }
 
 #[tokio::test]
+async fn review_mutations_ring_the_coordination_room() {
+    let state = test_state();
+    state.sessions.write().await.insert(
+        "review-agent".to_string(),
+        test_session("Reviewer", "secret-token", now_ms()),
+    );
+    // A panel is listening on the wiki's room before the agent acts.
+    let mut room = state.coordination.subscribe("frwiki").await;
+    let router = build_router(state);
+    let cookie = format!("{SESSION_COOKIE_NAME}=review-agent");
+
+    let (status, _) = post_review_json(
+        router.clone(),
+        &cookie,
+        sp42_core::routes::DEV_REVIEW_OPEN_PATH,
+        &serde_json::json!({"wiki_id": "frwiki", "target": "Exemple", "rev_id": 42}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+
+    let envelope = tokio::time::timeout(Duration::from_secs(5), room.recv())
+        .await
+        .expect("open should ring the room promptly")
+        .expect("room channel should stay open");
+    assert_eq!(envelope.sender_id, crate::review_routes::SERVER_SENDER_ID);
+    let message =
+        sp42_coordination::decode_message(&envelope.payload).expect("signal should decode");
+    let sp42_coordination::CoordinationMessage::ReviewSignal(signal) = message else {
+        panic!("expected a review signal, got {message:?}");
+    };
+    assert_eq!(signal.wiki_id, "frwiki");
+    assert_eq!(signal.session.title, "Exemple");
+    assert_eq!(signal.session.rev_id, 42);
+
+    // Queueing feedback rings again, carrying the pending count so a panel
+    // can badge without a round-trip.
+    let (status, _) = post_review_json(
+        router.clone(),
+        &cookie,
+        sp42_core::routes::DEV_REVIEW_PROMPTS_PATH,
+        &serde_json::json!({
+            "wiki_id": "frwiki",
+            "title": "Exemple",
+            "prompts": [{"kind": "message", "prompt": "check the lede"}],
+            "end_session": false,
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let envelope = tokio::time::timeout(Duration::from_secs(5), room.recv())
+        .await
+        .expect("queue should ring the room promptly")
+        .expect("room channel should stay open");
+    let message =
+        sp42_coordination::decode_message(&envelope.payload).expect("signal should decode");
+    let sp42_coordination::CoordinationMessage::ReviewSignal(signal) = message else {
+        panic!("expected a review signal, got {message:?}");
+    };
+    assert_eq!(signal.session.pending_prompts, 1);
+}
+
+#[tokio::test]
 async fn review_queue_refuses_an_ended_session_and_replies_surface_in_open() {
     let (router, cookie) = review_test_router().await;
 

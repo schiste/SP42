@@ -17,6 +17,7 @@ use axum::{
     http::{HeaderMap, StatusCode},
     response::IntoResponse,
 };
+use sp42_coordination::{CoordinationMessage, ReviewSignal};
 use sp42_core::{
     REVIEW_SESSION_CONTRACT_VERSION, ReviewAckResponse, ReviewBlockOutline, ReviewEndRequest,
     ReviewEndedBy, ReviewFeedbackTake, ReviewFindingsRequest, ReviewFindingsResponse,
@@ -26,7 +27,9 @@ use sp42_core::{
     open_next_step, poll_next_step, poll_status,
 };
 use tokio::sync::{Notify, RwLock};
-use tracing::info;
+use tracing::{info, warn};
+
+use crate::coordination::CoordinationEnvelope;
 
 use crate::citation_routes::fetch_latest_revid;
 use crate::config_for_state_wiki;
@@ -61,6 +64,36 @@ pub(crate) fn new_review_session_store() -> SharedReviewSessions {
 }
 
 type RouteError = (StatusCode, Json<serde_json::Value>);
+
+/// Sender id for server-originated room messages. Client ids are handed out
+/// from 1, so 0 is never echo-suppressed by the relay.
+pub(crate) const SERVER_SENDER_ID: u64 = 0;
+
+/// Publish the live re-fetch hint for a changed review session to the
+/// wiki's coordination room (ADR-0018 §8). Best-effort by design: a room no
+/// operator has joined drops the signal, and panels recover through the
+/// review routes — the signal is a doorbell, never the data.
+async fn publish_review_signal(state: &AppState, session: &sp42_core::ReviewSessionSnapshot) {
+    let message = CoordinationMessage::ReviewSignal(ReviewSignal {
+        wiki_id: session.wiki_id.clone(),
+        session: session.clone(),
+    });
+    match sp42_coordination::encode_message(&message) {
+        Ok(payload) => {
+            let _subscribers = state
+                .coordination
+                .publish(
+                    &session.wiki_id,
+                    CoordinationEnvelope {
+                        sender_id: SERVER_SENDER_ID,
+                        payload,
+                    },
+                )
+                .await;
+        }
+        Err(error) => warn!(%error, "review signal failed to encode"),
+    }
+}
 
 /// Require an authenticated bridge session with a valid CSRF header —
 /// the shared gate for every review POST route.
@@ -213,6 +246,8 @@ pub(crate) async fn post_review_open(
         );
         (snapshot, Vec::new(), Vec::new())
     };
+    drop(store);
+    publish_review_signal(&state, &session).await;
     // Attached verification findings overlay the outline: each marker joins
     // its block by ref_id, so the operator sees report problems in article
     // context rather than as detached text.
@@ -285,6 +320,9 @@ pub(crate) async fn post_review_prompts(
             )
         })?;
     entry.notify.notify_one();
+    let snapshot = entry.session.snapshot();
+    drop(store);
+    publish_review_signal(&state, &snapshot).await;
     info!(
         wiki_id = %payload.wiki_id,
         title = %payload.title,
@@ -294,7 +332,7 @@ pub(crate) async fn post_review_prompts(
     );
     Ok(Json(ReviewQueueResponse {
         contract_version: REVIEW_SESSION_CONTRACT_VERSION,
-        session: entry.session.snapshot(),
+        session: snapshot,
         queued,
     }))
 }
@@ -332,6 +370,9 @@ pub(crate) async fn post_review_findings(
                 })),
             )
         })?;
+    let snapshot = entry.session.snapshot();
+    drop(store);
+    publish_review_signal(&state, &snapshot).await;
     info!(
         wiki_id = %payload.wiki_id,
         title = %payload.title,
@@ -340,7 +381,7 @@ pub(crate) async fn post_review_findings(
     );
     Ok(Json(ReviewFindingsResponse {
         contract_version: REVIEW_SESSION_CONTRACT_VERSION,
-        session: entry.session.snapshot(),
+        session: snapshot,
         attached,
     }))
 }
@@ -450,9 +491,12 @@ pub(crate) async fn post_review_reply(
         return Err(missing_session_error(&payload.wiki_id, &payload.title));
     };
     entry.session.agent_reply(&payload.text, now_ms);
+    let snapshot = entry.session.snapshot();
+    drop(store);
+    publish_review_signal(&state, &snapshot).await;
     Ok(Json(ReviewAckResponse {
         contract_version: REVIEW_SESSION_CONTRACT_VERSION,
-        session: entry.session.snapshot(),
+        session: snapshot,
     }))
 }
 
@@ -472,6 +516,9 @@ pub(crate) async fn post_review_end(
     };
     entry.session.end(ReviewEndedBy::Agent, now_ms);
     entry.notify.notify_one();
+    let snapshot = entry.session.snapshot();
+    drop(store);
+    publish_review_signal(&state, &snapshot).await;
     info!(
         wiki_id = %payload.wiki_id,
         title = %payload.title,
@@ -479,7 +526,7 @@ pub(crate) async fn post_review_end(
     );
     Ok(Json(ReviewAckResponse {
         contract_version: REVIEW_SESSION_CONTRACT_VERSION,
-        session: entry.session.snapshot(),
+        session: snapshot,
     }))
 }
 

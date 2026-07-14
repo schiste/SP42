@@ -211,6 +211,7 @@ pub fn dev_coordination_message_label(message: &CoordinationMessage) -> &'static
         CoordinationMessage::PresenceHeartbeat(_) => "PresenceHeartbeat",
         CoordinationMessage::FlaggedEdit(_) => "FlaggedEdit",
         CoordinationMessage::RaceResolution(_) => "RaceResolution",
+        CoordinationMessage::ReviewSignal(_) => "ReviewSignal",
     }
 }
 

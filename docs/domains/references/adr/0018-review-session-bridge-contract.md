@@ -112,6 +112,26 @@ contracts (Art. 9.1).
    `unanchored_findings` rather than dropping. Attaching wakes no poll —
    findings are operator-surface input, not agent feedback.
 
+8. **Live panel updates ride the coordination room as an advisory signal —
+   the substrates stay separate.** The review store and the coordination
+   substrate make opposite delivery guarantees: review feedback is a
+   durable, drain-exactly-once queue keyed per page; coordination is
+   live-only state sync keyed per wiki with no backfill (ADR-0023 §2).
+   Folding one into the other would break one contract or the other, so
+   they converge only at the notification layer: every review mutation
+   (open, queue, findings, reply, end) publishes a `ReviewSignal` — a
+   seventh `CoordinationMessage` kind extending ADR-0023's registry — to
+   the wiki's room with the server sender id (`0`, never a client id, so
+   it is never echo-suppressed). The signal is a doorbell, not the data:
+   it carries only the session snapshot for badging, the reducer relays
+   it without folding any room state, and panels re-fetch through the
+   gated review routes, which remain the sole source of truth. This makes
+   spoofing harmless (a client-forged signal can only cause a re-fetch),
+   keeps the agent side on the long-poll (no WebSocket client in
+   `sp42-cli`/`sp42-mcp`), and loses nothing when no operator is in the
+   room — an unheard doorbell has no one to notify, and a late-joining
+   panel lists sessions over REST.
+
 ## Consequences
 
 - The loop's semantics are testable without a server, and the server tests

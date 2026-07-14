@@ -80,6 +80,11 @@ User-facing behavior:
   do — poll again, apply-and-reply, or stop without reopening.
 - **Inventory**: `sp42-cli review sessions` and `GET /dev/review/sessions`
   list open sessions with pending-prompt counts.
+- **Live signal**: every session mutation rings the wiki's coordination
+  room with an advisory `ReviewSignal` (session snapshot only — a doorbell,
+  not the data), so a browser panel gets push updates over the existing
+  WebSocket without a second push transport; it re-fetches the review
+  routes, which stay the source of truth (ADR-0018 §8).
 
 Everything stays read-only with respect to the wiki: a review session never
 edits anything. Acting on feedback rides the existing operator-confirmed
@@ -128,6 +133,10 @@ lanes (re-verify, bare-URL repair, inline edit).
   `queueing_to_an_ended_session_is_refused` (`sp42-platform`) and
   `review_queue_refuses_an_ended_session_and_replies_surface_in_open`
   (`sp42-server`)
+- [ ] Every review mutation publishes an advisory `ReviewSignal` to the
+  wiki's coordination room, relayed without folding room state, verified by
+  `review_mutations_ring_the_coordination_room` (`sp42-server`) and
+  `review_signal_relays_without_folding_room_state` (`sp42-coordination`)
 - [ ] Session opens, feedback queueing, findings attaches, deliveries, and
   ends emit `tracing` events, checkable in server logs
 
@@ -139,10 +148,15 @@ lanes (re-verify, bare-URL repair, inline edit).
   anchors (truncated CSS selectors + DOM ranges) are weaker than Parsoid
   block/cite anchors for wiki work; and SP42 already owns the localhost
   server, session/CSRF runtime, and Parsoid read path the loop needs.
-- **WebSocket feedback channel** (reuse the coordination-room substrate):
-  deferred — a long-poll matches the agent's blocking-command ergonomics
-  (one CLI invocation = one rendezvous) and needs no client protocol. The
-  browser annotation panel may later ride the existing WebSocket/SSE paths.
+- **WebSocket feedback channel** (move the whole loop onto the
+  coordination-room substrate): rejected — a long-poll matches the agent's
+  blocking-command ergonomics (one CLI invocation = one rendezvous) and
+  needs no client protocol, and the substrates' delivery guarantees are
+  opposites (durable exactly-once feedback queue vs. live-only no-backfill
+  state sync, ADR-0023). Instead the browser side converges at the
+  notification layer only: every review mutation rings the wiki's
+  coordination room with an advisory `ReviewSignal` the panel answers by
+  re-fetching the review routes (ADR-0018 §8).
 - **Key sessions by URL string** (hash the raw URL like lavish-axi hashes
   paths): rejected — two URLs for the same page (percent-encoding,
   underscores, `oldid` forms) must resolve to one session, so the canonical

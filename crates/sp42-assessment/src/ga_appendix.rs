@@ -99,10 +99,19 @@ fn bucket_for(finding: &sp42_citation::CitationFinding) -> Bucket {
                 Bucket::Unconfirmed
             }
         }
-        CitationVerdict::SourceUnavailable => match finding.source_unavailable_reason {
-            Some(SourceUnavailableReason::Unusable) => Bucket::Unreadable,
-            Some(SourceUnavailableReason::Unreachable) | None => Bucket::DeadLink,
-        },
+        CitationVerdict::SourceUnavailable => {
+            // A book finding's provenance is the scan the TOOL tried to
+            // read; an outage there is a tool limitation, never a dead
+            // article link (Codex round 11, PR 154).
+            if finding.book_scan.is_some() {
+                Bucket::Unreadable
+            } else {
+                match finding.source_unavailable_reason {
+                    Some(SourceUnavailableReason::Unusable) => Bucket::Unreadable,
+                    Some(SourceUnavailableReason::Unreachable) | None => Bucket::DeadLink,
+                }
+            }
+        }
     }
 }
 
@@ -195,7 +204,7 @@ pub fn render_ga_appendix(
     // Footer
     output.push_str("\n----\n");
     output.push_str("''");
-    output.push_str(&report.title);
+    output.push_str(&escape_verbatim(&report.title));
     output.push_str(" at rev ");
     output.push_str(&report.rev_id.to_string());
     output.push_str(" · rendered ");
@@ -311,7 +320,10 @@ fn render_skipped_section(output: &mut String, report: &sp42_citation::PageVerif
             if !identifiers.is_empty() {
                 let labels: Vec<String> = identifiers
                     .iter()
-                    .map(|identifier| crate::copy::book_identifier(identifier))
+                    // Saved-report identifiers bypass constructor validation
+                    // (serde), so the values are verbatim data — escape them
+                    // (Codex round 11, PR 154).
+                    .map(|identifier| escape_verbatim(&crate::copy::book_identifier(identifier)))
                     .collect();
                 output.push_str(" (");
                 output.push_str(&labels.join(", "));
@@ -1727,6 +1739,60 @@ mod renderer_tests {
         assert_eq!(
             out.matches("<nowiki>").count(),
             out.matches("</nowiki>").count()
+        );
+    }
+
+    #[test]
+    fn saved_report_trust_boundary_round11() {
+        // Codex round 11 (PR 154): render-report input is deserialized data —
+        // titles and identifier values are verbatim, and book-scan outages
+        // are tool limitations, not dead article links.
+        let mut report = fixtures::full_report();
+        report.title = "Evil''{{title}}".to_string();
+        report.skipped.push(sp42_citation::SkippedRef {
+            ref_id: "cite_ref-raw_40-0".to_string(),
+            reason: sp42_citation::SkippedReason::BookSource,
+            block_ordinal: 8,
+            book_sources: vec![sp42_citation::BookSource {
+                identifiers: vec![sp42_citation::BookIdentifier::Isbn(
+                    "{{evil-isbn}}".to_string(),
+                )],
+                cited_page: None,
+            }],
+        });
+        let outage_idx = report
+            .findings
+            .iter()
+            .position(|f| {
+                matches!(f.verdict, sp42_citation::CitationVerdict::SourceUnavailable)
+                    && f.source_unavailable_reason
+                        == Some(sp42_citation::SourceUnavailableReason::Unreachable)
+            })
+            .expect("an unreachable finding");
+        report.findings[outage_idx].book_scan = Some(sp42_citation::BookScanProvenance {
+            ocaid: "item0003".to_string(),
+            scanned_page: None,
+            cited_page: None,
+            note: Some("metadata request did not complete".to_string()),
+        });
+        let out = render_ga_appendix(&report, 0, "0.1.0");
+        assert!(
+            out.contains("<nowiki>Evil''{{title}}</nowiki>"),
+            "title wrapped inert"
+        );
+        assert!(
+            out.contains("<nowiki>ISBN {{evil-isbn}}</nowiki>"),
+            "identifier wrapped inert"
+        );
+        // The scan outage renders as a tool limitation, not a dead link.
+        let dead_idx = out.find(crate::copy::BUCKET_DEAD_LINKS);
+        let unreadable_idx = out
+            .find(crate::copy::BUCKET_UNREADABLE)
+            .expect("unreadable bucket");
+        let _ = (dead_idx, unreadable_idx);
+        assert!(
+            out[unreadable_idx..].contains("metadata request did not complete"),
+            "outage note in the tool-limitation bucket"
         );
     }
 

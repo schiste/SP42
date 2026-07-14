@@ -22,7 +22,7 @@ pub use codec::{decode_message, encode_message};
 pub use errors::{CodecError, CoordinationError};
 pub use messages::{
     ActionBroadcast, CoordinationMessage, CoordinationRoomSummary, CoordinationSnapshot, EditClaim,
-    FlaggedEdit, PresenceHeartbeat, RaceResolution, ScoreDelta,
+    FlaggedEdit, PresenceHeartbeat, RaceResolution, ReviewSignal, ScoreDelta,
 };
 pub use runtime::{CoordinationRuntime, CoordinationRuntimeStatus};
 pub use state::{CoordinationState, CoordinationStateSummary};

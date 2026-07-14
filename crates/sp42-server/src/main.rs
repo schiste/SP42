@@ -11,6 +11,7 @@ mod local_env;
 mod oauth_runtime;
 mod operator_live;
 mod parsoid_editor;
+mod review_routes;
 mod revision_artifacts;
 mod routes;
 pub(crate) mod runtime_adapters;
@@ -322,6 +323,7 @@ async fn main() -> Result<(), std::io::Error> {
         capability_targets: CapabilityProbeTargets::default(),
         clock: clock.clone(),
         coordination: CoordinationRegistry::new(clock),
+        review_sessions: review_routes::new_review_session_store(),
         deployment,
         wiki_registry,
         wikitext_editor: Arc::new(parsoid_editor::ParsoidWikitextEditor::new()),

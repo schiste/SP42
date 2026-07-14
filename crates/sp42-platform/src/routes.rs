@@ -99,6 +99,18 @@ pub const DEV_CITATION_VERIFY_PAGE_PATH: &str = "/dev/citation/verify-page";
 /// cost is spent.
 pub const DEV_CITATION_REVERIFY_PATH: &str = "/dev/citation/reverify";
 
+/// Interactive review-session bridge (PRD-0017): an agent opens a session on
+/// a page, the operator queues anchored feedback, and the agent polls for it.
+/// All POST routes are session+CSRF gated; the listing is a read-only
+/// inspection surface.
+pub const DEV_REVIEW_OPEN_PATH: &str = "/dev/review/open";
+pub const DEV_REVIEW_SESSIONS_PATH: &str = "/dev/review/sessions";
+pub const DEV_REVIEW_PROMPTS_PATH: &str = "/dev/review/prompts";
+pub const DEV_REVIEW_POLL_PATH: &str = "/dev/review/poll";
+pub const DEV_REVIEW_FINDINGS_PATH: &str = "/dev/review/findings";
+pub const DEV_REVIEW_REPLY_PATH: &str = "/dev/review/agent-reply";
+pub const DEV_REVIEW_END_PATH: &str = "/dev/review/end";
+
 /// Header carrying the bridge session's CSRF token on state-changing routes.
 pub const CSRF_HEADER_NAME: &str = "x-sp42-csrf-token";
 
@@ -335,6 +347,11 @@ fn operator_dev_endpoints(default_wiki_id: &str) -> Vec<RouteDefinition> {
             RouteMethod::Get,
             COORDINATION_INSPECTIONS_PATH,
             "Room-by-room coordination inspection collection.",
+        ),
+        RouteDefinition::new(
+            RouteMethod::Get,
+            DEV_REVIEW_SESSIONS_PATH,
+            "Interactive review-session inventory and pending-feedback summaries.",
         ),
     ]
 }

@@ -58,8 +58,8 @@ pub use citation::openlibrary_apply::{
 };
 pub use citation::page::{
     PageVerificationReport, PageVerificationRequest, PageVerificationStats, ReverifyFindingRequest,
-    ReverifyFindingResponse, apply_reverified_finding, select_reverify_use_site,
-    verify_one_use_site, verify_page,
+    ReverifyFindingResponse, apply_reverified_finding, review_finding_markers,
+    select_reverify_use_site, verify_one_use_site, verify_page,
 };
 pub use citation::parsing::{
     ParsedVerdict, canonicalize_verdict, parse_repair_response, parse_verdict_response,

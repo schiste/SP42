@@ -46,6 +46,19 @@ mod tests {
         assert_eq!(decoded, message);
     }
 
+    #[test]
+    fn review_signal_round_trips() {
+        let message = CoordinationMessage::ReviewSignal(crate::messages::ReviewSignal {
+            wiki_id: "frwiki".to_string(),
+            session: sp42_platform::ReviewSession::open("frwiki", "Exemple", 42, 1_000).snapshot(),
+        });
+
+        let bytes = encode_message(&message).expect("encoding should succeed");
+        let decoded = decode_message(&bytes).expect("decoding should succeed");
+
+        assert_eq!(decoded, message);
+    }
+
     fn action_strategy() -> impl Strategy<Value = Action> {
         prop_oneof![
             Just(Action::Rollback),

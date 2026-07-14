@@ -203,6 +203,52 @@ pub struct PageVerificationReport {
     pub stats: PageVerificationStats,
 }
 
+/// Project a page report's findings into review-session overlay markers
+/// (PRD-0017): one marker per finding, joined to the article by the
+/// finding's `ref_id` — the same anchor coordinate review prompts use — so
+/// a review surface can show the report's problems in the context of the
+/// article instead of as detached text. Verdicts keep their wire labels;
+/// claims are truncated to the outline display limit; grounding caveats and
+/// unavailable reasons ride along as `detail`. Findings without a `ref_id`
+/// (the standalone single-claim path) cannot anchor and are skipped.
+#[must_use]
+pub fn review_finding_markers(
+    report: &PageVerificationReport,
+) -> Vec<sp42_platform::ReviewFindingMarker> {
+    report
+        .findings
+        .iter()
+        .filter(|finding| !finding.ref_id.is_empty())
+        .map(|finding| sp42_platform::ReviewFindingMarker {
+            ref_id: finding.ref_id.clone(),
+            verdict: finding.verdict.as_wire().to_string(),
+            claim: sp42_platform::truncate_outline_text(&finding.claim),
+            detail: finding_marker_detail(finding),
+        })
+        .collect()
+}
+
+/// The marker's short qualifier: the unavailable reason for an abstention,
+/// or the grounding caveat for a support judgment that did not locate
+/// verbatim (SP42#25 layer 6 — surfaced, never silently upgraded).
+fn finding_marker_detail(finding: &CitationFinding) -> Option<String> {
+    if finding.verdict == CitationVerdict::SourceUnavailable {
+        return finding
+            .source_unavailable_reason
+            .map(|reason| format!("source {}", reason.as_str()));
+    }
+    match finding.grounding_status {
+        crate::citation::verify::GroundingStatus::Located
+        | crate::citation::verify::GroundingStatus::NotApplicable => None,
+        crate::citation::verify::GroundingStatus::LocatedFuzzy => {
+            Some("support located by fuzzy match only".to_string())
+        }
+        crate::citation::verify::GroundingStatus::Unlocated => {
+            Some("support quote not located in source (unverified)".to_string())
+        }
+    }
+}
+
 /// Try archive fallbacks if the primary URL came back `SourceUnavailable`.
 /// Returns the original outcome if no archives work or if no archives exist.
 async fn try_archive_fallback<C, M>(
@@ -1002,6 +1048,52 @@ mod orchestrator_tests {
             book_scan: None,
             schema_version: crate::citation::verify::SCHEMA_VERSION,
         }
+    }
+
+    #[test]
+    fn review_finding_markers_project_the_report_onto_review_anchors() {
+        let judged = |level| CitationVerdict::Judged(level);
+        let mut unlocated = mk_finding("r_unlocated", 1, judged(SupportLevel::Supported));
+        unlocated.grounding_status = GroundingStatus::Unlocated;
+        let mut dead = mk_finding("r_dead", 2, CitationVerdict::SourceUnavailable);
+        dead.source_unavailable_reason = Some(SourceUnavailableReason::Unreachable);
+        let mut long_claim = mk_finding("r_long", 3, judged(SupportLevel::Partial));
+        long_claim.claim = "x".repeat(500);
+        // The standalone single-claim path has no page ref: nothing to anchor to.
+        let standalone = mk_finding("", 4, judged(SupportLevel::NotSupported));
+        let report = PageVerificationReport {
+            wiki_id: "enwiki".into(),
+            title: "Cats".into(),
+            rev_id: 7,
+            findings: vec![
+                mk_finding("r_ok", 0, judged(SupportLevel::Supported)),
+                unlocated,
+                dead,
+                long_claim,
+                standalone,
+            ],
+            skipped: Vec::new(),
+            extraction_failures: Vec::new(),
+            book_resolutions: Vec::new(),
+            stats: PageVerificationStats::default(),
+        };
+
+        let markers = super::review_finding_markers(&report);
+
+        assert_eq!(markers.len(), 4, "ref-less standalone finding is skipped");
+        assert_eq!(markers[0].ref_id, "r_ok");
+        assert_eq!(markers[0].verdict, "supported");
+        assert_eq!(markers[0].detail, None);
+        assert_eq!(
+            markers[1].detail.as_deref(),
+            Some("support quote not located in source (unverified)")
+        );
+        assert_eq!(markers[2].verdict, "source_unavailable");
+        assert_eq!(markers[2].detail.as_deref(), Some("source unreachable"));
+        assert!(
+            markers[3].claim.chars().count() <= 200,
+            "claims are truncated to the outline display limit"
+        );
     }
 
     #[test]

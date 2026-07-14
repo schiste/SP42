@@ -48,6 +48,7 @@ pub mod origin;
 pub mod priority_queue;
 pub mod public_documents;
 pub mod queue_builder;
+pub mod review_session;
 pub mod review_workbench;
 pub mod routes;
 pub mod score_tier;
@@ -127,6 +128,16 @@ pub use public_documents::{
 pub use queue_builder::{
     build_ranked_queue, build_ranked_queue_with_contexts, build_ranked_queue_with_policy,
 };
+pub use review_session::{
+    FindingsRevisionMismatch, REVIEW_SESSION_CONTRACT_VERSION, ReviewAckResponse, ReviewAnchor,
+    ReviewBlockOutline, ReviewChatEntry, ReviewChatRole, ReviewEndRequest, ReviewEndedBy,
+    ReviewFeedbackTake, ReviewFindingMarker, ReviewFindingsRequest, ReviewFindingsResponse,
+    ReviewOpenRequest, ReviewOpenResponse, ReviewPollRequest, ReviewPollResponse, ReviewPollStatus,
+    ReviewPrompt, ReviewPromptKind, ReviewQueueRequest, ReviewQueueResponse, ReviewReplyRequest,
+    ReviewSession, ReviewSessionSnapshot, ReviewSessionStatus, ReviewSessionsResponse,
+    SessionEnded, annotate_outline, build_article_outline, open_next_step, poll_next_step,
+    poll_status, truncate_outline_text,
+};
 pub use review_workbench::{
     PreparedRequestPreview, ReviewWorkbench, build_review_workbench,
     build_session_action_execution_requests,
@@ -192,4 +203,5 @@ pub use wikitext_editor::{
     ScriptedEditorInvocation, ScriptedWikitextEditor, ScriptedWikitextNode, WikitextEditOutcome,
     WikitextEditRefusal, WikitextEditor, WikitextEditorError, WikitextNodeDescriptor,
     WikitextNodeKind, WikitextNodeLocator, WikitextPageRef, normalize_anchor_text,
+    normalize_title_spacing,
 };

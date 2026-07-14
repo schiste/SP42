@@ -100,6 +100,7 @@ fn test_state() -> AppState {
         capability_targets: CapabilityProbeTargets::default(),
         clock: clock.clone(),
         coordination: CoordinationRegistry::new(clock),
+        review_sessions: crate::review_routes::new_review_session_store(),
         deployment: test_deployment(),
         wiki_registry: test_wiki_registry(),
         wikitext_editor: test_wikitext_editor(),
@@ -1158,6 +1159,7 @@ async fn healthz_reports_ready_when_local_token_is_loaded() {
         },
         clock: clock.clone(),
         coordination: CoordinationRegistry::new(clock),
+        review_sessions: crate::review_routes::new_review_session_store(),
         deployment: test_deployment(),
         wiki_registry: test_wiki_registry(),
         wikitext_editor: test_wikitext_editor(),
@@ -1667,6 +1669,7 @@ async fn capability_route_uses_injected_targets() {
         },
         clock: clock.clone(),
         coordination: CoordinationRegistry::new(clock),
+        review_sessions: crate::review_routes::new_review_session_store(),
         deployment: test_deployment(),
         wiki_registry: test_wiki_registry(),
         wikitext_editor: test_wikitext_editor(),
@@ -1735,6 +1738,7 @@ async fn live_operator_route_returns_canonical_operator_contract() {
         },
         clock: clock.clone(),
         coordination: CoordinationRegistry::new(clock),
+        review_sessions: crate::review_routes::new_review_session_store(),
         deployment: test_deployment(),
         wiki_registry: test_wiki_registry(),
         wikitext_editor: test_wikitext_editor(),
@@ -1826,6 +1830,7 @@ async fn live_operator_route_surfaces_cached_backlog_state() {
         },
         clock: clock.clone(),
         coordination: CoordinationRegistry::new(clock),
+        review_sessions: crate::review_routes::new_review_session_store(),
         deployment: test_deployment(),
         wiki_registry: test_wiki_registry(),
         wikitext_editor: test_wikitext_editor(),
@@ -2002,6 +2007,7 @@ async fn logical_storage_document_route_resolves_profile_page() {
         },
         clock: clock.clone(),
         coordination: CoordinationRegistry::new(clock),
+        review_sessions: crate::review_routes::new_review_session_store(),
         deployment: test_deployment(),
         wiki_registry: test_wiki_registry(),
         wikitext_editor: test_wikitext_editor(),
@@ -2085,6 +2091,7 @@ async fn public_storage_document_route_returns_typed_preferences() {
         },
         clock: clock.clone(),
         coordination: CoordinationRegistry::new(clock),
+        review_sessions: crate::review_routes::new_review_session_store(),
         deployment: test_deployment(),
         wiki_registry: test_wiki_registry(),
         wikitext_editor: test_wikitext_editor(),
@@ -2174,6 +2181,7 @@ async fn bootstrap_derives_username_and_scopes_from_validated_token() {
         },
         clock: clock.clone(),
         coordination: CoordinationRegistry::new(clock),
+        review_sessions: crate::review_routes::new_review_session_store(),
         deployment: test_deployment(),
         wiki_registry: test_wiki_registry(),
         wikitext_editor: test_wikitext_editor(),
@@ -3983,4 +3991,502 @@ fn action_error_response_preserves_carried_status() {
         crate::action_routes::action_error_response(&no_status).0,
         axum::http::StatusCode::BAD_GATEWAY
     );
+}
+
+/// POST a JSON body to a review route with the bridge cookie + CSRF header
+/// and return the status plus parsed JSON body.
+async fn post_review_json(
+    router: Router,
+    cookie: &str,
+    path: &str,
+    body: &serde_json::Value,
+) -> (StatusCode, serde_json::Value) {
+    let response = router
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri(path)
+                .header(axum::http::header::COOKIE, cookie)
+                .header(CSRF_HEADER_NAME, "csrf-token")
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(Body::from(body.to_string()))
+                .expect("request should build"),
+        )
+        .await
+        .expect("review request should succeed");
+    let status = response.status();
+    let bytes = to_bytes(response.into_body(), usize::MAX)
+        .await
+        .expect("review response body should read");
+    let value = serde_json::from_slice(&bytes).unwrap_or(serde_json::Value::Null);
+    (status, value)
+}
+
+#[tokio::test]
+async fn review_routes_require_an_authenticated_bridge_session() {
+    let state = test_state();
+    let router = build_router(state);
+
+    let response = router
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri(sp42_core::routes::DEV_REVIEW_POLL_PATH)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(Body::from(
+                    serde_json::json!({"wiki_id": "frwiki", "title": "Exemple", "wait_ms": 1})
+                        .to_string(),
+                ))
+                .expect("request should build"),
+        )
+        .await
+        .expect("poll request should succeed");
+
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+}
+
+/// A router with an installed bridge session, ready for review requests.
+async fn review_test_router() -> (Router, String) {
+    let state = test_state();
+    let created_at_ms = now_ms();
+    state.sessions.write().await.insert(
+        "review-agent".to_string(),
+        test_session("Reviewer", "secret-token", created_at_ms),
+    );
+    (
+        build_router(state),
+        format!("{SESSION_COOKIE_NAME}=review-agent"),
+    )
+}
+
+#[tokio::test]
+async fn review_session_loop_delivers_operator_feedback_to_the_agent() {
+    let (router, cookie) = review_test_router().await;
+
+    // Open on a pasted URL: the title unwraps and the pinned rev is recorded.
+    let (status, open) = post_review_json(
+        router.clone(),
+        &cookie,
+        sp42_core::routes::DEV_REVIEW_OPEN_PATH,
+        &serde_json::json!({
+            "wiki_id": "frwiki",
+            "target": "https://fr.wikipedia.org/wiki/Exemple",
+            "rev_id": 42,
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(open["session"]["title"], "Exemple");
+    assert_eq!(open["session"]["rev_id"], 42);
+    assert_eq!(open["session"]["status"], "open");
+    assert_eq!(open["contract_version"], 1);
+
+    // No feedback yet: a bounded poll reports waiting.
+    let poll_body = serde_json::json!({"wiki_id": "frwiki", "title": "Exemple", "wait_ms": 1});
+    let (status, poll) = post_review_json(
+        router.clone(),
+        &cookie,
+        sp42_core::routes::DEV_REVIEW_POLL_PATH,
+        &poll_body,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(poll["status"], "waiting");
+
+    // The operator queues an anchored prompt and ends the session in one action.
+    let (status, queued) = post_review_json(
+        router.clone(),
+        &cookie,
+        sp42_core::routes::DEV_REVIEW_PROMPTS_PATH,
+        &serde_json::json!({
+            "wiki_id": "frwiki",
+            "title": "Exemple",
+            "prompts": [{
+                "kind": "text",
+                "prompt": "this quote is not in the source",
+                "anchor": {"block_ordinal": 3, "ref_id": "cite_ref-a_1-0", "selected_text": "quote"},
+            }],
+            "end_session": true,
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(queued["queued"], 1);
+
+    // Feedback queued before the end still delivers, flagged as the final batch.
+    let (status, poll) = post_review_json(
+        router.clone(),
+        &cookie,
+        sp42_core::routes::DEV_REVIEW_POLL_PATH,
+        &poll_body,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(poll["status"], "feedback");
+    assert_eq!(poll["session_ended"], true);
+    assert_eq!(poll["ended_by"], "operator");
+    assert_eq!(poll["prompts"][0]["anchor"]["block_ordinal"], 3);
+
+    // A later poll reports the operator end with reopen etiquette.
+    let (status, poll) = post_review_json(
+        router.clone(),
+        &cookie,
+        sp42_core::routes::DEV_REVIEW_POLL_PATH,
+        &poll_body,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(poll["status"], "ended");
+    assert!(
+        poll["next_step"]
+            .as_str()
+            .expect("next_step should be a string")
+            .contains("do not reopen"),
+    );
+}
+
+#[tokio::test]
+async fn review_mutations_ring_the_coordination_room() {
+    let state = test_state();
+    state.sessions.write().await.insert(
+        "review-agent".to_string(),
+        test_session("Reviewer", "secret-token", now_ms()),
+    );
+    // A panel is listening on the wiki's room before the agent acts.
+    let mut room = state.coordination.subscribe("frwiki").await;
+    let router = build_router(state);
+    let cookie = format!("{SESSION_COOKIE_NAME}=review-agent");
+
+    let (status, _) = post_review_json(
+        router.clone(),
+        &cookie,
+        sp42_core::routes::DEV_REVIEW_OPEN_PATH,
+        &serde_json::json!({"wiki_id": "frwiki", "target": "Exemple", "rev_id": 42}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+
+    let envelope = tokio::time::timeout(Duration::from_secs(5), room.recv())
+        .await
+        .expect("open should ring the room promptly")
+        .expect("room channel should stay open");
+    assert_eq!(envelope.sender_id, crate::review_routes::SERVER_SENDER_ID);
+    let message =
+        sp42_coordination::decode_message(&envelope.payload).expect("signal should decode");
+    let sp42_coordination::CoordinationMessage::ReviewSignal(signal) = message else {
+        panic!("expected a review signal, got {message:?}");
+    };
+    assert_eq!(signal.wiki_id, "frwiki");
+    assert_eq!(signal.session.title, "Exemple");
+    assert_eq!(signal.session.rev_id, 42);
+
+    // Queueing feedback rings again, carrying the pending count so a panel
+    // can badge without a round-trip.
+    let (status, _) = post_review_json(
+        router.clone(),
+        &cookie,
+        sp42_core::routes::DEV_REVIEW_PROMPTS_PATH,
+        &serde_json::json!({
+            "wiki_id": "frwiki",
+            "title": "Exemple",
+            "prompts": [{"kind": "message", "prompt": "check the lede"}],
+            "end_session": false,
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let envelope = tokio::time::timeout(Duration::from_secs(5), room.recv())
+        .await
+        .expect("queue should ring the room promptly")
+        .expect("room channel should stay open");
+    let message =
+        sp42_coordination::decode_message(&envelope.payload).expect("signal should decode");
+    let sp42_coordination::CoordinationMessage::ReviewSignal(signal) = message else {
+        panic!("expected a review signal, got {message:?}");
+    };
+    assert_eq!(signal.session.pending_prompts, 1);
+
+    // Draining the feedback rings once more so the panel's badge does not
+    // sit on the stale pending count.
+    let (status, poll) = post_review_json(
+        router.clone(),
+        &cookie,
+        sp42_core::routes::DEV_REVIEW_POLL_PATH,
+        &serde_json::json!({"wiki_id": "frwiki", "title": "Exemple", "wait_ms": 1}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(poll["status"], "feedback");
+    let envelope = tokio::time::timeout(Duration::from_secs(5), room.recv())
+        .await
+        .expect("a drained poll should ring the room promptly")
+        .expect("room channel should stay open");
+    let message =
+        sp42_coordination::decode_message(&envelope.payload).expect("signal should decode");
+    let sp42_coordination::CoordinationMessage::ReviewSignal(signal) = message else {
+        panic!("expected a review signal, got {message:?}");
+    };
+    assert_eq!(signal.session.pending_prompts, 0);
+    assert_eq!(signal.session.status, sp42_core::ReviewSessionStatus::Open);
+}
+
+#[tokio::test]
+async fn review_queue_refuses_an_ended_session_and_replies_surface_in_open() {
+    let (router, cookie) = review_test_router().await;
+
+    let (status, _) = post_review_json(
+        router.clone(),
+        &cookie,
+        sp42_core::routes::DEV_REVIEW_OPEN_PATH,
+        &serde_json::json!({"wiki_id": "frwiki", "target": "Exemple", "rev_id": 42}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+
+    // The agent posts a summary; the operator surface must be able to read
+    // it back (an invisible reply would be write-only).
+    let (status, _) = post_review_json(
+        router.clone(),
+        &cookie,
+        sp42_core::routes::DEV_REVIEW_REPLY_PATH,
+        &serde_json::json!({
+            "wiki_id": "frwiki",
+            "title": "Exemple",
+            "text": "opened — start with the lede",
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let (status, open) = post_review_json(
+        router.clone(),
+        &cookie,
+        sp42_core::routes::DEV_REVIEW_OPEN_PATH,
+        &serde_json::json!({"wiki_id": "frwiki", "target": "Exemple", "rev_id": 42}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(open["chat"][0]["role"], "agent");
+    assert_eq!(open["chat"][0]["text"], "opened — start with the lede");
+
+    // The operator ends the session; a later plain queue must not silently
+    // flip it back to feedback around the reopen gate.
+    let (status, _) = post_review_json(
+        router.clone(),
+        &cookie,
+        sp42_core::routes::DEV_REVIEW_PROMPTS_PATH,
+        &serde_json::json!({
+            "wiki_id": "frwiki",
+            "title": "Exemple",
+            "prompts": [],
+            "end_session": true,
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let (status, refused) = post_review_json(
+        router.clone(),
+        &cookie,
+        sp42_core::routes::DEV_REVIEW_PROMPTS_PATH,
+        &serde_json::json!({
+            "wiki_id": "frwiki",
+            "title": "Exemple",
+            "prompts": [{"kind": "message", "prompt": "too late"}],
+            "end_session": false,
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT);
+    assert_eq!(refused["code"], "review-session-ended");
+
+    // A nonblocking poll (explicit wait_ms: 0) reports the end immediately.
+    let (status, poll) = post_review_json(
+        router.clone(),
+        &cookie,
+        sp42_core::routes::DEV_REVIEW_POLL_PATH,
+        &serde_json::json!({"wiki_id": "frwiki", "title": "Exemple", "wait_ms": 0}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(poll["status"], "ended");
+}
+
+#[tokio::test]
+async fn review_findings_attach_and_overlay_the_next_open() {
+    let (router, cookie) = review_test_router().await;
+
+    // Attaching to a page with no session refuses.
+    let marker = serde_json::json!({
+        "ref_id": "cite_ref-a_1-0",
+        "verdict": "not_supported",
+        "claim": "Cats bark.",
+    });
+    let attach_body = serde_json::json!({
+        "wiki_id": "frwiki",
+        "title": "Exemple",
+        "rev_id": 42,
+        "findings": [marker],
+    });
+    let (status, refused) = post_review_json(
+        router.clone(),
+        &cookie,
+        sp42_core::routes::DEV_REVIEW_FINDINGS_PATH,
+        &attach_body,
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert_eq!(refused["code"], "review-session-not-found");
+
+    let (status, _) = post_review_json(
+        router.clone(),
+        &cookie,
+        sp42_core::routes::DEV_REVIEW_OPEN_PATH,
+        &serde_json::json!({"wiki_id": "frwiki", "target": "Exemple", "rev_id": 42}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+
+    // A report produced against another revision must not overlay this one.
+    let mut stale = attach_body.clone();
+    stale["rev_id"] = serde_json::json!(41);
+    let (status, refused) = post_review_json(
+        router.clone(),
+        &cookie,
+        sp42_core::routes::DEV_REVIEW_FINDINGS_PATH,
+        &stale,
+    )
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT);
+    assert_eq!(refused["code"], "review-findings-revision-mismatch");
+
+    let (status, attached) = post_review_json(
+        router.clone(),
+        &cookie,
+        sp42_core::routes::DEV_REVIEW_FINDINGS_PATH,
+        &attach_body,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(attached["attached"], 1);
+    assert_eq!(attached["session"]["findings"], 1);
+
+    // The next open carries the overlay. The scripted editor exposes no
+    // blocks, so the marker surfaces as unanchored rather than dropping;
+    // block-level joins are covered by the platform unit tests.
+    let (status, open) = post_review_json(
+        router.clone(),
+        &cookie,
+        sp42_core::routes::DEV_REVIEW_OPEN_PATH,
+        &serde_json::json!({"wiki_id": "frwiki", "target": "Exemple", "rev_id": 42}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(open["unanchored_findings"][0]["ref_id"], "cite_ref-a_1-0");
+    assert_eq!(open["unanchored_findings"][0]["verdict"], "not_supported");
+    assert!(
+        open["next_step"]
+            .as_str()
+            .expect("next_step should be a string")
+            .contains("1 verification finding"),
+    );
+}
+
+#[tokio::test]
+async fn review_reopen_gate_requires_explicit_reopen_after_operator_end() {
+    let (router, cookie) = review_test_router().await;
+
+    // Open, then let the operator end the session with no further feedback.
+    let (status, _) = post_review_json(
+        router.clone(),
+        &cookie,
+        sp42_core::routes::DEV_REVIEW_OPEN_PATH,
+        &serde_json::json!({"wiki_id": "frwiki", "target": "Exemple", "rev_id": 42}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let (status, _) = post_review_json(
+        router.clone(),
+        &cookie,
+        sp42_core::routes::DEV_REVIEW_PROMPTS_PATH,
+        &serde_json::json!({
+            "wiki_id": "frwiki",
+            "title": "Exemple",
+            "prompts": [],
+            "end_session": true,
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+
+    // A plain reopen refuses; an explicit reopen resumes.
+    let open_body = serde_json::json!({
+        "wiki_id": "frwiki",
+        "target": "Exemple",
+        "rev_id": 42,
+    });
+    let (status, refused) = post_review_json(
+        router.clone(),
+        &cookie,
+        sp42_core::routes::DEV_REVIEW_OPEN_PATH,
+        &open_body,
+    )
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT);
+    assert_eq!(refused["code"], "review-session-operator-ended");
+
+    let (status, reopened) = post_review_json(
+        router.clone(),
+        &cookie,
+        sp42_core::routes::DEV_REVIEW_OPEN_PATH,
+        &serde_json::json!({
+            "wiki_id": "frwiki",
+            "target": "Exemple",
+            "rev_id": 42,
+            "reopen": true,
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(reopened["session"]["status"], "open");
+
+    // The listing shows the resumed session.
+    let response = router
+        .oneshot(
+            Request::builder()
+                .method(Method::GET)
+                .uri(sp42_core::routes::DEV_REVIEW_SESSIONS_PATH)
+                .body(Body::empty())
+                .expect("request should build"),
+        )
+        .await
+        .expect("sessions request should succeed");
+    assert_eq!(response.status(), StatusCode::OK);
+    let bytes = to_bytes(response.into_body(), usize::MAX)
+        .await
+        .expect("sessions body should read");
+    let sessions: serde_json::Value =
+        serde_json::from_slice(&bytes).expect("sessions body should parse");
+    assert_eq!(sessions["sessions"][0]["title"], "Exemple");
+}
+
+#[tokio::test]
+async fn review_poll_reports_missing_for_an_unopened_page() {
+    let state = test_state();
+    let created_at_ms = now_ms();
+    state.sessions.write().await.insert(
+        "review-agent".to_string(),
+        test_session("Reviewer", "secret-token", created_at_ms),
+    );
+    let router = build_router(state);
+    let cookie = format!("{SESSION_COOKIE_NAME}=review-agent");
+
+    let (status, poll) = post_review_json(
+        router,
+        &cookie,
+        sp42_core::routes::DEV_REVIEW_POLL_PATH,
+        &serde_json::json!({"wiki_id": "frwiki", "title": "Nowhere", "wait_ms": 1}),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(poll["status"], "missing");
 }

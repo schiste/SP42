@@ -12,6 +12,7 @@ use regex::Regex;
 use url::Url;
 
 use crate::errors::CitationVerificationError;
+use sp42_platform::wikitext_editor::normalize_title_spacing;
 
 /// Accepted wiki language/site codes — the SSRF guard before host interpolation.
 static WIKI_CODE: LazyLock<Regex> = LazyLock::new(|| {
@@ -166,9 +167,14 @@ pub struct PageTarget {
 /// - `https://…/w/index.php?title=Foo&oldid=123` → title `Foo`, `rev_id` `123`.
 ///
 /// Underscores become spaces and percent-escapes are decoded, matching `MediaWiki`
-/// title normalization. Anything that is not an `http(s)` URL is treated as a
-/// bare title verbatim. The wiki the URL points at is *not* inspected — the caller
-/// chooses the wiki separately, and a host mismatch is theirs to reconcile.
+/// title normalization. A bare (non-URL) title gets the same spacing
+/// normalization — underscores to spaces, whitespace runs collapsed — but no
+/// percent-decoding, since a literal `%` is valid title text. First-letter
+/// case is deliberately *not* folded: case rules are wiki-dependent
+/// (Wiktionary titles are case-sensitive), and conflating two distinct pages
+/// would be worse than treating one page as two. The wiki the URL points at
+/// is *not* inspected — the caller chooses the wiki separately, and a host
+/// mismatch is theirs to reconcile.
 #[must_use]
 pub fn parse_page_target(input: &str) -> PageTarget {
     let trimmed = input.trim();
@@ -207,20 +213,15 @@ pub fn parse_page_target(input: &str) -> PageTarget {
     }
 
     PageTarget {
-        title: trimmed.to_string(),
+        title: normalize_title_spacing(trimmed),
         rev_id: 0,
     }
 }
 
-/// Normalize a title extracted from a URL: percent-decode, then map underscores
-/// to spaces (`MediaWiki` treats them as equivalent and the action API expects
-/// spaces).
+/// Normalize a title extracted from a URL: percent-decode, then apply the
+/// spacing normalization.
 fn normalize_title(raw: &str) -> String {
-    percent_decode_str(raw)
-        .decode_utf8_lossy()
-        .replace('_', " ")
-        .trim()
-        .to_string()
+    normalize_title_spacing(&percent_decode_str(raw).decode_utf8_lossy())
 }
 
 #[cfg(test)]
@@ -235,6 +236,21 @@ mod tests {
         let target = parse_page_target("  User:LuisVilla/SP42 smoke  ");
         assert_eq!(target.title, "User:LuisVilla/SP42 smoke");
         assert_eq!(target.rev_id, 0);
+    }
+
+    #[test]
+    fn parse_page_target_normalizes_bare_title_spacing() {
+        // Underscores are spaces in MediaWiki, and runs of either collapse
+        // to one — a bare title must not spell a different page (or review
+        // session) than the same title pasted as a URL.
+        assert_eq!(
+            parse_page_target("Grand_Exemple").title,
+            "Grand Exemple",
+            "underscore spelling matches the URL spelling"
+        );
+        assert_eq!(parse_page_target("A __ B  C").title, "A B C");
+        // No percent-decoding for bare titles: a literal `%` is valid text.
+        assert_eq!(parse_page_target("100%_Design").title, "100% Design");
     }
 
     #[test]

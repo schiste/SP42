@@ -151,6 +151,21 @@ pub fn render_ga_appendix(
         })
         .count();
 
+    // Dead-link vs tool-limitation counts derive from the same bucketing the
+    // sublists use, so the summary can never disagree with the lines below
+    // it (raw stats count book-scan outages as unreachable; Codex round 12,
+    // PR 154).
+    let dead_links = report
+        .findings
+        .iter()
+        .filter(|f| bucket_for(f) == Bucket::DeadLink)
+        .count();
+    let unreadable = report
+        .findings
+        .iter()
+        .filter(|f| bucket_for(f) == Bucket::Unreadable)
+        .count();
+
     let stats_line = format!(
         "Of {} references, {} citation use-sites were machine-checked: {} supported ({} of them unconfirmed), {} partially supported, {} where claim and source disagree, {} dead {}, {} {} the tool could not read; {} book/offline {} and {} unprocessable {} were not checked.",
         report.stats.refs_seen,
@@ -159,14 +174,10 @@ pub fn render_ga_appendix(
         unconfirmed_supported,
         report.stats.partial,
         report.stats.not_supported,
-        report.stats.source_unavailable_unreachable,
-        plural(report.stats.source_unavailable_unreachable, "link", "links"),
-        report.stats.source_unavailable_unusable,
-        plural(
-            report.stats.source_unavailable_unusable,
-            "source",
-            "sources"
-        ),
+        dead_links,
+        plural(dead_links, "link", "links"),
+        unreadable,
+        plural(unreadable, "source", "sources"),
         report.stats.skipped,
         plural(report.stats.skipped, "ref", "refs"),
         report.stats.extraction_failures,
@@ -1793,6 +1804,14 @@ mod renderer_tests {
         assert!(
             out[unreadable_idx..].contains("metadata request did not complete"),
             "outage note in the tool-limitation bucket"
+        );
+        // The summary agrees with the buckets: the fixture's only
+        // unreachable finding became the scan outage, so zero dead links
+        // remain and the outage joined the unreadable count
+        // (Codex round 12, PR 154).
+        assert!(
+            out.contains("0 dead links,"),
+            "summary counts derive from bucketing"
         );
     }
 

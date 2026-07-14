@@ -10,6 +10,7 @@ workspace = true
 
 [dependencies]
 parsoid.workspace = true
+percent-encoding.workspace = true
 serde_json.workspace = true
 sp42-platform = { path = "../sp42-platform" }
 url.workspace = true

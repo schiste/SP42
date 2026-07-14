@@ -898,7 +898,14 @@ where
         .map(|u| u.ref_id.as_str())
         .chain(book_use_sites.iter().map(|b| b.ref_id.as_str()))
         .collect();
-    let refs_seen = distinct_use_site_refs.len() + skipped.len() + failures.len();
+    // A partially-resolved bundled ref appears BOTH as a use-site and as an
+    // unresolved-short-cite skip (the disclosure); count the physical ref
+    // once (Codex round 11, PR 153).
+    let skipped_only = skipped
+        .iter()
+        .filter(|skip| !distinct_use_site_refs.contains(skip.ref_id.as_str()))
+        .count();
+    let refs_seen = distinct_use_site_refs.len() + skipped_only + failures.len();
 
     // Pre-bind shared refs OUTSIDE the closures so the spawned futures capture
     // plain `&`/`&dyn` (Copy) references, not re-borrows of locals — mirrors the
@@ -1201,6 +1208,7 @@ mod orchestrator_tests {
                     ref_text: "[1]".into(),
                     named: false,
                     is_bare_url_ref: false,
+                    short_cite_unresolved: false,
                 },
                 BlockRef {
                     offset: 22,
@@ -1213,6 +1221,7 @@ mod orchestrator_tests {
                     ref_text: "[2]".into(),
                     named: false,
                     is_bare_url_ref: false,
+                    short_cite_unresolved: false,
                 },
             ],
             block_kind: BlockKind::Paragraph,
@@ -1240,6 +1249,7 @@ mod orchestrator_tests {
                     ref_text: "[1]".into(),
                     named: false,
                     is_bare_url_ref: false,
+                    short_cite_unresolved: false,
                 },
                 BlockRef {
                     offset: 17,
@@ -1249,6 +1259,7 @@ mod orchestrator_tests {
                     ref_text: "[2]".into(),
                     named: false,
                     is_bare_url_ref: false,
+                    short_cite_unresolved: false,
                 },
             ],
             block_kind: BlockKind::Paragraph,
@@ -1318,6 +1329,7 @@ mod orchestrator_tests {
                 ref_text: "[1]".into(),
                 named: false,
                 is_bare_url_ref: false,
+                short_cite_unresolved: false,
             }],
             block_kind: BlockKind::Paragraph,
             block_ordinal: 0,
@@ -1543,6 +1555,57 @@ mod orchestrator_tests {
     }
 
     #[test]
+    fn partially_resolved_ref_counts_once_in_refs_seen() {
+        use futures::executor::block_on;
+        // Codex round 11 (PR 153): a ref that is BOTH a URL use-site and an
+        // unresolved-short-cite skip (partially-resolved bundled ref) is one
+        // physical ref in refs_seen, while the disclosure stays in skipped.
+        let b = ParsoidBlock {
+            text: "Cats purr.".into(),
+            refs: vec![BlockRef {
+                offset: 10,
+                ref_id: "r1".into(),
+                sources: vec![crate::wikitext_editor::CitedSource {
+                    url: url::Url::parse("https://s.test/x").unwrap(),
+                    archive_urls: vec![],
+                }],
+                book_sources: vec![],
+                ref_text: "[1]".into(),
+                named: false,
+                is_bare_url_ref: false,
+                short_cite_unresolved: true,
+            }],
+            block_kind: BlockKind::Paragraph,
+            block_ordinal: 0,
+        };
+        let extract = extract_use_sites(&[b], &page());
+        let http = StubHttpClient::new([Ok(HttpResponse {
+            status: 200,
+            headers: std::collections::BTreeMap::new(),
+            body: b"cats purr and sleep".to_vec(),
+        })]);
+        let model = StubModelClient::new([Ok(completion(
+            "{\"verdict\": \"supported\", \"quote\": \"cats purr\"}",
+        ))]);
+        let report = block_on(verify_page(
+            &http,
+            &model,
+            &FixedClock::new(0),
+            &[model_ref()],
+            &page(),
+            extract,
+            VerifyOptions::default(),
+            1,
+        ));
+        assert_eq!(report.skipped.len(), 1, "disclosure survives");
+        assert_eq!(
+            report.skipped[0].reason,
+            crate::citation::extract::SkippedReason::UnresolvedShortCite
+        );
+        assert_eq!(report.stats.refs_seen, 1, "one physical ref");
+    }
+
+    #[test]
     fn dedupes_fetches_and_verifies_each_use_site() {
         use futures::executor::block_on;
         // EXACTLY ONE http response: proves the shared URL is fetched once.
@@ -1664,6 +1727,7 @@ mod orchestrator_tests {
                 ref_text: "[1]".into(),
                 named: false,
                 is_bare_url_ref: false,
+                short_cite_unresolved: false,
             }],
             block_kind: BlockKind::Paragraph,
             block_ordinal: 0,
@@ -1734,6 +1798,7 @@ mod orchestrator_tests {
                 ref_text: "[1]".into(),
                 named: false,
                 is_bare_url_ref: false,
+                short_cite_unresolved: false,
             }],
             block_kind: BlockKind::Paragraph,
             block_ordinal: 0,
@@ -1826,6 +1891,7 @@ reject it as too short, allowing the verification process to proceed normally."
                 ref_text: "[1]".into(),
                 named: false,
                 is_bare_url_ref: false,
+                short_cite_unresolved: false,
             }],
             block_kind: BlockKind::Paragraph,
             block_ordinal: 0,
@@ -1887,6 +1953,7 @@ reject it as too short, allowing the verification process to proceed normally."
                 ref_text: "[1]".into(),
                 named: false,
                 is_bare_url_ref: false,
+                short_cite_unresolved: false,
             }],
             block_kind: BlockKind::Paragraph,
             block_ordinal: 0,
@@ -1955,6 +2022,7 @@ archive is fetched, the queue will be empty and the test will fail, proving the 
                 ref_text: "[1]".into(),
                 named: false,
                 is_bare_url_ref: false,
+                short_cite_unresolved: false,
             }],
             block_kind: BlockKind::Paragraph,
             block_ordinal: 0,

@@ -8,8 +8,10 @@ and renders it in the shape a reviewer uses; the criterion judgments and the
 pass/fail stay human. Evidence, not verdicts — the same informational posture as
 the references domain (ADR-0007), with every write ADR-0010 propose/confirm.
 
-No crate yet. The end-to-end workflow and build sequencing live in the design
-sketch
+The domain's first crate is `crates/sp42-assessment` (PRD-0016 renderer: pure
+`PageVerificationReport` → wikitext GA evidence appendix; CLI surfaces
+`verify-page --format ga-appendix` and `render-report` for report-only mode).
+Workflow sequencing still lives in the design sketch
 [2026-07-09-ga-review-assist.md](../../design-plans/2026-07-09-ga-review-assist.md);
 citation-evidence mechanics are owned by the references domain (ADR-0011,
 PRD-0009), not re-specified here.

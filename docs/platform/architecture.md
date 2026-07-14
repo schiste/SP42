@@ -21,16 +21,19 @@ underlying crate-to-crate dependencies, drawn in full in the next diagram.
 ```mermaid
 flowchart LR
   G_shell["Shells — composition roots<br/>6 crates"]:::shell
+  G_assessment["assessment domain<br/>1 crate"]:::domain
   G_patrolling["patrolling domain<br/>1 crate"]:::domain
   G_references["references domain<br/>1 crate"]:::domain
   G_hybrid["sp42-core — hybrid, being retired (ADR-0013)"]:::hybrid
   G_platform["Platform — mechanisms, primitives, contracts<br/>10 crates"]:::platform
+  G_assessment -->|1 dep| G_references
   G_hybrid -->|1 dep| G_patrolling
   G_hybrid -->|2 deps| G_platform
   G_hybrid -->|1 dep| G_references
   G_patrolling -->|5 deps| G_platform
   G_platform -->|2 deps| G_hybrid
   G_references -->|3 deps| G_platform
+  G_shell -->|1 dep| G_assessment
   G_shell -->|5 deps| G_hybrid
   G_shell -->|5 deps| G_patrolling
   G_shell -->|29 deps| G_platform
@@ -54,6 +57,9 @@ flowchart TB
     sp42_server["sp42-server<br/>ADR-0003 … +9 more ADRs"]:::shell
   end
   subgraph DOMAINS["Domains — policy, config, workflow"]
+    subgraph DOM_assessment["assessment"]
+      sp42_assessment["sp42-assessment"]:::domain
+    end
     subgraph DOM_patrolling["patrolling"]
       sp42_patrol["sp42-patrol<br/>ADR-0013, ADR-0020, ADR-0021"]:::domain
     end
@@ -83,8 +89,10 @@ flowchart TB
   sp42_app --> sp42_patrol
   sp42_app --> sp42_reporting
   sp42_app --> sp42_ui
+  sp42_assessment --> sp42_citation
   sp42_citation --> sp42_platform
   sp42_citation --> sp42_reporting
+  sp42_cli --> sp42_assessment
   sp42_cli --> sp42_citation
   sp42_cli --> sp42_core
   sp42_cli --> sp42_devtools
@@ -150,6 +158,7 @@ Reading notes:
 | Crate | Layer | ADRs that name it | PRDs that name it | Notes |
 |---|---|---|---|---|
 | `sp42-app` | shell | [ADR-0004](adr/0004-crate-boundary-collaboration-model.md), [ADR-0005](adr/0005-design-system-shared-component-layer.md), [ADR-0008](../domains/references/adr/0008-citation-verification-contract.md), [ADR-0010](adr/0010-operator-confirmed-content-proposals.md), [ADR-0012](adr/0012-frontend-e2e-testing-approach.md), [ADR-0013](adr/0013-layered-platform-domain-architecture.md) | [PRD-0002](../domains/patrolling/prd/0002-patrol-review-workflow.md), [PRD-0006](../domains/patrolling/prd/0006-multi-operator-coordination.md), [PRD-0010](../domains/references/prd/0010-citation-verification-mcp-surface.md), [PRD-0014](../domains/references/prd/0014-citation-repair-insertion-browser-surface.md) |  |
+| `sp42-assessment` | domain | — | [PRD-0016](../domains/assessment/prd/0016-ga-evidence-appendix-renderer.md) |  |
 | `sp42-citation` | domain | [ADR-0013](adr/0013-layered-platform-domain-architecture.md) | [PRD-0001](../domains/references/prd/0001-citation-verification.md), [PRD-0008](../domains/references/prd/0008-bare-url-repair.md), [PRD-0010](../domains/references/prd/0010-citation-verification-mcp-surface.md), [PRD-0014](../domains/references/prd/0014-citation-repair-insertion-browser-surface.md), [PRD-0016](../domains/assessment/prd/0016-ga-evidence-appendix-renderer.md), [PRD-0017](../domains/references/prd/0017-interactive-review-sessions.md) |  |
 | `sp42-cli` | shell | [ADR-0004](adr/0004-crate-boundary-collaboration-model.md), [ADR-0005](adr/0005-design-system-shared-component-layer.md), [ADR-0013](adr/0013-layered-platform-domain-architecture.md), [ADR-0015](../domains/references/adr/0015-rules-compliant-read-only-fetch-edge.md), [ADR-0018](../domains/references/adr/0018-review-session-bridge-contract.md) | [PRD-0001](../domains/references/prd/0001-citation-verification.md), [PRD-0017](../domains/references/prd/0017-interactive-review-sessions.md) |  |
 | `sp42-coordination` | platform | [ADR-0004](adr/0004-crate-boundary-collaboration-model.md), [ADR-0013](adr/0013-layered-platform-domain-architecture.md), [ADR-0023](adr/0023-coordination-contract.md) | [PRD-0006](../domains/patrolling/prd/0006-multi-operator-coordination.md), [PRD-0017](../domains/references/prd/0017-interactive-review-sessions.md) |  |
@@ -217,5 +226,5 @@ Reading notes:
 | [PRD-0012](../domains/references/prd/0012-citation-insertion.md) | Citation insertion for unsourced claims | Discussion | references | ADR-0002, ADR-0003, ADR-0006, ADR-0010 |
 | [PRD-0014](../domains/references/prd/0014-citation-repair-insertion-browser-surface.md) | Citation repair and insertion — browser surface | Accepted | references | ADR-0003, ADR-0006, ADR-0009, ADR-0010, ADR-0019 |
 | [PRD-0015](../domains/assessment/prd/0015-article-stability-signal.md) | Article stability signal | Discussion | assessment | ADR-0006, ADR-0007, ADR-0009, ADR-0011, ADR-0014 |
-| [PRD-0016](../domains/assessment/prd/0016-ga-evidence-appendix-renderer.md) | GA evidence appendix renderer | Discussion | assessment | ADR-0003, ADR-0007, ADR-0010, ADR-0011, ADR-0013, ADR-0018 |
+| [PRD-0016](../domains/assessment/prd/0016-ga-evidence-appendix-renderer.md) | GA evidence appendix renderer | Implemented (MVP; criterion-5 arm staged on PRD-0015) | assessment | ADR-0003, ADR-0007, ADR-0010, ADR-0011, ADR-0013, ADR-0018 |
 | [PRD-0017](../domains/references/prd/0017-interactive-review-sessions.md) | Interactive review sessions — agent↔operator feedback loop on a page | Draft | references | ADR-0018, ADR-0023 |

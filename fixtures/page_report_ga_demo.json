@@ -1,0 +1,398 @@
+{
+  "wiki_id": "testwiki",
+  "rev_id": 100200300,
+  "title": "Fixture Bridge (demo)",
+  "findings": [
+    {
+      "kind": "citation_verdict",
+      "verdict": "not_supported",
+      "grounding_status": "not_applicable",
+      "unusable_reason": null,
+      "agreement": {
+        "panel_size": 3,
+        "winner_votes": 1
+      },
+      "passage": null,
+      "provenance": {
+        "url": "https://web.archive.org/web/2020/https://example.org/source",
+        "content_hash": "",
+        "fetched_at": 0,
+        "http_status": 200
+      },
+      "grounding": {
+        "kind": "source_fetched",
+        "source_hash": ""
+      },
+      "use_site_ordinal": 0,
+      "ref_id": "cite_ref-source1_0-0",
+      "claim": "The wiki bridge was completed in {{Infobox}} during the 1920s",
+      "archive_of": "https://example.org/source",
+      "is_bare_url_ref": false,
+      "schema_version": 1
+    },
+    {
+      "kind": "citation_verdict",
+      "verdict": "not_supported",
+      "grounding_status": "not_applicable",
+      "unusable_reason": null,
+      "agreement": {
+        "panel_size": 3,
+        "winner_votes": 3
+      },
+      "passage": null,
+      "provenance": {
+        "url": "https://example.org/source",
+        "content_hash": "",
+        "fetched_at": 0,
+        "http_status": 200
+      },
+      "source_excerpt": "The structure employs different engineering",
+      "grounding": {
+        "kind": "source_fetched",
+        "source_hash": ""
+      },
+      "use_site_ordinal": 1,
+      "ref_id": "cite_ref-construction_1-0",
+      "claim": "The main span uses a specific arch design",
+      "is_bare_url_ref": false,
+      "schema_version": 1
+    },
+    {
+      "kind": "citation_verdict",
+      "verdict": "partial",
+      "grounding_status": "located",
+      "unusable_reason": null,
+      "agreement": {
+        "panel_size": 3,
+        "winner_votes": 3
+      },
+      "passage": {
+        "quote": "historic structures added",
+        "offset": 100
+      },
+      "provenance": {
+        "url": "https://web.archive.org/web/2020/https://example.org/source",
+        "content_hash": "",
+        "fetched_at": 0,
+        "http_status": 200
+      },
+      "grounding": {
+        "kind": "source_fetched",
+        "source_hash": ""
+      },
+      "use_site_ordinal": 2,
+      "ref_id": "cite_ref-partial_2-0",
+      "claim": "The bridge was declared historic in 1985",
+      "archive_of": "https://example.org/source",
+      "is_bare_url_ref": false,
+      "schema_version": 1
+    },
+    {
+      "kind": "citation_verdict",
+      "verdict": "supported",
+      "grounding_status": "located",
+      "unusable_reason": null,
+      "agreement": {
+        "panel_size": 3,
+        "winner_votes": 3
+      },
+      "passage": {
+        "quote": "supporting quote text",
+        "offset": 0
+      },
+      "provenance": {
+        "url": "https://web.archive.org/web/2020/https://example.org/source",
+        "content_hash": "",
+        "fetched_at": 0,
+        "http_status": 200
+      },
+      "grounding": {
+        "kind": "source_fetched",
+        "source_hash": ""
+      },
+      "use_site_ordinal": 3,
+      "ref_id": "cite_ref-archived_3-0",
+      "claim": "The original design documentation was archived in 2010",
+      "archive_of": "https://example.org/source",
+      "is_bare_url_ref": false,
+      "schema_version": 1
+    },
+    {
+      "kind": "citation_verdict",
+      "verdict": "source_unavailable",
+      "grounding_status": "not_applicable",
+      "source_unavailable_reason": "unreachable",
+      "unusable_reason": null,
+      "agreement": {
+        "panel_size": 3,
+        "winner_votes": 3
+      },
+      "passage": null,
+      "provenance": {
+        "url": "https://example.org/source",
+        "content_hash": "",
+        "fetched_at": 0,
+        "http_status": 200
+      },
+      "grounding": {
+        "kind": "source_fetched",
+        "source_hash": ""
+      },
+      "use_site_ordinal": 4,
+      "ref_id": "cite_ref-dead1_4-0",
+      "claim": "Historic records confirm the construction dates",
+      "is_bare_url_ref": false,
+      "schema_version": 1
+    },
+    {
+      "kind": "citation_verdict",
+      "verdict": "source_unavailable",
+      "grounding_status": "not_applicable",
+      "source_unavailable_reason": "unreachable",
+      "unusable_reason": null,
+      "agreement": {
+        "panel_size": 3,
+        "winner_votes": 3
+      },
+      "passage": null,
+      "provenance": {
+        "url": "https://example.org/source",
+        "content_hash": "",
+        "fetched_at": 0,
+        "http_status": 200
+      },
+      "grounding": {
+        "kind": "source_fetched",
+        "source_hash": ""
+      },
+      "use_site_ordinal": 5,
+      "ref_id": "cite_ref-dead2_5-0",
+      "claim": "The engineering firm details are documented online",
+      "is_bare_url_ref": false,
+      "schema_version": 1
+    },
+    {
+      "kind": "citation_verdict",
+      "verdict": "source_unavailable",
+      "grounding_status": "not_applicable",
+      "source_unavailable_reason": "unusable",
+      "unusable_reason": "pdf_body",
+      "agreement": {
+        "panel_size": 3,
+        "winner_votes": 3
+      },
+      "passage": null,
+      "provenance": {
+        "url": "https://example.org/source",
+        "content_hash": "",
+        "fetched_at": 0,
+        "http_status": 200
+      },
+      "grounding": {
+        "kind": "source_fetched",
+        "source_hash": ""
+      },
+      "use_site_ordinal": 6,
+      "ref_id": "cite_ref-pdf_6-0",
+      "claim": "The technical specifications are in a PDF document",
+      "is_bare_url_ref": false,
+      "schema_version": 1
+    },
+    {
+      "kind": "citation_verdict",
+      "verdict": "source_unavailable",
+      "grounding_status": "not_applicable",
+      "source_unavailable_reason": "unusable",
+      "unusable_reason": "nav_chrome_paywall",
+      "agreement": {
+        "panel_size": 3,
+        "winner_votes": 3
+      },
+      "passage": null,
+      "provenance": {
+        "url": "https://example.org/source",
+        "content_hash": "",
+        "fetched_at": 0,
+        "http_status": 200
+      },
+      "grounding": {
+        "kind": "source_fetched",
+        "source_hash": ""
+      },
+      "use_site_ordinal": 7,
+      "ref_id": "cite_ref-paywall_7-0",
+      "claim": "The newspaper article requires subscription access",
+      "is_bare_url_ref": false,
+      "schema_version": 1
+    },
+    {
+      "kind": "citation_verdict",
+      "verdict": "supported",
+      "grounding_status": "unlocated",
+      "unusable_reason": null,
+      "agreement": {
+        "panel_size": 3,
+        "winner_votes": 3
+      },
+      "passage": null,
+      "provenance": {
+        "url": "https://example.org/source",
+        "content_hash": "",
+        "fetched_at": 0,
+        "http_status": 200
+      },
+      "grounding": {
+        "kind": "source_fetched",
+        "source_hash": ""
+      },
+      "use_site_ordinal": 8,
+      "ref_id": "cite_ref-unconf1_8-0",
+      "claim": "The bridge opening date is confirmed in historical records",
+      "is_bare_url_ref": false,
+      "schema_version": 1
+    },
+    {
+      "kind": "citation_verdict",
+      "verdict": "supported",
+      "grounding_status": "located_fuzzy",
+      "unusable_reason": null,
+      "agreement": {
+        "panel_size": 3,
+        "winner_votes": 3
+      },
+      "passage": null,
+      "provenance": {
+        "url": "https://example.org/source",
+        "content_hash": "",
+        "fetched_at": 0,
+        "http_status": 200
+      },
+      "grounding": {
+        "kind": "source_fetched",
+        "source_hash": ""
+      },
+      "use_site_ordinal": 9,
+      "ref_id": "cite_ref-unconf2_9-0",
+      "claim": "The architect's original plans were published",
+      "is_bare_url_ref": false,
+      "schema_version": 1
+    },
+    {
+      "kind": "citation_verdict",
+      "verdict": "supported",
+      "grounding_status": "located",
+      "unusable_reason": null,
+      "agreement": {
+        "panel_size": 3,
+        "winner_votes": 3
+      },
+      "passage": {
+        "quote": "supporting quote text",
+        "offset": 0
+      },
+      "provenance": {
+        "url": "https://example.org/bridge-one",
+        "content_hash": "",
+        "fetched_at": 0,
+        "http_status": 200
+      },
+      "grounding": {
+        "kind": "source_fetched",
+        "source_hash": ""
+      },
+      "use_site_ordinal": 10,
+      "ref_id": "cite_ref-supported_10-0",
+      "claim": "The maintenance budget increased annually",
+      "is_bare_url_ref": false,
+      "schema_version": 1
+    },
+    {
+      "kind": "citation_verdict",
+      "verdict": "supported",
+      "grounding_status": "located",
+      "unusable_reason": null,
+      "agreement": {
+        "panel_size": 3,
+        "winner_votes": 3
+      },
+      "passage": {
+        "quote": "supporting quote text",
+        "offset": 0
+      },
+      "provenance": {
+        "url": "https://example.org/bridge-two",
+        "content_hash": "",
+        "fetched_at": 0,
+        "http_status": 200
+      },
+      "grounding": {
+        "kind": "source_fetched",
+        "source_hash": ""
+      },
+      "use_site_ordinal": 11,
+      "ref_id": "cite_ref-supported_10-0",
+      "claim": "The renovation project was completed on schedule",
+      "is_bare_url_ref": false,
+      "schema_version": 1
+    },
+    {
+      "kind": "citation_verdict",
+      "verdict": "supported",
+      "grounding_status": "located",
+      "unusable_reason": null,
+      "agreement": {
+        "panel_size": 3,
+        "winner_votes": 3
+      },
+      "passage": {
+        "quote": "supporting quote text",
+        "offset": 0
+      },
+      "provenance": {
+        "url": "https://example.org/source",
+        "content_hash": "",
+        "fetched_at": 0,
+        "http_status": 200
+      },
+      "grounding": {
+        "kind": "source_fetched",
+        "source_hash": ""
+      },
+      "use_site_ordinal": 12,
+      "ref_id": "cite_ref-supported3_12-0",
+      "claim": "Annual visitor numbers have increased",
+      "is_bare_url_ref": false,
+      "schema_version": 1
+    }
+  ],
+  "skipped": [
+    {
+      "ref_id": "cite_ref-book_ref",
+      "reason": "non_url_source",
+      "block_ordinal": 3
+    },
+    {
+      "ref_id": "cite_ref-offline_ref",
+      "reason": "non_url_source",
+      "block_ordinal": 7
+    }
+  ],
+  "extraction_failures": [
+    {
+      "block_ordinal": 5,
+      "reason": "ref cite_ref-broken_ref has no resolvable claim text"
+    }
+  ],
+  "stats": {
+    "refs_seen": 18,
+    "use_sites_verified": 13,
+    "skipped": 2,
+    "extraction_failures": 1,
+    "supported": 5,
+    "partial": 1,
+    "not_supported": 2,
+    "source_unavailable": 4,
+    "source_unavailable_unreachable": 2,
+    "source_unavailable_unusable": 2
+  }
+}

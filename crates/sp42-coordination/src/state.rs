@@ -136,6 +136,13 @@ impl CoordinationState {
                     self.recent_actions.drain(0..overflow);
                 }
             }
+            CoordinationMessage::ReviewSignal(signal) => {
+                // Deliberately stateless: the signal is a live re-fetch hint
+                // for panels, and the review-session store behind the gated
+                // review routes stays the source of truth (ADR-0018 §8).
+                // Folding it here would create a second, spoofable copy.
+                drop(signal);
+            }
         }
 
         true
@@ -202,6 +209,7 @@ fn message_wiki_id(message: &CoordinationMessage) -> &str {
         CoordinationMessage::PresenceHeartbeat(heartbeat) => &heartbeat.wiki_id,
         CoordinationMessage::FlaggedEdit(flagged) => &flagged.wiki_id,
         CoordinationMessage::RaceResolution(resolution) => &resolution.wiki_id,
+        CoordinationMessage::ReviewSignal(signal) => &signal.wiki_id,
     }
 }
 
@@ -209,11 +217,33 @@ fn message_wiki_id(message: &CoordinationMessage) -> &str {
 mod tests {
     use crate::messages::{
         ActionBroadcast, CoordinationMessage, EditClaim, FlaggedEdit, PresenceHeartbeat,
-        RaceResolution, ScoreDelta,
+        RaceResolution, ReviewSignal, ScoreDelta,
     };
     use sp42_platform::Action;
 
     use super::CoordinationState;
+
+    fn review_signal(wiki_id: &str) -> ReviewSignal {
+        ReviewSignal {
+            wiki_id: wiki_id.to_string(),
+            session: sp42_platform::ReviewSession::open(wiki_id, "Exemple", 42, 1_000).snapshot(),
+        }
+    }
+
+    #[test]
+    fn review_signal_relays_without_folding_room_state() {
+        let mut state = CoordinationState::new("frwiki");
+        let before = state.summary();
+
+        // Same wiki: accepted (so the relay fans it out to panels)...
+        assert!(state.apply(CoordinationMessage::ReviewSignal(review_signal("frwiki"))));
+        // ...but deliberately stateless — the review-session store behind
+        // the gated review routes is the source of truth (ADR-0018 §8).
+        assert_eq!(state.summary(), before);
+
+        // Other wiki: rejected like every other kind.
+        assert!(!state.apply(CoordinationMessage::ReviewSignal(review_signal("enwiki"))));
+    }
 
     #[test]
     fn ignores_messages_for_other_wikis() {

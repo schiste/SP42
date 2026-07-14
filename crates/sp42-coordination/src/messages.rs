@@ -1,7 +1,7 @@
 //! Coordination protocol payloads and room summary contracts.
 
 use serde::{Deserialize, Serialize};
-use sp42_platform::Action;
+use sp42_platform::{Action, ReviewSessionSnapshot};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum CoordinationMessage {
@@ -11,6 +11,21 @@ pub enum CoordinationMessage {
     PresenceHeartbeat(PresenceHeartbeat),
     FlaggedEdit(FlaggedEdit),
     RaceResolution(RaceResolution),
+    ReviewSignal(ReviewSignal),
+}
+
+/// Server-originated hint that a review session changed (PRD-0017,
+/// ADR-0018 §8): a live re-fetch cue for operator panels watching the
+/// wiki's room. Advisory by design — the review-session store behind the
+/// gated `/dev/review` routes stays the source of truth, the reducer
+/// relays this kind without folding any room state, and a spoofed signal
+/// can only cause a harmless re-fetch.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ReviewSignal {
+    pub wiki_id: String,
+    /// Session summary so a panel can badge (status, pending prompts,
+    /// findings count) without a round-trip. Never authoritative.
+    pub session: ReviewSessionSnapshot,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

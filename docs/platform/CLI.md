@@ -29,9 +29,11 @@ quick one.
 | --- | --- | --- |
 | `verify` | Verify one claim against one source URL (runs the model in-process). | no |
 | `verify-page` | Verify every citation on a revision via the bridge. | no |
+| `render-report` | Render a saved verify-page JSON report locally (no server). | no |
 | `batch` | Verify a JSONL batch (one case per line), one result line out. | JSONL cases (or `--file`) |
 | `locate-probe` | Offline check whether a quote locates in a source body. | source body |
 | `bare-url preview` / `bare-url execute` | Preview or apply bare-URL repairs. | no |
+| `review <action>` | Interactive review sessions: open a page, wait for operator feedback. | no |
 | `preview [mode]` | Dev / operator queue views; default is the ranked queue. | event payload |
 
 Output goes to **stdout** on success (exit `0`); errors print to **stderr**
@@ -66,10 +68,12 @@ maps to `preview parity-report`.
 | `-h`, `--help` | Print help (top-level or per-command) and exit. |
 | `-V`, `--version` | Print version and exit. |
 
-`--format <text\|json\|markdown>` (default `text`) is available on every command
-that renders. `--bridge-base-url <URL>` (default `http://127.0.0.1:8788`) is
-available on the server-backed commands (`verify-page`, `bare-url execute`,
-`preview`).
+`--format` (default `text`) is available on the commands that render: `verify`,
+`bare-url`, and `preview` support `text|json|markdown`; `verify-page` and
+`render-report` add `ga-appendix` (wikitext, PRD-0016). (`batch` emits JSONL and
+`locate-probe` a fixed report; neither takes `--format`.)
+`--bridge-base-url <URL>` (default `http://127.0.0.1:8788`) is available on the
+server-backed commands (`verify-page`, `bare-url execute`, `preview`).
 
 ## `verify` — ad-hoc claim + source (PRD-0001)
 
@@ -124,6 +128,24 @@ The route is session + CSRF gated, so the CLI bootstraps a bridge session
 
 ```sh
 sp42-cli verify-page --wiki enwiki --title "Museum" --format markdown
+```
+
+## `render-report` — replay a saved report (PRD-0016)
+
+Transform a saved page-verification report JSON file (the exact output of
+`verify-page --format json`) without any bridge, session, or network — pure
+local computation for reproducible reruns and offline archival. The input is
+fully self-contained; it may be rendered with any `sp42-cli` version, producing
+deterministic output except for the footer timestamp.
+
+| Flag | Description |
+| --- | --- |
+| `file` | Path to a saved report JSON (required, positional). |
+| `--format <FORMAT>` | Output format; `ga-appendix` produces pasteable wikitext. |
+
+```sh
+sp42-cli verify-page --title "Example" --wiki enwiki --format json > report.json
+sp42-cli render-report report.json --format ga-appendix
 ```
 
 ## `batch` — JSONL batch verify
@@ -187,6 +209,38 @@ sp42-cli bare-url execute --title "Museum" --rev 12345 --ordinal 0
 | `--ordinal <N>` | Zero-based index of the proposal to apply (required). |
 | `--action-note <SUMMARY>` | Edit summary attached to the applied repair. |
 | `--bridge-base-url <URL>` | Local server base URL. |
+
+## `review` — interactive review sessions (PRD-0017)
+
+Agent↔operator feedback loop on a page: the agent opens a session on a page
+target (bare title or pasted wiki URL, including `oldid` URLs), the operator
+queues anchored feedback prompts, and the agent polls until they arrive. All
+actions ride the local bridge session (bootstrap → cookie + CSRF).
+
+```sh
+sp42-cli review open "https://fr.wikipedia.org/wiki/Exemple" --wiki frwiki
+sp42-cli review poll "Exemple" --wiki frwiki --agent-reply "opened — start with the lede"
+sp42-cli review queue "Exemple" --wiki frwiki --message "check this ref" --block 3 --ref-id cite_ref-a_1-0
+sp42-cli verify-page --title "Exemple" --wiki frwiki --format json > report.json
+sp42-cli review findings "Exemple" --wiki frwiki --report report.json
+sp42-cli review end "Exemple" --wiki frwiki
+sp42-cli review sessions
+```
+
+| Action | What it does |
+| --- | --- |
+| `open <TARGET>` | Open or resume a session; returns the article outline plus `next_step`. `--rev <REVID>` pins a revision (default: latest), `--reopen` resumes a session the operator explicitly ended. |
+| `poll <TARGET>` | Wait for feedback; re-arms bounded server waits until feedback, an end, or a missing session (stderr narrates the wait). `--agent-reply <TEXT>` posts a chat line first, `--once` returns after a single wait. |
+| `queue <TARGET>` | Queue one operator prompt (dev/test surface): `--message <TEXT>` plus optional anchors `--block <N>`, `--ref-id <ID>`, `--selected-text <TEXT>`; `--end` sends and ends in one action. |
+| `findings <TARGET>` | Attach a `verify-page --format json` report (`--report <PATH>`, `-` for stdin) so its findings overlay the outline by cite id — the report's in-article view. The report must describe the target page/wiki, and is refused when its revision differs from the session's (`review-findings-revision-mismatch`). |
+| `reply <TARGET>` | Send an agent chat reply (`--message <TEXT>`). |
+| `end <TARGET>` | End the session as the agent; a plain reopen stays allowed. |
+| `sessions` | List review sessions on the local server. |
+
+All actions accept `--wiki <ID>` (default `testwiki`), `--bridge-base-url
+<URL>`, and `--format <FORMAT>`. An operator-ended session refuses a plain
+`open` with `review-session-operator-ended`; pass `--reopen` only when the
+operator asks for further review.
 
 ## `preview` — dev / operator views
 

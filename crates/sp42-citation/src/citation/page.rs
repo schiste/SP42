@@ -203,6 +203,52 @@ pub struct PageVerificationReport {
     pub stats: PageVerificationStats,
 }
 
+/// Project a page report's findings into review-session overlay markers
+/// (PRD-0017): one marker per finding, joined to the article by the
+/// finding's `ref_id` — the same anchor coordinate review prompts use — so
+/// a review surface can show the report's problems in the context of the
+/// article instead of as detached text. Verdicts keep their wire labels;
+/// claims are truncated to the outline display limit; grounding caveats and
+/// unavailable reasons ride along as `detail`. Findings without a `ref_id`
+/// (the standalone single-claim path) cannot anchor and are skipped.
+#[must_use]
+pub fn review_finding_markers(
+    report: &PageVerificationReport,
+) -> Vec<sp42_platform::ReviewFindingMarker> {
+    report
+        .findings
+        .iter()
+        .filter(|finding| !finding.ref_id.is_empty())
+        .map(|finding| sp42_platform::ReviewFindingMarker {
+            ref_id: finding.ref_id.clone(),
+            verdict: finding.verdict.as_wire().to_string(),
+            claim: sp42_platform::truncate_outline_text(&finding.claim),
+            detail: finding_marker_detail(finding),
+        })
+        .collect()
+}
+
+/// The marker's short qualifier: the unavailable reason for an abstention,
+/// or the grounding caveat for a support judgment that did not locate
+/// verbatim (SP42#25 layer 6 — surfaced, never silently upgraded).
+fn finding_marker_detail(finding: &CitationFinding) -> Option<String> {
+    if finding.verdict == CitationVerdict::SourceUnavailable {
+        return finding
+            .source_unavailable_reason
+            .map(|reason| format!("source {}", reason.as_str()));
+    }
+    match finding.grounding_status {
+        crate::citation::verify::GroundingStatus::Located
+        | crate::citation::verify::GroundingStatus::NotApplicable => None,
+        crate::citation::verify::GroundingStatus::LocatedFuzzy => {
+            Some("support located by fuzzy match only".to_string())
+        }
+        crate::citation::verify::GroundingStatus::Unlocated => {
+            Some("support quote not located in source (unverified)".to_string())
+        }
+    }
+}
+
 /// Try archive fallbacks if the primary URL came back `SourceUnavailable`.
 /// Returns the original outcome if no archives work or if no archives exist.
 async fn try_archive_fallback<C, M>(
@@ -852,7 +898,14 @@ where
         .map(|u| u.ref_id.as_str())
         .chain(book_use_sites.iter().map(|b| b.ref_id.as_str()))
         .collect();
-    let refs_seen = distinct_use_site_refs.len() + skipped.len() + failures.len();
+    // A partially-resolved bundled ref appears BOTH as a use-site and as an
+    // unresolved-short-cite skip (the disclosure); count the physical ref
+    // once (Codex round 11, PR 153).
+    let skipped_only = skipped
+        .iter()
+        .filter(|skip| !distinct_use_site_refs.contains(skip.ref_id.as_str()))
+        .count();
+    let refs_seen = distinct_use_site_refs.len() + skipped_only + failures.len();
 
     // Pre-bind shared refs OUTSIDE the closures so the spawned futures capture
     // plain `&`/`&dyn` (Copy) references, not re-borrows of locals — mirrors the
@@ -998,6 +1051,52 @@ mod orchestrator_tests {
     }
 
     #[test]
+    fn review_finding_markers_project_the_report_onto_review_anchors() {
+        let judged = |level| CitationVerdict::Judged(level);
+        let mut unlocated = mk_finding("r_unlocated", 1, judged(SupportLevel::Supported));
+        unlocated.grounding_status = GroundingStatus::Unlocated;
+        let mut dead = mk_finding("r_dead", 2, CitationVerdict::SourceUnavailable);
+        dead.source_unavailable_reason = Some(SourceUnavailableReason::Unreachable);
+        let mut long_claim = mk_finding("r_long", 3, judged(SupportLevel::Partial));
+        long_claim.claim = "x".repeat(500);
+        // The standalone single-claim path has no page ref: nothing to anchor to.
+        let standalone = mk_finding("", 4, judged(SupportLevel::NotSupported));
+        let report = PageVerificationReport {
+            wiki_id: "enwiki".into(),
+            title: "Cats".into(),
+            rev_id: 7,
+            findings: vec![
+                mk_finding("r_ok", 0, judged(SupportLevel::Supported)),
+                unlocated,
+                dead,
+                long_claim,
+                standalone,
+            ],
+            skipped: Vec::new(),
+            extraction_failures: Vec::new(),
+            book_resolutions: Vec::new(),
+            stats: PageVerificationStats::default(),
+        };
+
+        let markers = super::review_finding_markers(&report);
+
+        assert_eq!(markers.len(), 4, "ref-less standalone finding is skipped");
+        assert_eq!(markers[0].ref_id, "r_ok");
+        assert_eq!(markers[0].verdict, "supported");
+        assert_eq!(markers[0].detail, None);
+        assert_eq!(
+            markers[1].detail.as_deref(),
+            Some("support quote not located in source (unverified)")
+        );
+        assert_eq!(markers[2].verdict, "source_unavailable");
+        assert_eq!(markers[2].detail.as_deref(), Some("source unreachable"));
+        assert!(
+            markers[3].claim.chars().count() <= 200,
+            "claims are truncated to the outline display limit"
+        );
+    }
+
+    #[test]
     fn apply_reverified_finding_moves_verdict_and_updates_tallies() {
         let judged = |level| CitationVerdict::Judged(level);
         let mut report = PageVerificationReport {
@@ -1109,6 +1208,7 @@ mod orchestrator_tests {
                     ref_text: "[1]".into(),
                     named: false,
                     is_bare_url_ref: false,
+                    short_cite_unresolved: false,
                 },
                 BlockRef {
                     offset: 22,
@@ -1121,6 +1221,7 @@ mod orchestrator_tests {
                     ref_text: "[2]".into(),
                     named: false,
                     is_bare_url_ref: false,
+                    short_cite_unresolved: false,
                 },
             ],
             block_kind: BlockKind::Paragraph,
@@ -1148,6 +1249,7 @@ mod orchestrator_tests {
                     ref_text: "[1]".into(),
                     named: false,
                     is_bare_url_ref: false,
+                    short_cite_unresolved: false,
                 },
                 BlockRef {
                     offset: 17,
@@ -1157,6 +1259,7 @@ mod orchestrator_tests {
                     ref_text: "[2]".into(),
                     named: false,
                     is_bare_url_ref: false,
+                    short_cite_unresolved: false,
                 },
             ],
             block_kind: BlockKind::Paragraph,
@@ -1226,6 +1329,7 @@ mod orchestrator_tests {
                 ref_text: "[1]".into(),
                 named: false,
                 is_bare_url_ref: false,
+                short_cite_unresolved: false,
             }],
             block_kind: BlockKind::Paragraph,
             block_ordinal: 0,
@@ -1451,6 +1555,57 @@ mod orchestrator_tests {
     }
 
     #[test]
+    fn partially_resolved_ref_counts_once_in_refs_seen() {
+        use futures::executor::block_on;
+        // Codex round 11 (PR 153): a ref that is BOTH a URL use-site and an
+        // unresolved-short-cite skip (partially-resolved bundled ref) is one
+        // physical ref in refs_seen, while the disclosure stays in skipped.
+        let b = ParsoidBlock {
+            text: "Cats purr.".into(),
+            refs: vec![BlockRef {
+                offset: 10,
+                ref_id: "r1".into(),
+                sources: vec![crate::wikitext_editor::CitedSource {
+                    url: url::Url::parse("https://s.test/x").unwrap(),
+                    archive_urls: vec![],
+                }],
+                book_sources: vec![],
+                ref_text: "[1]".into(),
+                named: false,
+                is_bare_url_ref: false,
+                short_cite_unresolved: true,
+            }],
+            block_kind: BlockKind::Paragraph,
+            block_ordinal: 0,
+        };
+        let extract = extract_use_sites(&[b], &page());
+        let http = StubHttpClient::new([Ok(HttpResponse {
+            status: 200,
+            headers: std::collections::BTreeMap::new(),
+            body: b"cats purr and sleep".to_vec(),
+        })]);
+        let model = StubModelClient::new([Ok(completion(
+            "{\"verdict\": \"supported\", \"quote\": \"cats purr\"}",
+        ))]);
+        let report = block_on(verify_page(
+            &http,
+            &model,
+            &FixedClock::new(0),
+            &[model_ref()],
+            &page(),
+            extract,
+            VerifyOptions::default(),
+            1,
+        ));
+        assert_eq!(report.skipped.len(), 1, "disclosure survives");
+        assert_eq!(
+            report.skipped[0].reason,
+            crate::citation::extract::SkippedReason::UnresolvedShortCite
+        );
+        assert_eq!(report.stats.refs_seen, 1, "one physical ref");
+    }
+
+    #[test]
     fn dedupes_fetches_and_verifies_each_use_site() {
         use futures::executor::block_on;
         // EXACTLY ONE http response: proves the shared URL is fetched once.
@@ -1572,6 +1727,7 @@ mod orchestrator_tests {
                 ref_text: "[1]".into(),
                 named: false,
                 is_bare_url_ref: false,
+                short_cite_unresolved: false,
             }],
             block_kind: BlockKind::Paragraph,
             block_ordinal: 0,
@@ -1642,6 +1798,7 @@ mod orchestrator_tests {
                 ref_text: "[1]".into(),
                 named: false,
                 is_bare_url_ref: false,
+                short_cite_unresolved: false,
             }],
             block_kind: BlockKind::Paragraph,
             block_ordinal: 0,
@@ -1734,6 +1891,7 @@ reject it as too short, allowing the verification process to proceed normally."
                 ref_text: "[1]".into(),
                 named: false,
                 is_bare_url_ref: false,
+                short_cite_unresolved: false,
             }],
             block_kind: BlockKind::Paragraph,
             block_ordinal: 0,
@@ -1795,6 +1953,7 @@ reject it as too short, allowing the verification process to proceed normally."
                 ref_text: "[1]".into(),
                 named: false,
                 is_bare_url_ref: false,
+                short_cite_unresolved: false,
             }],
             block_kind: BlockKind::Paragraph,
             block_ordinal: 0,
@@ -1863,6 +2022,7 @@ archive is fetched, the queue will be empty and the test will fail, proving the 
                 ref_text: "[1]".into(),
                 named: false,
                 is_bare_url_ref: false,
+                short_cite_unresolved: false,
             }],
             block_kind: BlockKind::Paragraph,
             block_ordinal: 0,

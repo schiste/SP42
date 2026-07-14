@@ -69,6 +69,7 @@ LAYER = {
     # tooling (exempt)
     "xtask": "tooling",
     # domains
+    "sp42-assessment": "domain",
     "sp42-citation": "domain",
     "sp42-patrol": "domain",
     # hybrid — all code extracted; sp42-core is now a pure re-export facade,

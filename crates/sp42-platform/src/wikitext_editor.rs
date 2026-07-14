@@ -52,6 +52,19 @@ pub struct WikitextNodeLocator {
     pub expected_text: String,
 }
 
+/// The spacing half of `MediaWiki` title normalization, valid on every
+/// wiki: underscores are spaces, and runs of whitespace collapse to one
+/// space. First-letter case is deliberately *not* folded — case rules are
+/// wiki-dependent (Wiktionary titles are case-sensitive), and conflating
+/// two distinct pages would be worse than treating one page as two.
+#[must_use]
+pub fn normalize_title_spacing(raw: &str) -> String {
+    raw.replace('_', " ")
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
 /// The page revision a node-anchored operation grounds on.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WikitextPageRef {
@@ -87,7 +100,7 @@ pub enum BlockKind {
 /// One cited source: a primary (live) URL plus archive fallbacks
 /// (e.g. `archive-url=`, Wayback/wikiwix), consulted only when the
 /// primary is unavailable.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CitedSource {
     pub url: url::Url,
     pub archive_urls: Vec<url::Url>,
@@ -242,7 +255,7 @@ pub struct BookSource {
 }
 
 /// One inline `<ref>` within a [`ParsoidBlock`], in document order.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BlockRef {
     /// Byte offset into [`ParsoidBlock::text`] where the marker sat — the
     /// position of the punctuation it follows. Anchors claim↔ref association.
@@ -270,6 +283,12 @@ pub struct BlockRef {
     /// repair only when its own ref is genuinely bare, rather than inferred from
     /// a source URL that another (bare) ref happens to share.
     pub is_bare_url_ref: bool,
+    /// `true` when a short-cite template (sfn/harvsp/etc) in this ref pointed
+    /// to a bibliography anchor that was not found in the document index.
+    /// Additive like `is_bare_url_ref` — indicates a classification of the ref
+    /// that downstream code may use for quality signals.
+    #[serde(default)]
+    pub short_cite_unresolved: bool,
 }
 
 /// A single prose-bearing block emitted by the editor's one DOM pass.

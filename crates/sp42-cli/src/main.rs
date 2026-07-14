@@ -11,10 +11,14 @@ use sp42_core::routes as route_contracts;
 use sp42_core::{
     CitationFinding, CitationVerificationRequest, CitoidMetadata, ClaimContext,
     DevAuthBootstrapRequest, DevAuthSessionStatus, FetchedSource, GroundingStatus,
-    PageVerificationReport, PageVerificationRequest, QueuedEdit, SessionActionExecutionRequest,
+    PageVerificationReport, PageVerificationRequest, QueuedEdit, ReviewAckResponse, ReviewAnchor,
+    ReviewEndRequest, ReviewFindingsRequest, ReviewFindingsResponse, ReviewOpenRequest,
+    ReviewOpenResponse, ReviewPollRequest, ReviewPollResponse, ReviewPollStatus, ReviewPrompt,
+    ReviewPromptKind, ReviewQueueRequest, ReviewQueueResponse, ReviewReplyRequest,
+    ReviewSessionSnapshot, ReviewSessionsResponse, SessionActionExecutionRequest,
     SessionActionExecutionResponse, SessionActionKind, SystemClock, VerificationOutcome,
     VerifyOptions as CoreVerifyOptions, build_dev_auth_bootstrap_request, locate_quote,
-    locate_quote_fuzzy, parse_dev_auth_status, verify_citation_use_site,
+    locate_quote_fuzzy, parse_dev_auth_status, review_finding_markers, verify_citation_use_site,
 };
 use sp42_devtools::{
     DEV_PREVIEW_SAMPLE_EVENTS, DEV_PREVIEW_WIKI_ID, DevContextOptions, DevWorkbenchOptions,
@@ -28,7 +32,7 @@ use sp42_patrol::{
     build_shell_state_model, render_patrol_scenario_markdown, render_patrol_scenario_text,
     render_shell_state_markdown, render_shell_state_text,
 };
-use sp42_types::{HttpMethod, HttpRequest, HttpResponse, ModelRef};
+use sp42_types::{Clock, HttpMethod, HttpRequest, HttpResponse, ModelRef};
 use std::collections::BTreeMap;
 
 const LOCAL_SERVER_BASE_URL: &str = "http://127.0.0.1:8788";
@@ -39,6 +43,29 @@ enum OutputFormat {
     Text,
     Json,
     Markdown,
+}
+
+/// Output formats for the page-report commands (`verify-page`,
+/// `render-report`) only. Command-local on purpose: the shared
+/// [`OutputFormat`] is flattened into commands that cannot produce a GA
+/// appendix and must not advertise it (PRD-0016).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+#[value(rename_all = "lowercase")]
+enum PageReportFormat {
+    Text,
+    Json,
+    Markdown,
+    /// GA evidence appendix wikitext (PRD-0016).
+    #[value(name = "ga-appendix")]
+    GaAppendix,
+}
+
+/// Shared `--format` flag for the page-report commands.
+#[derive(Debug, Args)]
+struct PageReportFormatArg {
+    /// Output format.
+    #[arg(long, value_enum, default_value = "text")]
+    format: PageReportFormat,
 }
 
 /// Which bare-URL flag-mode was selected (PRD-0008 CLI surface).
@@ -229,12 +256,17 @@ enum Command {
     Verify(VerifyArgs),
     /// Verify every URL-bearing citation on a revision via the bridge (PRD-0001).
     VerifyPage(VerifyPageArgs),
+    /// Render a saved page-verification report (`verify-page --format json`
+    /// output) with no bridge, session, or network (PRD-0016).
+    RenderReport(RenderReportArgs),
     /// Report whether a quote locates in a source body read from STDIN (offline, SP42#25).
     LocateProbe(LocateProbeArgs),
     /// Verify a JSONL batch (one case per line, STDIN or --file), one result per line.
     Batch(BatchArgs),
     /// Preview or apply bare-URL citation repairs (PRD-0008).
     BareUrl(BareUrlArgs),
+    /// Interactive review sessions: open a page, wait for operator feedback (PRD-0017).
+    Review(ReviewArgs),
     /// Dev / operator queue views; reads the event payload from STDIN.
     Preview(PreviewArgs),
 }
@@ -328,6 +360,166 @@ struct VerifyPageArgs {
     /// Revision id. Omit for the latest revision (the server resolves it).
     #[arg(long)]
     rev: Option<u64>,
+    /// Local server base URL.
+    #[arg(long, default_value = LOCAL_SERVER_BASE_URL)]
+    bridge_base_url: String,
+    #[command(flatten)]
+    fmt: PageReportFormatArg,
+}
+
+/// `render-report`: pure local transform of a saved report file.
+#[derive(Debug, Args)]
+struct RenderReportArgs {
+    /// Path to a saved report JSON (the exact `verify-page --format json` output).
+    file: std::path::PathBuf,
+    #[command(flatten)]
+    fmt: PageReportFormatArg,
+}
+
+#[derive(Debug, Args)]
+struct ReviewArgs {
+    #[command(subcommand)]
+    action: ReviewAction,
+}
+
+#[derive(Debug, Subcommand)]
+enum ReviewAction {
+    /// Open or resume a review session on a page (bare title or pasted wiki URL).
+    Open(ReviewOpenArgs),
+    /// Wait for operator feedback on an open session; re-arms until feedback or end.
+    Poll(ReviewPollArgs),
+    /// Queue operator feedback from the command line (dev/test surface).
+    Queue(ReviewQueueArgs),
+    /// Attach a verify-page report to the session so its findings overlay
+    /// the article outline (the report's in-article frontend).
+    Findings(ReviewFindingsArgs),
+    /// Send an agent chat reply to the operator surface.
+    Reply(ReviewReplyArgs),
+    /// End a session as the agent (a plain reopen stays allowed).
+    End(ReviewEndArgs),
+    /// List review sessions on the local server.
+    Sessions(ReviewSessionsArgs),
+}
+
+#[derive(Debug, Args)]
+struct ReviewOpenArgs {
+    /// Page target: bare title or pasted wiki URL (oldid URLs pin the revision).
+    target: String,
+    /// Target wiki id.
+    #[arg(long, default_value = BARE_URL_DEFAULT_WIKI)]
+    wiki: String,
+    /// Revision id. Omit for the latest revision (the server resolves it).
+    #[arg(long)]
+    rev: Option<u64>,
+    /// Resume a session the operator explicitly ended (only when they ask).
+    #[arg(long)]
+    reopen: bool,
+    /// Local server base URL.
+    #[arg(long, default_value = LOCAL_SERVER_BASE_URL)]
+    bridge_base_url: String,
+    #[command(flatten)]
+    fmt: FormatArg,
+}
+
+#[derive(Debug, Args)]
+struct ReviewPollArgs {
+    /// Page target: bare title or pasted wiki URL.
+    target: String,
+    /// Target wiki id.
+    #[arg(long, default_value = BARE_URL_DEFAULT_WIKI)]
+    wiki: String,
+    /// Chat reply shown to the operator before the wait starts.
+    #[arg(long)]
+    agent_reply: Option<String>,
+    /// Return after one bounded server wait instead of re-arming until feedback.
+    #[arg(long)]
+    once: bool,
+    /// Local server base URL.
+    #[arg(long, default_value = LOCAL_SERVER_BASE_URL)]
+    bridge_base_url: String,
+    #[command(flatten)]
+    fmt: FormatArg,
+}
+
+#[derive(Debug, Args)]
+struct ReviewQueueArgs {
+    /// Page target: bare title or pasted wiki URL.
+    target: String,
+    /// The feedback prompt to queue.
+    #[arg(long)]
+    message: String,
+    /// Target wiki id.
+    #[arg(long, default_value = BARE_URL_DEFAULT_WIKI)]
+    wiki: String,
+    /// Anchor the prompt to this block ordinal.
+    #[arg(long)]
+    block: Option<usize>,
+    /// Anchor the prompt to this cite id (e.g. cite_ref-x_2-0).
+    #[arg(long)]
+    ref_id: Option<String>,
+    /// Anchor the prompt to this verbatim selected text.
+    #[arg(long)]
+    selected_text: Option<String>,
+    /// Queue and end the session in one action ("send & end").
+    #[arg(long)]
+    end: bool,
+    /// Local server base URL.
+    #[arg(long, default_value = LOCAL_SERVER_BASE_URL)]
+    bridge_base_url: String,
+    #[command(flatten)]
+    fmt: FormatArg,
+}
+
+#[derive(Debug, Args)]
+struct ReviewFindingsArgs {
+    /// Page target: bare title or pasted wiki URL.
+    target: String,
+    /// Path to a `verify-page --format json` report, or `-` for stdin.
+    #[arg(long)]
+    report: String,
+    /// Target wiki id.
+    #[arg(long, default_value = BARE_URL_DEFAULT_WIKI)]
+    wiki: String,
+    /// Local server base URL.
+    #[arg(long, default_value = LOCAL_SERVER_BASE_URL)]
+    bridge_base_url: String,
+    #[command(flatten)]
+    fmt: FormatArg,
+}
+
+#[derive(Debug, Args)]
+struct ReviewReplyArgs {
+    /// Page target: bare title or pasted wiki URL.
+    target: String,
+    /// The reply text.
+    #[arg(long)]
+    message: String,
+    /// Target wiki id.
+    #[arg(long, default_value = BARE_URL_DEFAULT_WIKI)]
+    wiki: String,
+    /// Local server base URL.
+    #[arg(long, default_value = LOCAL_SERVER_BASE_URL)]
+    bridge_base_url: String,
+    #[command(flatten)]
+    fmt: FormatArg,
+}
+
+#[derive(Debug, Args)]
+struct ReviewEndArgs {
+    /// Page target: bare title or pasted wiki URL.
+    target: String,
+    /// Target wiki id.
+    #[arg(long, default_value = BARE_URL_DEFAULT_WIKI)]
+    wiki: String,
+    /// Local server base URL.
+    #[arg(long, default_value = LOCAL_SERVER_BASE_URL)]
+    bridge_base_url: String,
+    #[command(flatten)]
+    fmt: FormatArg,
+}
+
+#[derive(Debug, Args)]
+struct ReviewSessionsArgs {
     /// Local server base URL.
     #[arg(long, default_value = LOCAL_SERVER_BASE_URL)]
     bridge_base_url: String,
@@ -692,6 +884,7 @@ fn dispatch(command: Command) -> Result<String, String> {
             let bridge_base_url = args.bridge_base_url.clone();
             render_verify_page(&VerifyPageCliOptions::from(args), &bridge_base_url, format)
         }
+        Command::RenderReport(args) => run_render_report(&args.file, args.fmt.format),
         Command::LocateProbe(args) => {
             // Offline locate probe: read a source body from STDIN, report whether the quote
             // locates. No model, no fetch — the deterministic locate-replay tool (SP42#25).
@@ -703,6 +896,7 @@ fn dispatch(command: Command) -> Result<String, String> {
             models: args.models,
         }),
         Command::BareUrl(args) => dispatch_bare_url(args.action),
+        Command::Review(args) => dispatch_review(args.action),
         Command::Preview(args) => dispatch_preview(args),
     }
 }
@@ -3011,7 +3205,7 @@ where
 fn render_verify_page(
     options: &VerifyPageCliOptions,
     bridge_base_url: &str,
-    format: OutputFormat,
+    format: PageReportFormat,
 ) -> Result<String, String> {
     // `reqwest` needs a Tokio reactor; drive the bridge calls on a real runtime
     // (mirrors `run_verify`), not `futures::executor::block_on`.
@@ -3022,14 +3216,41 @@ fn render_verify_page(
         fetch_page_report_via_bridge(bridge_base_url, options),
     ))?;
     match format {
-        OutputFormat::Json => {
+        PageReportFormat::Json => {
             serde_json::to_string_pretty(&report).map_err(|error| error.to_string())
         }
         // The shared renderer already emits a full markdown document (`# Page citation
         // report`), so it is not wrapped in render_markdown_section.
-        OutputFormat::Markdown => Ok(render_page_verification_markdown(&report)),
-        OutputFormat::Text => Ok(render_page_verification_text(&report)),
+        PageReportFormat::Markdown => Ok(render_page_verification_markdown(&report)),
+        PageReportFormat::Text => Ok(render_page_verification_text(&report)),
+        PageReportFormat::GaAppendix => Ok(sp42_assessment::render_ga_appendix(
+            &report,
+            SystemClock.now_ms(),
+            env!("CARGO_PKG_VERSION"),
+        )),
     }
+}
+
+/// Render a saved `PageVerificationReport` from disk. The replay-friendly
+/// core surface of PRD-0016: no bridge bootstrap, no session, no network —
+/// a stored report renders identically anywhere.
+fn run_render_report(path: &std::path::Path, format: PageReportFormat) -> Result<String, String> {
+    let raw = std::fs::read_to_string(path)
+        .map_err(|error| format!("could not read report file {}: {error}", path.display()))?;
+    let report: PageVerificationReport = serde_json::from_str(&raw)
+        .map_err(|error| format!("{} is not a saved page report: {error}", path.display()))?;
+    Ok(match format {
+        PageReportFormat::Json => {
+            serde_json::to_string_pretty(&report).map_err(|error| error.to_string())?
+        }
+        PageReportFormat::Markdown => render_page_verification_markdown(&report),
+        PageReportFormat::Text => render_page_verification_text(&report),
+        PageReportFormat::GaAppendix => sp42_assessment::render_ga_appendix(
+            &report,
+            SystemClock.now_ms(),
+            env!("CARGO_PKG_VERSION"),
+        ),
+    })
 }
 
 /// Verify every citation on a page through the bridge and return the report. The
@@ -3181,6 +3402,453 @@ async fn execute_bare_url_via_bridge(
         proposal,
         response: apply,
     })
+}
+
+/// An authenticated bridge session: the reqwest client plus the cookie and
+/// CSRF token every gated review request must carry (ADR-0002).
+struct BridgeSession {
+    client: reqwest::Client,
+    cookie: String,
+    csrf_token: String,
+}
+
+/// Bootstrap the local dev-auth bridge and capture the session cookie and
+/// CSRF token — the shared preamble of every gated bridge call.
+async fn bootstrap_bridge_session(base_url: &str) -> Result<BridgeSession, String> {
+    let client = reqwest::Client::builder()
+        .user_agent(sp42_core::branding::USER_AGENT)
+        .build()
+        .map_err(|error| format!("bridge client failed to build: {error}"))?;
+    let bootstrap_request =
+        build_dev_auth_bootstrap_request(base_url, &DevAuthBootstrapRequest::default())
+            .map_err(|error| error.to_string())?;
+    let bootstrap_response = execute_local_http_request(&client, bootstrap_request).await?;
+    let bootstrap =
+        parse_dev_auth_status(&bootstrap_response.body).map_err(|error| error.to_string())?;
+    if !bootstrap.authenticated {
+        return Err("bridge bootstrap did not produce an authenticated session".to_string());
+    }
+    let cookie = session_cookie_from_headers(&bootstrap_response.headers)
+        .ok_or_else(|| "bridge bootstrap did not set a session cookie".to_string())?;
+    let csrf_token = bootstrap
+        .csrf_token
+        .ok_or_else(|| "bridge bootstrap did not return a CSRF token".to_string())?;
+    Ok(BridgeSession {
+        client,
+        cookie,
+        csrf_token,
+    })
+}
+
+/// POST a JSON body to a gated review route and parse the JSON response.
+async fn post_review_route<Request, Response>(
+    bridge: &BridgeSession,
+    base_url: &str,
+    path: &str,
+    request: &Request,
+) -> Result<Response, String>
+where
+    Request: serde::Serialize,
+    Response: serde::de::DeserializeOwned,
+{
+    let response = bridge
+        .client
+        .post(format!("{base_url}{path}"))
+        .header(COOKIE, bridge.cookie.as_str())
+        .header(
+            route_contracts::CSRF_HEADER_NAME,
+            bridge.csrf_token.as_str(),
+        )
+        .json(request)
+        .send()
+        .await
+        .map_err(|error| format!("review request to {path} failed: {error}"))?;
+    let status = response.status();
+    if !status.is_success() {
+        // Keep the server's JSON detail: refusals like the operator-ended
+        // reopen gate carry their etiquette guidance in the body.
+        let body = response.text().await.unwrap_or_default();
+        return Err(format!(
+            "review request to {path} failed: HTTP {status}: {body}"
+        ));
+    }
+    response
+        .json::<Response>()
+        .await
+        .map_err(|error| format!("review response from {path} was invalid: {error}"))
+}
+
+/// Route a `review` subcommand to its runner on a fresh Tokio runtime
+/// (`reqwest` needs a reactor; mirrors `render_verify_page`).
+fn dispatch_review(action: ReviewAction) -> Result<String, String> {
+    let runtime = tokio::runtime::Runtime::new()
+        .map_err(|error| format!("failed to start async runtime: {error}"))?;
+    match action {
+        ReviewAction::Open(args) => {
+            let format = args.fmt.format;
+            let response = runtime.block_on(run_review_open(&args))?;
+            render_review_output(format, &response, render_review_open_text(&response))
+        }
+        ReviewAction::Poll(args) => {
+            let format = args.fmt.format;
+            let response = runtime.block_on(run_review_poll(&args))?;
+            render_review_output(format, &response, render_review_poll_text(&response))
+        }
+        ReviewAction::Queue(args) => {
+            let format = args.fmt.format;
+            let response = runtime.block_on(run_review_queue(&args))?;
+            let text = format!(
+                "queued {} prompt(s)\n{}",
+                response.queued,
+                render_review_snapshot_line(&response.session)
+            );
+            render_review_output(format, &response, text)
+        }
+        ReviewAction::Findings(args) => {
+            let format = args.fmt.format;
+            let response = runtime.block_on(run_review_findings(&args))?;
+            let text = format!(
+                "attached {} finding marker(s)\n{}",
+                response.attached,
+                render_review_snapshot_line(&response.session)
+            );
+            render_review_output(format, &response, text)
+        }
+        ReviewAction::Reply(args) => {
+            let format = args.fmt.format;
+            let response = runtime.block_on(run_review_reply(&args))?;
+            let text = format!(
+                "reply delivered\n{}",
+                render_review_snapshot_line(&response.session)
+            );
+            render_review_output(format, &response, text)
+        }
+        ReviewAction::End(args) => {
+            let format = args.fmt.format;
+            let response = runtime.block_on(run_review_end(&args))?;
+            let text = format!(
+                "session ended by agent\n{}",
+                render_review_snapshot_line(&response.session)
+            );
+            render_review_output(format, &response, text)
+        }
+        ReviewAction::Sessions(args) => {
+            let format = args.fmt.format;
+            let response = runtime.block_on(run_review_sessions(&args))?;
+            render_review_output(format, &response, render_review_sessions_text(&response))
+        }
+    }
+}
+
+async fn run_review_open(args: &ReviewOpenArgs) -> Result<ReviewOpenResponse, String> {
+    let bridge = bootstrap_bridge_session(&args.bridge_base_url).await?;
+    let request = ReviewOpenRequest {
+        wiki_id: args.wiki.clone(),
+        target: args.target.clone(),
+        rev_id: args.rev.unwrap_or(0),
+        reopen: args.reopen,
+    };
+    post_review_route(
+        &bridge,
+        &args.bridge_base_url,
+        route_contracts::DEV_REVIEW_OPEN_PATH,
+        &request,
+    )
+    .await
+}
+
+/// Wait for operator feedback. Each request is a bounded server-side wait;
+/// the loop re-arms until feedback, an end, or a missing session, so from
+/// the agent's side this behaves like one long poll. Waiting narration goes
+/// to stderr; stdout stays reserved for the final structured response.
+async fn run_review_poll(args: &ReviewPollArgs) -> Result<ReviewPollResponse, String> {
+    let bridge = bootstrap_bridge_session(&args.bridge_base_url).await?;
+    let title = sp42_core::parse_page_target(&args.target).title;
+    if let Some(reply) = &args.agent_reply {
+        let request = ReviewReplyRequest {
+            wiki_id: args.wiki.clone(),
+            title: title.clone(),
+            text: reply.clone(),
+        };
+        let _: ReviewAckResponse = post_review_route(
+            &bridge,
+            &args.bridge_base_url,
+            route_contracts::DEV_REVIEW_REPLY_PATH,
+            &request,
+        )
+        .await?;
+    }
+    let request = ReviewPollRequest {
+        wiki_id: args.wiki.clone(),
+        title: title.clone(),
+        // Omitted = the server's default bounded wait; the CLI re-arms
+        // between waits. (An explicit 0 is a nonblocking status check.)
+        wait_ms: None,
+    };
+    loop {
+        let response: ReviewPollResponse = post_review_route(
+            &bridge,
+            &args.bridge_base_url,
+            route_contracts::DEV_REVIEW_POLL_PATH,
+            &request,
+        )
+        .await?;
+        if args.once || response.status != ReviewPollStatus::Waiting {
+            return Ok(response);
+        }
+        eprintln!(
+            "review poll: still waiting for operator feedback on {title} \
+             (re-arming; queued feedback is never lost)"
+        );
+    }
+}
+
+/// Build the queue prompt from CLI anchor flags: `--selected-text` makes a
+/// text prompt, `--block`/`--ref-id` a block prompt, neither a free-form
+/// message. Anchored prompts require `--block` so the anchor is complete.
+fn build_review_queue_prompt(args: &ReviewQueueArgs) -> Result<ReviewPrompt, String> {
+    let anchored = args.ref_id.is_some() || args.selected_text.is_some();
+    let Some(block_ordinal) = args.block else {
+        if anchored {
+            return Err("--ref-id/--selected-text need --block to anchor the prompt".to_string());
+        }
+        return Ok(ReviewPrompt {
+            kind: ReviewPromptKind::Message,
+            prompt: args.message.clone(),
+            anchor: None,
+        });
+    };
+    let kind = if args.selected_text.is_some() {
+        ReviewPromptKind::Text
+    } else {
+        ReviewPromptKind::Block
+    };
+    Ok(ReviewPrompt {
+        kind,
+        prompt: args.message.clone(),
+        anchor: Some(ReviewAnchor {
+            block_ordinal,
+            ref_id: args.ref_id.clone(),
+            selected_text: args.selected_text.clone(),
+        }),
+    })
+}
+
+async fn run_review_queue(args: &ReviewQueueArgs) -> Result<ReviewQueueResponse, String> {
+    let bridge = bootstrap_bridge_session(&args.bridge_base_url).await?;
+    let request = ReviewQueueRequest {
+        wiki_id: args.wiki.clone(),
+        title: sp42_core::parse_page_target(&args.target).title,
+        prompts: vec![build_review_queue_prompt(args)?],
+        end_session: args.end,
+    };
+    post_review_route(
+        &bridge,
+        &args.bridge_base_url,
+        route_contracts::DEV_REVIEW_PROMPTS_PATH,
+        &request,
+    )
+    .await
+}
+
+/// Read a `verify-page --format json` report from a file or stdin (`-`).
+fn read_verification_report(path: &str) -> Result<PageVerificationReport, String> {
+    let raw = if path == "-" {
+        let mut buffer = String::new();
+        std::io::Read::read_to_string(&mut std::io::stdin(), &mut buffer)
+            .map_err(|error| format!("failed to read report from stdin: {error}"))?;
+        buffer
+    } else {
+        std::fs::read_to_string(path)
+            .map_err(|error| format!("failed to read report {path}: {error}"))?
+    };
+    serde_json::from_str(&raw)
+        .map_err(|error| format!("report is not a verify-page JSON report: {error}"))
+}
+
+/// Refuse a report whose identity does not match the requested session: the
+/// server can only compare revisions, and revision ids can collide across
+/// wikis, so a mistyped or reused report file could otherwise overlay
+/// unrelated findings onto the operator's outline.
+fn check_report_identity(
+    report: &PageVerificationReport,
+    wiki: &str,
+    title: &str,
+) -> Result<(), String> {
+    // MediaWiki treats underscores and spaces in titles as the same page.
+    let canonical = |t: &str| t.replace('_', " ");
+    if report.wiki_id != wiki || canonical(&report.title) != canonical(title) {
+        return Err(format!(
+            "the report describes {}:{} but the target session is {wiki}:{title}; \
+             pass the report produced for this page",
+            report.wiki_id, report.title
+        ));
+    }
+    Ok(())
+}
+
+/// Attach a verify-page report to the review session: project its findings
+/// onto review anchors (ref ids) and post them, pinned to the report's
+/// revision so a stale report cannot overlay a newer session.
+async fn run_review_findings(args: &ReviewFindingsArgs) -> Result<ReviewFindingsResponse, String> {
+    let report = read_verification_report(&args.report)?;
+    let title = sp42_core::parse_page_target(&args.target).title;
+    check_report_identity(&report, &args.wiki, &title)?;
+    let bridge = bootstrap_bridge_session(&args.bridge_base_url).await?;
+    let request = ReviewFindingsRequest {
+        wiki_id: args.wiki.clone(),
+        title,
+        rev_id: report.rev_id,
+        findings: review_finding_markers(&report),
+    };
+    post_review_route(
+        &bridge,
+        &args.bridge_base_url,
+        route_contracts::DEV_REVIEW_FINDINGS_PATH,
+        &request,
+    )
+    .await
+}
+
+async fn run_review_reply(args: &ReviewReplyArgs) -> Result<ReviewAckResponse, String> {
+    let bridge = bootstrap_bridge_session(&args.bridge_base_url).await?;
+    let request = ReviewReplyRequest {
+        wiki_id: args.wiki.clone(),
+        title: sp42_core::parse_page_target(&args.target).title,
+        text: args.message.clone(),
+    };
+    post_review_route(
+        &bridge,
+        &args.bridge_base_url,
+        route_contracts::DEV_REVIEW_REPLY_PATH,
+        &request,
+    )
+    .await
+}
+
+async fn run_review_end(args: &ReviewEndArgs) -> Result<ReviewAckResponse, String> {
+    let bridge = bootstrap_bridge_session(&args.bridge_base_url).await?;
+    let request = ReviewEndRequest {
+        wiki_id: args.wiki.clone(),
+        title: sp42_core::parse_page_target(&args.target).title,
+    };
+    post_review_route(
+        &bridge,
+        &args.bridge_base_url,
+        route_contracts::DEV_REVIEW_END_PATH,
+        &request,
+    )
+    .await
+}
+
+async fn run_review_sessions(args: &ReviewSessionsArgs) -> Result<ReviewSessionsResponse, String> {
+    let client = reqwest::Client::builder()
+        .user_agent(sp42_core::branding::USER_AGENT)
+        .build()
+        .map_err(|error| format!("bridge client failed to build: {error}"))?;
+    let url = format!(
+        "{}{}",
+        args.bridge_base_url,
+        route_contracts::DEV_REVIEW_SESSIONS_PATH
+    );
+    let response = client
+        .get(&url)
+        .send()
+        .await
+        .map_err(|error| format!("review sessions request failed: {error}"))?
+        .error_for_status()
+        .map_err(|error| format!("review sessions request failed: {error}"))?;
+    response
+        .json::<ReviewSessionsResponse>()
+        .await
+        .map_err(|error| format!("review sessions payload was invalid: {error}"))
+}
+
+/// Shared review output shaping: JSON is the machine contract; text and
+/// markdown share the same line-oriented rendering.
+fn render_review_output<T: serde::Serialize>(
+    format: OutputFormat,
+    value: &T,
+    text: String,
+) -> Result<String, String> {
+    match format {
+        OutputFormat::Json => {
+            serde_json::to_string_pretty(value).map_err(|error| error.to_string())
+        }
+        OutputFormat::Text => Ok(text),
+        OutputFormat::Markdown => Ok(format!("## Review session\n\n```\n{text}\n```")),
+    }
+}
+
+fn render_review_snapshot_line(session: &ReviewSessionSnapshot) -> String {
+    let ended = session.ended_by.map_or(String::new(), |by| {
+        format!(", ended by {by:?}").to_lowercase()
+    });
+    format!(
+        "session: {} ({}) rev {} — {:?}, {} pending prompt(s){}",
+        session.title,
+        session.wiki_id,
+        session.rev_id,
+        session.status,
+        session.pending_prompts,
+        ended
+    )
+}
+
+fn render_review_open_text(response: &ReviewOpenResponse) -> String {
+    let unanchored = if response.unanchored_findings.is_empty() {
+        String::new()
+    } else {
+        format!(
+            "\nunanchored findings: {} (attached but matching no outline block)",
+            response.unanchored_findings.len()
+        )
+    };
+    format!(
+        "{}\noutline: {} block(s), {} finding(s) attached{}\nnext: {}",
+        render_review_snapshot_line(&response.session),
+        response.outline.len(),
+        response.session.findings,
+        unanchored,
+        response.next_step
+    )
+}
+
+fn render_review_prompt_line(prompt: &ReviewPrompt) -> String {
+    let anchor = prompt.anchor.as_ref().map_or(String::new(), |anchor| {
+        let ref_part = anchor
+            .ref_id
+            .as_deref()
+            .map_or(String::new(), |ref_id| format!(", ref {ref_id}"));
+        let text_part = anchor
+            .selected_text
+            .as_deref()
+            .map_or(String::new(), |text| format!(", text \"{text}\""));
+        format!(" (block {}{ref_part}{text_part})", anchor.block_ordinal)
+    });
+    format!("- [{:?}] {}{anchor}", prompt.kind, prompt.prompt).to_string()
+}
+
+fn render_review_poll_text(response: &ReviewPollResponse) -> String {
+    let mut lines = vec![format!("status: {:?}", response.status).to_lowercase()];
+    lines.extend(response.prompts.iter().map(render_review_prompt_line));
+    if let Some(ended_by) = response.ended_by {
+        lines.push(format!("ended by: {ended_by:?}").to_lowercase());
+    }
+    lines.push(format!("next: {}", response.next_step));
+    lines.join("\n")
+}
+
+fn render_review_sessions_text(response: &ReviewSessionsResponse) -> String {
+    if response.sessions.is_empty() {
+        return "no review sessions".to_string();
+    }
+    response
+        .sessions
+        .iter()
+        .map(render_review_snapshot_line)
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 async fn execute_local_http_request(
@@ -3535,12 +4203,15 @@ mod tests {
 
     use super::{
         ActionKind, BareUrlAction, BareUrlCliMode, BareUrlCliOptions, BareUrlExecuteReport, Cli,
-        CliOptions, Command, ContextPreviewOptions, LOCAL_SERVER_BASE_URL, OutputFormat, ShellMode,
-        VerifyPageCliOptions, WorkbenchOptions, render_action_preview, render_backlog_preview,
+        CliOptions, Command, ContextPreviewOptions, FormatArg, LOCAL_SERVER_BASE_URL, OutputFormat,
+        PageReportFormat, PageVerificationReport, ReviewAction, ReviewAnchor, ReviewPollResponse,
+        ReviewPollStatus, ReviewPrompt, ReviewPromptKind, ReviewQueueArgs, ShellMode,
+        VerifyPageCliOptions, WorkbenchOptions, build_review_queue_prompt, check_report_identity,
+        read_verification_report, render_action_preview, render_backlog_preview,
         render_bare_url_execute, render_bare_url_proposals, render_context_preview,
-        render_coordination_preview, render_parity_report, render_queue, render_scenario_report,
-        render_session_digest, render_stream_preview, render_workbench, select_bare_url_proposal,
-        server_report_lines,
+        render_coordination_preview, render_parity_report, render_queue, render_review_poll_text,
+        render_scenario_report, render_session_digest, render_stream_preview, render_workbench,
+        run_render_report, select_bare_url_proposal, server_report_lines,
     };
     use clap::Parser;
     use serde_json::json;
@@ -3691,6 +4362,98 @@ mod tests {
     #[test]
     fn verify_page_requires_title() {
         assert!(command_from(&["verify-page", "--wiki", "enwiki"]).is_err());
+    }
+
+    #[test]
+    fn verify_page_accepts_ga_appendix_format() {
+        // Parse-level check only: the flag value is accepted and maps to the enum.
+        let cli = Cli::try_parse_from([
+            "sp42-cli",
+            "verify-page",
+            "--title",
+            "X",
+            "--format",
+            "ga-appendix",
+        ])
+        .expect("ga-appendix parses");
+        let Command::VerifyPage(args) = cli.command else {
+            panic!("expected verify-page");
+        };
+        assert_eq!(args.fmt.format, PageReportFormat::GaAppendix);
+    }
+
+    #[test]
+    fn ga_appendix_is_rejected_on_commands_that_cannot_produce_it() {
+        for argv in [
+            vec![
+                "sp42-cli",
+                "verify",
+                "--claim",
+                "c",
+                "--source-url",
+                "https://x",
+                "--format",
+                "ga-appendix",
+            ],
+            vec![
+                "sp42-cli",
+                "bare-url",
+                "preview",
+                "--title",
+                "X",
+                "--format",
+                "ga-appendix",
+            ],
+            vec!["sp42-cli", "preview", "--format", "ga-appendix"],
+        ] {
+            assert!(
+                Cli::try_parse_from(argv.clone()).is_err(),
+                "{argv:?} must reject ga-appendix"
+            );
+        }
+    }
+
+    #[test]
+    fn render_report_renders_a_saved_report_without_any_server() {
+        // Minimal saved report: what verify-page --format json emits.
+        let report = serde_json::json!({
+            "wiki_id": "testwiki",
+            "rev_id": 12345,
+            "title": "Fixture",
+            "findings": [],
+            "skipped": [],
+            "extraction_failures": [],
+            "stats": {
+                "refs_seen": 0, "use_sites_verified": 0, "skipped": 0,
+                "extraction_failures": 0, "supported": 0, "partial": 0,
+                "not_supported": 0, "source_unavailable": 0,
+                "source_unavailable_unreachable": 0, "source_unavailable_unusable": 0
+            }
+        });
+        let dir = std::env::temp_dir().join("sp42-cli-render-report-test");
+        std::fs::create_dir_all(&dir).expect("tmp dir");
+        let path = dir.join("report.json");
+        std::fs::write(&path, report.to_string()).expect("write fixture");
+
+        let out = run_render_report(&path, PageReportFormat::GaAppendix).expect("renders");
+        assert!(out.contains("Criterion 2"));
+        assert!(out.contains("Fixture"));
+
+        // Determinism through the CLI path is covered by the renderer's own
+        // pinned-timestamp test; here assert the ga-appendix path threads a real
+        // clock without panicking and json round-trips.
+        let json_out = run_render_report(&path, PageReportFormat::Json).expect("renders json");
+        assert!(json_out.contains("\"rev_id\": 12345"));
+    }
+
+    #[test]
+    fn render_report_reports_a_readable_error_for_a_bad_file() {
+        let err = run_render_report(
+            std::path::Path::new("/nonexistent/report.json"),
+            PageReportFormat::Text,
+        )
+        .expect_err("missing file errors");
+        assert!(err.contains("/nonexistent/report.json"));
     }
 
     #[test]
@@ -4518,5 +5281,191 @@ mod tests {
             select_bare_url_proposal(&response, 1).expect_err("should fail for missing ordinal");
         assert!(error.contains("no bare-URL proposal for ordinal 1"));
         assert!(error.contains("declined: []"));
+    }
+
+    #[test]
+    fn review_open_args_parse_target_wiki_rev_and_reopen() {
+        let cli = Cli::parse_from([
+            "sp42-cli",
+            "review",
+            "open",
+            "https://en.wikipedia.org/wiki/Example",
+            "--wiki",
+            "enwiki",
+            "--rev",
+            "5",
+            "--reopen",
+        ]);
+        let Command::Review(args) = cli.command else {
+            panic!("expected review command");
+        };
+        let ReviewAction::Open(open) = args.action else {
+            panic!("expected open action");
+        };
+        assert_eq!(open.target, "https://en.wikipedia.org/wiki/Example");
+        assert_eq!(open.wiki, "enwiki");
+        assert_eq!(open.rev, Some(5));
+        assert!(open.reopen);
+        assert_eq!(open.bridge_base_url, LOCAL_SERVER_BASE_URL);
+    }
+
+    #[test]
+    fn parses_review_findings_action() {
+        let cli = Cli::parse_from([
+            "sp42-cli",
+            "review",
+            "findings",
+            "Exemple",
+            "--report",
+            "report.json",
+            "--wiki",
+            "frwiki",
+        ]);
+        let Command::Review(args) = cli.command else {
+            panic!("expected review command");
+        };
+        let ReviewAction::Findings(findings) = args.action else {
+            panic!("expected findings action");
+        };
+        assert_eq!(findings.target, "Exemple");
+        assert_eq!(findings.report, "report.json");
+        assert_eq!(findings.wiki, "frwiki");
+    }
+
+    #[test]
+    fn read_verification_report_rejects_non_report_json() {
+        let dir =
+            std::env::temp_dir().join(format!("sp42-cli-review-findings-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("temp dir should create");
+        let path = dir.join("not-a-report.json");
+        std::fs::write(&path, "{\"outcome\": true}").expect("temp file should write");
+
+        let error = read_verification_report(path.to_str().expect("utf-8 path"))
+            .expect_err("non-report JSON should be rejected");
+        assert!(error.contains("not a verify-page JSON report"));
+    }
+
+    #[test]
+    fn report_identity_check_matches_page_not_just_revision() {
+        let report = |wiki: &str, title: &str| PageVerificationReport {
+            wiki_id: wiki.to_string(),
+            title: title.to_string(),
+            rev_id: 42,
+            findings: Vec::new(),
+            skipped: Vec::new(),
+            extraction_failures: Vec::new(),
+            book_resolutions: Vec::new(),
+            stats: sp42_core::PageVerificationStats::default(),
+        };
+
+        assert!(check_report_identity(&report("frwiki", "Exemple"), "frwiki", "Exemple").is_ok());
+        // Underscore and space spellings are the same MediaWiki title.
+        assert!(
+            check_report_identity(
+                &report("frwiki", "Grand_Exemple"),
+                "frwiki",
+                "Grand Exemple"
+            )
+            .is_ok()
+        );
+
+        let wrong_wiki = check_report_identity(&report("enwiki", "Exemple"), "frwiki", "Exemple")
+            .expect_err("a report for another wiki must not attach");
+        assert!(wrong_wiki.contains("enwiki:Exemple"));
+        assert!(
+            check_report_identity(&report("frwiki", "Autre"), "frwiki", "Exemple").is_err(),
+            "a report for another page must not attach"
+        );
+    }
+
+    #[test]
+    fn review_queue_prompt_builds_each_anchor_shape() {
+        let base = ReviewQueueArgs {
+            target: "Exemple".to_string(),
+            message: "tighten this".to_string(),
+            wiki: "frwiki".to_string(),
+            block: None,
+            ref_id: None,
+            selected_text: None,
+            end: false,
+            bridge_base_url: LOCAL_SERVER_BASE_URL.to_string(),
+            fmt: FormatArg {
+                format: OutputFormat::Text,
+            },
+        };
+
+        let message = build_review_queue_prompt(&base).expect("message prompt should build");
+        assert_eq!(message.kind, ReviewPromptKind::Message);
+        assert!(message.anchor.is_none());
+
+        let block = build_review_queue_prompt(&ReviewQueueArgs {
+            block: Some(3),
+            ref_id: Some("cite_ref-a_1-0".to_string()),
+            ..clone_review_queue_args(&base)
+        })
+        .expect("block prompt should build");
+        assert_eq!(block.kind, ReviewPromptKind::Block);
+        let anchor = block.anchor.expect("block prompt should carry an anchor");
+        assert_eq!(anchor.block_ordinal, 3);
+        assert_eq!(anchor.ref_id.as_deref(), Some("cite_ref-a_1-0"));
+
+        let text = build_review_queue_prompt(&ReviewQueueArgs {
+            block: Some(2),
+            selected_text: Some("the quote".to_string()),
+            ..clone_review_queue_args(&base)
+        })
+        .expect("text prompt should build");
+        assert_eq!(text.kind, ReviewPromptKind::Text);
+
+        let missing_block = build_review_queue_prompt(&ReviewQueueArgs {
+            ref_id: Some("cite_ref-a_1-0".to_string()),
+            ..clone_review_queue_args(&base)
+        })
+        .expect_err("an anchored prompt without --block must refuse");
+        assert!(missing_block.contains("--block"));
+    }
+
+    fn clone_review_queue_args(args: &ReviewQueueArgs) -> ReviewQueueArgs {
+        ReviewQueueArgs {
+            target: args.target.clone(),
+            message: args.message.clone(),
+            wiki: args.wiki.clone(),
+            block: args.block,
+            ref_id: args.ref_id.clone(),
+            selected_text: args.selected_text.clone(),
+            end: args.end,
+            bridge_base_url: args.bridge_base_url.clone(),
+            fmt: FormatArg {
+                format: OutputFormat::Text,
+            },
+        }
+    }
+
+    #[test]
+    fn review_poll_text_lists_prompts_and_next_step() {
+        let response = ReviewPollResponse {
+            contract_version: 1,
+            status: ReviewPollStatus::Feedback,
+            prompts: vec![ReviewPrompt {
+                kind: ReviewPromptKind::Text,
+                prompt: "check this quote".to_string(),
+                anchor: Some(ReviewAnchor {
+                    block_ordinal: 3,
+                    ref_id: Some("cite_ref-x_2-0".to_string()),
+                    selected_text: Some("the quote".to_string()),
+                }),
+            }],
+            session_ended: false,
+            ended_by: None,
+            next_step: "apply the feedback".to_string(),
+        };
+
+        let text = render_review_poll_text(&response);
+
+        assert!(text.contains("status: feedback"));
+        assert!(text.contains("check this quote"));
+        assert!(text.contains("block 3"));
+        assert!(text.contains("cite_ref-x_2-0"));
+        assert!(text.contains("next: apply the feedback"));
     }
 }

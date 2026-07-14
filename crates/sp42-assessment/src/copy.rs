@@ -110,6 +110,24 @@ pub const SKIPPED_BOOK_UNRESOLVED: &str =
 pub const SKIPPED_BOOK_LOOKUP_FAILED: &str =
     "cites a book whose catalog lookup did not complete — a tool failure, not a catalog miss";
 
+/// Books consulted section heading.
+pub const BUCKET_BOOKS_CONSULTED: &str = "==== Books consulted ====";
+
+/// Reader-facing description of scan availability states for books (exact scan available).
+pub const BOOK_SCAN_EXACT: &str = "scanned (exact edition)";
+
+/// Reader-facing description of scan availability states (similar edition scan only).
+pub const BOOK_SCAN_SIMILAR_ONLY: &str = "scanned (similar edition only)";
+
+/// Reader-facing description when no scan is available.
+pub const BOOK_SCAN_NONE: &str = "not scanned in the tool's catalog";
+
+/// Reader-facing description when the tool could not verify scan availability.
+pub const BOOK_SCAN_UNKNOWN: &str = "scan availability unknown (lookup failed)";
+
+/// Reader-facing description when a book catalog lookup never completed (transport failure).
+pub const BOOK_LOOKUP_FAILED: &str = "catalog lookup did not complete — a tool failure";
+
 #[cfg(test)]
 mod tests {
     use sp42_citation::{BodyUsabilityReason, SupportLevel};

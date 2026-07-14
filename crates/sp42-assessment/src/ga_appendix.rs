@@ -175,6 +175,8 @@ pub fn render_ga_appendix(
 
     render_skipped_section(&mut output, report);
 
+    render_books_section(&mut output, report);
+
     // Extraction failures
     if !report.extraction_failures.is_empty() {
         output.push('\n');
@@ -182,7 +184,7 @@ pub fn render_ga_appendix(
         output.push('\n');
         for failure in &report.extraction_failures {
             output.push_str("* ");
-            let rewritten = sanitize_reason(&failure.reason);
+            let rewritten = sanitize_reason(&failure.reason, failure.block_ordinal);
             output.push_str(&escape_verbatim(&rewritten));
             output.push('\n');
         }
@@ -209,22 +211,37 @@ pub fn render_ga_appendix(
 
 /// The skipped-refs section: reason-matched reader copy, with `BookSource`
 /// skips joined against `book_resolutions` so failed lookups are disclosed
-/// as tool failures (Codex round 2, PR 154).
+/// as tool failures (Codex rounds 2–3, PR 154).
 fn render_skipped_section(output: &mut String, report: &sp42_citation::PageVerificationReport) {
     // A BookSource skip's detail (catalog miss vs failed lookup) lives in
-    // the report's book_resolutions; join by ref id so a transport failure
-    // is never presented as a catalog miss (Codex round 2, PR 154).
-    let lookup_failed_refs: std::collections::HashSet<&str> = report
-        .book_resolutions
-        .iter()
-        .filter(|resolution| {
-            matches!(
-                resolution.outcome,
-                sp42_citation::BookResolutionOutcome::LookupFailed { .. }
-            )
-        })
-        .map(|resolution| resolution.ref_id.as_str())
-        .collect();
+    // the report's book_resolutions. Join by ref id AND identifiers (not just
+    // ref id) so a URL-less ref citing two books (one LookupFailed, one NotFound)
+    // renders each with its matching outcome, not both as failures (Codex round 3, PR 154).
+    let skip_outcome =
+        |skip: &sp42_citation::SkippedRef| -> Option<&sp42_citation::BookResolutionOutcome> {
+            let skip_identifiers = skip.book_identifiers();
+            if skip_identifiers.is_empty() {
+                // No identifiers to match; use ref_id-only fallback for legacy
+                // or non-book skips (Codex round 3, PR 154).
+                return report
+                    .book_resolutions
+                    .iter()
+                    .find(|resolution| resolution.ref_id == skip.ref_id)
+                    .map(|resolution| &resolution.outcome);
+            }
+            // Per-source join: find a resolution matching this skip's ref AND at least one identifier.
+            report
+                .book_resolutions
+                .iter()
+                .find(|resolution| {
+                    resolution.ref_id == skip.ref_id
+                        && resolution
+                            .identifiers
+                            .iter()
+                            .any(|id| skip_identifiers.contains(&id))
+                })
+                .map(|resolution| &resolution.outcome)
+        };
     if !report.skipped.is_empty() {
         output.push('\n');
         output.push_str(crate::copy::BUCKET_SKIPPED);
@@ -237,7 +254,9 @@ fn render_skipped_section(output: &mut String, report: &sp42_citation::PageVerif
             output.push_str(match skip.reason {
                 sp42_citation::SkippedReason::NonUrlSource => crate::copy::SKIPPED_NON_URL,
                 sp42_citation::SkippedReason::BookSource => {
-                    if lookup_failed_refs.contains(skip.ref_id.as_str()) {
+                    if let Some(sp42_citation::BookResolutionOutcome::LookupFailed { .. }) =
+                        skip_outcome(skip)
+                    {
                         crate::copy::SKIPPED_BOOK_LOOKUP_FAILED
                     } else {
                         crate::copy::SKIPPED_BOOK_UNRESOLVED
@@ -246,6 +265,68 @@ fn render_skipped_section(output: &mut String, report: &sp42_citation::PageVerif
             });
             output.push('\n');
         }
+    }
+}
+
+/// The books-consulted section: shows books that were resolved but had no
+/// searchable scan (`SourceUnavailable` outcomes) — distinct from unresolved
+/// skips. Renders edition title and scan state for each book (Codex round 3, PR 154).
+fn render_books_section(output: &mut String, report: &sp42_citation::PageVerificationReport) {
+    let resolvable = report
+        .book_resolutions
+        .iter()
+        .filter(|resolution| {
+            matches!(
+                resolution.outcome,
+                sp42_citation::BookResolutionOutcome::Resolved { .. }
+            )
+        })
+        .collect::<Vec<_>>();
+
+    if resolvable.is_empty() {
+        return;
+    }
+
+    output.push('\n');
+    output.push_str(crate::copy::BUCKET_BOOKS_CONSULTED);
+    output.push('\n');
+
+    for resolution in resolvable {
+        output.push_str("* ");
+        let ordinal = u32::try_from(resolution.block_ordinal).unwrap_or(0);
+        output.push_str(&ref_label(&resolution.ref_id, ordinal));
+        output.push_str(": ");
+
+        if let sp42_citation::BookResolutionOutcome::Resolved { edition, scan, .. } =
+            &resolution.outcome
+        {
+            // Render the edition title (preferred) or a generic fallback.
+            if let Some(title) = &edition.title {
+                output.push_str(&escape_verbatim(title));
+            } else {
+                output.push_str("(untitled book)");
+            }
+
+            output.push_str(" — ");
+
+            // Render scan availability state (Codex round 3, PR 154).
+            let scan_state = match scan {
+                Some(availability) => {
+                    if !availability.exact.is_empty()
+                        && availability.exact.iter().any(|item| item.ocaid.is_some())
+                    {
+                        crate::copy::BOOK_SCAN_EXACT
+                    } else if !availability.similar.is_empty() {
+                        crate::copy::BOOK_SCAN_SIMILAR_ONLY
+                    } else {
+                        crate::copy::BOOK_SCAN_NONE
+                    }
+                }
+                None => crate::copy::BOOK_SCAN_UNKNOWN,
+            };
+            output.push_str(scan_state);
+        }
+        output.push('\n');
     }
 }
 
@@ -443,7 +524,11 @@ fn truncate_claim(text: &str, max_len: usize) -> String {
     }
 }
 
-fn sanitize_reason(reason: &str) -> String {
+/// Rewrite `cite_ref` IDs in an extraction-failure reason to reader-facing labels.
+/// For unnamed refs (`cite_ref-<digits>`), use a block-anchored phrase to keep
+/// failures distinct; named refs use the existing derived-name path
+/// (Codex round 3, PR 154).
+fn sanitize_reason(reason: &str, block_ordinal: usize) -> String {
     let mut result = String::new();
     let mut remaining = reason;
 
@@ -457,7 +542,16 @@ fn sanitize_reason(reason: &str) -> String {
             .unwrap_or(after_prefix.len());
 
         let cite_id = &remaining[pos..pos + "cite_ref-".len() + token_end];
-        result.push_str(&ref_label(cite_id, 0));
+        let rest = cite_id.strip_prefix("cite_ref-").unwrap_or("");
+
+        // For unnamed refs (all digits), use block-anchored label to distinguish
+        // multiple failures in the same output (Codex round 3, PR 154).
+        let label = if rest.chars().all(|c| c.is_ascii_digit()) {
+            format!("an unnamed ref (block {block_ordinal})")
+        } else {
+            ref_label(cite_id, 0)
+        };
+        result.push_str(&label);
 
         remaining = &remaining[pos + "cite_ref-".len() + token_end..];
     }
@@ -855,16 +949,58 @@ mod helper_tests {
 
         // Multibyte text with cite_ref should not panic
         let reason = "cite_ref-64café and more text";
-        let result = sanitize_reason(reason);
+        let result = sanitize_reason(reason, 0);
         assert!(result.contains("and more text"));
 
         // Multiple cite_refs with multibyte
         let reason = "cite_ref-1 and cite_ref-2café near cite_ref-3";
-        let result = sanitize_reason(reason);
+        let result = sanitize_reason(reason, 2);
         assert!(result.contains("and"));
         assert!(result.contains("near"));
         // Each cite_ref should be rewritten
         assert!(result.matches("ref").count() >= 3);
+    }
+
+    #[test]
+    fn sanitize_reason_unnamed_refs_are_block_anchored() {
+        use super::sanitize_reason;
+
+        // Unnamed ref (all digits) becomes block-anchored (Codex round 3, PR 154).
+        let reason = "cite_ref-64 has no resolvable claim text";
+        let result = sanitize_reason(reason, 5);
+        assert!(result.contains("block 5"));
+        assert!(!result.contains("ref #"));
+
+        // Named ref stays on the derived-name path
+        let reason = "cite_ref-author_1-0 has no resolvable claim text";
+        let result = sanitize_reason(reason, 5);
+        assert!(result.contains("author"));
+        assert!(!result.contains("block"));
+    }
+
+    #[test]
+    fn distinct_unnamed_refs_in_same_output_render_distinct_labels() {
+        use super::sanitize_reason;
+
+        // Two unnamed refs in extraction failures should NOT both be "ref #1"
+        // (Codex round 3, PR 154).
+        let failure1 = "cite_ref-64 has no resolvable claim text";
+        let failure2 = "cite_ref-65 has a broken parse";
+        let result1 = sanitize_reason(failure1, 1);
+        let result2 = sanitize_reason(failure2, 3);
+
+        assert!(
+            result1.contains("block 1"),
+            "failure 1 should anchor to block 1"
+        );
+        assert!(
+            result2.contains("block 3"),
+            "failure 2 should anchor to block 3"
+        );
+        assert_ne!(
+            result1, result2,
+            "distinct failures should render distinct labels"
+        );
     }
 }
 
@@ -1187,11 +1323,11 @@ mod renderer_tests {
     fn sanitize_reason_handles_multibyte_cite_refs() {
         // Regression: "cite_ref-64café" should not panic on byte slicing
         let reason = "Error in cite_ref-64café during extraction";
-        let result = sanitize_reason(reason);
+        let result = sanitize_reason(reason, 0);
         // Should rewrite cite_ref-64café part and not panic
         assert!(result.contains("Error in"));
         assert!(result.contains("during extraction"));
-        // The cite_ref should be rewritten to ref #0 format (since "64café" is not all digits)
+        // The cite_ref should be rewritten (64café is not all digits so it falls back to ordinal)
         assert!(result.contains("ref"));
     }
 
@@ -1321,5 +1457,114 @@ mod renderer_tests {
             assert!(out.contains(heading), "missing bucket: {heading}");
         }
         assert!(!out.contains("cite_ref-"), "raw id leaked from fixture");
+    }
+
+    #[test]
+    fn per_source_lookup_join_distinguishes_multiple_books_in_same_ref() {
+        // Codex round 3 (PR 154): a URL-less ref citing two books should
+        // render each with its matching outcome, not both as failures.
+        let mut report = fixtures::full_report();
+
+        // Add two skips for the same ref, each with different book_sources.
+        let isbn_1 = sp42_citation::BookIdentifier::Isbn("978-0-123-45678-9".to_string());
+        let isbn_2 = sp42_citation::BookIdentifier::Isbn("978-0-987-65432-1".to_string());
+
+        report.skipped.push(sp42_citation::SkippedRef {
+            ref_id: "cite_ref-multi_books".to_string(),
+            reason: sp42_citation::SkippedReason::BookSource,
+            block_ordinal: 2,
+            book_sources: vec![sp42_citation::BookSource {
+                identifiers: vec![isbn_1.clone()],
+                cited_page: None,
+            }],
+        });
+
+        report.skipped.push(sp42_citation::SkippedRef {
+            ref_id: "cite_ref-multi_books".to_string(),
+            reason: sp42_citation::SkippedReason::BookSource,
+            block_ordinal: 2,
+            book_sources: vec![sp42_citation::BookSource {
+                identifiers: vec![isbn_2.clone()],
+                cited_page: None,
+            }],
+        });
+
+        // First resolution: LookupFailed for ISBN 1
+        report.book_resolutions.push(sp42_citation::BookResolution {
+            ref_id: "cite_ref-multi_books".to_string(),
+            block_ordinal: 2,
+            identifiers: vec![isbn_1],
+            cited_page: None,
+            outcome: sp42_citation::BookResolutionOutcome::LookupFailed {
+                message: "timeout".to_string(),
+            },
+            enrichment_candidates: Vec::new(),
+        });
+
+        // Second resolution: NotFound for ISBN 2
+        report.book_resolutions.push(sp42_citation::BookResolution {
+            ref_id: "cite_ref-multi_books".to_string(),
+            block_ordinal: 2,
+            identifiers: vec![isbn_2],
+            cited_page: None,
+            outcome: sp42_citation::BookResolutionOutcome::NotFound,
+            enrichment_candidates: Vec::new(),
+        });
+
+        let out = render_ga_appendix(&report, 0, "0.1.0");
+
+        // Both should render in the skipped section.
+        assert_eq!(
+            out.matches(crate::copy::SKIPPED_BOOK_LOOKUP_FAILED).count(),
+            1,
+            "one failure should be a tool failure"
+        );
+        assert_eq!(
+            out.matches(crate::copy::SKIPPED_BOOK_UNRESOLVED).count(),
+            1,
+            "one failure should be a catalog miss"
+        );
+    }
+
+    #[test]
+    fn books_consulted_section_renders_resolved_editions() {
+        // Codex round 3 (PR 154): book resolutions with Resolved outcomes
+        // should render in a "Books consulted" section showing title and scan state.
+        let mut report = fixtures::full_report();
+
+        // Add a resolved book with an exact scan.
+        let isbn = sp42_citation::BookIdentifier::Isbn("978-0-123-45678-9".to_string());
+        report.book_resolutions.push(sp42_citation::BookResolution {
+            ref_id: "cite_ref-book_with_scan".to_string(),
+            block_ordinal: 0,
+            identifiers: vec![isbn],
+            cited_page: None,
+            outcome: sp42_citation::BookResolutionOutcome::Resolved {
+                identifier: sp42_citation::BookIdentifier::Isbn("978-0-123-45678-9".to_string()),
+                edition: Box::new(sp42_citation::OpenLibraryEdition {
+                    title: Some("The Great Gatsby".to_string()),
+                    ..Default::default()
+                }),
+                scan: Some(sp42_citation::ScanAvailability {
+                    exact: vec![sp42_citation::ScanItem {
+                        status: "full access".to_string(),
+                        item_url: "https://archive.org/details/xyz".to_string(),
+                        ol_edition_id: None,
+                        ocaid: Some("xyz".to_string()),
+                    }],
+                    similar: Vec::new(),
+                }),
+            },
+            enrichment_candidates: Vec::new(),
+        });
+
+        let out = render_ga_appendix(&report, 0, "0.1.0");
+
+        // Books section should render.
+        assert!(out.contains(crate::copy::BUCKET_BOOKS_CONSULTED));
+        // Title should be present (and escaped).
+        assert!(out.contains("Great Gatsby"));
+        // Scan state for exact match should be present.
+        assert!(out.contains(crate::copy::BOOK_SCAN_EXACT));
     }
 }

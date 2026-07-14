@@ -475,7 +475,10 @@ fn render_disagreement_line(output: &mut String, finding: &sp42_citation::Citati
     output.push_str(": ");
 
     if let CitationVerdict::Judged(level) = finding.verdict {
-        output.push_str(crate::copy::disagreement_verdict(level));
+        output.push_str(crate::copy::disagreement_verdict(
+            level,
+            finding.agreement.panel_size > 0,
+        ));
     }
 
     output.push_str(". Claim: ");
@@ -575,17 +578,27 @@ fn render_dead_link_line(output: &mut String, finding: &sp42_citation::CitationF
 fn render_unreadable_line(output: &mut String, finding: &sp42_citation::CitationFinding) {
     output.push_str("* ");
     output.push_str(&ref_label(&finding.ref_id, finding.use_site_ordinal));
-    output.push_str(": the tool fetched [");
-    output.push_str(finding.provenance.url.as_str());
-    output.push_str("] but read ");
-
-    let reason_text = if let Some(reason) = finding.unusable_reason {
-        crate::copy::unusable_reason(reason)
+    // An unreachable book scan was never fetched — say so, instead of
+    // claiming an unusable read (Codex round 15, PR 154).
+    let scan_outage = finding.book_scan.is_some()
+        && finding.source_unavailable_reason
+            == Some(sp42_citation::SourceUnavailableReason::Unreachable);
+    if scan_outage {
+        output.push_str(": the tool could not reach the book scan at [");
+        output.push_str(finding.provenance.url.as_str());
+        output.push_str("] — the citation may be fine.");
     } else {
-        crate::copy::UNUSABLE_GENERIC
-    };
-    output.push_str(reason_text);
-    output.push_str(" — the citation may be fine.");
+        output.push_str(": the tool fetched [");
+        output.push_str(finding.provenance.url.as_str());
+        output.push_str("] but read ");
+        let reason_text = if let Some(reason) = finding.unusable_reason {
+            crate::copy::unusable_reason(reason)
+        } else {
+            crate::copy::UNUSABLE_GENERIC
+        };
+        output.push_str(reason_text);
+        output.push_str(" — the citation may be fine.");
+    }
     if let Some(annotation) = book_scan_annotation(finding) {
         output.push_str(" (");
         output.push_str(&annotation);
@@ -1901,6 +1914,44 @@ mod renderer_tests {
             !out.contains("ref #1: cites"),
             "no fabricated number for skips"
         );
+    }
+
+    #[test]
+    fn round15_no_model_misses_and_scan_outage_copy() {
+        // Codex round 15 (PR 154): deterministic book-search misses are not
+        // attributed to a panel, and unreachable scans are not "fetched".
+        let mut report = fixtures::full_report();
+        // ALL NotSupported findings become no-model outcomes for this test.
+        for finding in &mut report.findings {
+            if matches!(
+                finding.verdict,
+                sp42_citation::CitationVerdict::Judged(sp42_citation::SupportLevel::NotSupported)
+            ) {
+                finding.agreement = sp42_citation::PanelAgreement::new(0, 0);
+            }
+        }
+        let outage_idx = report
+            .findings
+            .iter()
+            .position(|f| {
+                matches!(f.verdict, sp42_citation::CitationVerdict::SourceUnavailable)
+                    && f.source_unavailable_reason
+                        == Some(sp42_citation::SourceUnavailableReason::Unreachable)
+            })
+            .expect("an unreachable finding");
+        report.findings[outage_idx].book_scan = Some(sp42_citation::BookScanProvenance {
+            ocaid: "item0004".to_string(),
+            scanned_page: None,
+            cited_page: None,
+            note: None,
+        });
+        let out = render_ga_appendix(&report, 0, "0.1.0");
+        assert!(out.contains("the source was searched and no supporting passage was found"));
+        assert!(
+            !out.contains("the panel found no support"),
+            "no phantom panel"
+        );
+        assert!(out.contains("could not reach the book scan at ["));
     }
 
     #[test]

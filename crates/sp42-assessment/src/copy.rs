@@ -37,13 +37,18 @@ pub const EXPLAINER_URL: &str =
 
 /// Reader-facing verdict for a disagreement line (PRD-0014 mismatch framing).
 #[must_use]
-pub fn disagreement_verdict(level: SupportLevel) -> &'static str {
-    match level {
-        SupportLevel::NotSupported => {
+pub fn disagreement_verdict(level: SupportLevel, panel_judged: bool) -> &'static str {
+    match (level, panel_judged) {
+        (SupportLevel::NotSupported, true) => {
             "the source and this claim disagree — the panel found no support for the claim in the source"
         }
-        SupportLevel::Partial => "the source only partially supports this claim",
-        SupportLevel::Supported => "the source supports this claim",
+        // No panel voted (a deterministic book-search miss): attribute the
+        // outcome to the search, not a panel (Codex round 15, PR 154).
+        (SupportLevel::NotSupported, false) => {
+            "the source was searched and no supporting passage was found"
+        }
+        (SupportLevel::Partial, _) => "the source only partially supports this claim",
+        (SupportLevel::Supported, _) => "the source supports this claim",
     }
 }
 
@@ -195,7 +200,9 @@ mod tests {
     #[test]
     fn verdict_copy_never_leaks_contract_identifiers() {
         for level in [SupportLevel::Partial, SupportLevel::NotSupported] {
-            let text = super::disagreement_verdict(level);
+            let text = super::disagreement_verdict(level, true);
+            assert!(!text.is_empty());
+            let text = super::disagreement_verdict(level, false);
             assert!(!text.contains("NotSupported") && !text.contains("Partial"));
             assert!(
                 !text.to_lowercase().contains("fail"),

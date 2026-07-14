@@ -3150,6 +3150,58 @@ async fn fetch_bare_url_proposals(
         .map_err(|error| format!("bare-url proposals payload was invalid: {error}"))
 }
 
+/// One heartbeat line for a long bridge wait (stderr; stdout stays clean).
+fn heartbeat_line(title: &str, elapsed: std::time::Duration) -> String {
+    let secs = elapsed.as_secs();
+    format!(
+        "verify-page: verifying \"{title}\" via the bridge… {}m{:02}s",
+        secs / 60,
+        secs % 60
+    )
+}
+
+/// Await `fut` while narrating elapsed time on stderr: a `\r`-updating line
+/// every second on a terminal, a plain line every 15s otherwise (piped logs).
+/// The bridge call is one blocking request, so this is honest elapsed-time
+/// narration, not per-use-site progress — that needs a server-side progress
+/// stream and is a recorded follow-up.
+async fn with_heartbeat<F, T>(title: &str, fut: F) -> T
+where
+    F: std::future::Future<Output = T>,
+{
+    use std::io::{IsTerminal, Write};
+    let started = std::time::Instant::now();
+    tokio::pin!(fut);
+    let interactive = std::io::stderr().is_terminal();
+    let period = if interactive { 1 } else { 15 };
+    let mut ticker = tokio::time::interval(std::time::Duration::from_secs(period));
+    ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    // An interval's first tick completes immediately; consume it so the
+    // first printed heartbeat lands after one full period.
+    ticker.tick().await;
+    loop {
+        tokio::select! {
+            out = &mut fut => {
+                if interactive {
+                    // Clear the in-place heartbeat line before results print.
+                    eprint!("\r\x1b[2K");
+                    let _ = std::io::stderr().flush();
+                }
+                return out;
+            }
+            _ = ticker.tick() => {
+                let line = heartbeat_line(title, started.elapsed());
+                if interactive {
+                    eprint!("\r\x1b[2K{line}");
+                    let _ = std::io::stderr().flush();
+                } else {
+                    eprintln!("{line}");
+                }
+            }
+        }
+    }
+}
+
 fn render_verify_page(
     options: &VerifyPageCliOptions,
     bridge_base_url: &str,
@@ -3159,7 +3211,10 @@ fn render_verify_page(
     // (mirrors `run_verify`), not `futures::executor::block_on`.
     let runtime = tokio::runtime::Runtime::new()
         .map_err(|error| format!("failed to start async runtime: {error}"))?;
-    let report = runtime.block_on(fetch_page_report_via_bridge(bridge_base_url, options))?;
+    let report = runtime.block_on(with_heartbeat(
+        &options.title,
+        fetch_page_report_via_bridge(bridge_base_url, options),
+    ))?;
     match format {
         PageReportFormat::Json => {
             serde_json::to_string_pretty(&report).map_err(|error| error.to_string())
@@ -4131,6 +4186,18 @@ fn render_markdown_code_block(language: &str, body: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn heartbeat_line_formats_minutes_and_seconds() {
+        assert_eq!(
+            super::heartbeat_line("Example", std::time::Duration::from_secs(75)),
+            "verify-page: verifying \"Example\" via the bridge… 1m15s"
+        );
+        assert_eq!(
+            super::heartbeat_line("Example", std::time::Duration::from_secs(4)),
+            "verify-page: verifying \"Example\" via the bridge… 0m04s"
+        );
+    }
+
     use serde_json::Value;
     use std::collections::BTreeMap;
 

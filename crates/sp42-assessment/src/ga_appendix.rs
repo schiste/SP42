@@ -224,6 +224,27 @@ fn skip_label(ref_id: &str, block_ordinal: usize) -> String {
     }
 }
 
+/// Book-scan provenance annotation for a finding verified against an
+/// Internet Archive scan: disclose a scanned-vs-cited page difference and
+/// any search note the report carries (Codex round 6, PR 154).
+fn book_scan_annotation(finding: &sp42_citation::CitationFinding) -> Option<String> {
+    let scan = finding.book_scan.as_ref()?;
+    let mut parts: Vec<String> = Vec::new();
+    if let (Some(scanned), Some(cited)) = (scan.scanned_page, scan.cited_page.as_deref())
+        && scanned.to_string() != cited
+    {
+        parts.push(crate::copy::book_scan_pages(scanned, cited));
+    }
+    if let Some(note) = &scan.note {
+        parts.push(escape_verbatim(note));
+    }
+    if parts.is_empty() {
+        None
+    } else {
+        Some(parts.join("; "))
+    }
+}
+
 /// The skipped-refs section: reason-matched reader copy, with `BookSource`
 /// skips joined against `book_resolutions` so failed lookups are disclosed
 /// as tool failures (Codex rounds 2–3, PR 154).
@@ -327,8 +348,7 @@ fn render_books_section(output: &mut String, report: &sp42_citation::PageVerific
 
     for resolution in resolvable {
         output.push_str("* ");
-        let ordinal = u32::try_from(resolution.block_ordinal).unwrap_or(0);
-        output.push_str(&ref_label(&resolution.ref_id, ordinal));
+        output.push_str(&skip_label(&resolution.ref_id, resolution.block_ordinal));
         output.push_str(": ");
 
         if let sp42_citation::BookResolutionOutcome::Resolved { edition, scan, .. } =
@@ -493,7 +513,13 @@ fn render_dead_link_line(output: &mut String, finding: &sp42_citation::CitationF
     output.push_str(&ref_label(&finding.ref_id, finding.use_site_ordinal));
     output.push_str(": the source could not be fetched (link may be dead): [");
     output.push_str(finding.provenance.url.as_str());
-    output.push_str("]\n");
+    output.push(']');
+    if let Some(annotation) = book_scan_annotation(finding) {
+        output.push_str(" (");
+        output.push_str(&annotation);
+        output.push(')');
+    }
+    output.push('\n');
 }
 
 fn render_unreadable_line(output: &mut String, finding: &sp42_citation::CitationFinding) {
@@ -509,7 +535,13 @@ fn render_unreadable_line(output: &mut String, finding: &sp42_citation::Citation
         crate::copy::UNUSABLE_GENERIC
     };
     output.push_str(reason_text);
-    output.push_str(" — the citation may be fine.\n");
+    output.push_str(" — the citation may be fine.");
+    if let Some(annotation) = book_scan_annotation(finding) {
+        output.push_str(" (");
+        output.push_str(&annotation);
+        output.push(')');
+    }
+    output.push('\n');
 }
 
 fn render_unconfirmed_line(output: &mut String, finding: &sp42_citation::CitationFinding) {
@@ -545,7 +577,13 @@ fn render_supported_line(output: &mut String, finding: &sp42_citation::CitationF
     output.push_str(&escape_verbatim(&truncate_claim(&finding.claim, 80)));
     output.push_str(" — [");
     output.push_str(finding.provenance.url.as_str());
-    output.push_str("] (quote located)\n");
+    output.push_str("] (quote located)");
+    if let Some(annotation) = book_scan_annotation(finding) {
+        output.push_str(" (");
+        output.push_str(&annotation);
+        output.push(')');
+    }
+    output.push('\n');
 }
 
 fn truncate_claim(text: &str, max_len: usize) -> String {
@@ -1563,6 +1601,59 @@ mod renderer_tests {
         for word in lower.split(|c: char| !c.is_ascii_alphabetic()) {
             assert!(!banned.contains(&word), "pass/fail wording leaked: {word}");
         }
+    }
+
+    #[test]
+    fn book_scan_provenance_renders_page_mismatch_and_notes() {
+        // Codex round 6 (PR 154): a supported book finding found on a
+        // different scanned page than cited must disclose both pages; a
+        // book_scan note (e.g. whole-book fallback) renders wherever carried.
+        let mut report = fixtures::full_report();
+        let supported_idx = report
+            .findings
+            .iter()
+            .position(|f| {
+                matches!(
+                    f.verdict,
+                    sp42_citation::CitationVerdict::Judged(sp42_citation::SupportLevel::Supported)
+                ) && f.book_scan.is_none()
+                    && f.archive_of.is_none()
+                    && f.grounding_status == sp42_citation::GroundingStatus::Located
+            })
+            .expect("a plain supported finding");
+        report.findings[supported_idx].book_scan = Some(sp42_citation::BookScanProvenance {
+            ocaid: "item0001".to_string(),
+            scanned_page: Some(32),
+            cited_page: Some("42".to_string()),
+            note: Some("cited page had no match; whole-book search".to_string()),
+        });
+        let out = render_ga_appendix(&report, 0, "0.1.0");
+        assert!(out.contains("located on scanned page 32; the citation names p. 42"));
+        assert!(out.contains("whole-book search"));
+    }
+
+    #[test]
+    fn books_section_never_fabricates_ref_numbers() {
+        // Codex round 6 (PR 154): unnamed book refs are block-anchored in
+        // the Books consulted section, like everywhere else.
+        let mut report = fixtures::full_report();
+        report.book_resolutions.push(sp42_citation::BookResolution {
+            ref_id: "cite_ref-9".to_string(),
+            block_ordinal: 6,
+            identifiers: Vec::new(),
+            cited_page: None,
+            outcome: sp42_citation::BookResolutionOutcome::Resolved {
+                identifier: sp42_citation::BookIdentifier::isbn("9780306406157").expect("valid"),
+                edition: Box::default(),
+                scan: None,
+            },
+            enrichment_candidates: Vec::new(),
+        });
+        let out = render_ga_appendix(&report, 0, "0.1.0");
+        let books_idx = out
+            .find(crate::copy::BUCKET_BOOKS_CONSULTED)
+            .expect("books section");
+        assert!(out[books_idx..].contains("an unnamed ref (block 6)"));
     }
 
     #[test]

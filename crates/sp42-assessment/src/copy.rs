@@ -127,6 +127,14 @@ pub const BOOK_SCAN_UNKNOWN: &str = "scan availability unknown (the lookup did n
 /// Reader-facing description when a book catalog lookup never completed (transport problem).
 pub const BOOK_LOOKUP_FAILED: &str = "catalog lookup did not complete — a tool limitation";
 
+/// Book-scan page annotation: the scan located the passage on a different
+/// page than the citation names (a disclosure, not a defect — scan
+/// pagination often differs from the cited edition).
+#[must_use]
+pub fn book_scan_pages(scanned: u32, cited: &str) -> String {
+    format!("the passage was located on scanned page {scanned}; the citation names p. {cited}")
+}
+
 /// Reader-facing label for one validated book identifier.
 #[must_use]
 pub fn book_identifier(identifier: &sp42_citation::BookIdentifier) -> String {

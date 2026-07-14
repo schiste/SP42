@@ -14,6 +14,37 @@ fn escape_verbatim(text: &str) -> String {
     format!("<nowiki>{inner}</nowiki>")
 }
 
+/// Percent-encode the wikitext-hostile characters that would break an
+/// external-link `[url …]` construct if they appeared literally in a URL.
+///
+/// A citation `url=`/`archive-url=` comes straight from article wikitext
+/// (`url::Url::parse`), and the `url` crate leaves `]`, `{`, and `}`
+/// unencoded in a query or fragment — so a source URL like
+/// `https://example.test/x?y=]{{Delete}}` would otherwise close the link
+/// early and transclude a live template into the appendix an editor pastes
+/// onto a review page. Percent-encoding these characters keeps the link
+/// live (unlike `escape_verbatim`, whose `<nowiki>` wrapper would make it
+/// inert) while neutralizing the injection. The set is the external-link
+/// terminators plus brace/pipe/backtick; each is safe to percent-encode
+/// without changing where the URL resolves.
+fn escape_wikitext_url(link: &url::Url) -> String {
+    link.as_str()
+        .chars()
+        .map(|c| match c {
+            ']' => "%5D".to_string(),
+            '[' => "%5B".to_string(),
+            '{' => "%7B".to_string(),
+            '}' => "%7D".to_string(),
+            '|' => "%7C".to_string(),
+            '<' => "%3C".to_string(),
+            '>' => "%3E".to_string(),
+            '`' => "%60".to_string(),
+            ' ' => "%20".to_string(),
+            other => other.to_string(),
+        })
+        .collect()
+}
+
 /// Reader-facing ref label derived from the stable cite id (PRD-0016: the
 /// report carries no rendered marker; never print the raw `cite_ref-…` id).
 /// Named `MediaWiki` refs produce `cite_ref-<name>_<seq>-<use>`; unnamed refs
@@ -527,14 +558,14 @@ fn render_disagreement_line(output: &mut String, finding: &sp42_citation::Citati
     }
 
     output.push_str(" — [");
-    output.push_str(finding.provenance.url.as_str());
+    output.push_str(&escape_wikitext_url(&finding.provenance.url));
     output.push(']');
 
     if let Some(archive) = &finding.archive_of {
         output.push_str(" (");
         output.push_str(crate::copy::ARCHIVE_HANDLE_PREFIX);
         output.push_str(" [");
-        output.push_str(archive.as_str());
+        output.push_str(&escape_wikitext_url(archive));
         output.push_str("])");
     }
     if let Some(annotation) = book_scan_annotation(finding) {
@@ -553,10 +584,10 @@ fn render_recovered_line(output: &mut String, finding: &sp42_citation::CitationF
     // actually read; `archive_of` is the dead live URL it stands in for
     // (Codex P1, PR 154 — the fields were previously swapped here).
     output.push_str(": supported via an archive copy — update the citation to [");
-    output.push_str(finding.provenance.url.as_str());
+    output.push_str(&escape_wikitext_url(&finding.provenance.url));
     output.push_str("] (replacing the dead link: [");
     if let Some(dead_live) = &finding.archive_of {
-        output.push_str(dead_live.as_str());
+        output.push_str(&escape_wikitext_url(dead_live));
     }
     output.push_str("]). Claim: ");
     output.push_str(&escape_verbatim(&truncate_claim(&finding.claim, 120)));
@@ -568,7 +599,7 @@ fn render_dead_link_line(output: &mut String, finding: &sp42_citation::CitationF
     output.push_str("* ");
     output.push_str(&ref_label(&finding.ref_id, finding.use_site_ordinal));
     output.push_str(": the source could not be fetched (link may be dead): [");
-    output.push_str(finding.provenance.url.as_str());
+    output.push_str(&escape_wikitext_url(&finding.provenance.url));
     output.push(']');
     if let Some(annotation) = book_scan_annotation(finding) {
         output.push_str(" (");
@@ -588,11 +619,11 @@ fn render_unreadable_line(output: &mut String, finding: &sp42_citation::Citation
             == Some(sp42_citation::SourceUnavailableReason::Unreachable);
     if scan_outage {
         output.push_str(": the tool could not reach the book scan at [");
-        output.push_str(finding.provenance.url.as_str());
+        output.push_str(&escape_wikitext_url(&finding.provenance.url));
         output.push_str("] — the citation may be fine.");
     } else {
         output.push_str(": the tool fetched [");
-        output.push_str(finding.provenance.url.as_str());
+        output.push_str(&escape_wikitext_url(&finding.provenance.url));
         output.push_str("] but read ");
         let reason_text = if let Some(reason) = finding.unusable_reason {
             crate::copy::unusable_reason(reason)
@@ -622,14 +653,14 @@ fn render_unconfirmed_line(output: &mut String, finding: &sp42_citation::Citatio
     output.push_str(". Claim: ");
     output.push_str(&escape_verbatim(&truncate_claim(&finding.claim, 80)));
     output.push_str(". — [");
-    output.push_str(finding.provenance.url.as_str());
+    output.push_str(&escape_wikitext_url(&finding.provenance.url));
     output.push(']');
 
     if let Some(archive) = &finding.archive_of {
         output.push_str(" (");
         output.push_str(crate::copy::ARCHIVE_HANDLE_PREFIX);
         output.push_str(" [");
-        output.push_str(archive.as_str());
+        output.push_str(&escape_wikitext_url(archive));
         output.push_str("])");
     }
     if let Some(annotation) = book_scan_annotation(finding) {
@@ -647,7 +678,7 @@ fn render_supported_line(output: &mut String, finding: &sp42_citation::CitationF
     output.push_str(": supported — ");
     output.push_str(&escape_verbatim(&truncate_claim(&finding.claim, 80)));
     output.push_str(" — [");
-    output.push_str(finding.provenance.url.as_str());
+    output.push_str(&escape_wikitext_url(&finding.provenance.url));
     output.push_str("] (quote located)");
     if let Some(annotation) = book_scan_annotation(finding) {
         output.push_str(" (");
@@ -1038,7 +1069,9 @@ mod fixtures {
 
 #[cfg(test)]
 mod helper_tests {
-    use super::{escape_verbatim, format_utc_date, ref_label};
+    use super::{
+        escape_verbatim, escape_wikitext_url, format_utc_date, ref_label, render_ga_appendix,
+    };
 
     #[test]
     fn escape_neutralizes_templates_refs_and_nowiki_terminators() {
@@ -1058,6 +1091,43 @@ mod helper_tests {
     fn escape_round_trips_preexisting_entities_faithfully() {
         // `&lt;` in the source text must not collapse into a live `<`.
         assert_eq!(escape_verbatim("a &lt; b"), "<nowiki>a &amp;lt; b</nowiki>");
+    }
+
+    #[test]
+    fn escape_wikitext_url_neutralizes_link_breakout_from_citation_urls() {
+        // A `]` in a citation URL query would otherwise close the `[url …]`
+        // external link early and a following `{{…}}` would transclude a live
+        // template into the pasted appendix. `url::Url` leaves `]{}` unencoded
+        // in the query, so the escaper must percent-encode them.
+        let hostile = url::Url::parse("https://example.test/x?y=]{{Delete}}").expect("valid url");
+        assert!(
+            hostile.as_str().contains(']'),
+            "precondition: url crate leaves ] unencoded in the query"
+        );
+        let escaped = escape_wikitext_url(&hostile);
+        assert!(!escaped.contains(']'), "the link-terminating ] is encoded");
+        assert!(
+            !escaped.contains('{') && !escaped.contains('}'),
+            "braces are encoded"
+        );
+        assert!(escaped.contains("%5D") && escaped.contains("%7B"));
+        // A benign URL is unchanged.
+        let benign = url::Url::parse("https://example.test/a/b?c=1&d=2").expect("valid url");
+        assert_eq!(escape_wikitext_url(&benign), benign.as_str());
+    }
+
+    #[test]
+    fn rendered_appendix_never_leaks_a_live_template_from_a_citation_url() {
+        let mut report = super::fixtures::full_report();
+        for finding in &mut report.findings {
+            finding.provenance.url =
+                url::Url::parse("https://example.test/p?q=]{{Delete}}").expect("valid url");
+        }
+        let out = render_ga_appendix(&report, 0, "0.1.0");
+        assert!(
+            !out.contains("]{{Delete}}"),
+            "a citation URL must not break out of its [url] link into a live template"
+        );
     }
 
     #[test]

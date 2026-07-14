@@ -20,6 +20,7 @@ Each finding in the appendix is labeled with one of these categories:
 - **Supported spot-checks** — the claim and source agree, and the supporting quote was located
 - **Not machine-verified (book and offline sources)** — cites a book or offline source the tool does not verify
 - **cites a book whose identifier matched no catalog record the tool could use** — the tool found an ISBN or similar identifier and looked it up, but no usable catalog record came back; the citation itself may be perfectly fine.
+- **cites a book whose catalog lookup did not complete — a tool failure, not a catalog miss** — the lookup errored before an answer; nothing is implied about the book or the citation.
 - **Refs the tool could not process** — parsing or extraction errors prevented assessment of these refs
 
 **Panel split (low-confidence)** — if you see this note on a finding, the review panel split on the reading; treat this verdict as less certain than majority findings.

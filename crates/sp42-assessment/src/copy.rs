@@ -105,6 +105,11 @@ pub const SKIPPED_NON_URL: &str = "cites a book or offline source the tool does 
 pub const SKIPPED_BOOK_UNRESOLVED: &str =
     "cites a book whose identifier matched no catalog record the tool could use";
 
+/// Skip reason: the catalog lookup never completed (a tool/transport
+/// failure) — the book may well have a record; nothing is implied about it.
+pub const SKIPPED_BOOK_LOOKUP_FAILED: &str =
+    "cites a book whose catalog lookup did not complete — a tool failure, not a catalog miss";
+
 #[cfg(test)]
 mod tests {
     use sp42_citation::{BodyUsabilityReason, SupportLevel};

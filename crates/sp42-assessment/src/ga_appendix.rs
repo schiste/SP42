@@ -174,6 +174,20 @@ pub fn render_ga_appendix(
     render_bucket(&mut output, report, Bucket::Supported);
 
     // Skipped section
+    // A BookSource skip's detail (catalog miss vs failed lookup) lives in
+    // the report's book_resolutions; join by ref id so a transport failure
+    // is never presented as a catalog miss (Codex round 2, PR 154).
+    let lookup_failed_refs: std::collections::HashSet<&str> = report
+        .book_resolutions
+        .iter()
+        .filter(|resolution| {
+            matches!(
+                resolution.outcome,
+                sp42_citation::BookResolutionOutcome::LookupFailed { .. }
+            )
+        })
+        .map(|resolution| resolution.ref_id.as_str())
+        .collect();
     if !report.skipped.is_empty() {
         output.push('\n');
         output.push_str(crate::copy::BUCKET_SKIPPED);
@@ -185,7 +199,13 @@ pub fn render_ga_appendix(
             output.push_str(": ");
             output.push_str(match skip.reason {
                 sp42_citation::SkippedReason::NonUrlSource => crate::copy::SKIPPED_NON_URL,
-                sp42_citation::SkippedReason::BookSource => crate::copy::SKIPPED_BOOK_UNRESOLVED,
+                sp42_citation::SkippedReason::BookSource => {
+                    if lookup_failed_refs.contains(skip.ref_id.as_str()) {
+                        crate::copy::SKIPPED_BOOK_LOOKUP_FAILED
+                    } else {
+                        crate::copy::SKIPPED_BOOK_UNRESOLVED
+                    }
+                }
             });
             output.push('\n');
         }
@@ -303,7 +323,12 @@ fn render_disagreement_line(output: &mut String, finding: &sp42_citation::Citati
         output.push('.');
     }
 
-    if u32::from(finding.agreement.winner_votes) * 2 <= u32::from(finding.agreement.panel_size) {
+    // Only a real panel can split: no-model findings (deterministic book
+    // search-inside outcomes) carry PanelAgreement(0, 0) and must not be
+    // labeled low-confidence (Codex round 2, PR 154).
+    if finding.agreement.panel_size > 0
+        && u32::from(finding.agreement.winner_votes) * 2 <= u32::from(finding.agreement.panel_size)
+    {
         output.push_str(" (");
         output.push_str(crate::copy::PANEL_SPLIT_LINE);
         output.push(')');
@@ -1226,6 +1251,48 @@ mod renderer_tests {
         assert!(
             !out.contains("update the citation to [https://example.org/dead-live]"),
             "never instruct citing the dead URL"
+        );
+    }
+
+    #[test]
+    fn no_model_findings_are_never_labeled_panel_split() {
+        // Codex round 2 (PR 154): PanelAgreement(0, 0) means no panel voted
+        // (deterministic book outcomes); the low-confidence annotation is
+        // only for real panels lacking a majority.
+        let mut report = fixtures::full_report();
+        for finding in &mut report.findings {
+            finding.agreement = sp42_citation::PanelAgreement::new(0, 0);
+        }
+        let out = render_ga_appendix(&report, 0, "0.1.0");
+        assert_eq!(out.matches(crate::copy::PANEL_SPLIT_LINE).count(), 0);
+    }
+
+    #[test]
+    fn failed_book_lookups_render_as_tool_failures_not_catalog_misses() {
+        // Codex round 2 (PR 154): a BookSource skip whose resolution says
+        // LookupFailed is a transport failure, not a catalog miss.
+        let mut report = fixtures::full_report();
+        report.skipped.push(sp42_citation::SkippedRef {
+            ref_id: "cite_ref-flaky_20-0".to_string(),
+            reason: sp42_citation::SkippedReason::BookSource,
+            block_ordinal: 3,
+            book_sources: Vec::new(),
+        });
+        report.book_resolutions.push(sp42_citation::BookResolution {
+            ref_id: "cite_ref-flaky_20-0".to_string(),
+            block_ordinal: 3,
+            identifiers: Vec::new(),
+            cited_page: None,
+            outcome: sp42_citation::BookResolutionOutcome::LookupFailed {
+                message: "connect timeout".to_string(),
+            },
+            enrichment_candidates: Vec::new(),
+        });
+        let out = render_ga_appendix(&report, 0, "0.1.0");
+        assert!(out.contains(crate::copy::SKIPPED_BOOK_LOOKUP_FAILED));
+        assert!(
+            !out.contains("no catalog record the tool could use\n* ref \"flaky"),
+            "the flaky ref must not read as a catalog miss"
         );
     }
 

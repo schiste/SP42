@@ -19,30 +19,34 @@ fn escape_verbatim(text: &str) -> String {
 /// Named `MediaWiki` refs produce `cite_ref-<name>_<seq>-<use>`; unnamed refs
 /// produce `cite_ref-<n>`. The `ordinal` is the finding's `use_site_ordinal`.
 fn ref_label(ref_id: &str, ordinal: u32) -> String {
-    let fallback = format!("ref #{}", ordinal + 1);
-    let Some(rest) = ref_id.strip_prefix("cite_ref-") else {
-        return fallback;
-    };
+    named_ref_label(ref_id).unwrap_or_else(|| format!("ref #{}", ordinal + 1))
+}
+
+/// The derived-name label for a NAMED cite id (`cite_ref-<name>_<seq>-<use>`),
+/// or `None` when the id is unnamed or unparseable — callers with no real
+/// citation ordinal must then anchor by block instead of fabricating a
+/// number (Codex round 14, PR 154).
+fn named_ref_label(ref_id: &str) -> Option<String> {
+    let rest = ref_id.strip_prefix("cite_ref-")?;
     if rest.chars().all(|c| c.is_ascii_digit()) {
-        return fallback;
+        return None;
     }
     // Strip the trailing `-<use>` then the trailing `_<seq>`; what remains is
-    // the ref name. Any parse miss falls back to the ordinal.
-    let Some((rest, use_idx)) = rest.rsplit_once('-') else {
-        return fallback;
-    };
+    // the ref name.
+    let (rest, use_idx) = rest.rsplit_once('-')?;
     if !use_idx.chars().all(|c| c.is_ascii_digit()) {
-        return fallback;
+        return None;
     }
-    let Some((name, seq)) = rest.rsplit_once('_') else {
-        return fallback;
-    };
+    let (name, seq) = rest.rsplit_once('_')?;
     if name.is_empty() || !seq.chars().all(|c| c.is_ascii_digit()) {
-        return fallback;
+        return None;
     }
     // Ref names are article-authored text (they ride the cite id); escape
     // them like every other verbatim field (Codex round 9, PR 154).
-    format!("ref \"{}\"", escape_verbatim(&name.replace('_', " ")))
+    Some(format!(
+        "ref \"{}\"",
+        escape_verbatim(&name.replace('_', " "))
+    ))
 }
 
 /// `YYYY-MM-DD` (UTC) from epoch milliseconds. Civil-from-days per Howard
@@ -236,14 +240,7 @@ pub fn render_ga_appendix(
 /// not a citation number — Codex round 5, PR 154), so it renders
 /// block-anchored instead.
 fn skip_label(ref_id: &str, block_ordinal: usize) -> String {
-    let unnamed = ref_id
-        .strip_prefix("cite_ref-")
-        .is_none_or(|rest| rest.chars().all(|c| c.is_ascii_digit()));
-    if unnamed {
-        format!("an unnamed ref (block {block_ordinal})")
-    } else {
-        ref_label(ref_id, 0)
-    }
+    named_ref_label(ref_id).unwrap_or_else(|| format!("an unnamed ref (block {block_ordinal})"))
 }
 
 /// Book-scan provenance annotation for a finding verified against an
@@ -411,6 +408,22 @@ fn render_books_section(output: &mut String, report: &sp42_citation::PageVerific
                 None => crate::copy::BOOK_SCAN_UNKNOWN,
             };
             output.push_str(scan_state);
+        }
+        // Which book: identifiers and cited page keep same-title or untitled
+        // resolutions distinguishable (Codex round 14, PR 154).
+        if !resolution.identifiers.is_empty() {
+            let labels: Vec<String> = resolution
+                .identifiers
+                .iter()
+                .map(|identifier| escape_verbatim(&crate::copy::book_identifier(identifier)))
+                .collect();
+            output.push_str(" (");
+            output.push_str(&labels.join(", "));
+            if let Some(page) = resolution.cited_page.as_deref() {
+                output.push_str(", p. ");
+                output.push_str(&escape_verbatim(page));
+            }
+            output.push(')');
         }
         output.push('\n');
     }
@@ -1844,6 +1857,50 @@ mod renderer_tests {
         });
         let out = render_ga_appendix(&report, 0, "0.1.0");
         assert!(out.contains(crate::copy::BOOK_SCAN_EXACT_UNSEARCHABLE));
+    }
+
+    #[test]
+    fn books_lines_carry_identifiers_and_unparseable_skips_anchor_by_block() {
+        // Codex round 14 (PR 154).
+        let mut report = fixtures::full_report();
+        report.book_resolutions.push(sp42_citation::BookResolution {
+            ref_id: "cite_ref-samebook_60-0".to_string(),
+            block_ordinal: 2,
+            identifiers: vec![sp42_citation::BookIdentifier::isbn("9780306406157").expect("ok")],
+            cited_page: Some("14".to_string()),
+            outcome: sp42_citation::BookResolutionOutcome::Resolved {
+                identifier: sp42_citation::BookIdentifier::isbn("9780306406157").expect("ok"),
+                edition: Box::default(),
+                scan: None,
+            },
+            enrichment_candidates: Vec::new(),
+        });
+        report.skipped.push(sp42_citation::SkippedRef {
+            ref_id: "cite_ref-test-1".to_string(),
+            reason: sp42_citation::SkippedReason::NonUrlSource,
+            block_ordinal: 3,
+            book_sources: Vec::new(),
+        });
+        let out = render_ga_appendix(&report, 0, "0.1.0");
+        let books_idx = out
+            .find(crate::copy::BUCKET_BOOKS_CONSULTED)
+            .expect("books");
+        assert!(
+            out[books_idx..].contains("ISBN 9780306406157"),
+            "identifier on books line"
+        );
+        assert!(
+            out[books_idx..].contains(", p. <nowiki>14</nowiki>)"),
+            "cited page on books line"
+        );
+        assert!(
+            out.contains("an unnamed ref (block 3)"),
+            "unparseable id block-anchored"
+        );
+        assert!(
+            !out.contains("ref #1: cites"),
+            "no fabricated number for skips"
+        );
     }
 
     #[test]

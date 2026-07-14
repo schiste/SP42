@@ -2740,6 +2740,48 @@ async fn invalid_coordination_payload_is_counted_without_mutating_state() {
 }
 
 #[tokio::test]
+async fn client_originated_review_signal_is_dropped_not_relayed() {
+    // ReviewSignal is server-originated (publish_review_signal, SERVER_SENDER_ID).
+    // A client that sends one is forging review-session state for other panels;
+    // the sanitizer must drop it rather than relay it, unlike the other kinds.
+    let state = test_state();
+    let created_at_ms = now_ms();
+    state.sessions.write().await.extend([
+        (
+            "session-a".to_string(),
+            test_session("Alice", "token-a", created_at_ms),
+        ),
+        (
+            "session-b".to_string(),
+            test_session("Bob", "token-b", created_at_ms),
+        ),
+    ]);
+
+    let (base_url, server) = spawn_test_server(build_router(state)).await;
+    let mut alice = connect_session_socket(&base_url, "frwiki", "session-a").await;
+    let mut bob = connect_session_socket(&base_url, "frwiki", "session-b").await;
+
+    let forged =
+        sp42_coordination::CoordinationMessage::ReviewSignal(sp42_coordination::ReviewSignal {
+            wiki_id: "frwiki".to_string(),
+            session: sp42_core::ReviewSession::open("frwiki", "Exemple", 42, created_at_ms)
+                .snapshot(),
+        });
+    send_coordination_message(&mut alice, forged).await;
+
+    // Bob must not receive the forged signal.
+    let no_relay = tokio::time::timeout(std::time::Duration::from_millis(75), bob.next()).await;
+    assert!(
+        no_relay.is_err(),
+        "client-originated ReviewSignal must not be relayed to peers"
+    );
+
+    let _ = alice.close(None).await;
+    let _ = bob.close(None).await;
+    server.abort();
+}
+
+#[tokio::test]
 async fn coordination_room_persists_after_disconnect_and_reports_zero_clients() {
     let state = test_state();
     let created_at_ms = now_ms();

@@ -429,38 +429,25 @@ async fn handle_socket(socket: WebSocket, wiki_id: String, actor: Option<String>
             break;
         };
 
-        match message {
-            Message::Binary(bytes) => {
-                let payload = sanitize_coordination_payload(bytes.to_vec(), actor.as_deref());
-                state
-                    .coordination
-                    .publish(
-                        &wiki_id,
-                        CoordinationEnvelope {
-                            sender_id: client_id,
-                            payload,
-                        },
-                    )
-                    .await;
-            }
-            Message::Text(text) => {
-                let payload = sanitize_coordination_payload(
-                    text.as_str().as_bytes().to_vec(),
-                    actor.as_deref(),
-                );
-                state
-                    .coordination
-                    .publish(
-                        &wiki_id,
-                        CoordinationEnvelope {
-                            sender_id: client_id,
-                            payload,
-                        },
-                    )
-                    .await;
-            }
+        let raw = match message {
+            Message::Binary(bytes) => bytes.to_vec(),
+            Message::Text(text) => text.as_str().as_bytes().to_vec(),
             Message::Close(_) => break,
-            Message::Ping(_) | Message::Pong(_) => {}
+            Message::Ping(_) | Message::Pong(_) => continue,
+        };
+        // A `None` here means the inbound message was rejected (e.g. a
+        // client-forged `ReviewSignal`) and must not be relayed to the room.
+        if let Some(payload) = sanitize_coordination_payload(raw, actor.as_deref()) {
+            state
+                .coordination
+                .publish(
+                    &wiki_id,
+                    CoordinationEnvelope {
+                        sender_id: client_id,
+                        payload,
+                    },
+                )
+                .await;
         }
     }
 
@@ -1094,35 +1081,57 @@ fn cache_is_fresh(cache: &CachedCapabilityReport, current_time_ms: i64) -> bool 
     current_time_ms.saturating_sub(cache.fetched_at_ms) < CAPABILITY_CACHE_TTL_MS
 }
 
-fn sanitize_coordination_payload(payload: Vec<u8>, actor: Option<&str>) -> Vec<u8> {
-    let Some(actor) = actor else {
-        return payload;
-    };
+/// Rewrite an inbound coordination message's actor to the connection's own
+/// identity before it is relayed, and reject messages a client must never
+/// originate. Returns `None` when the message is dropped (not relayed).
+///
+/// The match is deliberately exhaustive rather than using a `_` wildcard: a new
+/// actor-carrying variant must be a compile error here so it cannot silently
+/// ship without server-side actor rewriting (or an explicit forward/drop
+/// decision).
+fn sanitize_coordination_payload(payload: Vec<u8>, actor: Option<&str>) -> Option<Vec<u8>> {
+    use sp42_coordination::CoordinationMessage as Msg;
     let Ok(message) = sp42_coordination::decode_message(&payload) else {
         warn!("received undecodable coordination payload while rewriting actor");
-        return payload;
+        return Some(payload);
     };
     let rewritten = match message {
-        sp42_coordination::CoordinationMessage::ActionBroadcast(mut action) => {
-            action.actor = actor.to_string();
-            sp42_coordination::CoordinationMessage::ActionBroadcast(action)
+        Msg::ActionBroadcast(mut action) => {
+            if let Some(actor) = actor {
+                action.actor = actor.to_string();
+            }
+            Msg::ActionBroadcast(action)
         }
-        sp42_coordination::CoordinationMessage::EditClaim(mut claim) => {
-            claim.actor = actor.to_string();
-            sp42_coordination::CoordinationMessage::EditClaim(claim)
+        Msg::EditClaim(mut claim) => {
+            if let Some(actor) = actor {
+                claim.actor = actor.to_string();
+            }
+            Msg::EditClaim(claim)
         }
-        sp42_coordination::CoordinationMessage::PresenceHeartbeat(mut presence) => {
-            presence.actor = actor.to_string();
-            sp42_coordination::CoordinationMessage::PresenceHeartbeat(presence)
+        Msg::PresenceHeartbeat(mut presence) => {
+            if let Some(actor) = actor {
+                presence.actor = actor.to_string();
+            }
+            Msg::PresenceHeartbeat(presence)
         }
-        sp42_coordination::CoordinationMessage::RaceResolution(mut resolution) => {
-            resolution.winning_actor = actor.to_string();
-            sp42_coordination::CoordinationMessage::RaceResolution(resolution)
+        Msg::RaceResolution(mut resolution) => {
+            if let Some(actor) = actor {
+                resolution.winning_actor = actor.to_string();
+            }
+            Msg::RaceResolution(resolution)
         }
-        other => other,
+        // No actor-bearing field: forwarded unchanged.
+        message @ (Msg::ScoreDelta(_) | Msg::FlaggedEdit(_)) => message,
+        // Server-originated only (see `publish_review_signal`, SERVER_SENDER_ID).
+        // A client sending one is forging review-session state for other panels;
+        // drop it rather than relay it.
+        Msg::ReviewSignal(_) => {
+            warn!("dropped client-originated ReviewSignal from coordination inbound");
+            return None;
+        }
     };
 
-    sp42_coordination::encode_message(&rewritten).unwrap_or(payload)
+    Some(sp42_coordination::encode_message(&rewritten).unwrap_or(payload))
 }
 
 fn config_for_state_wiki(

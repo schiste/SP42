@@ -9,6 +9,35 @@ use crate::messages::{
     RaceResolution, ScoreDelta,
 };
 
+/// Upper bound on the length (in bytes) of an accumulated `ScoreDelta` reason.
+///
+/// Each incoming delta for a given `rev_id` appends its reason onto the stored
+/// one, so an unbounded stream of deltas — from a chatty, buggy, or hostile
+/// client — would grow this `String` without limit, and it is cloned into every
+/// state snapshot. Capping keeps the most recent reason text and drops the
+/// oldest once the bound is reached.
+const MAX_ACCUMULATED_REASON_LEN: usize = 4096;
+
+/// Append `next` onto `current` (separated by `" | "`), keeping the total under
+/// [`MAX_ACCUMULATED_REASON_LEN`] bytes by discarding the oldest leading text on
+/// a UTF-8 character boundary.
+fn append_capped_reason(current: &mut String, next: &str) {
+    if !current.is_empty() {
+        current.push_str(" | ");
+    }
+    current.push_str(next);
+    if current.len() <= MAX_ACCUMULATED_REASON_LEN {
+        return;
+    }
+    // Drop from the front so the freshest reason survives, then advance to the
+    // next char boundary so we never split a multi-byte sequence.
+    let mut cut = current.len() - MAX_ACCUMULATED_REASON_LEN;
+    while cut < current.len() && !current.is_char_boundary(cut) {
+        cut += 1;
+    }
+    current.drain(..cut);
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CoordinationStateSummary {
     pub wiki_id: String,
@@ -114,7 +143,7 @@ impl CoordinationState {
                     .entry(delta.rev_id)
                     .and_modify(|current| {
                         current.delta = current.delta.saturating_add(delta.delta);
-                        current.reason = format!("{} | {}", current.reason, delta.reason);
+                        append_capped_reason(&mut current.reason, &delta.reason);
                     })
                     .or_insert(delta);
             }
@@ -346,6 +375,32 @@ mod tests {
             state.claim_for(456).map(|claim| claim.actor.as_str()),
             Some("Bob")
         );
+    }
+
+    #[test]
+    fn accumulated_score_delta_reason_stays_bounded() {
+        let mut state = CoordinationState::new("frwiki");
+
+        // A client streams many deltas for the same rev_id; the stored reason
+        // must not grow without limit.
+        for i in 0..2_000 {
+            assert!(state.apply(CoordinationMessage::ScoreDelta(ScoreDelta {
+                wiki_id: "frwiki".to_string(),
+                rev_id: 456,
+                delta: 0,
+                reason: format!("reason-{i}-with-some-padding-text"),
+            })));
+        }
+
+        let delta = state.score_delta(456).expect("delta should exist");
+        assert!(
+            delta.reason.len() <= super::MAX_ACCUMULATED_REASON_LEN,
+            "reason grew to {} bytes",
+            delta.reason.len()
+        );
+        // The freshest reason survives; the oldest is dropped.
+        assert!(delta.reason.contains("reason-1999-"));
+        assert!(!delta.reason.contains("reason-0-"));
     }
 
     #[test]

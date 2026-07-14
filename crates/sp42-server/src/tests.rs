@@ -3223,6 +3223,41 @@ fn validate_accepts_inline_edit_with_node_locator() {
 }
 
 #[test]
+fn validate_rejects_patrol_with_an_empty_batch() {
+    // A present-but-empty batch_rev_ids would index rev_ids[0] on an empty
+    // Vec and panic in execute_session_action; validation must reject it.
+    let report = sp42_core::DevAuthCapabilityReport {
+        checked: true,
+        wiki_id: "frwiki".to_string(),
+        capabilities: sp42_core::DevAuthDerivedCapabilities {
+            moderation: sp42_core::DevAuthModerationCapabilities {
+                can_patrol: true,
+                ..Default::default()
+            },
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let mut payload = inline_edit_request(None, None, None);
+    payload.kind = sp42_core::SessionActionKind::Patrol;
+    payload.batch_rev_ids = Some(vec![]);
+
+    let (status, body) = crate::action_routes::validate_action_request(&payload, &report)
+        .expect_err("an empty patrol batch must be rejected");
+    assert_eq!(status, axum::http::StatusCode::BAD_REQUEST);
+    assert!(
+        body.0["error"]
+            .as_str()
+            .expect("error body should carry a message")
+            .contains("batch_rev_ids")
+    );
+
+    // A missing batch (None) still falls back to the single rev_id.
+    payload.batch_rev_ids = None;
+    assert!(crate::action_routes::validate_action_request(&payload, &report).is_ok());
+}
+
+#[test]
 fn validate_rejects_inline_edit_without_selected_text_or_locator() {
     let payload = inline_edit_request(None, None, Some("x".to_string()));
     let report = capability_report_allowing_edit();

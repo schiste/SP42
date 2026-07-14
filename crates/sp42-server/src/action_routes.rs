@@ -273,17 +273,21 @@ async fn execute_session_action(
             let rev_ids = payload
                 .batch_rev_ids
                 .clone()
+                .filter(|ids| !ids.is_empty())
                 .unwrap_or_else(|| vec![payload.rev_id]);
+            let (first, rest) = rev_ids
+                .split_first()
+                .expect("rev_ids is non-empty: the empty fallback yields [payload.rev_id]");
             let mut response = execute_patrol(
                 client,
                 config,
                 &PatrolRequest {
-                    rev_id: rev_ids[0],
+                    rev_id: *first,
                     token: token.clone(),
                 },
             )
             .await?;
-            for rid in rev_ids.iter().skip(1) {
+            for rid in rest {
                 response = execute_patrol(
                     client,
                     config,
@@ -981,6 +985,27 @@ fn action_shell_feedback(
     feedback
 }
 
+/// Validate a Patrol request: reject a present-but-empty batch (which would
+/// otherwise index `rev_ids[0]` on an empty Vec and panic in
+/// `execute_session_action`) and require the patrol capability. A missing
+/// `batch_rev_ids` is fine — it falls back to the single `rev_id`.
+fn validate_patrol_request(
+    payload: &SessionActionExecutionRequest,
+    capabilities: &DevAuthCapabilityReport,
+) -> Result<(), (StatusCode, Json<serde_json::Value>)> {
+    if payload.batch_rev_ids.as_ref().is_some_and(Vec::is_empty) {
+        return Err(invalid_payload(
+            "batch_rev_ids must be non-empty when present",
+        ));
+    }
+    if !capabilities.capabilities.moderation.can_patrol {
+        return Err(forbidden_error(
+            "The authenticated session does not currently have patrol capability on this wiki.",
+        ));
+    }
+    Ok(())
+}
+
 pub(crate) fn validate_action_request(
     payload: &SessionActionExecutionRequest,
     capabilities: &DevAuthCapabilityReport,
@@ -1006,13 +1031,7 @@ pub(crate) fn validate_action_request(
                 ));
             }
         }
-        SessionActionKind::Patrol => {
-            if !capabilities.capabilities.moderation.can_patrol {
-                return Err(forbidden_error(
-                    "The authenticated session does not currently have patrol capability on this wiki.",
-                ));
-            }
-        }
+        SessionActionKind::Patrol => validate_patrol_request(payload, capabilities)?,
         SessionActionKind::Undo => {
             if payload.title.as_deref().is_none_or(str::is_empty) {
                 return Err(invalid_payload("title is required for undo"));

@@ -473,6 +473,20 @@ pub(crate) async fn post_review_poll(
             "review poll delivered"
         );
     }
+    // A delivered batch changed the session (pending count, maybe status) —
+    // ring the room so a panel's badge does not sit on the stale count from
+    // the queueing signal until some later mutation.
+    if matches!(take, ReviewFeedbackTake::Feedback { .. }) {
+        let snapshot = state
+            .review_sessions
+            .read()
+            .await
+            .get(&key)
+            .map(|entry| entry.session.snapshot());
+        if let Some(snapshot) = snapshot {
+            publish_review_signal(&state, &snapshot).await;
+        }
+    }
     Ok(Json(poll_response(take, &title)))
 }
 

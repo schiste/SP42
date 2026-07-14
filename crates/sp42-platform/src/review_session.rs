@@ -345,8 +345,15 @@ impl ReviewSession {
         self.updated_at_ms = now_ms;
     }
 
-    /// Close the session, recording who closed it.
+    /// Close the session, recording who closed it. Ending an already-ended
+    /// session is a no-op: the first closer keeps the attribution, so an
+    /// agent's cleanup `end` after an operator's send-and-end cannot
+    /// downgrade the operator-ended reopen gate to a freely-reopenable
+    /// agent end.
     pub fn end(&mut self, by: ReviewEndedBy, now_ms: i64) {
+        if self.status == ReviewSessionStatus::Ended {
+            return;
+        }
         self.status = ReviewSessionStatus::Ended;
         self.ended_by = Some(by);
         self.updated_at_ms = now_ms;
@@ -891,6 +898,23 @@ mod tests {
                 ended_by: ReviewEndedBy::Agent
             }),
             ReviewPollStatus::Ended
+        );
+    }
+
+    #[test]
+    fn agent_end_does_not_downgrade_an_operator_end() {
+        let mut session = ReviewSession::open("frwiki", "Exemple", 42, 1_000);
+        session.end(ReviewEndedBy::Operator, 2_000);
+
+        // Agent cleanup after the operator already closed the review must
+        // not flip the attribution and lift the reopen gate.
+        session.end(ReviewEndedBy::Agent, 3_000);
+
+        assert_eq!(session.ended_by, Some(ReviewEndedBy::Operator));
+        assert_eq!(session.gate_reopen(false), Err(ReopenRefused));
+        assert_eq!(
+            session.updated_at_ms, 2_000,
+            "a no-op end leaves the session untouched"
         );
     }
 

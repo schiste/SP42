@@ -4205,6 +4205,29 @@ async fn review_mutations_ring_the_coordination_room() {
         panic!("expected a review signal, got {message:?}");
     };
     assert_eq!(signal.session.pending_prompts, 1);
+
+    // Draining the feedback rings once more so the panel's badge does not
+    // sit on the stale pending count.
+    let (status, poll) = post_review_json(
+        router.clone(),
+        &cookie,
+        sp42_core::routes::DEV_REVIEW_POLL_PATH,
+        &serde_json::json!({"wiki_id": "frwiki", "title": "Exemple", "wait_ms": 1}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(poll["status"], "feedback");
+    let envelope = tokio::time::timeout(Duration::from_secs(5), room.recv())
+        .await
+        .expect("a drained poll should ring the room promptly")
+        .expect("room channel should stay open");
+    let message =
+        sp42_coordination::decode_message(&envelope.payload).expect("signal should decode");
+    let sp42_coordination::CoordinationMessage::ReviewSignal(signal) = message else {
+        panic!("expected a review signal, got {message:?}");
+    };
+    assert_eq!(signal.session.pending_prompts, 0);
+    assert_eq!(signal.session.status, sp42_core::ReviewSessionStatus::Open);
 }
 
 #[tokio::test]

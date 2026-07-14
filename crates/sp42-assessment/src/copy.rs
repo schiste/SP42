@@ -114,6 +114,11 @@ pub const SKIPPED_BOOK_UNRESOLVED: &str =
 /// problem) — the book may well have a record; nothing is implied about it.
 pub const SKIPPED_BOOK_LOOKUP_FAILED: &str = "cites a book whose catalog lookup did not complete — the tool could not reach the catalog; nothing is implied about the book";
 
+/// Skip reason: a short cite ({{sfn}}-style) whose bibliography entry could
+/// not be resolved to a usable identifier — never guessed, disclosed.
+pub const SKIPPED_SHORT_CITE_UNRESOLVED: &str =
+    "is a short cite the tool could not resolve to a bibliography entry with a usable identifier";
+
 /// Books consulted section heading.
 pub const BUCKET_BOOKS_CONSULTED: &str = "==== Books consulted ====";
 

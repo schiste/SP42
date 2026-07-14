@@ -822,6 +822,7 @@ mod tests {
                 ref_text: "[1]".to_string(),
                 named: false,
                 is_bare_url_ref: false,
+                short_cite_unresolved: false,
             }],
             block_kind: BlockKind::Paragraph,
             block_ordinal: 7,

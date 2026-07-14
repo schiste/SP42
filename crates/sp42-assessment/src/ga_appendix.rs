@@ -321,6 +321,9 @@ fn render_skipped_section(output: &mut String, report: &sp42_citation::PageVerif
                         crate::copy::SKIPPED_BOOK_UNRESOLVED
                     }
                 }
+                sp42_citation::SkippedReason::UnresolvedShortCite => {
+                    crate::copy::SKIPPED_SHORT_CITE_UNRESOLVED
+                }
             });
             // Which book: identifiers (and cited page) make multiple books
             // under one ref distinguishable (Codex round 4, PR 154).

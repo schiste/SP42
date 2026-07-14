@@ -171,11 +171,18 @@ const PAYWALL_VENDOR_HOSTS: &[&str] = &[
     "wallkit.net",
 ];
 
-/// Hosts whose pages are viewer/embed shells under generic extraction (no readable
-/// article body). Matched as a case-insensitive substring of the URL host. Extension point: add hosts here.
-const SPECIAL_CASE_HOSTS: &[&str] = &["books.google."];
+/// Domains whose pages are viewer/embed shells under generic extraction (no
+/// readable article body), as label sequences (excluding the TLD). Matched by
+/// domain-suffix against the host, ignoring the final TLD label — so
+/// `["books", "google"]` matches `books.google.com` and
+/// `www.books.google.de` but NOT `books.google.com.evil.example` or
+/// `xbooks.google.com`. Extension point: add domains here.
+const SPECIAL_CASE_DOMAINS: &[&[&str]] = &[&["books", "google"]];
 
-/// `true` if the URL's host matches a special-case viewer-shell host.
+/// `true` if the URL's host is (a subdomain of) a special-case viewer-shell
+/// domain, compared by DNS label boundaries rather than raw substring — a
+/// substring match would misclassify any host merely embedding the text
+/// (e.g. `books.google.com.attacker.example`).
 fn is_special_case_host(source_url: &str) -> bool {
     let Ok(parsed) = Url::parse(source_url) else {
         return false;
@@ -184,9 +191,15 @@ fn is_special_case_host(source_url: &str) -> bool {
         return false;
     };
     let host = host.to_ascii_lowercase();
-    SPECIAL_CASE_HOSTS
+    let labels: Vec<&str> = host.split('.').collect();
+    // Drop the final TLD label; a special-case domain must sit immediately
+    // before it (as the host itself or a subdomain suffix).
+    let Some((_tld, without_tld)) = labels.split_last() else {
+        return false;
+    };
+    SPECIAL_CASE_DOMAINS
         .iter()
-        .any(|needle| host.contains(needle))
+        .any(|domain| without_tld.ends_with(domain))
 }
 
 /// The first `n` characters of `text` (a char-boundary-safe prefix window).
@@ -524,10 +537,28 @@ mod tests {
         for url in [
             "https://books.google.com/books?id=abc123",
             "https://books.google.es/books?id=xyz",
+            // Subdomains of the viewer-shell domain still match.
+            "https://www.books.google.de/books?id=q",
         ] {
             let r = classify_source_usability(url, "text/html", None, Some("irrelevant body text"));
             assert!(!r.usable, "{url}");
             assert_eq!(r.reason, BodyUsabilityReason::ViewerShell, "{url}");
+        }
+    }
+
+    #[test]
+    fn host_embedding_the_special_case_text_is_not_matched() {
+        // A domain-suffix match, not a raw substring: an attacker-controlled
+        // host that merely embeds "books.google." must NOT be misclassified
+        // as the Google Books viewer shell.
+        let prose = "The history of the bridge spans more than a century. ".repeat(10);
+        for url in [
+            "https://books.google.com.attacker.example/x",
+            "https://xbooks.google.com/x",
+            "https://notbooks.google.com/x",
+        ] {
+            let r = classify_source_usability(url, "text/html", Some(&prose), Some(&prose));
+            assert!(r.usable, "{url} must not be flagged as a viewer shell");
         }
     }
 

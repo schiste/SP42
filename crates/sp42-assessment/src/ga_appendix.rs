@@ -396,10 +396,12 @@ fn render_books_section(output: &mut String, report: &sp42_citation::PageVerific
             // Render scan availability state (Codex round 3, PR 154).
             let scan_state = match scan {
                 Some(availability) => {
-                    if !availability.exact.is_empty()
-                        && availability.exact.iter().any(|item| item.ocaid.is_some())
-                    {
+                    if availability.exact.iter().any(|item| item.ocaid.is_some()) {
                         crate::copy::BOOK_SCAN_EXACT
+                    } else if !availability.exact.is_empty() {
+                        // Exact scan cataloged but identity unrecoverable —
+                        // never "no scan exists" (Codex round 13, PR 154).
+                        crate::copy::BOOK_SCAN_EXACT_UNSEARCHABLE
                     } else if !availability.similar.is_empty() {
                         crate::copy::BOOK_SCAN_SIMILAR_ONLY
                     } else {
@@ -1813,6 +1815,35 @@ mod renderer_tests {
             out.contains("0 dead links,"),
             "summary counts derive from bucketing"
         );
+    }
+
+    #[test]
+    fn ungroundable_exact_scans_are_not_reported_as_unscanned() {
+        // Codex round 13 (PR 154): an exact item with no recoverable ocaid
+        // is a cataloged-but-unsearchable scan, not "no scan exists".
+        let mut report = fixtures::full_report();
+        report.book_resolutions.push(sp42_citation::BookResolution {
+            ref_id: "cite_ref-ghost_50-0".to_string(),
+            block_ordinal: 9,
+            identifiers: Vec::new(),
+            cited_page: None,
+            outcome: sp42_citation::BookResolutionOutcome::Resolved {
+                identifier: sp42_citation::BookIdentifier::isbn("9780306406157").expect("valid"),
+                edition: Box::default(),
+                scan: Some(sp42_citation::ScanAvailability {
+                    exact: vec![sp42_citation::ScanItem {
+                        status: "lendable".to_string(),
+                        item_url: "http://openlibrary.org/books/OL1M/X/borrow".to_string(),
+                        ol_edition_id: None,
+                        ocaid: None,
+                    }],
+                    similar: Vec::new(),
+                }),
+            },
+            enrichment_candidates: Vec::new(),
+        });
+        let out = render_ga_appendix(&report, 0, "0.1.0");
+        assert!(out.contains(crate::copy::BOOK_SCAN_EXACT_UNSEARCHABLE));
     }
 
     #[test]

@@ -121,6 +121,12 @@ pub const BOOK_SCAN_SIMILAR_ONLY: &str = "scanned (similar edition only)";
 /// Reader-facing description when no scan is available.
 pub const BOOK_SCAN_NONE: &str = "not scanned in the tool's catalog";
 
+/// An exact-edition scan is cataloged but its identity could not be
+/// recovered, so the tool could not search it — a tool limitation, distinct
+/// from "no scan exists".
+pub const BOOK_SCAN_EXACT_UNSEARCHABLE: &str =
+    "an exact-edition scan is cataloged, but the tool could not identify it to search it";
+
 /// Reader-facing description when the tool could not verify scan availability.
 pub const BOOK_SCAN_UNKNOWN: &str = "scan availability unknown (the lookup did not complete)";
 

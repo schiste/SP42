@@ -9,6 +9,14 @@
 pipeline shipped (source fetch, body classification, page report; PRs
 #104/#110), but the Open Library apply lane remains gated, so the PRD stays
 Draft until it lands or is descoped.
+**Implementation note (2026-07-13):** Layers 1–3 merged (PRs #147/#148; apply
+lane mechanism-only behind the ADR-0025 enablement gate). Same-day amendment
+to Layer 1: identifiers may be carried by **bibliography indirection**
+(shortened-footnote link-following) or ref-local ISBN magiclinks, not only by
+direct cite-template parameters — motivated by field measurement (a
+shortened-footnote GA article converted 0 of 73 book refs) and grounded in
+en/fr/de Parsoid probes; see
+`docs/design-plans/2026-07-13-bibliography-indirection.md`.
 **Discussion:** design conversation 2026-07-01 (Internet Archive editable book
 metadata → SP42 integration); no tracking issue yet.
 **Spawned ADRs:** ADR-0024 (Open Library / Internet Archive read contract:
@@ -118,9 +126,21 @@ only under ADR-0010's confirm discipline.
 For a book citation in the revision under review, SP42 resolves it to catalog
 records **only from identifiers it already trusts**:
 
-- The key is the **ISBN** (or OCLC/LCCN/OLID) carried by the cite template, read
-  **directly from the citation's template parameters** via Parsoid `data-mw` — the same
-  structured-extraction path ADR-0011 already uses for a cite's `url`/`archive-url`.
+- The key is the **ISBN** (or OCLC/LCCN/OLID) carried by the citation, read from
+  structured Parsoid `data-mw` — the same structured-extraction path ADR-0011
+  already uses for a cite's `url`/`archive-url`. The identifier may be carried
+  **directly** (the cite template's parameters inside the ref) or **by
+  indirection** (2026-07-13 amendment): a shortened-footnote ref
+  (`{{sfn}}`/`{{harvsp}}`-family) whose body links to a bibliography entry is
+  resolved by following that literal fragment link to the identified
+  bibliography element and reading *its* template parameters and ISBN
+  magiclinks — the short-cite's own `p`/`pp` params become the cited page.
+  Ref-local ISBN magiclinks and `{{ISBN}}` transclusions also carry
+  identifiers directly (the dominant dewiki shape). Unlinked free-text short
+  refs (a name-and-year string whose full citation is only typographically
+  related to a bibliography entry) are **not** resolved — never a guessed
+  identifier; they keep a refined skip reason. Design:
+  `docs/design-plans/2026-07-13-bibliography-indirection.md`.
   This is a **new cite-template identifier extractor the MVP must add**, and it is
   precisely what lets a book ref stop being `skipped { NonUrlSource }`: today the
   article extractor drops a ref with no URL before any Citoid call, and Citoid is a

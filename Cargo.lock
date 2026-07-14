@@ -3443,6 +3443,7 @@ name = "sp42-parsoid"
 version = "0.1.0"
 dependencies = [
  "parsoid",
+ "percent-encoding",
  "serde_json",
  "sp42-platform",
  "url",

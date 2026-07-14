@@ -31,10 +31,13 @@ contracts (Art. 9.1).
 ## Decision
 
 1. **Pure core in `sp42-platform::review_session`.** `ReviewSession` owns
-   every transition — `queue_prompts`, `take_feedback` (deliver-before-ended,
-   drain-exactly-once), `gate_reopen` (operator-ended refuses a plain
-   reopen), `resume`, `end`, `agent_reply` — as pure methods over injected
-   `now_ms`. The wire types (`ReviewOpenRequest/Response`, `ReviewPollRequest/
+   every transition — `queue_prompts` (which refuses an ended session so a
+   stale queue cannot flip it back to feedback around the reopen gate),
+   `take_feedback` (deliver-before-ended, drain-exactly-once), `gate_reopen`
+   (operator-ended refuses a plain reopen; the route checks this against
+   the stored session *before* any remote revision/Parsoid read), `resume`,
+   `end`, `agent_reply` (chat is echoed back on the open response so
+   replies are not write-only) — as pure methods over injected `now_ms`. The wire types (`ReviewOpenRequest/Response`, `ReviewPollRequest/
    Response`, `ReviewQueueRequest/Response`, ack/list shapes) live beside
    them, all embedding `REVIEW_SESSION_CONTRACT_VERSION`. The `next_step`
    strings are pure functions too, so the loop etiquette is unit-tested.
@@ -53,7 +56,8 @@ contracts (Art. 9.1).
    `Notify`; queue/end call `notify_one`, whose stored permit covers feedback
    queued while no poll is waiting. The poll handler drains, waits
    (`tokio::time::timeout` over `notified()`, clamped to 55 s), and drains
-   once more. Bounded server-side waits with a re-arming CLI loop replace
+   once more; an omitted `wait_ms` uses the server default, while an
+   explicit `wait_ms: 0` skips the wait — a nonblocking status check. Bounded server-side waits with a re-arming CLI loop replace
    lavish-axi's single indefinite request — no heartbeat protocol, no
    proxy-timeout exposure, identical agent ergonomics. No cross-restart
    persistence: this is a localhost dev-bridge surface (PRD-0017 Risks).

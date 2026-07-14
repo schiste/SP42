@@ -4146,6 +4146,86 @@ async fn review_session_loop_delivers_operator_feedback_to_the_agent() {
 }
 
 #[tokio::test]
+async fn review_queue_refuses_an_ended_session_and_replies_surface_in_open() {
+    let (router, cookie) = review_test_router().await;
+
+    let (status, _) = post_review_json(
+        router.clone(),
+        &cookie,
+        sp42_core::routes::DEV_REVIEW_OPEN_PATH,
+        &serde_json::json!({"wiki_id": "frwiki", "target": "Exemple", "rev_id": 42}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+
+    // The agent posts a summary; the operator surface must be able to read
+    // it back (an invisible reply would be write-only).
+    let (status, _) = post_review_json(
+        router.clone(),
+        &cookie,
+        sp42_core::routes::DEV_REVIEW_REPLY_PATH,
+        &serde_json::json!({
+            "wiki_id": "frwiki",
+            "title": "Exemple",
+            "text": "opened — start with the lede",
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let (status, open) = post_review_json(
+        router.clone(),
+        &cookie,
+        sp42_core::routes::DEV_REVIEW_OPEN_PATH,
+        &serde_json::json!({"wiki_id": "frwiki", "target": "Exemple", "rev_id": 42}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(open["chat"][0]["role"], "agent");
+    assert_eq!(open["chat"][0]["text"], "opened — start with the lede");
+
+    // The operator ends the session; a later plain queue must not silently
+    // flip it back to feedback around the reopen gate.
+    let (status, _) = post_review_json(
+        router.clone(),
+        &cookie,
+        sp42_core::routes::DEV_REVIEW_PROMPTS_PATH,
+        &serde_json::json!({
+            "wiki_id": "frwiki",
+            "title": "Exemple",
+            "prompts": [],
+            "end_session": true,
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let (status, refused) = post_review_json(
+        router.clone(),
+        &cookie,
+        sp42_core::routes::DEV_REVIEW_PROMPTS_PATH,
+        &serde_json::json!({
+            "wiki_id": "frwiki",
+            "title": "Exemple",
+            "prompts": [{"kind": "message", "prompt": "too late"}],
+            "end_session": false,
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT);
+    assert_eq!(refused["code"], "review-session-ended");
+
+    // A nonblocking poll (explicit wait_ms: 0) reports the end immediately.
+    let (status, poll) = post_review_json(
+        router.clone(),
+        &cookie,
+        sp42_core::routes::DEV_REVIEW_POLL_PATH,
+        &serde_json::json!({"wiki_id": "frwiki", "title": "Exemple", "wait_ms": 0}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(poll["status"], "ended");
+}
+
+#[tokio::test]
 async fn review_findings_attach_and_overlay_the_next_open() {
     let (router, cookie) = review_test_router().await;
 

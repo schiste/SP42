@@ -125,6 +125,28 @@ async fn resolve_open_target(
     Ok((target.title, rev_id, build_article_outline(&blocks)))
 }
 
+/// The 409 etiquette response when a plain open hits a session the operator
+/// explicitly ended.
+fn reopen_gate_error(
+    session: &ReviewSession,
+    reopen_requested: bool,
+    title: &str,
+) -> Result<(), RouteError> {
+    if session.gate_reopen(reopen_requested).is_err() {
+        return Err((
+            StatusCode::CONFLICT,
+            Json(serde_json::json!({
+                "error": format!(
+                    "the operator ended the review of {title}; do not reopen uninvited — \
+                     pass reopen=true only when the operator asks for further review"
+                ),
+                "code": "review-session-operator-ended",
+            })),
+        ));
+    }
+    Ok(())
+}
+
 /// Open a new session or resume an existing one, honoring the reopen gate:
 /// a session the operator explicitly ended refuses a plain reopen.
 fn open_or_resume(
@@ -137,18 +159,7 @@ fn open_or_resume(
     let Some(entry) = entry else {
         return Ok(None);
     };
-    if entry.session.gate_reopen(reopen_requested).is_err() {
-        return Err((
-            StatusCode::CONFLICT,
-            Json(serde_json::json!({
-                "error": format!(
-                    "the operator ended the review of {title}; do not reopen uninvited — \
-                     pass reopen=true only when the operator asks for further review"
-                ),
-                "code": "review-session-operator-ended",
-            })),
-        ));
-    }
+    reopen_gate_error(&entry.session, reopen_requested, title)?;
     entry.session.resume(rev_id, now_ms);
     Ok(Some(entry.session.snapshot()))
 }
@@ -163,18 +174,33 @@ pub(crate) async fn post_review_open(
     Json(payload): Json<ReviewOpenRequest>,
 ) -> Result<impl IntoResponse, RouteError> {
     let session = require_review_session(&state, &headers).await?;
+
+    // Check the reopen gate before any remote read: a plain reopen of an
+    // operator-ended session must get the 409 etiquette response from the
+    // stored session alone, not depend on (or pay for) revision/Parsoid
+    // lookups. The key from the locally parsed title matches the one built
+    // after resolution. Re-gated under the write lock below for the race.
+    let parsed_title = sp42_core::parse_page_target(&payload.target).title;
+    {
+        let store = state.review_sessions.read().await;
+        let key = ReviewSession::canonical_key(&payload.wiki_id, &parsed_title);
+        if let Some(entry) = store.get(&key) {
+            reopen_gate_error(&entry.session, payload.reopen, &parsed_title)?;
+        }
+    }
+
     let (title, rev_id, outline) = resolve_open_target(&state, &session, &payload).await?;
     let key = ReviewSession::canonical_key(&payload.wiki_id, &title);
     let now_ms = state.clock.now_ms();
 
     let mut store = state.review_sessions.write().await;
     let resumed = open_or_resume(store.get_mut(&key), payload.reopen, &title, rev_id, now_ms)?;
-    let (session, findings) = if let Some(snapshot) = resumed {
-        let findings = store
+    let (session, findings, chat) = if let Some(snapshot) = resumed {
+        let (findings, chat) = store
             .get(&key)
-            .map(|entry| entry.session.findings.clone())
+            .map(|entry| (entry.session.findings.clone(), entry.session.chat.clone()))
             .unwrap_or_default();
-        (snapshot, findings)
+        (snapshot, findings, chat)
     } else {
         let session = ReviewSession::open(&payload.wiki_id, &title, rev_id, now_ms);
         let snapshot = session.snapshot();
@@ -185,7 +211,7 @@ pub(crate) async fn post_review_open(
                 notify: Arc::new(Notify::new()),
             },
         );
-        (snapshot, Vec::new())
+        (snapshot, Vec::new(), Vec::new())
     };
     // Attached verification findings overlay the outline: each marker joins
     // its block by ref_id, so the operator sees report problems in article
@@ -204,6 +230,7 @@ pub(crate) async fn post_review_open(
         session,
         outline,
         unanchored_findings,
+        chat,
     }))
 }
 
@@ -239,7 +266,24 @@ pub(crate) async fn post_review_prompts(
     let queued = payload.prompts.len();
     entry
         .session
-        .queue_prompts(payload.prompts, payload.end_session, now_ms);
+        .queue_prompts(payload.prompts, payload.end_session, now_ms)
+        .map_err(|ended| {
+            let by = match ended.ended_by {
+                ReviewEndedBy::Operator => "operator",
+                ReviewEndedBy::Agent => "agent",
+            };
+            (
+                StatusCode::CONFLICT,
+                Json(serde_json::json!({
+                    "error": format!(
+                        "the review of {} was already ended by the {by}; open the session \
+                         again before queueing more feedback",
+                        payload.title
+                    ),
+                    "code": "review-session-ended",
+                })),
+            )
+        })?;
     entry.notify.notify_one();
     info!(
         wiki_id = %payload.wiki_id,
@@ -349,7 +393,9 @@ fn missing_poll_response() -> ReviewPollResponse {
 /// `POST /dev/review/poll` — the agent's bounded feedback wait.
 ///
 /// Drains immediately when feedback is queued; otherwise waits (clamped to
-/// [`POLL_WAIT_MAX_MS`]) for a queue/end wake-up and drains once more. The
+/// [`POLL_WAIT_MAX_MS`]; an explicit `wait_ms: 0` skips the wait entirely
+/// for a nonblocking status check) for a queue/end wake-up and drains once
+/// more. The
 /// wake-up uses `notify_one` permits, so feedback queued while no poll is
 /// waiting is picked up by the next poll without racing.
 pub(crate) async fn post_review_poll(
@@ -363,12 +409,12 @@ pub(crate) async fn post_review_poll(
         return Ok(Json(missing_poll_response()));
     };
 
-    let wait_ms = if payload.wait_ms == 0 {
-        POLL_WAIT_DEFAULT_MS
-    } else {
-        payload.wait_ms.min(POLL_WAIT_MAX_MS)
-    };
-    let take = if take == ReviewFeedbackTake::Waiting {
+    // Omitted wait = the server default; an explicit 0 is the contract's
+    // nonblocking status check and must return the first drain immediately.
+    let wait_ms = payload
+        .wait_ms
+        .map_or(POLL_WAIT_DEFAULT_MS, |ms| ms.min(POLL_WAIT_MAX_MS));
+    let take = if take == ReviewFeedbackTake::Waiting && wait_ms > 0 {
         let _ = tokio::time::timeout(Duration::from_millis(wait_ms), notify.notified()).await;
         match drain_feedback(&state, &key).await {
             Some((take, _, _)) => take,
@@ -494,7 +540,8 @@ mod tests {
             let entry = sessions.get_mut(&key).expect("session should exist");
             entry
                 .session
-                .queue_prompts(vec![message_prompt("wake up")], false, 1_500);
+                .queue_prompts(vec![message_prompt("wake up")], false, 1_500)
+                .expect("open session should accept prompts");
             entry.notify.notify_one();
         }
 

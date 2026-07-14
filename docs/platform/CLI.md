@@ -211,7 +211,7 @@ sp42-cli review sessions
 | `open <TARGET>` | Open or resume a session; returns the article outline plus `next_step`. `--rev <REVID>` pins a revision (default: latest), `--reopen` resumes a session the operator explicitly ended. |
 | `poll <TARGET>` | Wait for feedback; re-arms bounded server waits until feedback, an end, or a missing session (stderr narrates the wait). `--agent-reply <TEXT>` posts a chat line first, `--once` returns after a single wait. |
 | `queue <TARGET>` | Queue one operator prompt (dev/test surface): `--message <TEXT>` plus optional anchors `--block <N>`, `--ref-id <ID>`, `--selected-text <TEXT>`; `--end` sends and ends in one action. |
-| `findings <TARGET>` | Attach a `verify-page --format json` report (`--report <PATH>`, `-` for stdin) so its findings overlay the outline by cite id — the report's in-article view. Refused when the report's revision differs from the session's (`review-findings-revision-mismatch`). |
+| `findings <TARGET>` | Attach a `verify-page --format json` report (`--report <PATH>`, `-` for stdin) so its findings overlay the outline by cite id — the report's in-article view. The report must describe the target page/wiki, and is refused when its revision differs from the session's (`review-findings-revision-mismatch`). |
 | `reply <TARGET>` | Send an agent chat reply (`--message <TEXT>`). |
 | `end <TARGET>` | End the session as the agent; a plain reopen stays allowed. |
 | `sessions` | List review sessions on the local server. |

@@ -135,8 +135,8 @@ pub use review_session::{
     ReviewOpenRequest, ReviewOpenResponse, ReviewPollRequest, ReviewPollResponse, ReviewPollStatus,
     ReviewPrompt, ReviewPromptKind, ReviewQueueRequest, ReviewQueueResponse, ReviewReplyRequest,
     ReviewSession, ReviewSessionSnapshot, ReviewSessionStatus, ReviewSessionsResponse,
-    annotate_outline, build_article_outline, open_next_step, poll_next_step, poll_status,
-    truncate_outline_text,
+    SessionEnded, annotate_outline, build_article_outline, open_next_step, poll_next_step,
+    poll_status, truncate_outline_text,
 };
 pub use review_workbench::{
     PreparedRequestPreview, ReviewWorkbench, build_review_workbench,

@@ -176,6 +176,13 @@ pub enum ReviewFeedbackTake {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ReopenRefused;
 
+/// Refusal reason when prompts are queued against an already-ended session.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SessionEnded {
+    /// Who closed the session.
+    pub ended_by: ReviewEndedBy,
+}
+
 impl ReviewSession {
     /// A fresh open session on `(wiki_id, title)` at `rev_id`.
     #[must_use]
@@ -262,7 +269,27 @@ impl ReviewSession {
     /// Queue operator prompts; optionally close the session in the same
     /// action ("send & end"). Queued prompts survive the end and deliver on
     /// the next poll.
-    pub fn queue_prompts(&mut self, prompts: Vec<ReviewPrompt>, end_session: bool, now_ms: i64) {
+    ///
+    /// # Errors
+    ///
+    /// [`SessionEnded`] when the session is already closed: queueing then
+    /// would silently flip an ended session back to `Feedback` while
+    /// `ended_by` still says who closed it, so the next poll would deliver
+    /// with `session_ended: false` and reopen the session around the reopen
+    /// gate. An ended session takes new prompts only after an explicit open.
+    pub fn queue_prompts(
+        &mut self,
+        prompts: Vec<ReviewPrompt>,
+        end_session: bool,
+        now_ms: i64,
+    ) -> Result<(), SessionEnded> {
+        if self.status == ReviewSessionStatus::Ended {
+            return Err(SessionEnded {
+                // An ended session always records who ended it; fall back to
+                // the operator (the conservative gate) for hand-built state.
+                ended_by: self.ended_by.unwrap_or(ReviewEndedBy::Operator),
+            });
+        }
         self.queued_prompts.extend(prompts);
         if end_session {
             self.status = ReviewSessionStatus::Ended;
@@ -271,6 +298,7 @@ impl ReviewSession {
             self.status = ReviewSessionStatus::Feedback;
         }
         self.updated_at_ms = now_ms;
+        Ok(())
     }
 
     /// Drain queued feedback with deliver-before-ended semantics: prompts
@@ -458,6 +486,11 @@ pub struct ReviewOpenResponse {
     /// Attached findings whose `ref_id` matched no outline block.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub unanchored_findings: Vec<ReviewFindingMarker>,
+    /// The session's operator/agent conversation so far — the surface the
+    /// agent's `--agent-reply` summaries land on; without it a stored reply
+    /// would be write-only.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub chat: Vec<ReviewChatEntry>,
     pub next_step: String,
 }
 
@@ -506,10 +539,11 @@ pub struct ReviewQueueResponse {
 pub struct ReviewPollRequest {
     pub wiki_id: String,
     pub title: String,
-    /// Server-side wait bound in milliseconds; `0` returns immediately.
-    /// The server clamps this to its own maximum.
-    #[serde(default)]
-    pub wait_ms: u64,
+    /// Server-side wait bound in milliseconds. Omitted (`None`) means the
+    /// server's default wait; an explicit `0` returns immediately (a
+    /// nonblocking status check). The server clamps this to its own maximum.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub wait_ms: Option<u64>,
 }
 
 /// Poll outcome status on the wire.
@@ -652,7 +686,9 @@ mod tests {
     fn queueing_prompts_moves_the_session_to_feedback() {
         let mut session = ReviewSession::open("frwiki", "Exemple", 42, 1_000);
 
-        session.queue_prompts(vec![message_prompt("tighten the lede")], false, 2_000);
+        session
+            .queue_prompts(vec![message_prompt("tighten the lede")], false, 2_000)
+            .expect("open session should accept prompts");
 
         assert_eq!(session.status, ReviewSessionStatus::Feedback);
         assert_eq!(session.queued_prompts.len(), 1);
@@ -662,7 +698,9 @@ mod tests {
     #[test]
     fn take_feedback_drains_once_and_reopens() {
         let mut session = ReviewSession::open("frwiki", "Exemple", 42, 1_000);
-        session.queue_prompts(vec![message_prompt("first")], false, 2_000);
+        session
+            .queue_prompts(vec![message_prompt("first")], false, 2_000)
+            .expect("open session should accept prompts");
 
         let take = session.take_feedback(3_000);
         let ReviewFeedbackTake::Feedback {
@@ -682,7 +720,9 @@ mod tests {
     #[test]
     fn feedback_queued_before_an_end_delivers_before_ended() {
         let mut session = ReviewSession::open("frwiki", "Exemple", 42, 1_000);
-        session.queue_prompts(vec![message_prompt("last words")], true, 2_000);
+        session
+            .queue_prompts(vec![message_prompt("last words")], true, 2_000)
+            .expect("open session should accept prompts");
 
         let take = session.take_feedback(3_000);
         let ReviewFeedbackTake::Feedback {
@@ -719,7 +759,9 @@ mod tests {
     #[test]
     fn resume_clears_the_end_and_keeps_queued_feedback() {
         let mut session = ReviewSession::open("frwiki", "Exemple", 42, 1_000);
-        session.queue_prompts(vec![message_prompt("pending")], true, 2_000);
+        session
+            .queue_prompts(vec![message_prompt("pending")], true, 2_000)
+            .expect("open session should accept prompts");
 
         session.resume(43, 3_000);
 
@@ -827,6 +869,34 @@ mod tests {
             }),
             ReviewPollStatus::Ended
         );
+    }
+
+    #[test]
+    fn queueing_to_an_ended_session_is_refused() {
+        let mut session = ReviewSession::open("frwiki", "Exemple", 42, 1_000);
+        session
+            .queue_prompts(vec![message_prompt("last words")], true, 2_000)
+            .expect("open session should accept the send-and-end");
+
+        // A late queue (stale panel, plain CLI queue) must not flip the
+        // ended session back to feedback around the reopen gate.
+        let refused = session
+            .queue_prompts(vec![message_prompt("too late")], false, 3_000)
+            .expect_err("ended session must refuse new prompts");
+        assert_eq!(refused.ended_by, ReviewEndedBy::Operator);
+        assert_eq!(session.status, ReviewSessionStatus::Ended);
+        assert_eq!(
+            session.queued_prompts.len(),
+            1,
+            "only the pre-end prompt stays queued"
+        );
+
+        // The pre-end feedback still delivers with the end flag intact.
+        let take = session.take_feedback(4_000);
+        let ReviewFeedbackTake::Feedback { session_ended, .. } = take else {
+            panic!("expected the final feedback batch");
+        };
+        assert!(session_ended);
     }
 
     #[test]

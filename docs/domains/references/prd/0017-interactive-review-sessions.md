@@ -73,9 +73,11 @@ User-facing behavior:
   delivers first, flagged `session_ended`; only a later poll reports `ended`.
   An **operator**-ended session refuses a plain reopen (HTTP 409 with
   guidance) unless `--reopen` is passed; an **agent**-ended session
-  (`sp42-cli review end`) reopens freely. Every response carries `next_step`
-  prose telling the agent what to do — poll again, apply-and-reply, or stop
-  without reopening.
+  (`sp42-cli review end`) reopens freely. An ended session also refuses new
+  prompts (`review-session-ended`) until it is explicitly opened again — a
+  stale queue must not flip a closed session back to feedback around the
+  gate. Every response carries `next_step` prose telling the agent what to
+  do — poll again, apply-and-reply, or stop without reopening.
 - **Inventory**: `sp42-cli review sessions` and `GET /dev/review/sessions`
   list open sessions with pending-prompt counts.
 
@@ -121,6 +123,11 @@ lanes (re-verify, bare-URL repair, inline edit).
   findings skipped — verified by
   `review_finding_markers_project_the_report_onto_review_anchors`
   (`sp42-citation`)
+- [ ] Queueing to an ended session refuses with `review-session-ended`, and
+  agent chat replies are readable back on the open response, verified by
+  `queueing_to_an_ended_session_is_refused` (`sp42-platform`) and
+  `review_queue_refuses_an_ended_session_and_replies_surface_in_open`
+  (`sp42-server`)
 - [ ] Session opens, feedback queueing, findings attaches, deliveries, and
   ends emit `tracing` events, checkable in server logs
 

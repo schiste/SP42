@@ -3463,7 +3463,9 @@ async fn run_review_poll(args: &ReviewPollArgs) -> Result<ReviewPollResponse, St
     let request = ReviewPollRequest {
         wiki_id: args.wiki.clone(),
         title: title.clone(),
-        wait_ms: 0,
+        // Omitted = the server's default bounded wait; the CLI re-arms
+        // between waits. (An explicit 0 is a nonblocking status check.)
+        wait_ms: None,
     };
     loop {
         let response: ReviewPollResponse = post_review_route(
@@ -3546,15 +3548,38 @@ fn read_verification_report(path: &str) -> Result<PageVerificationReport, String
         .map_err(|error| format!("report is not a verify-page JSON report: {error}"))
 }
 
+/// Refuse a report whose identity does not match the requested session: the
+/// server can only compare revisions, and revision ids can collide across
+/// wikis, so a mistyped or reused report file could otherwise overlay
+/// unrelated findings onto the operator's outline.
+fn check_report_identity(
+    report: &PageVerificationReport,
+    wiki: &str,
+    title: &str,
+) -> Result<(), String> {
+    // MediaWiki treats underscores and spaces in titles as the same page.
+    let canonical = |t: &str| t.replace('_', " ");
+    if report.wiki_id != wiki || canonical(&report.title) != canonical(title) {
+        return Err(format!(
+            "the report describes {}:{} but the target session is {wiki}:{title}; \
+             pass the report produced for this page",
+            report.wiki_id, report.title
+        ));
+    }
+    Ok(())
+}
+
 /// Attach a verify-page report to the review session: project its findings
 /// onto review anchors (ref ids) and post them, pinned to the report's
 /// revision so a stale report cannot overlay a newer session.
 async fn run_review_findings(args: &ReviewFindingsArgs) -> Result<ReviewFindingsResponse, String> {
     let report = read_verification_report(&args.report)?;
+    let title = sp42_core::parse_page_target(&args.target).title;
+    check_report_identity(&report, &args.wiki, &title)?;
     let bridge = bootstrap_bridge_session(&args.bridge_base_url).await?;
     let request = ReviewFindingsRequest {
         wiki_id: args.wiki.clone(),
-        title: sp42_core::parse_page_target(&args.target).title,
+        title,
         rev_id: report.rev_id,
         findings: review_finding_markers(&report),
     };
@@ -4049,13 +4074,14 @@ mod tests {
     use super::{
         ActionKind, BareUrlAction, BareUrlCliMode, BareUrlCliOptions, BareUrlExecuteReport, Cli,
         CliOptions, Command, ContextPreviewOptions, FormatArg, LOCAL_SERVER_BASE_URL, OutputFormat,
-        ReviewAction, ReviewAnchor, ReviewPollResponse, ReviewPollStatus, ReviewPrompt,
-        ReviewPromptKind, ReviewQueueArgs, ShellMode, VerifyPageCliOptions, WorkbenchOptions,
-        build_review_queue_prompt, read_verification_report, render_action_preview,
-        render_backlog_preview, render_bare_url_execute, render_bare_url_proposals,
-        render_context_preview, render_coordination_preview, render_parity_report, render_queue,
-        render_review_poll_text, render_scenario_report, render_session_digest,
-        render_stream_preview, render_workbench, select_bare_url_proposal, server_report_lines,
+        PageVerificationReport, ReviewAction, ReviewAnchor, ReviewPollResponse, ReviewPollStatus,
+        ReviewPrompt, ReviewPromptKind, ReviewQueueArgs, ShellMode, VerifyPageCliOptions,
+        WorkbenchOptions, build_review_queue_prompt, check_report_identity,
+        read_verification_report, render_action_preview, render_backlog_preview,
+        render_bare_url_execute, render_bare_url_proposals, render_context_preview,
+        render_coordination_preview, render_parity_report, render_queue, render_review_poll_text,
+        render_scenario_report, render_session_digest, render_stream_preview, render_workbench,
+        select_bare_url_proposal, server_report_lines,
     };
     use clap::Parser;
     use serde_json::json;
@@ -5095,6 +5121,39 @@ mod tests {
         let error = read_verification_report(path.to_str().expect("utf-8 path"))
             .expect_err("non-report JSON should be rejected");
         assert!(error.contains("not a verify-page JSON report"));
+    }
+
+    #[test]
+    fn report_identity_check_matches_page_not_just_revision() {
+        let report = |wiki: &str, title: &str| PageVerificationReport {
+            wiki_id: wiki.to_string(),
+            title: title.to_string(),
+            rev_id: 42,
+            findings: Vec::new(),
+            skipped: Vec::new(),
+            extraction_failures: Vec::new(),
+            book_resolutions: Vec::new(),
+            stats: sp42_core::PageVerificationStats::default(),
+        };
+
+        assert!(check_report_identity(&report("frwiki", "Exemple"), "frwiki", "Exemple").is_ok());
+        // Underscore and space spellings are the same MediaWiki title.
+        assert!(
+            check_report_identity(
+                &report("frwiki", "Grand_Exemple"),
+                "frwiki",
+                "Grand Exemple"
+            )
+            .is_ok()
+        );
+
+        let wrong_wiki = check_report_identity(&report("enwiki", "Exemple"), "frwiki", "Exemple")
+            .expect_err("a report for another wiki must not attach");
+        assert!(wrong_wiki.contains("enwiki:Exemple"));
+        assert!(
+            check_report_identity(&report("frwiki", "Autre"), "frwiki", "Exemple").is_err(),
+            "a report for another page must not attach"
+        );
     }
 
     #[test]

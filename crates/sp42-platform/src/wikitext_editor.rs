@@ -52,6 +52,19 @@ pub struct WikitextNodeLocator {
     pub expected_text: String,
 }
 
+/// The spacing half of `MediaWiki` title normalization, valid on every
+/// wiki: underscores are spaces, and runs of whitespace collapse to one
+/// space. First-letter case is deliberately *not* folded — case rules are
+/// wiki-dependent (Wiktionary titles are case-sensitive), and conflating
+/// two distinct pages would be worse than treating one page as two.
+#[must_use]
+pub fn normalize_title_spacing(raw: &str) -> String {
+    raw.replace('_', " ")
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
 /// The page revision a node-anchored operation grounds on.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WikitextPageRef {

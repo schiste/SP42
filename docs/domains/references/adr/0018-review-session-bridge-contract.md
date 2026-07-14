@@ -46,10 +46,19 @@ contracts (Art. 9.1).
    route accepts a bare title or a pasted wiki URL and unwraps it with the
    existing `parse_page_target` (same as verify-page), so every URL spelling
    of a page collapses to one session — the analog of lavish-axi's
-   canonical-path key, with MediaWiki title normalization playing the role of
-   `realpath`. The store key is `wiki_id ␟ title` (unit-separator joined, so
-   the pair is unambiguous). The revision is session *state* (pinned at open,
-   re-pinned on resume), not identity.
+   canonical-path key. The store key is `wiki_id ␟ title` (unit-separator
+   joined, so the pair is unambiguous), and `canonical_key` applies the
+   wiki-independent half of MediaWiki title normalization to the title
+   component — underscores are spaces, whitespace runs collapse — so bare
+   titles, URL spellings, and direct API callers all key one session.
+   First-letter case is deliberately *not* folded: case rules are
+   wiki-dependent (Wiktionary titles are case-sensitive), so folding could
+   merge two genuinely distinct pages; the residual cost is that a
+   lowercase-typed title opens a separate session on case-insensitive
+   wikis. Full API-side normalization (case, namespace aliases) would need
+   a wiki round-trip per request and is out of scope for the dev bridge.
+   The revision is session *state* (pinned at open, re-pinned on resume),
+   not identity.
 
 3. **Server store: `AppState.review_sessions`, in-memory, with a per-session
    `tokio::sync::Notify`.** Each entry pairs the pure `ReviewSession` with a

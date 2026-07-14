@@ -203,4 +203,5 @@ pub use wikitext_editor::{
     ScriptedEditorInvocation, ScriptedWikitextEditor, ScriptedWikitextNode, WikitextEditOutcome,
     WikitextEditRefusal, WikitextEditor, WikitextEditorError, WikitextNodeDescriptor,
     WikitextNodeKind, WikitextNodeLocator, WikitextPageRef, normalize_anchor_text,
+    normalize_title_spacing,
 };

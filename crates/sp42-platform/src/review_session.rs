@@ -202,10 +202,19 @@ impl ReviewSession {
     }
 
     /// Canonical store key for a target. The pair is the identity — the
-    /// analog of the ported loop's canonical-file-path session key.
+    /// analog of the ported loop's canonical-file-path session key. The
+    /// title component gets the wiki-independent spacing normalization
+    /// (underscores are spaces, whitespace runs collapse), so every
+    /// spelling of one page keys one session even for callers that bypass
+    /// the CLI's target parsing. First-letter case is not folded — case
+    /// rules are wiki-dependent, and merging two distinct pages would be
+    /// worse than splitting one.
     #[must_use]
     pub fn canonical_key(wiki_id: &str, title: &str) -> String {
-        format!("{wiki_id}\u{1f}{title}")
+        format!(
+            "{wiki_id}\u{1f}{}",
+            crate::wikitext_editor::normalize_title_spacing(title)
+        )
     }
 
     /// Gate a reopen attempt: a session the *operator* ended refuses a plain
@@ -776,6 +785,20 @@ mod tests {
         assert_ne!(
             ReviewSession::canonical_key("a", "b:c"),
             ReviewSession::canonical_key("a:b", "c")
+        );
+    }
+
+    #[test]
+    fn canonical_key_collapses_title_spellings_but_not_case() {
+        // Underscore/space/whitespace spellings of one page → one session.
+        assert_eq!(
+            ReviewSession::canonical_key("frwiki", "Grand_Exemple"),
+            ReviewSession::canonical_key("frwiki", "Grand  Exemple")
+        );
+        // Case rules are wiki-dependent; never merge across case.
+        assert_ne!(
+            ReviewSession::canonical_key("frwiki", "exemple"),
+            ReviewSession::canonical_key("frwiki", "Exemple")
         );
     }
 

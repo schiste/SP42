@@ -233,7 +233,12 @@ fn book_scan_annotation(finding: &sp42_citation::CitationFinding) -> Option<Stri
     if let (Some(scanned), Some(cited)) = (scan.scanned_page, scan.cited_page.as_deref())
         && scanned.to_string() != cited
     {
-        parts.push(crate::copy::book_scan_pages(scanned, cited));
+        // cited_page is verbatim template text — escape it like every other
+        // verbatim field (Codex round 7, PR 154).
+        parts.push(crate::copy::book_scan_pages(
+            scanned,
+            &escape_verbatim(cited),
+        ));
     }
     if let Some(note) = &scan.note {
         parts.push(escape_verbatim(note));
@@ -486,6 +491,11 @@ fn render_disagreement_line(output: &mut String, finding: &sp42_citation::Citati
         output.push_str(archive.as_str());
         output.push_str("])");
     }
+    if let Some(annotation) = book_scan_annotation(finding) {
+        output.push_str(" (");
+        output.push_str(&annotation);
+        output.push(')');
+    }
 
     output.push('\n');
 }
@@ -565,6 +575,11 @@ fn render_unconfirmed_line(output: &mut String, finding: &sp42_citation::Citatio
         output.push_str(" [");
         output.push_str(archive.as_str());
         output.push_str("])");
+    }
+    if let Some(annotation) = book_scan_annotation(finding) {
+        output.push_str(" (");
+        output.push_str(&annotation);
+        output.push(')');
     }
 
     output.push('\n');
@@ -1628,7 +1643,7 @@ mod renderer_tests {
             note: Some("cited page had no match; whole-book search".to_string()),
         });
         let out = render_ga_appendix(&report, 0, "0.1.0");
-        assert!(out.contains("located on scanned page 32; the citation names p. 42"));
+        assert!(out.contains("located on scanned page 32; the citation names p. <nowiki>42</nowiki>"));
         assert!(out.contains("whole-book search"));
     }
 
@@ -1654,6 +1669,43 @@ mod renderer_tests {
             .find(crate::copy::BUCKET_BOOKS_CONSULTED)
             .expect("books section");
         assert!(out[books_idx..].contains("an unnamed ref (block 6)"));
+    }
+
+    #[test]
+    fn book_scan_annotation_escapes_pages_and_reaches_disagreements() {
+        // Codex round 7 (PR 154): cited_page is verbatim template text and
+        // must be escaped; disagreement findings carry the annotation too.
+        let mut report = fixtures::full_report();
+        let disagreement_idx = report
+            .findings
+            .iter()
+            .position(|f| {
+                matches!(
+                    f.verdict,
+                    sp42_citation::CitationVerdict::Judged(
+                        sp42_citation::SupportLevel::NotSupported
+                    )
+                )
+            })
+            .expect("a disagreement finding");
+        report.findings[disagreement_idx].book_scan = Some(sp42_citation::BookScanProvenance {
+            ocaid: "item0002".to_string(),
+            scanned_page: Some(7),
+            cited_page: Some("42</nowiki>{{evil}}".to_string()),
+            note: Some("searched, no matching passage".to_string()),
+        });
+        let out = render_ga_appendix(&report, 0, "0.1.0");
+        assert!(
+            out.contains("searched, no matching passage"),
+            "note on a disagreement line"
+        );
+        assert!(!out.contains("42</nowiki>{{evil}}"), "hostile page escaped");
+        assert!(out.contains("42&lt;/nowiki&gt;"), "escaped form present");
+        assert_eq!(
+            out.matches("<nowiki>").count(),
+            out.matches("</nowiki>").count(),
+            "wrappers balanced"
+        );
     }
 
     #[test]

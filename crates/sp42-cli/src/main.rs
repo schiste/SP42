@@ -28,7 +28,7 @@ use sp42_patrol::{
     build_shell_state_model, render_patrol_scenario_markdown, render_patrol_scenario_text,
     render_shell_state_markdown, render_shell_state_text,
 };
-use sp42_types::{HttpMethod, HttpRequest, HttpResponse, ModelRef};
+use sp42_types::{Clock, HttpMethod, HttpRequest, HttpResponse, ModelRef};
 use std::collections::BTreeMap;
 
 const LOCAL_SERVER_BASE_URL: &str = "http://127.0.0.1:8788";
@@ -39,6 +39,29 @@ enum OutputFormat {
     Text,
     Json,
     Markdown,
+}
+
+/// Output formats for the page-report commands (`verify-page`,
+/// `render-report`) only. Command-local on purpose: the shared
+/// [`OutputFormat`] is flattened into commands that cannot produce a GA
+/// appendix and must not advertise it (PRD-0016).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+#[value(rename_all = "lowercase")]
+enum PageReportFormat {
+    Text,
+    Json,
+    Markdown,
+    /// GA evidence appendix wikitext (PRD-0016).
+    #[value(name = "ga-appendix")]
+    GaAppendix,
+}
+
+/// Shared `--format` flag for the page-report commands.
+#[derive(Debug, Args)]
+struct PageReportFormatArg {
+    /// Output format.
+    #[arg(long, value_enum, default_value = "text")]
+    format: PageReportFormat,
 }
 
 /// Which bare-URL flag-mode was selected (PRD-0008 CLI surface).
@@ -229,6 +252,9 @@ enum Command {
     Verify(VerifyArgs),
     /// Verify every URL-bearing citation on a revision via the bridge (PRD-0001).
     VerifyPage(VerifyPageArgs),
+    /// Render a saved page-verification report (`verify-page --format json`
+    /// output) with no bridge, session, or network (PRD-0016).
+    RenderReport(RenderReportArgs),
     /// Report whether a quote locates in a source body read from STDIN (offline, SP42#25).
     LocateProbe(LocateProbeArgs),
     /// Verify a JSONL batch (one case per line, STDIN or --file), one result per line.
@@ -332,7 +358,16 @@ struct VerifyPageArgs {
     #[arg(long, default_value = LOCAL_SERVER_BASE_URL)]
     bridge_base_url: String,
     #[command(flatten)]
-    fmt: FormatArg,
+    fmt: PageReportFormatArg,
+}
+
+/// `render-report`: pure local transform of a saved report file.
+#[derive(Debug, Args)]
+struct RenderReportArgs {
+    /// Path to a saved report JSON (the exact `verify-page --format json` output).
+    file: std::path::PathBuf,
+    #[command(flatten)]
+    fmt: PageReportFormatArg,
 }
 
 #[derive(Debug, Args)]
@@ -692,6 +727,7 @@ fn dispatch(command: Command) -> Result<String, String> {
             let bridge_base_url = args.bridge_base_url.clone();
             render_verify_page(&VerifyPageCliOptions::from(args), &bridge_base_url, format)
         }
+        Command::RenderReport(args) => run_render_report(&args.file, args.fmt.format),
         Command::LocateProbe(args) => {
             // Offline locate probe: read a source body from STDIN, report whether the quote
             // locates. No model, no fetch — the deterministic locate-replay tool (SP42#25).
@@ -2959,7 +2995,7 @@ async fn fetch_bare_url_proposals(
 fn render_verify_page(
     options: &VerifyPageCliOptions,
     bridge_base_url: &str,
-    format: OutputFormat,
+    format: PageReportFormat,
 ) -> Result<String, String> {
     // `reqwest` needs a Tokio reactor; drive the bridge calls on a real runtime
     // (mirrors `run_verify`), not `futures::executor::block_on`.
@@ -2967,14 +3003,41 @@ fn render_verify_page(
         .map_err(|error| format!("failed to start async runtime: {error}"))?;
     let report = runtime.block_on(fetch_page_report_via_bridge(bridge_base_url, options))?;
     match format {
-        OutputFormat::Json => {
+        PageReportFormat::Json => {
             serde_json::to_string_pretty(&report).map_err(|error| error.to_string())
         }
         // The shared renderer already emits a full markdown document (`# Page citation
         // report`), so it is not wrapped in render_markdown_section.
-        OutputFormat::Markdown => Ok(render_page_verification_markdown(&report)),
-        OutputFormat::Text => Ok(render_page_verification_text(&report)),
+        PageReportFormat::Markdown => Ok(render_page_verification_markdown(&report)),
+        PageReportFormat::Text => Ok(render_page_verification_text(&report)),
+        PageReportFormat::GaAppendix => Ok(sp42_assessment::render_ga_appendix(
+            &report,
+            SystemClock.now_ms(),
+            env!("CARGO_PKG_VERSION"),
+        )),
     }
+}
+
+/// Render a saved `PageVerificationReport` from disk. The replay-friendly
+/// core surface of PRD-0016: no bridge bootstrap, no session, no network —
+/// a stored report renders identically anywhere.
+fn run_render_report(path: &std::path::Path, format: PageReportFormat) -> Result<String, String> {
+    let raw = std::fs::read_to_string(path)
+        .map_err(|error| format!("could not read report file {}: {error}", path.display()))?;
+    let report: PageVerificationReport = serde_json::from_str(&raw)
+        .map_err(|error| format!("{} is not a saved page report: {error}", path.display()))?;
+    Ok(match format {
+        PageReportFormat::Json => {
+            serde_json::to_string_pretty(&report).map_err(|error| error.to_string())?
+        }
+        PageReportFormat::Markdown => render_page_verification_markdown(&report),
+        PageReportFormat::Text => render_page_verification_text(&report),
+        PageReportFormat::GaAppendix => sp42_assessment::render_ga_appendix(
+            &report,
+            SystemClock.now_ms(),
+            env!("CARGO_PKG_VERSION"),
+        ),
+    })
 }
 
 /// Verify every citation on a page through the bridge and return the report. The
@@ -3468,12 +3531,12 @@ mod tests {
 
     use super::{
         ActionKind, BareUrlAction, BareUrlCliMode, BareUrlCliOptions, BareUrlExecuteReport, Cli,
-        CliOptions, Command, ContextPreviewOptions, LOCAL_SERVER_BASE_URL, OutputFormat, ShellMode,
-        VerifyPageCliOptions, WorkbenchOptions, render_action_preview, render_backlog_preview,
-        render_bare_url_execute, render_bare_url_proposals, render_context_preview,
-        render_coordination_preview, render_parity_report, render_queue, render_scenario_report,
-        render_session_digest, render_stream_preview, render_workbench, select_bare_url_proposal,
-        server_report_lines,
+        CliOptions, Command, ContextPreviewOptions, LOCAL_SERVER_BASE_URL, OutputFormat,
+        PageReportFormat, ShellMode, VerifyPageCliOptions, WorkbenchOptions, render_action_preview,
+        render_backlog_preview, render_bare_url_execute, render_bare_url_proposals,
+        render_context_preview, render_coordination_preview, render_parity_report, render_queue,
+        render_scenario_report, render_session_digest, render_stream_preview, render_workbench,
+        run_render_report, select_bare_url_proposal, server_report_lines,
     };
     use clap::Parser;
     use serde_json::json;
@@ -3624,6 +3687,98 @@ mod tests {
     #[test]
     fn verify_page_requires_title() {
         assert!(command_from(&["verify-page", "--wiki", "enwiki"]).is_err());
+    }
+
+    #[test]
+    fn verify_page_accepts_ga_appendix_format() {
+        // Parse-level check only: the flag value is accepted and maps to the enum.
+        let cli = Cli::try_parse_from([
+            "sp42-cli",
+            "verify-page",
+            "--title",
+            "X",
+            "--format",
+            "ga-appendix",
+        ])
+        .expect("ga-appendix parses");
+        let Command::VerifyPage(args) = cli.command else {
+            panic!("expected verify-page");
+        };
+        assert_eq!(args.fmt.format, PageReportFormat::GaAppendix);
+    }
+
+    #[test]
+    fn ga_appendix_is_rejected_on_commands_that_cannot_produce_it() {
+        for argv in [
+            vec![
+                "sp42-cli",
+                "verify",
+                "--claim",
+                "c",
+                "--source-url",
+                "https://x",
+                "--format",
+                "ga-appendix",
+            ],
+            vec![
+                "sp42-cli",
+                "bare-url",
+                "preview",
+                "--title",
+                "X",
+                "--format",
+                "ga-appendix",
+            ],
+            vec!["sp42-cli", "preview", "--format", "ga-appendix"],
+        ] {
+            assert!(
+                Cli::try_parse_from(argv.clone()).is_err(),
+                "{argv:?} must reject ga-appendix"
+            );
+        }
+    }
+
+    #[test]
+    fn render_report_renders_a_saved_report_without_any_server() {
+        // Minimal saved report: what verify-page --format json emits.
+        let report = serde_json::json!({
+            "wiki_id": "testwiki",
+            "rev_id": 12345,
+            "title": "Fixture",
+            "findings": [],
+            "skipped": [],
+            "extraction_failures": [],
+            "stats": {
+                "refs_seen": 0, "use_sites_verified": 0, "skipped": 0,
+                "extraction_failures": 0, "supported": 0, "partial": 0,
+                "not_supported": 0, "source_unavailable": 0,
+                "source_unavailable_unreachable": 0, "source_unavailable_unusable": 0
+            }
+        });
+        let dir = std::env::temp_dir().join("sp42-cli-render-report-test");
+        std::fs::create_dir_all(&dir).expect("tmp dir");
+        let path = dir.join("report.json");
+        std::fs::write(&path, report.to_string()).expect("write fixture");
+
+        let out = run_render_report(&path, PageReportFormat::GaAppendix).expect("renders");
+        assert!(out.contains("Criterion 2"));
+        assert!(out.contains("Fixture"));
+
+        // Determinism through the CLI path is covered by the renderer's own
+        // pinned-timestamp test; here assert the ga-appendix path threads a real
+        // clock without panicking and json round-trips.
+        let json_out = run_render_report(&path, PageReportFormat::Json).expect("renders json");
+        assert!(json_out.contains("\"rev_id\": 12345"));
+    }
+
+    #[test]
+    fn render_report_reports_a_readable_error_for_a_bad_file() {
+        let err = run_render_report(
+            std::path::Path::new("/nonexistent/report.json"),
+            PageReportFormat::Text,
+        )
+        .expect_err("missing file errors");
+        assert!(err.contains("/nonexistent/report.json"));
     }
 
     #[test]

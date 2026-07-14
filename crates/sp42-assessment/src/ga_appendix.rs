@@ -241,7 +241,7 @@ fn book_scan_annotation(finding: &sp42_citation::CitationFinding) -> Option<Stri
         ));
     }
     if let Some(note) = &scan.note {
-        parts.push(escape_verbatim(note));
+        parts.push(escape_verbatim(&crate::copy::neutralize_tool_wording(note)));
     }
     if parts.is_empty() {
         None
@@ -656,7 +656,7 @@ fn sanitize_reason(reason: &str, block_ordinal: usize) -> String {
     }
 
     result.push_str(remaining);
-    result
+    crate::copy::neutralize_tool_wording(&result)
 }
 
 #[cfg(test)]
@@ -1574,7 +1574,8 @@ mod renderer_tests {
             .extraction_failures
             .push(sp42_citation::BlockFailure {
                 block_ordinal: 7,
-                reason: "verify went wrong for cite_ref-64: connect timeout".to_string(),
+                reason: "verify failed for cite_ref-64: transport failed: connect timeout"
+                    .to_string(),
             });
         // (3) lookup-not-completed path exercised so the pass/fail word scan
         // covers ALL copy branches (the word "failure" slipped through when
@@ -1604,8 +1605,8 @@ mod renderer_tests {
         let out = render_ga_appendix(&report, 0, "0.1.0");
         assert!(out.contains("an unnamed ref (block 4)"), "skip label");
         assert!(
-            out.contains("an unnamed ref (block 7): connect timeout"),
-            "punctuated token"
+            out.contains("an unnamed ref (block 7): transport did not complete: connect timeout"),
+            "punctuated token, neutralized wording"
         );
         assert!(!out.contains("ref #1: connect"), "no fabricated numbering");
         // The full-output word scan, over every copy branch this render hits.
@@ -1643,7 +1644,9 @@ mod renderer_tests {
             note: Some("cited page had no match; whole-book search".to_string()),
         });
         let out = render_ga_appendix(&report, 0, "0.1.0");
-        assert!(out.contains("located on scanned page 32; the citation names p. <nowiki>42</nowiki>"));
+        assert!(
+            out.contains("located on scanned page 32; the citation names p. <nowiki>42</nowiki>")
+        );
         assert!(out.contains("whole-book search"));
     }
 

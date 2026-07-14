@@ -135,6 +135,41 @@ pub fn book_scan_pages(scanned: u32, cited: &str) -> String {
     format!("the passage was located on scanned page {scanned}; the citation names p. {cited}")
 }
 
+/// Neutralize verdict-sounding tool wording in contract-authored strings
+/// (failure reasons, scan notes) before they reach the appendix: the
+/// no-pass/fail invariant binds the whole output, and these strings are
+/// tool messages, not article content — the copy module is their sanctioned
+/// rewrite seam (PRD-0016; Codex round 8, PR 154).
+#[must_use]
+pub fn neutralize_tool_wording(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    for (i, word) in text
+        .split_inclusive(|c: char| !c.is_ascii_alphabetic())
+        .enumerate()
+    {
+        let _ = i;
+        let (core, sep) = match word.char_indices().next_back() {
+            Some((idx, c)) if !c.is_ascii_alphabetic() => (&word[..idx], &word[idx..]),
+            _ => (word, ""),
+        };
+        let replacement = match core.to_ascii_lowercase().as_str() {
+            "failed" => Some("did not complete"),
+            "failure" | "failures" => Some("problem"),
+            "fails" | "fail" => Some("does not complete"),
+            "passed" | "passes" | "pass" => Some("completed"),
+            _ => None,
+        };
+        match replacement {
+            Some(neutral) => {
+                out.push_str(neutral);
+                out.push_str(sep);
+            }
+            None => out.push_str(word),
+        }
+    }
+    out
+}
+
 /// Reader-facing label for one validated book identifier.
 #[must_use]
 pub fn book_identifier(identifier: &sp42_citation::BookIdentifier) -> String {

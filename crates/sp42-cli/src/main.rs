@@ -12,13 +12,13 @@ use sp42_core::{
     CitationFinding, CitationVerificationRequest, CitoidMetadata, ClaimContext,
     DevAuthBootstrapRequest, DevAuthSessionStatus, FetchedSource, GroundingStatus,
     PageVerificationReport, PageVerificationRequest, QueuedEdit, ReviewAckResponse, ReviewAnchor,
-    ReviewEndRequest, ReviewOpenRequest, ReviewOpenResponse, ReviewPollRequest, ReviewPollResponse,
-    ReviewPollStatus, ReviewPrompt, ReviewPromptKind, ReviewQueueRequest, ReviewQueueResponse,
-    ReviewFindingsRequest, ReviewFindingsResponse, ReviewReplyRequest, ReviewSessionSnapshot,
-    ReviewSessionsResponse, review_finding_markers,
-    SessionActionExecutionRequest, SessionActionExecutionResponse, SessionActionKind, SystemClock,
-    VerificationOutcome, VerifyOptions as CoreVerifyOptions, build_dev_auth_bootstrap_request,
-    locate_quote, locate_quote_fuzzy, parse_dev_auth_status, verify_citation_use_site,
+    ReviewEndRequest, ReviewFindingsRequest, ReviewFindingsResponse, ReviewOpenRequest,
+    ReviewOpenResponse, ReviewPollRequest, ReviewPollResponse, ReviewPollStatus, ReviewPrompt,
+    ReviewPromptKind, ReviewQueueRequest, ReviewQueueResponse, ReviewReplyRequest,
+    ReviewSessionSnapshot, ReviewSessionsResponse, SessionActionExecutionRequest,
+    SessionActionExecutionResponse, SessionActionKind, SystemClock, VerificationOutcome,
+    VerifyOptions as CoreVerifyOptions, build_dev_auth_bootstrap_request, locate_quote,
+    locate_quote_fuzzy, parse_dev_auth_status, review_finding_markers, verify_citation_use_site,
 };
 use sp42_devtools::{
     DEV_PREVIEW_SAMPLE_EVENTS, DEV_PREVIEW_WIKI_ID, DevContextOptions, DevWorkbenchOptions,
@@ -1073,6 +1073,7 @@ fn prefetched_from_body(text: String) -> FetchedSource {
         status: 200,
         content_type: "text/plain".to_string(),
         raw_html: None,
+        book_snippet: false,
     }
 }
 
@@ -1743,6 +1744,7 @@ mod verify_tests {
             preceding_context: Vec::new(),
             archive_of: None,
             is_bare_url_ref: false,
+            book_scan: None,
             schema_version: 1,
         }
     }
@@ -4050,11 +4052,10 @@ mod tests {
         ReviewAction, ReviewAnchor, ReviewPollResponse, ReviewPollStatus, ReviewPrompt,
         ReviewPromptKind, ReviewQueueArgs, ShellMode, VerifyPageCliOptions, WorkbenchOptions,
         build_review_queue_prompt, read_verification_report, render_action_preview,
-        render_backlog_preview,
-        render_bare_url_execute, render_bare_url_proposals, render_context_preview,
-        render_coordination_preview, render_parity_report, render_queue, render_review_poll_text,
-        render_scenario_report, render_session_digest, render_stream_preview, render_workbench,
-        select_bare_url_proposal, server_report_lines,
+        render_backlog_preview, render_bare_url_execute, render_bare_url_proposals,
+        render_context_preview, render_coordination_preview, render_parity_report, render_queue,
+        render_review_poll_text, render_scenario_report, render_session_digest,
+        render_stream_preview, render_workbench, select_bare_url_proposal, server_report_lines,
     };
     use clap::Parser;
     use serde_json::json;
@@ -5085,10 +5086,8 @@ mod tests {
 
     #[test]
     fn read_verification_report_rejects_non_report_json() {
-        let dir = std::env::temp_dir().join(format!(
-            "sp42-cli-review-findings-{}",
-            std::process::id()
-        ));
+        let dir =
+            std::env::temp_dir().join(format!("sp42-cli-review-findings-{}", std::process::id()));
         std::fs::create_dir_all(&dir).expect("temp dir should create");
         let path = dir.join("not-a-report.json");
         std::fs::write(&path, "{\"outcome\": true}").expect("temp file should write");

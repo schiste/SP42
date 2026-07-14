@@ -808,6 +808,63 @@ mod tests {
     }
 
     #[test]
+    fn patrol_and_rollback_target_testwikidatawiki_through_the_generic_action_api() {
+        // The PRD-0011 MVP write gate: reviewer actions on a Wikidata change
+        // go through the generic Action API against the change's own wiki
+        // (test.wikidata.org), with no entity-specific machinery.
+        let mut config = fixture_wiki_config();
+        config.wiki_id = "testwikidatawiki".to_string();
+        config.api_url = "https://test.wikidata.org/w/api.php"
+            .parse()
+            .expect("valid url");
+
+        let patrol = build_patrol_request(
+            &config,
+            &PatrolRequest {
+                rev_id: 4_242,
+                token: "patrol-token".to_string(),
+            },
+        )
+        .expect("patrol request should build");
+        assert_eq!(
+            patrol.url.host_str(),
+            Some("test.wikidata.org"),
+            "the action targets the change's own wiki"
+        );
+        let body = String::from_utf8(patrol.body).expect("body should be utf-8");
+        assert!(body.contains("action=patrol"));
+        assert!(body.contains("revid=4242"));
+
+        let client = StubHttpClient::new([Ok(HttpResponse {
+            status: 200,
+            headers: BTreeMap::new(),
+            body: br#"{"patrol":true}"#.to_vec(),
+        })]);
+        let response = block_on(execute_patrol(
+            &client,
+            &config,
+            &PatrolRequest {
+                rev_id: 4_242,
+                token: "patrol-token".to_string(),
+            },
+        ))
+        .expect("patrol execution should succeed");
+        assert_eq!(response.status, 200);
+
+        let rollback = build_rollback_request(
+            &config,
+            &RollbackRequest {
+                title: "Q42".to_string(),
+                user: "ExampleVandal".to_string(),
+                token: "rollback-token".to_string(),
+                summary: None,
+            },
+        )
+        .expect("rollback request should build");
+        assert_eq!(rollback.url.host_str(), Some("test.wikidata.org"));
+    }
+
+    #[test]
     fn executes_patrol_through_http_trait() {
         let config = fixture_wiki_config();
         let client = StubHttpClient::new([Ok(HttpResponse {

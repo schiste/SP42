@@ -53,6 +53,8 @@ pub const OPERATOR_REPORT_PATH: &str = "/operator/report";
 pub const OPERATOR_LIVE_PATTERN: &str = "/operator/live/{wiki_id}";
 pub const OPERATOR_ARTICLE_PATTERN: &str = "/operator/article/{wiki_id}";
 pub const OPERATOR_DIFF_PATTERN: &str = "/operator/diff/{wiki_id}/{rev_id}/{old_rev_id}";
+pub const OPERATOR_CONTENT_DIFF_PATTERN: &str =
+    "/operator/content-diff/{wiki_id}/{rev_id}/{old_rev_id}";
 pub const OPERATOR_MEDIA_DIFF_PATTERN: &str =
     "/operator/media-diff/{wiki_id}/{rev_id}/{old_rev_id}";
 pub const OPERATOR_RENDERED_HUNK_PATTERN: &str =
@@ -144,6 +146,11 @@ pub fn operator_article_path(wiki_id: &str) -> String {
 #[must_use]
 pub fn operator_diff_path(wiki_id: &str, rev_id: u64, old_rev_id: u64) -> String {
     format!("/operator/diff/{wiki_id}/{rev_id}/{old_rev_id}")
+}
+
+#[must_use]
+pub fn operator_content_diff_path(wiki_id: &str, rev_id: u64, old_rev_id: u64) -> String {
+    format!("/operator/content-diff/{wiki_id}/{rev_id}/{old_rev_id}")
 }
 
 #[must_use]

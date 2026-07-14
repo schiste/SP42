@@ -382,25 +382,6 @@ async fn recv_coordination_message(
     }
 }
 
-async fn recv_binary_frame(socket: &mut TestWebSocket) -> Vec<u8> {
-    loop {
-        let frame = socket
-            .next()
-            .await
-            .expect("websocket stream should stay open")
-            .expect("websocket frame should be readable");
-
-        match frame {
-            WebSocketMessage::Binary(bytes) => return bytes.to_vec(),
-            WebSocketMessage::Text(text) => return text.as_str().as_bytes().to_vec(),
-            WebSocketMessage::Ping(_) | WebSocketMessage::Pong(_) | WebSocketMessage::Frame(_) => {}
-            WebSocketMessage::Close(frame) => {
-                panic!("websocket closed unexpectedly: {frame:?}");
-            }
-        }
-    }
-}
-
 async fn expect_no_coordination_message(socket: &mut TestWebSocket) {
     let no_message =
         tokio::time::timeout(std::time::Duration::from_millis(75), socket.next()).await;
@@ -2734,8 +2715,14 @@ async fn invalid_coordination_payload_is_counted_without_mutating_state() {
         .send(WebSocketMessage::Binary(b"not-msgpack".to_vec().into()))
         .await
         .expect("invalid binary payload should send");
-    let echoed = recv_binary_frame(&mut bob).await;
-    assert_eq!(echoed, b"not-msgpack".to_vec());
+    // Fail-closed (SP42#146): the undecodable payload is dropped, never fanned out.
+    // Bob must not receive it — an undecodable payload bypasses the authenticated
+    // actor-rewrite, so relaying it verbatim would be a spoofing path.
+    let no_relay = tokio::time::timeout(std::time::Duration::from_millis(75), bob.next()).await;
+    assert!(
+        no_relay.is_err(),
+        "undecodable coordination payload must not be relayed to peers"
+    );
 
     let inspection = fetch_room_inspection(&base_url, "frwiki").await;
     assert_eq!(inspection.room.connected_clients, 2);

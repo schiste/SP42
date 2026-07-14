@@ -746,6 +746,7 @@ mod tests {
                 offset: 3,
                 ref_id: "cite_ref-a_1-0".to_string(),
                 sources: Vec::new(),
+                book_sources: Vec::new(),
                 ref_text: "[1]".to_string(),
                 named: false,
                 is_bare_url_ref: false,
@@ -886,7 +887,11 @@ mod tests {
             .attach_findings(42, vec![marker("cite_ref-a_1-0", "unsupported")], 2_000)
             .expect("attach");
         same_rev.resume(42, 3_000);
-        assert_eq!(same_rev.findings.len(), 1, "same-revision resume keeps the overlay");
+        assert_eq!(
+            same_rev.findings.len(),
+            1,
+            "same-revision resume keeps the overlay"
+        );
     }
 
     #[test]

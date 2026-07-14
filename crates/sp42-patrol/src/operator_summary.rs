@@ -275,6 +275,7 @@ mod tests {
     fn builds_operator_summary_from_report() {
         let config = frwiki_config();
         let event = EditEvent {
+            content_model: None,
             wiki_id: "frwiki".to_string(),
             title: "Exemple".to_string(),
             namespace: 0,
@@ -347,6 +348,7 @@ mod tests {
     #[test]
     fn renders_operator_summary_in_text_and_markdown() {
         let event = EditEvent {
+            content_model: None,
             wiki_id: "frwiki".to_string(),
             title: "Exemple".to_string(),
             namespace: 0,

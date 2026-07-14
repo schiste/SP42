@@ -31,6 +31,7 @@ Operational guidance for the model panel is in [model-panel.md](model-panel.md).
 - [ADR-0011 — Article-level citation verification (the review path)](adr/0011-article-citation-verification.md)
 - [ADR-0015 — Rules-compliant read-only fetch edge](adr/0015-rules-compliant-read-only-fetch-edge.md)
 - [ADR-0018 — Review-session bridge contract and store placement](adr/0018-review-session-bridge-contract.md)
+- [ADR-0019 — Cached page re-verification](adr/0019-cached-page-reverification.md) — activate ADR-0009's dormant verdict cache so Re-verify refreshes the whole page to the current revision cheaply
 
 The shared LLM posture these depend on (model panel, measured agreement, keyless
 inference endpoint) is a platform decision,

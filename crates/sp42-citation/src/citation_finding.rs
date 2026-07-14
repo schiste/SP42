@@ -294,6 +294,7 @@ mod tests {
             preceding_context: Vec::new(),
             archive_of: None,
             is_bare_url_ref: false,
+            book_scan: None,
             schema_version: 1,
         }
     }

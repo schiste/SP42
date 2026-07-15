@@ -42,6 +42,7 @@ domains may consume it as the system expands toward sourcing and quality signals
 - [ADR-0021 — Scoring and ranking contract: composite score, policy schema, compile step](adr/0021-scoring-and-ranking-contract.md)
 - [ADR-0022 — Reviewer-action contract: dispositions, execute route, tokens, CSRF/baserevid](adr/0022-reviewer-action-contract.md)
 - [ADR-0023 — Coordination contract: message kinds, relay, room state, wire codec](adr/0023-coordination-contract.md)
+- [ADR-0026 — Diff-render HTML sanitization reliance (documented 10.2 deviation)](adr/0026-diff-render-html-sanitization-reliance.md) (Proposed)
 
 ADR-0006 defines the provider-agnostic LLM interface every capability reaches a
 model through, and ADR-0010 defines the propose/confirm editing pattern domains

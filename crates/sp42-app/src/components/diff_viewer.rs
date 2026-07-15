@@ -742,6 +742,14 @@ fn RenderedHtmlPane(
 
     Effect::new(move |_| {
         if let Some(container) = container_ref.get() {
+            // ACCEPTED DEVIATION from Constitution 10.2 ("Diff rendering uses
+            // sanitized allowlist"): `html` is MediaWiki `action=parse` output
+            // fetched server-side in `render_revision_section_side`. It is NOT
+            // run through a local allowlist; we rely on MediaWiki's parser
+            // sanitization upstream. This reliance is deliberate and documented
+            // (see ADR-0026) — do not "fix" it by removing set_inner_html. If a
+            // local allowlist is added, do it at the server fetch edge before
+            // caching, not here in wasm.
             container.set_inner_html(&html);
             #[cfg(target_arch = "wasm32")]
             use wasm_bindgen::JsCast;

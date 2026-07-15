@@ -452,6 +452,13 @@ fn rendered_hunk_cache_key(
     format!("{wiki_id}:{old_rev_id}:{rev_id}:hunk:{hunk_index}")
 }
 
+// NOTE: the `html` produced here is MediaWiki `action=parse` output and is
+// stored verbatim in the rendered-hunk cache, then `set_inner_html` in the wasm
+// client. Constitution 10.2 calls for a sanitized allowlist on diff rendering;
+// we currently rely on MediaWiki's upstream parser sanitization instead (an
+// accepted, documented deviation — see ADR-0026). This fetch edge is the right
+// place to add a local allowlist (e.g. ammonia) if that reliance is ever
+// revisited, so the cache only ever holds already-sanitized HTML.
 async fn render_revision_section_side(
     client: &reqwest::Client,
     access_token: &str,

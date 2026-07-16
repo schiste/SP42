@@ -22,6 +22,15 @@ pub(crate) type SharedCapabilityCache = Arc<RwLock<Option<CachedCapabilityReport
 pub(crate) type SharedPendingOAuthLogins = Arc<RwLock<HashMap<String, PendingOAuthLogin>>>;
 pub(crate) type SharedIngestionSupervisor =
     Arc<RwLock<HashMap<String, IngestionSupervisorSnapshot>>>;
+// KNOWN LIMITATION — unbounded, insert-only caches. Unlike `sessions`
+// (prune_expired_sessions), coordination rooms (prune_inactive_rooms), and the
+// citation prefetch cache (MAX_PREFETCH_CACHE_BYTES), these two caches are never
+// evicted: they grow one entry per distinct (wiki, revision-pair, hunk) ever
+// viewed, for the process lifetime. This is an accepted deviation for the
+// current restart-often, single-user localhost deployment. Before any
+// long-running or shared deployment, add eviction here — each cached type
+// already carries `fetched_at_ms`, so a TTL sweep mirroring
+// `prune_inactive_rooms` is the cheapest option.
 pub(crate) type SharedRevisionArtifactCache = Arc<RwLock<HashMap<String, CachedRevisionArtifacts>>>;
 pub(crate) type SharedRenderedHunkCache = Arc<RwLock<HashMap<String, CachedRenderedHunkPreview>>>;
 

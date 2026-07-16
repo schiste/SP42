@@ -44,6 +44,34 @@ Public API or contract changes do not automatically require a PRD. Use an ADR
 for structural contract changes; add a PRD only when the contract changes what
 operators, editors, or external integrations can do or rely on.
 
+## Collaboration Direction
+
+SP42 is git-and-PR-based today, but a standing goal is that **non-expert
+collaboration on detection rules, evaluation datasets, and evaluation runs
+should not require git**. This extends the contributor-pool reasoning in
+[ADR-0001 §1](docs/platform/adr/0001-foundational-decisions.md) (a full-Rust
+codebase narrows who can contribute code; non-code contribution must stay
+broad). Authoring a rule, contributing or correcting a labeled case, and running
+an evaluation should eventually be possible in-product, with the repository/CI
+path and the in-product path sharing one enforcement mechanism (see PRD-0007's
+embeddable verdict, callable from both repo/CI and the product).
+
+This is **partially implemented, not merely aspirational**: SP42 already has a
+canonical on-wiki public storage convention for personal and shared documents
+(`sp42-core::wiki_storage` / `public_documents`, surfaced at
+`/operator/storage/*`), and it already models shared **rule sets** and
+**training datasets** as on-wiki document kinds — chosen for auditability,
+transparency, and because data with no reason to be private is easiest to manage
+in the open. A wiki page is a natural zero-git editing surface, so that
+convention is the candidate substrate for the collaboration above. What is still
+missing is the in-product authoring lifecycle, typed/validated training-dataset
+documents, revision-pinned reads, and an authenticated write path (the last
+gated on live Wikimedia integration, Phase 4) — so until those land, all
+contribution remains PR-based as described below, and the reproducibility-pinned
+evaluation corpus stays in a Git host in the interim (PRD-0007). Validity is
+enforced not at wiki edit time (the wiki cannot run SP42's schema validator) but
+by an SP42-side adoption gate that only admits a validated, pinned revision.
+
 ## Pull Request Rules
 
 - External contributors work through forks or branches and open pull requests.

@@ -408,8 +408,27 @@ async fn handle_socket(socket: WebSocket, wiki_id: String, actor: Option<String>
     let mut subscriber = state.coordination.subscribe(&wiki_id).await;
     let (mut sender, mut receiver) = socket.split();
 
+    let log_wiki_id = wiki_id.clone();
     let send_task = tokio::spawn(async move {
-        while let Ok(envelope) = subscriber.recv().await {
+        loop {
+            let envelope = match subscriber.recv().await {
+                Ok(envelope) => envelope,
+                // A slow client that fell more than the room's buffer behind
+                // dropped `skipped` messages. Resync and keep serving live
+                // updates rather than killing the fan-out task (which would
+                // silently stop delivering to an otherwise-open socket).
+                Err(tokio::sync::broadcast::error::RecvError::Lagged(skipped)) => {
+                    warn!(
+                        wiki_id = %log_wiki_id,
+                        client_id,
+                        skipped,
+                        "coordination subscriber lagged; resyncing to live"
+                    );
+                    continue;
+                }
+                // Sender dropped (room evicted): nothing more will arrive.
+                Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+            };
             if envelope.sender_id == client_id {
                 continue;
             }

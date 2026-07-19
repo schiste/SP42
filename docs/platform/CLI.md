@@ -40,27 +40,6 @@ Output goes to **stdout** on success (exit `0`); errors print to **stderr**
 (exit `1`). `--help`/`--version` and `clap` usage errors are handled by `clap`
 (exit `0` for help/version, `2` for a usage error).
 
-### Legacy flag forms (deprecated)
-
-The CLI previously selected capabilities with top-level flags rather than
-subcommands. Those forms still work for now: an old-style invocation is
-translated to the equivalent subcommand and a deprecation warning is printed to
-stderr. **They will be removed**, so migrate scripts to the subcommand form.
-
-| Old | New |
-| --- | --- |
-| `--claim … --source-url …` | `verify --claim … --source-url …` |
-| `--verify-page …` | `verify-page …` |
-| `--locate-probe --quote …` | `locate-probe --quote …` |
-| `--batch` / `--batch-file <path>` | `batch` / `batch --file <path>` |
-| `--bare-url-preview …` / `--bare-url-execute …` | `bare-url preview …` / `bare-url execute …` |
-| `--shell <mode>`, `--<mode>`, `--<mode>-preview` | `preview <mode>` |
-| _(no flags)_ | `preview` |
-
-Note the old alias quirk is preserved during translation: the shorthand
-`--operator-report` maps to `preview server-report`, but `--shell operator-report`
-maps to `preview parity-report`.
-
 ## Global
 
 | Flag | Description |

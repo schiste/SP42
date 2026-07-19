@@ -148,7 +148,7 @@ struct VerifyCliOptions {
     metadata_json: Option<String>,
 }
 
-/// Article-level citation verification (`--verify-page`, PRD-0009 / ADR-0011): verify
+/// Article-level citation verification (`verify-page`, PRD-0009 / ADR-0011): verify
 /// *every* URL-bearing citation on a revision and render the page report. Reuses the
 /// shared `--wiki`/`--title`/`--rev` flags. The route is session+CSRF gated, so the CLI
 /// bootstraps a bridge session (ADR-0002) before the call.
@@ -643,231 +643,8 @@ fn run() -> Result<String, String> {
     } else {
         argv.remove(0)
     };
-    // Backward-compat: a pre-clap flag-form invocation is rewritten to the equivalent
-    // subcommand argv (with a deprecation warning) so existing scripts keep working during
-    // the transition. New-form argv is passed to clap unchanged.
-    let cli = match rewrite_legacy_argv(&argv) {
-        Some(Ok(translated)) => {
-            eprintln!(
-                "warning: this sp42-cli flag form is deprecated and will be removed; it now \
-                 maps to `sp42-cli {}`. See docs/platform/CLI.md.",
-                translated.join(" ")
-            );
-            Cli::parse_from(std::iter::once(program).chain(translated))
-        }
-        // A legacy invocation that was itself invalid (e.g. mutually-exclusive flags); surface
-        // the same usage error the old parser produced rather than silently picking one.
-        Some(Err(message)) => return Err(message),
-        None => Cli::parse_from(std::iter::once(program).chain(argv)),
-    };
+    let cli = Cli::parse_from(std::iter::once(program).chain(argv));
     dispatch(cli.command)
-}
-
-/// Map a pre-clap (flag-only) invocation onto the equivalent subcommand argv, so scripts
-/// written against the old surface keep working for a deprecation period.
-///
-/// Returns `None` when the argv is already in subcommand form — first token is a subcommand
-/// (no leading dash) or `--help`/`--version` — in which case clap parses it unchanged.
-/// Returns `Some(Err(..))` for a legacy invocation that the old parser itself rejected (e.g.
-/// mutually-exclusive flags), so the error is preserved rather than silently resolved.
-fn rewrite_legacy_argv(args: &[String]) -> Option<Result<Vec<String>, String>> {
-    match args.first().map(String::as_str) {
-        Some("-h" | "--help" | "-V" | "--version") => return None,
-        Some(token) if !token.starts_with('-') => return None,
-        _ => {} // empty, or a leading flag → legacy form
-    }
-
-    let present = |flag: &str| args.iter().any(|a| a == flag);
-    let without = |drop: &[&str]| -> Vec<String> {
-        args.iter()
-            .filter(|a| !drop.contains(&a.as_str()))
-            .cloned()
-            .collect()
-    };
-    let prepend = |head: &[&str], tail: Vec<String>| -> Vec<String> {
-        head.iter().map(|s| (*s).to_string()).chain(tail).collect()
-    };
-
-    // Precedence mirrors the pre-clap dispatch order: bare-url, locate, verify, verify-page,
-    // then the preview family.
-    if present("--bare-url-preview") || present("--bare-url-execute") {
-        // The old parser rejected both flags together before dispatch; preserve that so a
-        // typo can't turn a usage error into an apply (`execute`).
-        if present("--bare-url-preview") && present("--bare-url-execute") {
-            return Some(Err(
-                "--bare-url-preview and --bare-url-execute are mutually exclusive".to_string(),
-            ));
-        }
-        let action = if present("--bare-url-execute") {
-            "execute"
-        } else {
-            "preview"
-        };
-        return Some(Ok(prepend(
-            &["bare-url", action],
-            without(&["--bare-url-preview", "--bare-url-execute"]),
-        )));
-    }
-    if present("--locate-probe") {
-        return Some(rewrite_legacy_locate_probe(args));
-    }
-    if present("--batch") || present("--batch-file") {
-        // `--batch` selected batch mode and read STDIN; `--batch-file <p>` set the input path.
-        // The subcommand spells the path `--file`; `--models` passes through unchanged. The old
-        // global `--format <v>` was accepted but ignored by batch (output is always JSONL), so
-        // it is consumed and dropped here rather than forwarded to a subcommand that lacks it.
-        let mut out = vec!["batch".to_string()];
-        let mut iter = args.iter();
-        while let Some(arg) = iter.next() {
-            match arg.as_str() {
-                "--batch" => {}
-                "--batch-file" => {
-                    out.push("--file".to_string());
-                    let Some(path) = iter.next() else {
-                        return Some(Err("--batch-file requires a value".to_string()));
-                    };
-                    out.push(path.clone());
-                }
-                "--format" => {
-                    let Some(value) = iter.next() else {
-                        return Some(Err("--format requires a value".to_string()));
-                    };
-                    if let Err(message) = validate_legacy_output_format(value) {
-                        return Some(Err(message));
-                    }
-                }
-                _ => out.push(arg.clone()),
-            }
-        }
-        return Some(Ok(out));
-    }
-    if present("--claim") || present("--source-url") {
-        return Some(Ok(prepend(&["verify"], args.to_vec())));
-    }
-    if present("--verify-page") {
-        return Some(Ok(prepend(&["verify-page"], without(&["--verify-page"]))));
-    }
-    Some(rewrite_legacy_preview(args))
-}
-
-fn rewrite_legacy_locate_probe(args: &[String]) -> Result<Vec<String>, String> {
-    let mut out = vec!["locate-probe".to_string()];
-    let mut iter = args.iter();
-    while let Some(arg) = iter.next() {
-        match arg.as_str() {
-            "--locate-probe" => {}
-            "--format" => {
-                let value = iter
-                    .next()
-                    .ok_or_else(|| "--format requires a value".to_string())?;
-                validate_legacy_output_format(value)?;
-            }
-            _ => out.push(arg.clone()),
-        }
-    }
-    Ok(out)
-}
-
-fn validate_legacy_output_format(value: &str) -> Result<(), String> {
-    match value {
-        "text" | "json" | "markdown" => Ok(()),
-        _ => Err(format!("unsupported output format: {value}")),
-    }
-}
-
-/// Translate a legacy preview invocation: `--shell <value>` and the shorthand mode flags
-/// (`--parity-report`, `--stream`, …) become the `preview` positional `mode`; all other
-/// flags pass through. Reproduces the old alias quirks and selection precedence, and the old
-/// usage errors for a missing or unrecognized `--shell` value (so a typo fails loudly rather
-/// than silently rendering the default view).
-fn rewrite_legacy_preview(args: &[String]) -> Result<Vec<String>, String> {
-    let mut shell_mode: Option<&'static str> = None;
-    let mut shorthand_mode: Option<&'static str> = None;
-    let mut rest: Vec<String> = Vec::new();
-    let mut iter = args.iter();
-    while let Some(arg) = iter.next() {
-        if arg == "--shell" {
-            let value = iter
-                .next()
-                .ok_or_else(|| "--shell requires a value".to_string())?;
-            shell_mode = Some(
-                legacy_shell_value(value)
-                    .ok_or_else(|| format!("unsupported shell mode: {value}"))?,
-            );
-            continue;
-        }
-        if let Some(canonical) = legacy_preview_flag(arg) {
-            shorthand_mode = Some(match shorthand_mode {
-                Some(existing) if preview_mode_rank(existing) <= preview_mode_rank(canonical) => {
-                    existing
-                }
-                _ => canonical,
-            });
-            continue;
-        }
-        rest.push(arg.clone());
-    }
-
-    let mut out = vec!["preview".to_string()];
-    // `--shell` wins over the shorthand flags (old `selected_shell_mode` behavior).
-    if let Some(mode) = shell_mode.or(shorthand_mode) {
-        out.push(mode.to_string());
-    }
-    out.extend(rest);
-    Ok(out)
-}
-
-/// A legacy `--<mode>` shorthand flag mapped to its `preview` mode value (old
-/// `preview_mode_flag`). Note `--operator-report` mapped to the server report here.
-fn legacy_preview_flag(flag: &str) -> Option<&'static str> {
-    match flag {
-        "--stream-preview" | "--stream" => Some("stream"),
-        "--backlog-preview" | "--backlog" => Some("backlog"),
-        "--coordination-preview" | "--coordination" => Some("coordination"),
-        "--session-digest" => Some("session-digest"),
-        "--scenario-report" | "--patrol-report" => Some("scenario-report"),
-        "--server-report" | "--operator-report" => Some("server-report"),
-        "--parity-report" => Some("parity-report"),
-        "--action-preview" | "--action" => Some("action-preview"),
-        "--action-execute" => Some("action-execute"),
-        _ => None,
-    }
-}
-
-/// A legacy `--shell <value>` mapped to its `preview` mode value (old `parse_shell_mode`).
-/// Note `operator-report` mapped to the parity report here — the opposite of the shorthand.
-fn legacy_shell_value(value: &str) -> Option<&'static str> {
-    match value {
-        "parity-report" | "operator-report" => Some("parity-report"),
-        "stream-preview" | "stream" => Some("stream"),
-        "backlog-preview" | "backlog" => Some("backlog"),
-        "coordination-preview" | "coordination" => Some("coordination"),
-        "session-digest" => Some("session-digest"),
-        "scenario-report" | "patrol-report" => Some("scenario-report"),
-        "server-report" | "live-server-report" => Some("server-report"),
-        "action-preview" | "action" => Some("action-preview"),
-        "action-execute" => Some("action-execute"),
-        _ => None,
-    }
-}
-
-/// Selection precedence among multiple legacy shorthand mode flags (old `selected_shell_mode`).
-/// Lower rank wins.
-fn preview_mode_rank(mode: &str) -> usize {
-    [
-        "parity-report",
-        "stream",
-        "backlog",
-        "coordination",
-        "session-digest",
-        "scenario-report",
-        "server-report",
-        "action-execute",
-        "action-preview",
-    ]
-    .iter()
-    .position(|candidate| *candidate == mode)
-    .unwrap_or(usize::MAX)
 }
 
 /// Route a parsed subcommand to its handler. Each handler returns the text to print on
@@ -4274,6 +4051,30 @@ mod tests {
             Command::Preview(args) => args,
             other => panic!("expected preview, got {other:?}"),
         }
+    }
+
+    /// The pre-clap flag-form shim is gone (SP42#102): old flag-only invocations are
+    /// ordinary clap usage errors, not rewritten subcommands.
+    #[test]
+    fn removed_legacy_flag_forms_fail_through_clap() {
+        assert!(
+            command_from(&[
+                "--verify-page",
+                "--wiki",
+                "enwiki",
+                "--title",
+                "T",
+                "--rev",
+                "1"
+            ])
+            .is_err()
+        );
+        assert!(command_from(&["--locate-probe", "--quote", "q"]).is_err());
+        assert!(command_from(&["--batch"]).is_err());
+        assert!(command_from(&["--batch-file", "cases.jsonl"]).is_err());
+        assert!(command_from(&["--bare-url-preview", "--title", "T", "--rev", "1"]).is_err());
+        assert!(command_from(&["--shell", "stream"]).is_err());
+        assert!(command_from(&["--claim", "c", "--source-url", "https://example.org"]).is_err());
     }
 
     #[test]

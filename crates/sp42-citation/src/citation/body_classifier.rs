@@ -172,12 +172,19 @@ const PAYWALL_VENDOR_HOSTS: &[&str] = &[
 ];
 
 /// Domains whose pages are viewer/embed shells under generic extraction (no
-/// readable article body), as label sequences (excluding the TLD). Matched by
-/// domain-suffix against the host, ignoring the final TLD label — so
-/// `["books", "google"]` matches `books.google.com` and
-/// `www.books.google.de` but NOT `books.google.com.evil.example` or
+/// readable article body), as label sequences (excluding the public suffix).
+/// Matched by domain-suffix against the host, ignoring the public suffix — so
+/// `["books", "google"]` matches `books.google.com`, `books.google.co.uk`,
+/// and `www.books.google.de` but NOT `books.google.com.evil.example` or
 /// `xbooks.google.com`. Extension point: add domains here.
 const SPECIAL_CASE_DOMAINS: &[&[&str]] = &[&["books", "google"]];
+
+/// Second-level labels that, combined with a two-letter ccTLD, form a
+/// multi-label public suffix (`co.uk`, `com.au`, `ac.jp`, …). A conservative
+/// subset of the Public Suffix List: broad enough for the country hosts of
+/// the domains in [`SPECIAL_CASE_DOMAINS`], narrow enough that arbitrary
+/// attacker labels (`books.google.attacker.uk`) never qualify.
+const CC_SECOND_LEVEL_SUFFIXES: &[&str] = &["ac", "co", "com", "edu", "gov", "net", "or", "org"];
 
 /// `true` if the URL's host is (a subdomain of) a special-case viewer-shell
 /// domain, compared by DNS label boundaries rather than raw substring — a
@@ -192,14 +199,22 @@ fn is_special_case_host(source_url: &str) -> bool {
     };
     let host = host.to_ascii_lowercase();
     let labels: Vec<&str> = host.split('.').collect();
-    // Drop the final TLD label; a special-case domain must sit immediately
-    // before it (as the host itself or a subdomain suffix).
-    let Some((_tld, without_tld)) = labels.split_last() else {
+    // Drop the public suffix; a special-case domain must sit immediately
+    // before it (as the host itself or a subdomain suffix). The suffix is the
+    // final TLD label, plus one more label when the pair forms a multi-label
+    // country suffix (`co.uk`, `com.au`, …).
+    let Some((tld, mut without_suffix)) = labels.split_last() else {
         return false;
     };
+    if tld.len() == 2
+        && let Some((second, rest)) = without_suffix.split_last()
+        && CC_SECOND_LEVEL_SUFFIXES.contains(second)
+    {
+        without_suffix = rest;
+    }
     SPECIAL_CASE_DOMAINS
         .iter()
-        .any(|domain| without_tld.ends_with(domain))
+        .any(|domain| without_suffix.ends_with(domain))
 }
 
 /// The first `n` characters of `text` (a char-boundary-safe prefix window).
@@ -547,6 +562,21 @@ mod tests {
     }
 
     #[test]
+    fn google_books_multi_label_tld_host_is_viewer_shell() {
+        // Country hosts under multi-label public suffixes (co.uk, com.au, …)
+        // must match the special-case domain just like single-label TLDs.
+        for url in [
+            "https://books.google.co.uk/books?id=abc123",
+            "https://books.google.com.au/books?id=xyz",
+            "https://books.google.com.br/books?id=q",
+        ] {
+            let r = classify_source_usability(url, "text/html", None, Some("irrelevant body text"));
+            assert!(!r.usable, "{url}");
+            assert_eq!(r.reason, BodyUsabilityReason::ViewerShell, "{url}");
+        }
+    }
+
+    #[test]
     fn host_embedding_the_special_case_text_is_not_matched() {
         // A domain-suffix match, not a raw substring: an attacker-controlled
         // host that merely embeds "books.google." must NOT be misclassified
@@ -554,7 +584,10 @@ mod tests {
         let prose = "The history of the bridge spans more than a century. ".repeat(10);
         for url in [
             "https://books.google.com.attacker.example/x",
+            "https://books.google.co.attacker.example/x",
+            "https://books.google.attacker.uk/x",
             "https://xbooks.google.com/x",
+            "https://evilbooks.google.co.uk/x",
             "https://notbooks.google.com/x",
         ] {
             let r = classify_source_usability(url, "text/html", Some(&prose), Some(&prose));

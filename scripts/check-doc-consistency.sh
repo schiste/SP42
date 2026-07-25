@@ -14,11 +14,11 @@ require_line() {
   fi
 }
 
-require_line "README.md" '- `Phase 1`: offline patrol core and queueing, effectively complete for local/offline development'
-require_line "README.md" '- `Phase 2`: coordination and shared room state, effectively complete for local development'
-require_line "README.md" '- `Phase 3`: browser, CLI, and desktop shells with shared reports, shared shell-state, telemetry, and the interactive patrol rail, effectively complete for local development'
-require_line "README.md" '- `Phase 4`: live Wikimedia integration, pending real credentials and external verification'
-require_line "README.md" '- `Phase 5`: PWA/offline packaging and installability, effectively complete for local development'
+# The README carries only headline status claims and points at docs/STATUS.md
+# for the phase timeline; pin the claims that must stay in lockstep with STATUS.
+require_line "README.md" '- Live Wikimedia integration is still gated by external credentials and verification'
+require_line "README.md" '- Multi-user production auth is not implemented yet'
+require_line "README.md" '[docs/STATUS.md](docs/STATUS.md)'
 
 require_line "docs/STATUS.md" 'The offline patrol engine is now effectively complete for local development:'
 require_line "docs/STATUS.md" 'Coordination and shared runtime state are now effectively complete for local development:'

@@ -9,8 +9,7 @@ Wikidata as a first-class review target. Every shell (browser, CLI, desktop,
 localhost server, MCP agent surface) drives the same core contracts.
 
 Model-assisted output in SP42 is always informational evidence. Judgments,
-edits, and pass/fail decisions stay with the human operator — no autonomous
-edits, ever.
+edits, and pass/fail decisions stay with the human operator.
 
 SP42 is currently alpha software. The repository is public and buildable, but it
 is not yet a production-ready moderation tool.

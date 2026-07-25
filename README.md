@@ -1,68 +1,117 @@
 # SP42
 
-SP42 is a Rust-first Wikipedia patrolling workbench. It combines shared patrol logic, a browser shell, a CLI, a desktop shell, and a localhost bridge so the same review flow can be exercised across targets while the project moves toward live Wikimedia verification.
+SP42 is a Rust-first workbench for Wikimedia maintenance work. It began as a
+recent-changes patrolling tool and has grown into a **platform with domains**:
+shared, domain-agnostic layers (scoring, fetching, inference, live ingestion,
+coordination, wiki registry, UI) with focused capabilities built on top —
+patrolling, LLM-assisted citation verification, article-quality assessment, and
+Wikidata as a first-class review target. Every shell (browser, CLI, desktop,
+localhost server, MCP agent surface) drives the same core contracts.
 
-SP42 is currently alpha software. The repository is public and buildable, but it is not yet a production-ready moderation tool.
+Model-assisted output in SP42 is always informational evidence. Judgments,
+edits, and pass/fail decisions stay with the human operator — no autonomous
+edits, ever.
+
+SP42 is currently alpha software. The repository is public and buildable, but it
+is not yet a production-ready moderation tool.
 
 ## What SP42 Is
 
-- A shared core for patrol queueing, diffing, scoring, context building, and MediaWiki action preparation
-- A browser shell for patrol review, diagnostics, and local single-user Wikimedia testing
-- A CLI and desktop shell that reuse the same core contracts
-- A localhost server for coordination, debug surfaces, and the local development auth bridge
+- A **platform** of shared, domain-agnostic layers: transport contracts, a
+  guarded read-only fetch edge, the scoring engine and policy framework, live
+  EventStreams ingestion, multi-operator coordination, wiki
+  registry/capability profiles, the provider-agnostic LLM interface
+  (ADR-0006), read-only Parsoid page access, shared reporting, and a shared
+  design-system UI layer
+- The **patrolling** domain (shipped): patrol queueing, scoring, diffing,
+  context building, reviewer actions, and multi-operator coordination
+- The **references / citation verification** domain (shipped): LLM-assisted
+  verification of whether a cited source actually supports the claim it backs —
+  article-level `verify-page` reports, bare-URL reference repair, and
+  book-citation grounding through Open Library / Internet Archive
+- The **assessment** domain (first crate landed): grounded evidence for
+  per-article quality assessments, starting with the Good-article review
+  appendix
+- The **Wikidata** capability (in progress): entity read/diff and
+  content-model-routed patrol wired through the platform's `wikibase` module
+- Shells that reuse the same core contracts: a browser/PWA shell, a CLI, a
+  desktop shell, a localhost server (coordination, debug surfaces, and the
+  local dev-auth bridge), and an MCP surface that exposes citation
+  verification to agents
 
 <img width="1920" height="991" alt="Screenshot 2026-07-02 at 09 44 41" src="https://github.com/user-attachments/assets/411286b2-d41c-44c4-a67b-19f93be8eebc" />
 
 
 ## Current Status
 
-- Local and offline development is substantially implemented
+- Patrolling and citation verification are substantially implemented for local development
 - Single-user local Wikimedia token testing is supported through a localhost bridge
-- Live Wikimedia integration is still the main remaining external milestone
+- Live Wikimedia integration is still gated by external credentials and verification
 - Multi-user production auth is not implemented yet
 
-Phase summary:
-
-- `Phase 1`: offline patrol core and queueing, effectively complete for local/offline development
-- `Phase 2`: coordination and shared room state, effectively complete for local development
-- `Phase 3`: browser, CLI, and desktop shells with shared reports, shared shell-state, telemetry, and the interactive patrol rail, effectively complete for local development
-- `Phase 4`: live Wikimedia integration, pending real credentials and external verification
-- `Phase 5`: PWA/offline packaging and installability, effectively complete for local development
-
-Detailed status lives in [docs/STATUS.md](docs/STATUS.md).
+The phase-by-phase implementation timeline lives in
+[docs/STATUS.md](docs/STATUS.md) — the README deliberately does not duplicate
+it.
 
 ## Repository Layout
 
-SP42 is a platform that owns shared abstraction layers, with domains that consume
-them. The crates group along that seam.
+SP42 is a platform that owns shared abstraction layers, with domains that
+consume them and shells on top (`platform ◄─ domains ◄─ shells`, ADR-0013).
+The dependency direction is mechanically enforced by
+[scripts/check-layering.sh](scripts/check-layering.sh) and drawn in
+[docs/platform/architecture.md](docs/platform/architecture.md).
 
 Platform layers (shared, domain-agnostic):
 
 - `crates/sp42-types`: transport contracts and storage/HTTP/clock abstractions
-- `crates/sp42-fetch`: guarded read-only HTTP fetch edge (SSRF-guarded DNS resolver, redirect/size caps, Retry-After retry loop, Wikimedia UA) shared by the CLI and server source fetches
+- `crates/sp42-platform`: reusable mechanisms and contracts — the scoring
+  engine and policy framework, action contracts/executor, wikitext editing,
+  OAuth/dev-auth, and the Wikidata entity read model (`wikibase`)
+- `crates/sp42-fetch`: guarded read-only HTTP fetch edge (SSRF-guarded DNS
+  resolver, redirect/size caps, Retry-After retry loop, Wikimedia UA)
+- `crates/sp42-inference`: provider-agnostic LLM edge — model client, endpoint
+  config, and the multi-model panel (ADR-0006)
+- `crates/sp42-live`: EventStreams ingestion, recentchanges/backlog polling,
+  and live queue filtering
 - `crates/sp42-coordination`: multi-operator collaboration protocol and room state
-- `crates/sp42-wiki`: wiki config parsing, registry/default selection, and capability profiles
+- `crates/sp42-wiki`: wiki config parsing, registry/default selection, and
+  capability profiles
+- `crates/sp42-parsoid`: read-only Parsoid page access — fetch a revision and
+  decompose it into prose-bearing blocks
+- `crates/sp42-reporting`: shared reporting framework and renderers
+- `crates/sp42-ui`: shared Leptos presentation layer — Codex-backed tokens,
+  theming, and typed UI primitives
+
+Domains (capabilities built on the platform):
+
+- `crates/sp42-patrol`: patrolling policy, workflow, and report definitions
+- `crates/sp42-citation`: citation verification and bare-URL repair
+- `crates/sp42-assessment`: Good-article evidence-appendix rendering over
+  verification reports
+- Wikidata has no crate yet; its entity read model lives in `sp42-platform`
+  (see [docs/domains/wikidata/](docs/domains/wikidata/README.md))
+
+Shells (drive the platform and domains):
+
+- `crates/sp42-app`: browser and PWA shell
+- `crates/sp42-cli`: CLI shell
+- `crates/sp42-desktop`: desktop shell
 - `crates/sp42-server`: localhost HTTP/WebSocket server, auth bridge, and routing
 - `crates/sp42-devtools`: deterministic fixtures and demo-surface builders
-- `crates/sp42-core`: shared contracts, runtime primitives, and the scoring engine (also hosts patrolling action/queue logic pending a future split)
+- `crates/sp42-mcp`: agent-facing MCP surface for citation verification
+
+Transitional and tooling:
+
+- `crates/sp42-core`: retiring re-export facade (its code has been extracted
+  into `sp42-platform` and the domain crates)
 - `xtask`: workspace build tasks
-
-Patrolling domain (the shipped review workflow):
-
-- `crates/sp42-live`: EventStreams ingestion, recentchanges/backlog polling, and live queue filtering
-- `crates/sp42-reporting`: patrol scenario, session-digest, and operator-summary reporting
-- `crates/sp42-cli`: CLI shell
-- `crates/sp42-app`: browser and PWA shell
-- `crates/sp42-desktop`: desktop shell
-
-References / citation domain is incoming (no crate yet); see the PRD and ADRs in
-`docs/domains/references/`.
 
 Supporting trees:
 
 - `configs/`: per-wiki and scoring configuration
 - `schemas/`: config schemas
 - `fixtures/`: test fixtures
+- `evals/`: scoring evaluation fixture sets and profiles
 - `docs/`: platform, domain, and project documentation (see [docs/README.md](docs/README.md))
 
 ## Requirements
@@ -189,8 +238,8 @@ Documentation is organized to mirror the platform/domain architecture. Start wit
 the docs map, then drill into a layer or domain:
 
 - [docs/README.md](docs/README.md): documentation map — platform, domains, and project docs
-- [docs/platform/README.md](docs/platform/README.md): platform layers — runtime, desktop, developer surface, design contract, scoring, and ADR-0001–0006
-- [docs/domains/README.md](docs/domains/README.md): domains — patrolling (shipped) and references/citation (incoming)
+- [docs/platform/README.md](docs/platform/README.md): platform layers — runtime, desktop, developer surface, design contract, scoring, and the platform ADRs
+- [docs/domains/README.md](docs/domains/README.md): domains — patrolling and references/citation (shipped), assessment and Wikidata (incoming)
 
 Project and process docs:
 

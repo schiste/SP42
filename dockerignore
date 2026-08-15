@@ -1,0 +1,16 @@
+.git
+.gitignore
+.github
+
+target
+dist
+.sp42-runtime
+
+.env
+.env.*
+
+.vscode
+.idea
+.DS_Store
+
+**/*.log

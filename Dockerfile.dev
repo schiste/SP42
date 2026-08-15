@@ -1,6 +1,7 @@
 # syntax=docker/dockerfile:1.7
 FROM rust:1.96.0-bookworm AS builder
 
+ARG TAURI_CLI_VERSION=2.10.1
 ARG TRUNK_VERSION=0.21.14
 ARG USERNAME=dev
 ARG UID=1000
@@ -24,11 +25,15 @@ RUN apt-get update \
         libwebkit2gtk-4.1-dev \
         libsoup-3.0-dev \
         libjavascriptcoregtk-4.1-dev \
+        libayatana-appindicator3-dev \
+        librsvg2-dev \
+        patchelf \
     && rm -rf /var/lib/apt/lists/*
 
 USER "$USERNAME"
 
 RUN rustup target add wasm32-unknown-unknown \
+    && cargo install tauri-cli --locked --version "${TAURI_CLI_VERSION}" \
     && cargo install trunk --locked --version "${TRUNK_VERSION}" \
     && cargo install --locked \
         cargo-deny \

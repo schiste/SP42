@@ -49,7 +49,7 @@ RUN mkdir -p /var/lib/sp42 \
 
 WORKDIR /var/lib/sp42
 
-ENV SP42_BIND_ADDR=0.0.0.0:8788 \
+ENV SP42_BIND_ADDR=127.0.0.1:8788 \
     SP42_DEPLOYMENT_MODE=local \
     SP42_APP_DIST_DIR=/opt/sp42/dist/sp42-app \
     SP42_WIKI_CONFIG_DIR=/opt/sp42/configs \

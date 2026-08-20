@@ -11,6 +11,10 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 const TRUNK_VERSION: &str = "0.21.14";
+// SHA-256 of trunk-x86_64-unknown-linux-gnu.tar.gz for TRUNK_VERSION, from the
+// upstream release's published .sha256 sidecar file. Update alongside TRUNK_VERSION.
+const TRUNK_TARBALL_SHA256: &str =
+    "f2b4680cd239693a646a2795e4633c625328d7b2a044fbe749fa3a2fe9e7036b";
 
 fn main() {
     println!("cargo:rerun-if-env-changed=SP42_BUNDLE_FRONTEND");
@@ -35,9 +39,28 @@ fn main() {
         let url = format!(
             "https://github.com/trunk-rs/trunk/releases/download/v{TRUNK_VERSION}/trunk-x86_64-unknown-linux-gnu.tar.gz"
         );
+        let tarball = tools_dir.join("trunk.tar.gz");
+        run(
+            "curl",
+            &["-fsSL", "-o", tarball.to_str().expect("utf8 path"), &url],
+            &workspace_root,
+            &[],
+        );
         run(
             "sh",
-            &["-c", &format!("curl -fsSL {url} | tar -xz -C {}", tools_dir.display())],
+            &[
+                "-c",
+                &format!(
+                    "echo '{TRUNK_TARBALL_SHA256}  {}' | sha256sum -c -",
+                    tarball.display()
+                ),
+            ],
+            &workspace_root,
+            &[],
+        );
+        run(
+            "tar",
+            &["-xzf", tarball.to_str().expect("utf8 path"), "-C", tools_dir.to_str().expect("utf8 path")],
             &workspace_root,
             &[],
         );

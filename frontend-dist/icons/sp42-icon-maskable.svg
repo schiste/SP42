@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-labelledby="title desc">
+  <title id="title">SP42 Patrol Workbench Maskable Icon</title>
+  <desc id="desc">Maskable dark SP42 app icon with a centered patrol mark and safe padding.</desc>
+  <defs>
+    <linearGradient id="bg" x1="0" x2="1" y1="0" y2="1">
+      <stop offset="0" stop-color="#08111f"/>
+      <stop offset="1" stop-color="#11192b"/>
+    </linearGradient>
+    <linearGradient id="accent" x1="0" x2="1" y1="0" y2="1">
+      <stop offset="0" stop-color="#8fb7ff"/>
+      <stop offset="1" stop-color="#c5d9ff"/>
+    </linearGradient>
+  </defs>
+  <rect width="512" height="512" rx="128" fill="url(#bg)"/>
+  <circle cx="352" cy="156" r="96" fill="#1b315d" opacity=".8"/>
+  <circle cx="160" cy="160" r="18" fill="#eff4ff" opacity=".16"/>
+  <path d="M112 308C178 248 248 220 388 184" fill="none" stroke="url(#accent)" stroke-width="42" stroke-linecap="round" opacity=".92"/>
+  <path d="M164 308l58 60 138-150" fill="none" stroke="#eff4ff" stroke-width="56" stroke-linecap="round" stroke-linejoin="round"/>
+  <rect x="120" y="356" width="272" height="54" rx="27" fill="#0b1324" opacity=".34"/>
+  <text x="256" y="426" fill="#eff4ff" font-family="ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace" font-size="96" font-weight="700" text-anchor="middle">SP42</text>
+</svg>

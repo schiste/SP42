@@ -6,8 +6,11 @@
 // exists there), so this is how the frontend gets built as part of that single
 // buildpack invocation instead of shipping a prebuilt bundle through git.
 use std::env;
+use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+
+const TRUNK_VERSION: &str = "0.21.14";
 
 fn main() {
     println!("cargo:rerun-if-env-changed=SP42_BUNDLE_FRONTEND");
@@ -24,10 +27,23 @@ fn main() {
 
     run("rustup", &["target", "add", "wasm32-unknown-unknown"], &workspace_root, &[]);
 
-    if Command::new("trunk").arg("--version").output().is_err() {
-        println!("cargo:warning=trunk not found, installing via `cargo install trunk --locked`");
-        run("cargo", &["install", "trunk", "--locked"], &workspace_root, &[]);
+    let tools_dir = workspace_root.join("target").join("tools");
+    let trunk_path = tools_dir.join("trunk");
+    if !trunk_path.is_file() {
+        println!("cargo:warning=trunk not found, downloading prebuilt {TRUNK_VERSION} release binary");
+        std::fs::create_dir_all(&tools_dir).expect("create target/tools dir");
+        let url = format!(
+            "https://github.com/trunk-rs/trunk/releases/download/v{TRUNK_VERSION}/trunk-x86_64-unknown-linux-gnu.tar.gz"
+        );
+        run(
+            "sh",
+            &["-c", &format!("curl -fsSL {url} | tar -xz -C {}", tools_dir.display())],
+            &workspace_root,
+            &[],
+        );
+        assert!(trunk_path.is_file(), "trunk binary missing after download");
     }
+    let path_with_tools = prepend_to_path(&tools_dir);
 
     // Isolate Trunk's internal `cargo build --target wasm32-unknown-unknown` from
     // the outer `cargo build --release` invocation currently running this build
@@ -45,11 +61,21 @@ fn main() {
             "--release",
         ],
         &workspace_root,
-        &[("CARGO_TARGET_DIR", wasm_target_dir.to_str().expect("utf8 path"))],
+        &[
+            ("CARGO_TARGET_DIR", wasm_target_dir.to_str().expect("utf8 path").to_string()),
+            ("PATH", path_with_tools.to_string_lossy().into_owned()),
+        ],
     );
 }
 
-fn run(program: &str, args: &[&str], cwd: &Path, extra_env: &[(&str, &str)]) {
+fn prepend_to_path(dir: &Path) -> OsString {
+    let current = env::var_os("PATH").unwrap_or_default();
+    let mut paths = vec![dir.to_path_buf()];
+    paths.extend(env::split_paths(&current));
+    env::join_paths(paths).expect("build PATH")
+}
+
+fn run(program: &str, args: &[&str], cwd: &Path, extra_env: &[(&str, String)]) {
     println!("cargo:warning=running: {program} {}", args.join(" "));
     let mut command = Command::new(program);
     command.args(args).current_dir(cwd);

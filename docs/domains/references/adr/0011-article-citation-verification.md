@@ -3,6 +3,7 @@
 **Status:** Accepted
 **Date:** 2026-06-25
 **Author:** Luis Villa
+**Summary:** Article-level citation review is a read-only route that extracts an article's citation use-sites and orchestrates per-use-site verification, layering the whole-article path over the single-use-site verdict contract (ADR-0007/0008), one result per use-site in document order.
 
 ADR-0006–0009 settled how SP42 verifies **one** citation use-site (a claim and
 its cited source → a categorical verdict with a grounded passage). ADR-0010

@@ -3,6 +3,7 @@
 **Status:** Accepted
 **Date:** 2026-06-07
 **Author:** Luis Villa
+**Summary:** Citation verification exposes a read-only, versioned request/response contract that returns a `Finding` (never an action) from a (claim, source, revision) request, over a trait-based per-model edge behind the ADR-0006 `ModelClient` boundary.
 
 ## Context
 

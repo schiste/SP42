@@ -3,6 +3,7 @@
 **Status:** Accepted
 **Date:** 2026-06-09
 **Author:** Luis Villa
+**Summary:** Generated content edits follow a two-step propose/confirm pattern: a read-only proposal route computes the change and the operator explicitly confirms before it flows through the standard write path — nothing is written on proposal.
 
 Spawned by PRD-0008 (bare-URL repair). PRD-0008 claimed no ADR number at draft time (its Resolved question 5) because the citation-verification series (ADR-0006–0009) was then unmerged; that series has since merged to main (PR #24), so this ADR takes the next free number, 0010.
 

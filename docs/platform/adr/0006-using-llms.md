@@ -3,6 +3,7 @@
 **Status:** Accepted
 **Date:** 2026-06-08
 **Author:** Luis Villa
+**Summary:** Every LLM capability reaches models through a provider-agnostic `ModelClient` boundary as a multi-model panel whose surfaced answer is the voted result (skeptical tiebreaker); the only quantitative signal is measured panel agreement, never a model-reported confidence, and every invocation is fingerprinted for audit and replay.
 
 ## Context
 

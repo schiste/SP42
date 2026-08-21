@@ -3,6 +3,7 @@
 **Status:** Accepted
 **Date:** 2026-06-07
 **Author:** Luis Villa
+**Summary:** Citation verdicts are a closed two-axis set (availability vs support) with no model-reported confidence, gated by the load-bearing anti-fabrication invariant — no `Supported`/`Partial` without a verbatim, in-session-locatable passage — and are informational, never a Wikimedia action.
 
 ## Context
 

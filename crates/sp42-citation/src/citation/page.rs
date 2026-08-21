@@ -1440,6 +1440,10 @@ mod orchestrator_tests {
             Ok(response(
                 r#"{"server": "ia800300.us.archive.org", "dir": "/12/items/matilda00dahl", "metadata": {"mediatype": "texts"}}"#,
             )),
+            // Every rung of the query ladder comes back empty — only then is
+            // "the scan does not contain this claim" a safe conclusion.
+            Ok(response(r#"{"indexed": true, "matches": []}"#)),
+            Ok(response(r#"{"indexed": true, "matches": []}"#)),
             Ok(response(r#"{"indexed": true, "matches": []}"#)),
         ]);
         // Zero snippets → deterministic not_supported, no model call.

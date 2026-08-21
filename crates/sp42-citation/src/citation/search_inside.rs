@@ -5,8 +5,16 @@
 //! existing verifier can judge: read the item's metadata for its designated
 //! server and directory, query the `BookReader` full-text search, and assemble
 //! the returned **verbatim OCR snippets** (page-numbered) into a body. The
-//! scan's OCR is never downloaded whole — snippet search typically works even
-//! for lending-restricted scans, so grounding needs no borrow.
+//! scan's OCR is never downloaded whole, so grounding needs no borrow.
+//!
+//! **Reach is narrower than originally assumed.** Snippet search was expected
+//! to work for lending-restricted scans too; it does not. The endpoint returns
+//! 403 for print-disabled/lendable items, so only `full access` scans can be
+//! grounded (measured 2026-07-23 across 130 book editions cited by seven
+//! en.wikipedia articles: 11 had an exact groundable scan, every one of them
+//! `lendable`, all 403). That is a reach limit, not a correctness problem — a
+//! 403 is [`BookGroundingPreparation::Unreachable`] and degrades to
+//! `SourceUnavailable`, never to `not_supported`.
 //!
 //! Pure `build_*`/`parse_*` pairs over the injected `HttpClient`, like the
 //! Open Library module ([`crate::citation::openlibrary`]). Outcome semantics
@@ -135,12 +143,27 @@ pub fn build_search_inside_request(
     })
 }
 
+/// The highlight markers the full-text search wraps matched terms in. The
+/// live endpoint emits `<IA_FTS_MATCH>…</IA_FTS_MATCH>` (observed 2026-07-23);
+/// `{{{…}}}` is the historical form. Both are stripped, because a marker left
+/// in the text is markup inside bytes we present as verbatim OCR — it reaches
+/// the verifier prompt, and it breaks quote location (and therefore page
+/// attribution) for any quote spanning a match boundary.
+const HIGHLIGHT_MARKERS: [&str; 4] = ["<IA_FTS_MATCH>", "</IA_FTS_MATCH>", "{{{", "}}}"];
+
+/// Remove every highlight marker form from a snippet.
+fn strip_highlight_markers(text: &str) -> String {
+    HIGHLIGHT_MARKERS
+        .iter()
+        .fold(text.to_string(), |acc, marker| acc.replace(marker, ""))
+}
+
 /// One search-inside match: the verbatim OCR snippet (match markers stripped)
 /// and the scanned page it was found on.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SearchInsideMatch {
-    /// Verbatim OCR snippet text, with the `{{{…}}}` highlight markers
-    /// removed so the text is exactly what the OCR holds (groundable bytes).
+    /// Verbatim OCR snippet text, with the highlight markers removed so the
+    /// text is exactly what the OCR holds (groundable bytes).
     pub text: String,
     /// The scanned page number, when the match carries one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -179,7 +202,7 @@ pub fn parse_search_inside(body: &[u8]) -> Option<SearchInsideResult> {
                         .and_then(Value::as_u64)
                         .and_then(|p| u32::try_from(p).ok());
                     Some(SearchInsideMatch {
-                        text: text.replace("{{{", "").replace("}}}", ""),
+                        text: strip_highlight_markers(text),
                         page,
                     })
                 })
@@ -189,32 +212,84 @@ pub fn parse_search_inside(body: &[u8]) -> Option<SearchInsideResult> {
     Some(SearchInsideResult { indexed, matches })
 }
 
-/// A conservative full-text query from a claim sentence: the distinct longer
-/// words (≥ 5 chars, falling back to ≥ 4, then the trimmed claim), in claim
-/// order, capped at `MAX_QUERY_TERMS`. Deliberately simple — term selection
-/// quality only affects recall, never grounding (the snippet bytes are what
-/// the gate locates quotes in); smarter selection can come later.
-#[must_use]
-pub fn search_query(claim: &str) -> String {
+/// The distinct longer words of a claim (≥ 5 chars, falling back to ≥ 4), in
+/// claim order, capped at `limit`. Empty when the claim holds no word that
+/// long.
+fn claim_terms(claim: &str, limit: usize) -> Vec<&str> {
     let words: Vec<&str> = claim
         .split(|c: char| !c.is_alphanumeric())
         .filter(|w| !w.is_empty())
         .collect();
     for floor in [5, 4] {
-        let mut seen = Vec::new();
+        let mut seen: Vec<&str> = Vec::new();
         for word in &words {
             if word.chars().count() >= floor && !seen.contains(word) {
                 seen.push(word);
-                if seen.len() == MAX_QUERY_TERMS {
+                if seen.len() == limit {
                     break;
                 }
             }
         }
         if !seen.is_empty() {
-            return seen.join(" ");
+            return seen;
         }
     }
-    claim.trim().to_string()
+    Vec::new()
+}
+
+/// A conservative full-text query from a claim sentence: the distinct longer
+/// words in claim order, capped at `MAX_QUERY_TERMS`.
+#[must_use]
+pub fn search_query(claim: &str) -> String {
+    let terms = claim_terms(claim, MAX_QUERY_TERMS);
+    if terms.is_empty() {
+        claim.trim().to_string()
+    } else {
+        terms.join(" ")
+    }
+}
+
+/// Progressively narrower queries, tried in order until one returns matches.
+///
+/// This ladder is a correctness requirement, not a recall optimization. The
+/// full-text endpoint returns zero matches for the **entire** query when any
+/// single term is absent from that item's OCR index. Because an empty result
+/// is what [`BookGroundingPreparation::NoMatches`] reports — and the caller
+/// turns that into `not_supported` (PRD-0009 resolved Q4) — a one-shot query
+/// lets a single unindexed word turn a well-supported claim into a false
+/// accusation against the citation.
+///
+/// Observed live on `onoriginofspeci00darw` (2026-07-23), the 1871 D. Appleton
+/// printing, which spells it *favored*: `natural selection preservation slight`
+/// returns 493 matches, adding `favourable` returns **0**, and `favourable`
+/// alone returns 0 — while `preservation` alone returns 25. Spelling variants,
+/// OCR damage and hyphenation breaks all trigger the same collapse.
+///
+/// Falling back to the few most distinctive terms, and finally to the single
+/// most distinctive one, makes "no matches" mean the scan genuinely lacks the
+/// claim's rarest word.
+#[must_use]
+pub fn search_query_ladder(claim: &str) -> Vec<String> {
+    let terms = claim_terms(claim, MAX_QUERY_TERMS);
+    if terms.is_empty() {
+        return vec![claim.trim().to_string()];
+    }
+
+    let mut rungs: Vec<String> = Vec::new();
+    for width in [MAX_QUERY_TERMS, 3, 1] {
+        // Narrower rungs keep the longest (rarest) terms, in claim order.
+        let mut kept: Vec<&str> = terms.clone();
+        if width < kept.len() {
+            kept.sort_by_key(|term| std::cmp::Reverse(term.chars().count()));
+            kept.truncate(width);
+            kept.sort_by_key(|term| terms.iter().position(|t| t == term));
+        }
+        let query = kept.join(" ");
+        if !rungs.contains(&query) {
+            rungs.push(query);
+        }
+    }
+    rungs
 }
 
 /// A page-anchored deep link into the scan, with the search terms highlighted
@@ -293,6 +368,77 @@ impl BookSnippetBody {
     }
 }
 
+/// What the query ladder ended on: the last response parsed, the query that
+/// produced it, and that response's raw bytes (for the `SourceFetched` hash).
+struct SearchLadderOutcome {
+    result: SearchInsideResult,
+    query: String,
+    response_body: Vec<u8>,
+}
+
+/// Walk [`search_query_ladder`], stopping at the first rung that returns
+/// matches. `Err` carries the [`BookGroundingPreparation`] the caller should
+/// return directly — every failure mode is an outcome, never an error.
+async fn run_search_ladder<C>(
+    client: &C,
+    location: &ItemLocation,
+    ocaid: &str,
+    claim: &str,
+) -> Result<SearchLadderOutcome, BookGroundingPreparation>
+where
+    C: HttpClient + ?Sized,
+{
+    let mut outcome = SearchLadderOutcome {
+        result: SearchInsideResult {
+            indexed: true,
+            matches: Vec::new(),
+        },
+        query: String::new(),
+        response_body: Vec::new(),
+    };
+
+    for rung in search_query_ladder(claim) {
+        outcome.query = rung;
+        let Some(request) = build_search_inside_request(location, ocaid, &outcome.query) else {
+            return Err(BookGroundingPreparation::NoUsableBody {
+                detail: "search server unusable",
+            });
+        };
+        let response = match client.execute(request).await {
+            Ok(response) => response,
+            Err(error) => {
+                return Err(BookGroundingPreparation::Unreachable {
+                    message: error.to_string(),
+                });
+            }
+        };
+        // A 403 here is the lending-restricted case (see the module header):
+        // a failure to read, never a finding about the book.
+        if !(200..300).contains(&response.status) {
+            return Err(BookGroundingPreparation::Unreachable {
+                message: format!("search-inside returned {}", response.status),
+            });
+        }
+        let Some(parsed) = parse_search_inside(&response.body) else {
+            return Err(BookGroundingPreparation::NoUsableBody {
+                detail: "search response unusable",
+            });
+        };
+        if !parsed.indexed {
+            return Err(BookGroundingPreparation::NoUsableBody {
+                detail: "no full-text index",
+            });
+        }
+        outcome.response_body = response.body;
+        outcome.result = parsed;
+        if !outcome.result.matches.is_empty() {
+            break;
+        }
+    }
+
+    Ok(outcome)
+}
+
 /// Prepare the grounding body for one book claim against one scan: metadata →
 /// search-inside → cited-page-first snippet selection. Strictly read-only and
 /// best-effort; every failure maps onto the ADR-0007 outcome split rather
@@ -331,39 +477,23 @@ where
         };
     }
 
-    // 2. Full-text search on the designated server.
-    let query = search_query(claim);
-    let Some(request) = build_search_inside_request(&location, ocaid, &query) else {
-        return BookGroundingPreparation::NoUsableBody {
-            detail: "search server unusable",
-        };
+    // 2. Full-text search on the designated server, narrowing the query until
+    //    something comes back (see `search_query_ladder` for why that is a
+    //    correctness requirement rather than a recall tweak).
+    let search = match run_search_ladder(client, &location, ocaid, claim).await {
+        Ok(search) => search,
+        Err(outcome) => return outcome,
     };
-    let search_response = match client.execute(request).await {
-        Ok(response) => response,
-        Err(error) => {
-            return BookGroundingPreparation::Unreachable {
-                message: error.to_string(),
-            };
-        }
-    };
-    if !(200..300).contains(&search_response.status) {
-        return BookGroundingPreparation::Unreachable {
-            message: format!("search-inside returned {}", search_response.status),
-        };
-    }
-    let Some(result) = parse_search_inside(&search_response.body) else {
-        return BookGroundingPreparation::NoUsableBody {
-            detail: "search response unusable",
-        };
-    };
-    if !result.indexed {
-        return BookGroundingPreparation::NoUsableBody {
-            detail: "no full-text index",
-        };
-    }
+    let SearchLadderOutcome {
+        result,
+        query,
+        response_body,
+    } = search;
     if result.matches.is_empty() {
+        // Every rung came back empty, down to the single most distinctive
+        // term — the scan genuinely lacks the claim's rarest word.
         return BookGroundingPreparation::NoMatches {
-            response_hash: sha256_hex(&search_response.body),
+            response_hash: sha256_hex(&response_body),
             deep_link: scan_deep_link(ocaid, None, &query),
         };
     }
@@ -426,7 +556,7 @@ mod tests {
     use super::{
         BookGroundingPreparation, ItemLocation, build_item_metadata_request,
         build_search_inside_request, extract_ocaid, parse_item_metadata, parse_search_inside,
-        prepare_book_grounding, scan_deep_link, search_query,
+        prepare_book_grounding, scan_deep_link, search_query, search_query_ladder,
     };
     use crate::types::HttpResponse;
     use futures::executor::block_on;
@@ -446,12 +576,14 @@ mod tests {
         "metadata": {"identifier": "matilda00dahl", "mediatype": "texts"}
     }"#;
 
+    // Live marker form (`<IA_FTS_MATCH>`); the historical `{{{…}}}` form is
+    // covered separately in `parse_search_strips_highlight_markers_and_reads_pages`.
     const SEARCH_HITS: &str = r#"{
         "indexed": true,
         "matches": [
-            {"text": "Matilda longed for her parents to be {{{good}}} and {{{loving}}}.",
+            {"text": "Matilda longed for her parents to be <IA_FTS_MATCH>good</IA_FTS_MATCH> and <IA_FTS_MATCH>loving</IA_FTS_MATCH>.",
              "par": [{"page": 42, "boxes": []}]},
-            {"text": "a {{{good}}} and {{{loving}}} child somewhere else in the book",
+            {"text": "a <IA_FTS_MATCH>good</IA_FTS_MATCH> and <IA_FTS_MATCH>loving</IA_FTS_MATCH> child somewhere else in the book",
              "par": [{"page": 7, "boxes": []}]}
         ]
     }"#;
@@ -518,6 +650,22 @@ mod tests {
             "Matilda longed for her parents to be good and loving."
         );
         assert_eq!(result.matches[0].page, Some(42));
+        // A marker left in the text is markup inside bytes we present as
+        // verbatim OCR: it reaches the verifier prompt and breaks quote
+        // location for any quote spanning a match boundary.
+        for entry in &result.matches {
+            assert!(
+                !entry.text.contains("IA_FTS_MATCH") && !entry.text.contains("{{{"),
+                "marker survived into supposedly verbatim OCR: {}",
+                entry.text
+            );
+        }
+        // The historical marker form is still stripped.
+        let legacy = parse_search_inside(
+            br#"{"indexed": true, "matches": [{"text": "a {{{good}}} book", "par": [{"page": 1}]}]}"#,
+        )
+        .expect("parses");
+        assert_eq!(legacy.matches[0].text, "a good book");
         // Unindexed and garbage responses are distinguishable.
         assert!(
             !parse_search_inside(br#"{"indexed": false}"#)
@@ -536,6 +684,75 @@ mod tests {
         // Short-word claims fall back to the 4-char floor, then the raw claim.
         assert_eq!(search_query("The cat sat down"), "down");
         assert_eq!(search_query("a b c"), "a b c");
+    }
+
+    #[test]
+    fn query_ladder_narrows_to_the_single_most_distinctive_term() {
+        // The safety property: one word missing from a scan's OCR index zeroes
+        // the whole query, so "no matches" must never be concluded from a wide
+        // query alone.
+        assert_eq!(
+            search_query_ladder(
+                "Natural selection acts by the preservation of slight favourable variations."
+            ),
+            vec![
+                "Natural selection preservation slight favourable variations",
+                "preservation favourable variations",
+                "preservation",
+            ]
+        );
+        // A claim with few long words collapses to fewer distinct rungs.
+        assert_eq!(search_query_ladder("The cat sat down"), vec!["down"]);
+    }
+
+    #[test]
+    fn grounding_retries_a_narrower_query_when_the_wide_one_is_empty() {
+        // Regression for the false-`not_supported` bug: the wide query and the
+        // three-term rung both come back empty (as they do live, because the
+        // 1871 D. Appleton printing spells it "favored"), and the single-term
+        // rung finds the passage.
+        let client = StubHttpClient::new(vec![
+            Ok(ok(ITEM_METADATA)),
+            Ok(ok(r#"{"indexed": true, "matches": []}"#)),
+            Ok(ok(r#"{"indexed": true, "matches": []}"#)),
+            Ok(ok(
+                r#"{"indexed": true, "matches": [{"text": "the <IA_FTS_MATCH>preservation</IA_FTS_MATCH> of favored races", "par": [{"page": 3}]}]}"#,
+            )),
+        ]);
+        let prep = block_on(prepare_book_grounding(
+            &client,
+            "onoriginofspeci00darw",
+            "Natural selection acts by the preservation of slight favourable variations.",
+            None,
+        ));
+        let BookGroundingPreparation::Body(body) = prep else {
+            panic!("expected a body, got {prep:?}");
+        };
+        assert_eq!(body.query, "preservation", "the narrowest rung grounded it");
+        assert_eq!(body.text, "the preservation of favored races");
+    }
+
+    #[test]
+    fn no_matches_only_after_every_rung_is_exhausted() {
+        let client = StubHttpClient::new(vec![
+            Ok(ok(ITEM_METADATA)),
+            Ok(ok(r#"{"indexed": true, "matches": []}"#)),
+            Ok(ok(r#"{"indexed": true, "matches": []}"#)),
+            Ok(ok(r#"{"indexed": true, "matches": []}"#)),
+        ]);
+        let prep = block_on(prepare_book_grounding(
+            &client,
+            "onoriginofspeci00darw",
+            "Natural selection acts by the preservation of slight favourable variations.",
+            None,
+        ));
+        let BookGroundingPreparation::NoMatches { deep_link, .. } = prep else {
+            panic!("expected NoMatches, got {prep:?}");
+        };
+        assert!(
+            deep_link.ends_with("?q=preservation"),
+            "the deep link reflects the query actually exhausted: {deep_link}"
+        );
     }
 
     #[test]

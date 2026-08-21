@@ -2860,8 +2860,7 @@ async fn execute_bridge_action(
         build_dev_auth_bootstrap_request(base_url, &DevAuthBootstrapRequest::default())
             .map_err(|error| error.to_string())?;
     let bootstrap_response = execute_local_http_request(&client, bootstrap_request).await?;
-    let bootstrap =
-        parse_dev_auth_status(&bootstrap_response.body).map_err(|error| error.to_string())?;
+    let bootstrap = interpret_bootstrap_response(&bootstrap_response)?;
     if !bootstrap.authenticated {
         return Err("bridge bootstrap did not produce an authenticated session".to_string());
     }
@@ -3046,8 +3045,7 @@ async fn fetch_page_report_via_bridge(
         build_dev_auth_bootstrap_request(bridge_base_url, &DevAuthBootstrapRequest::default())
             .map_err(|error| error.to_string())?;
     let bootstrap_response = execute_local_http_request(&client, bootstrap_request).await?;
-    let bootstrap =
-        parse_dev_auth_status(&bootstrap_response.body).map_err(|error| error.to_string())?;
+    let bootstrap = interpret_bootstrap_response(&bootstrap_response)?;
     if !bootstrap.authenticated {
         return Err("bridge bootstrap did not produce an authenticated session".to_string());
     }
@@ -3131,8 +3129,7 @@ async fn execute_bare_url_via_bridge(
         build_dev_auth_bootstrap_request(bridge_base_url, &DevAuthBootstrapRequest::default())
             .map_err(|error| error.to_string())?;
     let bootstrap_response = execute_local_http_request(&client, bootstrap_request).await?;
-    let bootstrap =
-        parse_dev_auth_status(&bootstrap_response.body).map_err(|error| error.to_string())?;
+    let bootstrap = interpret_bootstrap_response(&bootstrap_response)?;
     if !bootstrap.authenticated {
         return Err("bridge bootstrap did not produce an authenticated session".to_string());
     }
@@ -3200,8 +3197,7 @@ async fn bootstrap_bridge_session(base_url: &str) -> Result<BridgeSession, Strin
         build_dev_auth_bootstrap_request(base_url, &DevAuthBootstrapRequest::default())
             .map_err(|error| error.to_string())?;
     let bootstrap_response = execute_local_http_request(&client, bootstrap_request).await?;
-    let bootstrap =
-        parse_dev_auth_status(&bootstrap_response.body).map_err(|error| error.to_string())?;
+    let bootstrap = interpret_bootstrap_response(&bootstrap_response)?;
     if !bootstrap.authenticated {
         return Err("bridge bootstrap did not produce an authenticated session".to_string());
     }
@@ -3673,6 +3669,38 @@ async fn execute_local_http_request(
     })
 }
 
+/// Interpret a dev-auth bootstrap HTTP response into a session status.
+///
+/// On a non-success status, surface the server's `error` envelope (or a
+/// status-only fallback) rather than feeding the error body straight into
+/// [`parse_dev_auth_status`] — otherwise a 403/412 first-time-setup failure
+/// (wrong deployment mode, missing or wrong-wiki token) reaches the user as a
+/// cryptic serde "missing field authenticated" instead of the server's actual
+/// explanation.
+fn interpret_bootstrap_response(response: &HttpResponse) -> Result<DevAuthSessionStatus, String> {
+    if !(200..300).contains(&response.status) {
+        let detail = serde_json::from_slice::<Value>(&response.body)
+            .ok()
+            .and_then(|value| {
+                value
+                    .get("error")
+                    .and_then(Value::as_str)
+                    .map(str::to_string)
+            })
+            .unwrap_or_else(|| String::from_utf8_lossy(&response.body).trim().to_string());
+        let detail = if detail.is_empty() {
+            "no response body".to_string()
+        } else {
+            detail
+        };
+        return Err(format!(
+            "bridge bootstrap failed (HTTP {}): {detail}",
+            response.status
+        ));
+    }
+    parse_dev_auth_status(&response.body).map_err(|error| error.to_string())
+}
+
 fn session_cookie_from_headers(headers: &BTreeMap<String, String>) -> Option<String> {
     headers.get("set-cookie").and_then(|value| {
         value
@@ -3963,6 +3991,61 @@ fn render_markdown_code_block(language: &str, body: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    fn bootstrap_error_response(status: u16, body: &str) -> HttpResponse {
+        HttpResponse {
+            status,
+            headers: BTreeMap::new(),
+            body: body.as_bytes().to_vec(),
+        }
+    }
+
+    #[test]
+    fn bootstrap_surfaces_wrong_wiki_412_error_envelope() {
+        // The real setup failure: a token registered on the wrong wiki. The
+        // server answers 412 with an `error` envelope; the CLI must surface that
+        // text, not a serde "missing field `authenticated`".
+        let body = r#"{"error":"profile probe failed: endpoint=https://meta.wikimedia.org/w/rest.php/oauth2/resource/profile status=403 message=upstream returned a non-success status body={\"errorKey\":\"mwoauth-invalid-authorization-wrong-wiki\"}"}"#;
+        let error = interpret_bootstrap_response(&bootstrap_error_response(412, body))
+            .expect_err("non-2xx bootstrap must be an error");
+        assert!(error.contains("412"), "status code should appear: {error}");
+        assert!(
+            error.contains("mwoauth-invalid-authorization-wrong-wiki"),
+            "server error text should be surfaced: {error}"
+        );
+        assert!(
+            !error.contains("missing field"),
+            "must not leak the serde deserialize error: {error}"
+        );
+    }
+
+    #[test]
+    fn bootstrap_surfaces_disabled_mode_403_error_envelope() {
+        let body = r#"{"error":"Local dev-token bootstrap is disabled outside SP42_DEPLOYMENT_MODE=local"}"#;
+        let error = interpret_bootstrap_response(&bootstrap_error_response(403, body))
+            .expect_err("403 bootstrap must be an error");
+        assert!(error.contains("403"), "status code should appear: {error}");
+        assert!(
+            error.contains("SP42_DEPLOYMENT_MODE=local"),
+            "server error text should be surfaced: {error}"
+        );
+    }
+
+    #[test]
+    fn bootstrap_falls_back_to_status_when_body_has_no_envelope() {
+        let error = interpret_bootstrap_response(&bootstrap_error_response(500, ""))
+            .expect_err("500 bootstrap must be an error");
+        assert!(error.contains("500"), "status code should appear: {error}");
+    }
+
+    #[test]
+    fn bootstrap_parses_authenticated_session_on_success() {
+        let body = r#"{"authenticated":true,"username":"Example","scopes":[],"expires_at_ms":null,"token_present":true,"bridge_mode":"local-env-token","csrf_token":"abc","local_token_available":true}"#;
+        let status = interpret_bootstrap_response(&bootstrap_error_response(200, body))
+            .expect("2xx with a valid session status must parse");
+        assert!(status.authenticated);
+        assert_eq!(status.csrf_token.as_deref(), Some("abc"));
+    }
+
     #[test]
     fn heartbeat_line_formats_minutes_and_seconds() {
         assert_eq!(
@@ -3980,15 +4063,16 @@ mod tests {
 
     use super::{
         ActionKind, BareUrlAction, BareUrlCliMode, BareUrlCliOptions, BareUrlExecuteReport, Cli,
-        CliOptions, Command, ContextPreviewOptions, FormatArg, LOCAL_SERVER_BASE_URL, OutputFormat,
-        PageReportFormat, PageVerificationReport, ReviewAction, ReviewAnchor, ReviewPollResponse,
-        ReviewPollStatus, ReviewPrompt, ReviewPromptKind, ReviewQueueArgs, ShellMode,
-        VerifyPageCliOptions, WorkbenchOptions, build_review_queue_prompt, check_report_identity,
-        read_verification_report, render_action_preview, render_backlog_preview,
-        render_bare_url_execute, render_bare_url_proposals, render_context_preview,
-        render_coordination_preview, render_parity_report, render_queue, render_review_poll_text,
-        render_scenario_report, render_session_digest, render_stream_preview, render_workbench,
-        run_render_report, select_bare_url_proposal, server_report_lines,
+        CliOptions, Command, ContextPreviewOptions, FormatArg, HttpResponse, LOCAL_SERVER_BASE_URL,
+        OutputFormat, PageReportFormat, PageVerificationReport, ReviewAction, ReviewAnchor,
+        ReviewPollResponse, ReviewPollStatus, ReviewPrompt, ReviewPromptKind, ReviewQueueArgs,
+        ShellMode, VerifyPageCliOptions, WorkbenchOptions, build_review_queue_prompt,
+        check_report_identity, interpret_bootstrap_response, read_verification_report,
+        render_action_preview, render_backlog_preview, render_bare_url_execute,
+        render_bare_url_proposals, render_context_preview, render_coordination_preview,
+        render_parity_report, render_queue, render_review_poll_text, render_scenario_report,
+        render_session_digest, render_stream_preview, render_workbench, run_render_report,
+        select_bare_url_proposal, server_report_lines,
     };
     use clap::Parser;
     use serde_json::json;

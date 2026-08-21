@@ -16,6 +16,22 @@ const TRUNK_VERSION: &str = "0.21.14";
 const TRUNK_TARBALL_SHA256: &str =
     "f2b4680cd239693a646a2795e4633c625328d7b2a044fbe749fa3a2fe9e7036b";
 
+// Crates whose sources feed the Trunk-built wasm bundle, mirroring Trunk.toml's
+// [watch] list so an incremental build reruns Trunk after changes to any of them.
+const FRONTEND_WATCH_CRATES: &[&str] = &[
+    "sp42-app",
+    "sp42-ui",
+    "sp42-platform",
+    "sp42-citation",
+    "sp42-patrol",
+    "sp42-reporting",
+    "sp42-coordination",
+    "sp42-live",
+    "sp42-wiki",
+    "sp42-core",
+    "sp42-types",
+];
+
 fn main() {
     println!("cargo:rerun-if-env-changed=SP42_BUNDLE_FRONTEND");
     if env::var("SP42_BUNDLE_FRONTEND").as_deref() != Ok("1") {
@@ -29,12 +45,37 @@ fn main() {
         .canonicalize()
         .expect("resolve workspace root");
 
-    run("rustup", &["target", "add", "wasm32-unknown-unknown"], &workspace_root, &[]);
+    println!(
+        "cargo:rerun-if-changed={}",
+        workspace_root.join("index.html").display()
+    );
+    println!(
+        "cargo:rerun-if-changed={}",
+        workspace_root.join("Trunk.toml").display()
+    );
+    for crate_name in FRONTEND_WATCH_CRATES {
+        let crate_dir = workspace_root.join("crates").join(crate_name);
+        for sub_dir in ["src", "static"] {
+            let watched = crate_dir.join(sub_dir);
+            if watched.is_dir() {
+                println!("cargo:rerun-if-changed={}", watched.display());
+            }
+        }
+    }
+
+    run(
+        "rustup",
+        &["target", "add", "wasm32-unknown-unknown"],
+        &workspace_root,
+        &[],
+    );
 
     let tools_dir = workspace_root.join("target").join("tools");
     let trunk_path = tools_dir.join("trunk");
     if !trunk_path.is_file() {
-        println!("cargo:warning=trunk not found, downloading prebuilt {TRUNK_VERSION} release binary");
+        println!(
+            "cargo:warning=trunk not found, downloading prebuilt {TRUNK_VERSION} release binary"
+        );
         std::fs::create_dir_all(&tools_dir).expect("create target/tools dir");
         let url = format!(
             "https://github.com/trunk-rs/trunk/releases/download/v{TRUNK_VERSION}/trunk-x86_64-unknown-linux-gnu.tar.gz"
@@ -60,7 +101,12 @@ fn main() {
         );
         run(
             "tar",
-            &["-xzf", tarball.to_str().expect("utf8 path"), "-C", tools_dir.to_str().expect("utf8 path")],
+            &[
+                "-xzf",
+                tarball.to_str().expect("utf8 path"),
+                "-C",
+                tools_dir.to_str().expect("utf8 path"),
+            ],
             &workspace_root,
             &[],
         );
@@ -78,14 +124,20 @@ fn main() {
         &[
             "build",
             "--config",
-            workspace_root.join("Trunk.toml").to_str().expect("utf8 path"),
+            workspace_root
+                .join("Trunk.toml")
+                .to_str()
+                .expect("utf8 path"),
             "--cargo-profile",
             "web-release",
             "--release",
         ],
         &workspace_root,
         &[
-            ("CARGO_TARGET_DIR", wasm_target_dir.to_str().expect("utf8 path").to_string()),
+            (
+                "CARGO_TARGET_DIR",
+                wasm_target_dir.to_str().expect("utf8 path").to_string(),
+            ),
             ("PATH", path_with_tools.to_string_lossy().into_owned()),
         ],
     );
@@ -108,5 +160,9 @@ fn run(program: &str, args: &[&str], cwd: &Path, extra_env: &[(&str, String)]) {
     let status = command
         .status()
         .unwrap_or_else(|error| panic!("failed to spawn {program}: {error}"));
-    assert!(status.success(), "{program} {} exited with {status}", args.join(" "));
+    assert!(
+        status.success(),
+        "{program} {} exited with {status}",
+        args.join(" ")
+    );
 }

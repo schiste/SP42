@@ -3,6 +3,7 @@
 **Status:** Proposed
 **Date:** 2026-07-07
 **Author:** Luis Villa (drafted by Claude Code)
+**Summary:** A book citation's ISBN resolves to an Open Library catalog record and, when available, an Internet Archive scan or search-inside snippet, entirely through documented read-only endpoints — never the Open Library route that can trigger a write-side import.
 
 Spawned by PRD-0009 (book-citation grounding and Open Library enrichment),
 resolved Q6(a): the **read-contract** ADR. It fixes how SP42 turns a book

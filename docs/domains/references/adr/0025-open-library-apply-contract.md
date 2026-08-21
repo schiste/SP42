@@ -3,6 +3,7 @@
 **Status:** Proposed
 **Date:** 2026-07-08
 **Author:** Luis Villa (drafted by Claude Code)
+**Summary:** A confirmed field-level Open Library record enrichment transfers ADR-0010's propose/confirm/refuse-on-drift discipline to Open Library's usergroup-gated write API — replaying exactly what the operator confirmed and refusing on revision drift, with no CSRF protection or server-side conflict detection to lean on upstream.
 
 Spawned by PRD-0009 resolved Q6(b): the **apply-contract** ADR for the
 enrichment lane (Layer 3). ADR-0024 owns the read side (resolve + grounding);

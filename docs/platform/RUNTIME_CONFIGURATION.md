@@ -8,7 +8,10 @@ Cloud VPS deployments, and the desktop sidecar mode.
 The server reads these environment variables:
 
 - `SP42_DEPLOYMENT_MODE=local|vps|desktop` controls deployment-sensitive
-  defaults. It defaults to `local`.
+  defaults. Required — there is no default; an unset or empty value fails
+  startup rather than silently landing in `local`, which permits the
+  `local`-only dev-auth bootstrap. A distributable artifact (container image,
+  packaged binary) must set this explicitly.
 - `SP42_BIND_ADDR` controls the server bind address. It defaults to
   `127.0.0.1:8788`.
 - `SP42_PUBLIC_BASE_URL` sets the externally visible HTTP(S) base URL, for

@@ -155,8 +155,13 @@ For focused local checks during iteration:
 #### 2. Run the localhost server
 
 ```sh
-cargo run -p sp42-server
+SP42_DEPLOYMENT_MODE=local cargo run -p sp42-server
 ```
+
+`SP42_DEPLOYMENT_MODE` has no default — it must be set explicitly to
+`local`, `vps`, or `desktop` or the server refuses to start. This keeps a
+distributable artifact (container image, packaged binary) from silently
+booting with the `local`-only dev-auth bootstrap enabled.
 
 Useful local endpoints:
 

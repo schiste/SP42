@@ -123,7 +123,9 @@ Optional:
 
 ## Quick Start
 
-### 1. Clone and build
+### Local Development
+
+#### 1. Clone and build
 
 ```sh
 ./scripts/build-local.sh
@@ -150,7 +152,7 @@ For focused local checks during iteration:
 ./scripts/check-focused.sh
 ```
 
-### 2. Run the localhost server
+#### 2. Run the localhost server
 
 ```sh
 SP42_DEPLOYMENT_MODE=local cargo run -p sp42-server
@@ -167,7 +169,7 @@ Useful local endpoints:
 - `http://127.0.0.1:8788/debug/summary`
 - `http://127.0.0.1:8788/dev/auth/bootstrap/status`
 
-### 3. Run the CLI
+#### 3. Run the CLI
 
 ```sh
 cargo run -p sp42-cli -- --help            # list subcommands
@@ -178,7 +180,7 @@ Capabilities are subcommands (`verify`, `verify-page`, `locate-probe`,
 `bare-url`, `preview`). For the full command-line reference — including
 environment variables — see [docs/platform/CLI.md](docs/platform/CLI.md).
 
-### 4. Build the browser app
+#### 4. Build the browser app
 
 ```sh
 rustup target add wasm32-unknown-unknown
@@ -207,6 +209,60 @@ For desktop app packaging, see
 [docs/platform/DESKTOP_DISTRIBUTION.md](docs/platform/DESKTOP_DISTRIBUTION.md).
 For a Wikimedia Cloud VPS artifact, run `./scripts/package-vps.sh`; the
 generated package includes its own deployment README.
+
+### Using Docker
+
+#### 1. Build the Docker Image
+
+```sh
+docker build -t sp42:latest .
+```
+
+#### 2. Run SP42 in a Docker Container
+
+You need to create a file `.env.wikimedia.local` with your access token in the current directory.
+
+`SP42_DEPLOYMENT_MODE` has no default in the image — it must be passed
+explicitly as `local`, `vps`, or `desktop`, or the server refuses to start.
+This keeps the image from silently booting with the `local`-only dev-auth
+bootstrap enabled. Use `local` for a local Docker run like this one; use `vps`
+when running this image as a real deployment.
+
+```sh
+docker run --rm \
+    --name sp42 \
+    -p 8788:8788 \
+    -e SP42_DEPLOYMENT_MODE=local \
+    -v "$PWD"/.env.wikimedia.local:/var/lib/sp42/.env.wikimedia.local \
+    -v sp42-data:/var/lib/sp42/ \
+    sp42:latest
+```
+
+####
+
+#### 1. Build the Docker Development Image
+
+Clone the repo and build the `sp42-dev` image:
+```sh
+docker build -f Dockerfile.dev -t sp42-dev:latest .
+```
+
+#### 2. Build the Docker Development Image
+
+Assuming the repository is in the current directory:
+```sh
+docker run --rm \
+    -it \
+    --name sp42-dev \
+    --user "$(id -u):$(id -g)" \
+    -e HOME=/tmp \
+    -e SSH_AUTH_SOCK=/ssh-agent \
+    -v "$PWD:/src" \
+    -v "$HOME/.gitconfig:/tmp/.gitconfig:ro" \
+    -v "$SSH_AUTH_SOCK:/ssh-agent" \
+    -w /src \
+    sp42-dev:latest
+```
 
 ## Development Commands
 

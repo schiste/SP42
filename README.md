@@ -221,10 +221,18 @@ docker build -t sp42:latest .
 #### 2. Run SP42 in a Docker Container
 
 You need to create a file `.env.wikimedia.local` with your access token in the current directory.
+
+`SP42_DEPLOYMENT_MODE` has no default in the image — it must be passed
+explicitly as `local`, `vps`, or `desktop`, or the server refuses to start.
+This keeps the image from silently booting with the `local`-only dev-auth
+bootstrap enabled. Use `local` for a local Docker run like this one; use `vps`
+when running this image as a real deployment.
+
 ```sh
 docker run --rm \
     --name sp42 \
     -p 8788:8788 \
+    -e SP42_DEPLOYMENT_MODE=local \
     -v "$PWD"/.env.wikimedia.local:/var/lib/sp42/.env.wikimedia.local \
     -v sp42-data:/var/lib/sp42/ \
     sp42:latest

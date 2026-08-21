@@ -49,8 +49,11 @@ RUN mkdir -p /var/lib/sp42 \
 
 WORKDIR /var/lib/sp42
 
+# SP42_DEPLOYMENT_MODE is intentionally not set here: the server requires it
+# explicitly (local, vps, or desktop; see docs/platform/RUNTIME_CONFIGURATION.md)
+# and refuses to start without it, so this image can't silently boot with the
+# local-only dev-auth bootstrap enabled. Pass it at `docker run` time.
 ENV SP42_BIND_ADDR=127.0.0.1:8788 \
-    SP42_DEPLOYMENT_MODE=local \
     SP42_APP_DIST_DIR=/opt/sp42/dist/sp42-app \
     SP42_WIKI_CONFIG_DIR=/opt/sp42/configs \
     SP42_RUNTIME_DIR=/var/lib/sp42 \

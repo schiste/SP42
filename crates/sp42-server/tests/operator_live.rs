@@ -257,6 +257,7 @@ fn spawn_server(temp_dir: &Path, bind_addr: &str, mock_base: &str) -> Child {
 
     Command::new(env!("CARGO_BIN_EXE_sp42-server"))
         .current_dir(temp_dir)
+        .env("SP42_DEPLOYMENT_MODE", "local")
         .env("SP42_BIND_ADDR", bind_addr)
         .env("SP42_RUNTIME_DIR", &runtime_dir)
         .env(

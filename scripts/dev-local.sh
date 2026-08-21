@@ -119,7 +119,7 @@ if payload.get("wiki_id") != expected_wiki_id:
 }
 
 printf 'Starting sp42-server on %s\n' "$server_bind"
-SP42_BIND_ADDR="$server_bind" "$CARGO_BIN" run -q -p sp42-server >"$server_log" 2>&1 &
+SP42_DEPLOYMENT_MODE=local SP42_BIND_ADDR="$server_bind" "$CARGO_BIN" run -q -p sp42-server >"$server_log" 2>&1 &
 server_pid="$!"
 
 printf 'Starting Trunk on %s:%s\n' "$trunk_address" "$trunk_port"

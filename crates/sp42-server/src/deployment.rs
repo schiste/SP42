@@ -9,14 +9,19 @@ pub(crate) enum DeploymentMode {
 }
 
 impl DeploymentMode {
+    /// No implicit default: an unset or empty `SP42_DEPLOYMENT_MODE` fails
+    /// startup rather than silently landing in `local`, which permits the
+    /// personal-token dev-auth bootstrap (see `permits_dev_token_bootstrap`).
+    /// A distributable artifact (container image, packaged binary) that
+    /// forgets to set this must fail loudly, not boot with dev auth enabled.
     pub(crate) fn from_env() -> Result<Self, String> {
-        let raw = std::env::var("SP42_DEPLOYMENT_MODE").unwrap_or_else(|_| "local".to_string());
+        let raw = std::env::var("SP42_DEPLOYMENT_MODE").unwrap_or_default();
         match raw.trim() {
-            "" | "local" => Ok(Self::Local),
+            "local" => Ok(Self::Local),
             "vps" => Ok(Self::Vps),
             "desktop" => Ok(Self::Desktop),
             other => Err(format!(
-                "SP42_DEPLOYMENT_MODE must be one of local, vps, desktop; got `{other}`"
+                "SP42_DEPLOYMENT_MODE must be set explicitly to one of local, vps, desktop; got `{other}`"
             )),
         }
     }
@@ -199,6 +204,33 @@ mod tests {
         assert_eq!(DeploymentMode::Local.as_str(), "local");
         assert_eq!(DeploymentMode::Vps.as_str(), "vps");
         assert_eq!(DeploymentMode::Desktop.as_str(), "desktop");
+    }
+
+    #[test]
+    fn from_env_rejects_missing_and_empty_mode() {
+        // SAFETY: no other test reads/writes SP42_DEPLOYMENT_MODE.
+        unsafe {
+            std::env::remove_var("SP42_DEPLOYMENT_MODE");
+        }
+        let missing = DeploymentMode::from_env();
+        assert!(
+            missing.is_err(),
+            "an unset SP42_DEPLOYMENT_MODE must not silently become local"
+        );
+
+        // SAFETY: no other test reads/writes SP42_DEPLOYMENT_MODE.
+        unsafe {
+            std::env::set_var("SP42_DEPLOYMENT_MODE", "");
+        }
+        let empty = DeploymentMode::from_env();
+        // SAFETY: no other test reads/writes SP42_DEPLOYMENT_MODE.
+        unsafe {
+            std::env::remove_var("SP42_DEPLOYMENT_MODE");
+        }
+        assert!(
+            empty.is_err(),
+            "an empty SP42_DEPLOYMENT_MODE must be rejected too"
+        );
     }
 
     #[test]

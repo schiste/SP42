@@ -44,7 +44,7 @@ domains may consume it as the system expands toward sourcing and quality signals
 - [ADR-0023 — Coordination contract: message kinds, relay, room state, wire codec](adr/0023-coordination-contract.md)
 - [ADR-0026 — Intake contract: data-driven event filtering, composable rule trees, wiki-relative capability resolution](adr/0026-intake-contract.md) (Proposed)
 - [ADR-0027 — Content lifecycle contract: canonical state, append-only transition log, transition-triggered re-entry](adr/0027-content-lifecycle-contract.md) (Proposed)
-- [ADR-0028 — Eligibility gate contract: capability-gated verdicts, open outcome vocabulary, gate chaining](adr/0028-eligibility-gate-contract.md) (Proposed)
+- [ADR-0028 — Deterministic eligibility gate contract: capability-gated verdicts, open outcome vocabulary, gate chaining](adr/0028-deterministic-eligibility-gate-contract.md) (Proposed)
 
 ADR-0006 defines the provider-agnostic LLM interface every capability reaches a
 model through, and ADR-0010 defines the propose/confirm editing pattern domains

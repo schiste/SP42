@@ -120,7 +120,7 @@ and ADR-0026 already established.
 
 ## Consequences
 
-- Enables ADR-0028 (eligibility gate contract) to exist at all: verdict
+- Enables ADR-0028 (deterministic eligibility gate contract) to exist at all: verdict
   recording and gate-chaining reads both depend on this contract, not merely
   benefit from it.
 - Resolves the redirect-reopening case (and its general shape,

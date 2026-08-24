@@ -60,14 +60,28 @@ LifecycleTransition {
     caused_by: TransitionCause,
     occurred_at: Timestamp,   // resolved against Clock::now(), never wall-clock — same discipline as ADR-0026 §4
 }
-TransitionCause = GateVerdict { gate_id: String, ruleset_id: String, outcome_key: String }
+TransitionCause = GateVerdict { gate_id: String, ruleset_id: String, outcome_key: String, resolution_class: ResolutionClass, reasons: Vec<Reason>, matched_rule_path: Option<Vec<String>> }
                  | ReviewerAction { actor: String, action_kind: String }
                  | SystemReentry { reason: String }
+ResolutionClass = Terminal | NeedsHuman | Relist | RouteElsewhere
 ```
 `state` always equals `history.last().to`; the log is the source of truth,
 and `state` exists only so a hot-path read doesn't need to replay history. A
 transition is recorded, never overwritten — this is what makes §4's queries
 meaningful and is the direct fix for `LiveOperatorView`'s no-history gap.
+`GateVerdict` carries the complete verdict envelope, not just its routing
+key: without `resolution_class` in the transition itself, a `PriorOutcome`-
+style query (§4) could never filter on resolution class without a second
+store, and without `reasons`/`matched_rule_path` the transition log stops
+being the audit trail it otherwise claims to be. `ResolutionClass` is
+defined here, once, rather than per gate type — it's the one thing the
+engine needs to branch on generically across every verdict-producing gate,
+the same reasoning that keeps `LifecycleState.key` open but `disposition`
+closed (§1). A gate-type contract (e.g. a deterministic eligibility gate)
+reuses it verbatim, exactly as it would reuse `IntakeField`/`Op`/`Value`
+from ADR-0026 — one vocabulary, not a parallel one per gate type. `Reason`
+is referenced, not defined, here — its shape belongs to whichever gate-type
+contract produces it.
 
 ### 3. Transition-triggered re-entry is a registered watch, not a bespoke callback
 ```
@@ -117,6 +131,13 @@ and ADR-0026 already established.
 - **Store current state only, no history.** Rejected — gate chaining (G4)
   requires querying *past* recorded outcomes, not just the current state;
   this would also foreclose audit-trail needs later domains will have.
+- **Keep `GateVerdict` to just `{gate_id, ruleset_id, outcome_key}` and
+  require a separate verdict store for resolution-class and reasons
+  detail.** Rejected — reproduces exactly the "separate store" a
+  gate-type contract explicitly avoids by writing through this log, and
+  leaves resolution-class-filtered `PriorOutcome` queries unimplementable
+  against the log alone, since the data they'd need to filter on
+  wouldn't exist there.
 
 ## Consequences
 
@@ -133,6 +154,11 @@ and ADR-0026 already established.
   a bounded lookup per item, not a full history scan on every eligibility
   call. This is flagged as an implementation constraint the eventual engine
   must satisfy, not solved by this contract.
+- `GateVerdict`'s widened payload (`reasons`, `matched_rule_path`) makes
+  transitions larger than the minimal routing-key shape first drafted —
+  acceptable at eligibility's scale (one verdict per ruleset evaluation, not
+  per edit event), but a size/storage consideration the eventual engine
+  should keep in view as more gate types write through this log.
 - Watch configs get the same fail-closed misconfiguration discipline as
   intake (ADR-0026 §6/§7) — an unresolvable `re_trigger` workflow id is
   rejected at load time, extending that linter rather than inventing a

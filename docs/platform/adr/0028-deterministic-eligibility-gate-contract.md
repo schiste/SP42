@@ -87,7 +87,7 @@ substituted by accident.
 ```
 EligibilityCondition = All(Vec<EligibilityCondition>) | Any(Vec<EligibilityCondition>) | Not(Box<EligibilityCondition>)
                       | Rule(IntakeRule)
-                      | PriorOutcome { gate_id: String, ruleset_id: Option<String>, resolution_class: Option<ResolutionClass>, within: Option<Duration> }
+                      | PriorOutcome { gate_id: String, ruleset_id: Option<String>, outcome_key: Option<String>, resolution_class: Option<ResolutionClass>, within: Option<Duration> }
 ```
 `IntakeField` / `IntakeOp` / `IntakeValue` (ADR-0026 §4) are reused verbatim
 — no parallel rule vocabulary. This is the ADR's central design commitment,
@@ -104,6 +104,18 @@ generic `LifecycleTransition`, never a gate-specific verdict type. This is
 exactly the "separated but composed through data transfer" boundary: this
 gate's condition tree can react to what another gate decided without ever
 importing that gate's Rust types.
+
+`resolution_class` alone is not enough to express G4 ("a prior AfD gate
+resolved this page to Delete"): AfD's Keep, No consensus, and Merge can all
+share `Terminal` alongside Delete, so a resolution-class-only predicate
+can't tell them apart. `outcome_key` is the exact-match predicate that closes this: when set, it's
+compared against the referenced transition's own `outcome_key` (ADR-0027
+§2) — data the transition already carried, but that this condition had no
+way to compare against directly, only through the coarser
+`resolution_class`. `ruleset_id` and
+`outcome_key` compose independently — a condition can pin the ruleset
+without pinning the outcome, or pin an outcome key that's only meaningful
+given a specific ruleset's own vocabulary (§6 validates that combination).
 
 ### 3. Outcomes are open per ruleset; only the resolution class is closed
 ```
@@ -126,7 +138,7 @@ work this gate secretly does — see §7.
 EligibilityVerdict {
     ruleset_id, gate_id, item_id,
     outcome: { key, resolution_class },
-    reasons: Vec<Reason>, matched_rule_path: Option<...>,
+    reasons: Vec<Reason>, matched_rule_path: Option<Vec<String>>,
     evaluated_at,
 }
 ```
@@ -135,15 +147,17 @@ construction, a deterministic rule-tree match, reproducible from
 `matched_rule_path` alone — carrying an evaluator tag here would imply the
 gate sometimes produces verdicts some other way, which it structurally
 cannot. A verdict is written as a `ContentLifecycle` transition whose
-`TransitionCause::GateVerdict` (ADR-0027 §2) carries `{gate_id, ruleset_id,
-outcome_key}` — eligibility does not own a separate store; writing through
-ADR-0027's log is exactly what makes §2's `PriorOutcome` queries resolve
-against genuinely current data, and what lets a future stochastic gate or a
-human's `ReviewerAction` be referenced by this gate's own `PriorOutcome`
-without either side depending on the other's types. The shape generalizes
-`CitationVerdict`'s precedent (ADR-0007/0008: categorical, informational-
-first, no numeric confidence) off a single closed enum onto the open
-key-plus-class shape of §3.
+`TransitionCause::GateVerdict` (ADR-0027 §2) carries the complete verdict
+envelope — `{gate_id, ruleset_id, outcome_key, resolution_class, reasons,
+matched_rule_path}` — not just its routing key; eligibility does not own a
+separate store, so the transition itself has to be the durable record, or
+§2's `PriorOutcome` queries (on `resolution_class` or `outcome_key`) and any
+later audit read would have nothing to read. Writing through ADR-0027's log
+is what lets a future stochastic gate or a human's `ReviewerAction` be
+referenced by this gate's own `PriorOutcome` without either side depending
+on the other's types. The shape generalizes `CitationVerdict`'s precedent
+(ADR-0007/0008: categorical, informational-first, no numeric confidence)
+off a single closed enum onto the open key-plus-class shape of §3.
 
 ### 5. A ruleset declares what it may *not* decide on
 ```
@@ -158,10 +172,15 @@ valid, regardless of how plausible they read.
 ### 6. Configs are linted by extending ADR-0026's linter, not a second one
 The xtask from ADR-0026 §7 gains: ruleset schema validation, `PriorOutcome`
 `gate_id` existence, `disallowed_reasons` non-overlap with the ruleset's own
-`outcomes`, and non-empty `capability_required`. Load-time rejection of an
-unresolvable `PriorOutcome` `gate_id` or `CapabilityRef`; an eval-time
-failure produces the same distinct `Misconfigured` state ADR-0026 §6 defines
-— never silently collapsed into a real outcome.
+`outcomes`, and non-empty `capability_required`. When a `PriorOutcome`
+specifies both `ruleset_id` and `outcome_key`, the linter additionally
+checks that `outcome_key` is a member of that specific ruleset's declared
+`outcomes` — an `outcome_key` that no version of the referenced ruleset
+could ever produce is a config bug, not a rule that will just never match.
+Load-time rejection of an unresolvable `PriorOutcome` `gate_id` or
+`CapabilityRef`; an eval-time failure produces the same distinct
+`Misconfigured` state ADR-0026 §6 defines — never silently collapsed into a
+real outcome.
 
 ### 7. `NeedsHuman` hands off to `ReviewerAction`, never to a human-flavored verdict
 A ruleset that mixes a machine-checkable precondition with a judgment call
@@ -209,6 +228,12 @@ variants on the same log, not different values of one evaluator field.
 - **Let a ruleset cite a disallowed reason silently (log-only).** Rejected —
   matches ADR-0026's "misconfiguration is never silent" precedent; a policy
   author citing a banned reason is a policy bug, not a warning-level event.
+- **Filter `PriorOutcome` only by `resolution_class`, not a specific outcome
+  key.** Rejected — multiple named outcomes commonly share one
+  `resolution_class` (AfD's Keep, No consensus, and Merge can all be
+  `Terminal` alongside Delete), so the ADR's own headline chaining example
+  (G4: "a prior AfD gate resolved this page to *Delete* specifically") isn't
+  expressible without an exact-match `outcome_key` predicate alongside it.
 
 ## Consequences
 

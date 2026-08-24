@@ -23,10 +23,10 @@ Every shell wires intake at boot (`sp42-server`, `sp42-cli`, `sp42-app`, `sp42-d
 
 ### 3. A generic item envelope, fed by two source modes: continuous stream and composed query
 ```
-IntakeItem { wiki_id, event_type, namespace, page_id, revision_id, created_at: Option<Timestamp>, actor, observed_at, payload_ref }
+IntakeItem { wiki_id, event_type, namespace, page_id, revision_id, created_at: Option<Timestamp>, last_revision_at: Option<Timestamp>, actor, observed_at, payload_ref }
 IntakeActor { username: Option<String>, rights: Vec<String>, is_bot: bool, account_created_at: Option<Timestamp> }
 ```
-`observed_at` is when *this event* happened (an edit's timestamp, not necessarily the page's); `created_at` is the subject page's own creation fact, populated by the adapter when known — always for a `Create` event (the two coincide), and always for the `Query` source below, since it fetched the page directly. Conflating the two would make "page age" and "time since this edit" indistinguishable.
+`observed_at` is when *this event* happened (an edit's timestamp, not necessarily the page's); `created_at` is the subject page's own creation fact, populated by the adapter when known — always for a `Create` event (the two coincide), and always for the `Query` source below, since it fetched the page directly. Conflating the two would make "page age" and "time since this edit" indistinguishable. `last_revision_at` is the subject page's most recent revision timestamp as of the adapter's fetch — always known for `Query` items (fetched directly) and for any `Stream` adapter that polls page state rather than only forwarding an edit's own timestamp; a plain edit-triggered stream event typically has it coincide with `observed_at`, and an adapter that hasn't fetched page history may leave it `None` rather than guess. §4 defines how an absent value here (or in `created_at`) is evaluated, rather than defaulting it silently.
 
 Two kinds of source adapter normalize raw content into this shape:
 - **Stream** (default, continuous): EventStreams, backlog polling, a pull-query draft queue, a contribution-history walk. `sp42-live`'s current inline filtering becomes one such adapter instead of doing its own filtering; this ADR authorizes that migration but does not itself perform it (see Non-goals).
@@ -56,6 +56,20 @@ IntakeValue  = Str | Int | StrList | IntList | Bool | Timestamp | Duration | Cap
 
 `Before`/`After` compare a field against an absolute `IntakeValue::Timestamp`; `OlderThan`/`YoungerThan` compare it against `Clock::now() ± Duration` — the same non-wall-clock discipline the query spec's `unedited_since` already uses, extended so it applies to any timestamp field, not just a query-time fetch parameter. This is what makes "account younger than 7 days" (`ActorAccountCreatedAt YoungerThan 7d`), "page not touched in 20 months" (`LastRevisionAt OlderThan 20mo`, expressible in stream mode too, not only as a query-fetch optimization), and a review workflow's cooldown window (`CreatedAt YoungerThan 1h`, evaluated at gate-invocation altitude per §8) all the same rule shape — none of them need a bespoke mechanism.
 
+A `Rule` against an `Option`-typed field (`CreatedAt`, `LastRevisionAt`,
+`ActorAccountCreatedAt`) evaluates three-valued — `True | False | Unknown`
+— not boolean: an absent value is `Unknown`, never coerced to `False`.
+`All`/`Any`/`Not` compose with standard Kleene semantics: `All` is `False`
+if any child is `False`, else `Unknown` if any child is `Unknown`, else
+`True`; `Any` is `True` if any child is `True`, else `Unknown` if any child
+is `Unknown`, else `False`; `Not` maps `True↔False` and leaves `Unknown` as
+`Unknown` — negating an unknown never manufactures a `True`. A pipeline's
+root condition (§6) routes on this three-valued result as `True → on_pass`,
+`False | Unknown → on_fail`: an absent field can never itself cause an
+admission, closing the exact failure mode where `Not(CreatedAt YoungerThan
+1h)` against a missing `created_at` would otherwise read as a confirmed
+old-enough page rather than an unknown one.
+
 ### 5. Wiki-relative values resolve through a two-tier capability profile
 `IntakeValue::CapabilityRef(String)` lets a rule say "the mainspace namespaces for this wiki" instead of a literal namespace number, so one pipeline definition works across wikis with different conventions. Capability profiles split into:
 - **Discovered facts** (Tier A): namespace map, available rights, content models — fetched from each wiki's own `action=query&meta=siteinfo` through the already-hardened `sp42-fetch` edge, cached with a TTL, refreshed as a background job (never inline in the intake hot path), diffed against the last known-good profile with drift surfaced rather than silently applied.
@@ -69,10 +83,10 @@ IntakePipeline { id, condition: IntakeCondition, on_pass: IntakeOutcome, on_fail
 IntakeOutcome  = Admit { route_to: String } | Drop | Reclassify { pipeline: String }
 IntakeDecision = { outcome, pipeline_id, matched_rule_path, config_version } | Misconfigured { pipeline_id, unresolved_ref }
 ```
-A `CapabilityRef` that cannot resolve is checked twice: at config **load time**, every reference is resolved against every wiki profile the config could apply to, and an unresolvable config is rejected outright — it never goes live. If a Tier A drift later breaks a previously-valid reference, evaluation returns `Misconfigured`, a state distinct from `Drop`, so a broken filter is never indistinguishable from an intentional one.
+A `CapabilityRef` that cannot resolve is checked twice: at config **load time**, every reference is resolved against every wiki profile the config could apply to, and an unresolvable config is rejected outright — it never goes live. If a Tier A drift later breaks a previously-valid reference, evaluation returns `Misconfigured`, a state distinct from `Drop`, so a broken filter is never indistinguishable from an intentional one. An `Unknown` three-valued result (§4) is a different situation from `Misconfigured`: the config is valid and every reference resolves, the *data* simply doesn't carry that field for this item — it routes through `on_fail` like an ordinary non-match, never through `Misconfigured`, which is reserved for a config-resolution failure.
 
 ### 7. Configs are linted mechanically, the same way layering is
-A CI-time check (an `xtask` subcommand run from `ci-all.sh`, alongside `scripts/check-layering.sh` and `scripts/check-scoring-governance.sh`) validates every config in `configs/`: schema conformance, every `CapabilityRef` resolves against the profiles it applies to, every `Custom(String)` field is registered by some domain, every `route_to` targets a real queue/workflow id, and no branch of a condition tree is statically unreachable.
+A CI-time check (an `xtask` subcommand run from `ci-all.sh`, alongside `scripts/check-layering.sh` and `scripts/check-scoring-governance.sh`) validates every config in `configs/`: schema conformance, every `CapabilityRef` resolves against the profiles it applies to, every `Custom(String)` field is registered by some domain, every `route_to` and `Reclassify.pipeline` target resolves to a real queue/workflow or pipeline id, the directed graph formed by all `Reclassify` edges across the config set contains no cycle, and no branch of a condition tree is statically unreachable. A `Reclassify.pipeline` that doesn't resolve, or that closes a cycle (including a direct self-reference), is rejected at load/CI time exactly like an unresolvable `CapabilityRef` — never left to loop or fail at runtime.
 
 ### 8. The same pipeline mechanism serves two altitudes
 A workflow's top-level trigger ("is this page even a candidate for review at all") and a gate's own scoped narrowing ("of this contributor's history, which edits are in scope for this check") are the same `IntakePipeline` mechanism invoked at different points — not two separate systems. Workflow definitions and gates both reference pipelines by id.
@@ -87,6 +101,8 @@ A workflow's top-level trigger ("is this page even a candidate for review at all
 - **Free-form string dot-paths instead of a typed `IntakeField` enum.** Rejected: loses the ability to mechanically lint a config against real fields (§7), which is the main safety lever against silent misconfiguration; the `Custom(String)` variant already gives domains an extension path without paying that cost everywhere.
 - **Auto-onboard a wiki from an observed event referencing it.** Rejected: turns "send intake traffic mentioning wiki X" into an implicit registration mechanism — an availability/scope-creep risk, not a filtering-correctness one, but avoidable by keeping registration an explicit `sp42-wiki` action.
 - **Trust dynamically discovered wiki facts directly as filtering policy.** Rejected: conflates "this wiki has a right named X" (a fact) with "right X means skip human review" (a policy judgment with real consequences if wrong); the Tier A/B split with confirm-on-drift avoids silently promoting a fact into a policy decision.
+- **Treat an absent optional field as an ordinary `False` comparison.** Rejected: under `Not`, this silently flips "unknown" into "confirmed clear" — `Not(CreatedAt YoungerThan 1h)` against a missing `created_at` would read as a confirmed old-enough page rather than an unknown one, quietly admitting exactly the item a restrictive rule meant to hold back. Three-valued evaluation (§4) keeps unknown-ness from masquerading as a checked fact.
+- **Validate `route_to` targets only, leave `Reclassify.pipeline` unchecked.** Rejected: a typo'd or self-referential/cyclic reclassify target can loop the engine indefinitely on every matching item, with no load-time signal that the config is broken. Validating it exactly like `CapabilityRef` (§7) closes that gap without a second linting mechanism.
 
 ## Consequences
 
@@ -95,7 +111,7 @@ A workflow's top-level trigger ("is this page even a candidate for review at all
 - Requires building: the `sp42-types` contracts (§3–§4), the `sp42-platform` evaluation engine (§4, §6), the embedded default baseline pipeline (§2), the query-source fetch/pagination path (§3), the capability-profile discovery job and confirm-on-drift flow (§5, needs a review surface that doesn't exist yet), and the config linter (§7) — none of this exists today.
 - Requires wiring intake startup into every shell's boot sequence (§2) and migrating `sp42-live`'s inline filtering to a `Stream` adapter (behavior-preserving, but a real refactor) before patrolling itself benefits; until that lands, intake exists as a platform mechanism with no production consumer, the same "mechanism ahead of adoption" state ADR-0021 already documents for scoring's `ScoringSignal` catalogue.
 - Query-mode fetches need pagination and a hard result-count bound enforced at the source, not just the pipeline — a maintenance category can have tens of thousands of members, and the guarded `sp42-fetch` edge caps size/redirects but not result-set cardinality on its own.
-- Will be pinned by: unit tests on the condition-tree evaluator (mirroring `scoring_engine`'s tests), fixture-driven regression tests per wiki (mirroring `evals/scoring/fixtures/`), and the CI linter in §7 failing the build on any invalid config — none of these exist yet and are tracked as follow-up implementation work, not covered by this ADR.
+- Will be pinned by: unit tests on the condition-tree evaluator, including its three-valued `Unknown` propagation through `All`/`Any`/`Not` (§4) — mirroring `scoring_engine`'s tests — fixture-driven regression tests per wiki (mirroring `evals/scoring/fixtures/`), and the CI linter in §7 failing the build on any invalid config, including an unresolved `Reclassify.pipeline` target or a reclassify-graph cycle — none of these exist yet and are tracked as follow-up implementation work, not covered by this ADR.
 - Forecloses silently defaulting an unresolvable wiki-relative value to a permissive guess; every misconfiguration path is either a rejected config (load time) or a distinguishable `Misconfigured` decision (eval time), never an ordinary `Drop`.
 
 ## Non-goals

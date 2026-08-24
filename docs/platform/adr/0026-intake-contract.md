@@ -24,9 +24,11 @@ Every shell wires intake at boot (`sp42-server`, `sp42-cli`, `sp42-app`, `sp42-d
 ### 3. A generic item envelope, fed by two source modes: continuous stream and composed query
 ```
 IntakeItem { wiki_id, event_type, namespace, page_id, revision_id, created_at: Option<Timestamp>, last_revision_at: Option<Timestamp>, actor, observed_at, payload_ref }
-IntakeActor { username: Option<String>, rights: Vec<String>, is_bot: bool, account_created_at: Option<Timestamp> }
+IntakeActor { username: Option<String>, rights: Option<Vec<String>>, is_bot: bool, account_created_at: Option<Timestamp> }
 ```
 `observed_at` is when *this event* happened (an edit's timestamp, not necessarily the page's); `created_at` is the subject page's own creation fact, populated by the adapter when known — always for a `Create` event (the two coincide), and always for the `Query` source below, since it fetched the page directly. Conflating the two would make "page age" and "time since this edit" indistinguishable. `last_revision_at` is the subject page's most recent revision timestamp as of the adapter's fetch — always known for `Query` items (fetched directly) and for any `Stream` adapter that polls page state rather than only forwarding an edit's own timestamp; a plain edit-triggered stream event typically has it coincide with `observed_at`, and an adapter that hasn't fetched page history may leave it `None` rather than guess. §4 defines how an absent value here (or in `created_at`) is evaluated, rather than defaulting it silently.
+
+`rights` is `Option`-typed for the identical reason: a lightweight `Stream` adapter that forwards an edit event without a rights lookup hasn't *fetched* the actor's rights, which is a different fact from having fetched them and found none. A bare `Vec::new()` cannot distinguish "not fetched" from "confirmed no rights," which would make an `ActorRights Has "sysop"` rule silently evaluate `False` — a confirmed non-match — for an actor the adapter simply never looked up, the exact "unknown masquerading as checked" failure §4 already closes for timestamp fields. `None` means not fetched; `Some(vec![])` means fetched and confirmed empty.
 
 Two kinds of source adapter normalize raw content into this shape:
 - **Stream** (default, continuous): EventStreams, backlog polling, a pull-query draft queue, a contribution-history walk. `sp42-live`'s current inline filtering becomes one such adapter instead of doing its own filtering; this ADR authorizes that migration but does not itself perform it (see Non-goals).
@@ -52,23 +54,30 @@ IntakeField  = EventType | Namespace | PageId | RevisionId | CreatedAt | LastRev
 IntakeOp     = Eq | NotEq | In | NotIn | Has | NotHas | Before | After | OlderThan | YoungerThan
 IntakeValue  = Str | Int | StrList | IntList | Bool | Timestamp | Duration | CapabilityRef(String)
 ```
-`All`/`Any`/`Not` compose arbitrarily (real policy needs OR from day one — e.g. a quickfail-equivalent ruleset is inherently a disjunction of independent criteria; an AND-only rule list would force a breaking format change on the first real pipeline). `IntakeField` is a closed, typed enum so configs can be mechanically linted against real fields (§7), with `Custom(String)` as the deliberate escape hatch for **local, wiki- or domain-specific data items** the generic envelope doesn't carry — a content model, a tag list, an edit count in a namespace — resolved through a small per-domain field-resolver registry rather than requiring a platform change for every new filterable fact.
+`All`/`Any`/`Not` compose arbitrarily (real policy needs OR from day one — e.g. a quickfail-equivalent ruleset is inherently a disjunction of independent criteria; an AND-only rule list would force a breaking format change on the first real pipeline). `IntakeField` is a closed, typed enum so configs can be mechanically linted against real fields (§7), with `Custom(String)` as the deliberate escape hatch for **local, wiki- or domain-specific data items** the generic envelope doesn't carry — a content model, a tag list, an edit count in a namespace — resolved through a small per-domain field-resolver registry rather than requiring a platform change for every new filterable fact. Each `IntakeField` has a fixed value type (`ActorIsBot` is `Bool`, `CreatedAt` is `Timestamp`, `ActorRights` is `StrList`, …) and a fixed set of operators it accepts (a temporal field accepts `Before`/`After`/`OlderThan`/`YoungerThan`, not `Has`/`NotHas`; a list field accepts `Has`/`NotHas`/`In`/`NotIn`, not the temporal ops) — §7's linter checks every `IntakeRule`'s `field`/`op`/`value` triple against this table, so `ActorIsBot Before "2020-01-01"` is a rejected config, not a rule that silently never matches.
 
 `Before`/`After` compare a field against an absolute `IntakeValue::Timestamp`; `OlderThan`/`YoungerThan` compare it against `Clock::now() ± Duration` — the same non-wall-clock discipline the query spec's `unedited_since` already uses, extended so it applies to any timestamp field, not just a query-time fetch parameter. This is what makes "account younger than 7 days" (`ActorAccountCreatedAt YoungerThan 7d`), "page not touched in 20 months" (`LastRevisionAt OlderThan 20mo`, expressible in stream mode too, not only as a query-fetch optimization), and a review workflow's cooldown window (`CreatedAt YoungerThan 1h`, evaluated at gate-invocation altitude per §8) all the same rule shape — none of them need a bespoke mechanism.
 
 A `Rule` against an `Option`-typed field (`CreatedAt`, `LastRevisionAt`,
-`ActorAccountCreatedAt`) evaluates three-valued — `True | False | Unknown`
-— not boolean: an absent value is `Unknown`, never coerced to `False`.
-`All`/`Any`/`Not` compose with standard Kleene semantics: `All` is `False`
-if any child is `False`, else `Unknown` if any child is `Unknown`, else
-`True`; `Any` is `True` if any child is `True`, else `Unknown` if any child
-is `Unknown`, else `False`; `Not` maps `True↔False` and leaves `Unknown` as
-`Unknown` — negating an unknown never manufactures a `True`. A pipeline's
-root condition (§6) routes on this three-valued result as `True → on_pass`,
-`False | Unknown → on_fail`: an absent field can never itself cause an
-admission, closing the exact failure mode where `Not(CreatedAt YoungerThan
-1h)` against a missing `created_at` would otherwise read as a confirmed
-old-enough page rather than an unknown one.
+`ActorAccountCreatedAt`, `ActorRights`) evaluates three-valued — `True |
+False | Unknown` — not boolean: an absent value is `Unknown`, never coerced
+to `False`. `All`/`Any`/`Not` compose with standard Kleene semantics: `All`
+is `False` if any child is `False`, else `Unknown` if any child is
+`Unknown`, else `True`; `Any` is `True` if any child is `True`, else
+`Unknown` if any child is `Unknown`, else `False`; `Not` maps `True↔False`
+and leaves `Unknown` as `Unknown` — negating an unknown never manufactures a
+`True`. A pipeline's root condition (§6) routes on this three-valued result
+as `True → on_pass`, `False → on_fail`, `Unknown → on_unknown`: `on_unknown`
+is its own routing slot, never folded into `on_fail`, because `on_fail`
+itself can be configured `Admit` (a restrictive baseline that admits
+everything *except* a named disqualifying condition) — collapsing `Unknown`
+into that branch would let missing data ride along with an admitting
+`on_fail` and admit exactly the item a restrictive rule meant to hold back,
+even though no rule ever evaluated `True`. Keeping `on_unknown` distinct
+closes the exact failure mode where `Not(CreatedAt YoungerThan 1h)` against
+a missing `created_at` would otherwise read as a confirmed old-enough page
+rather than an unknown one, regardless of what `on_fail` happens to be
+configured to do.
 
 ### 5. Wiki-relative values resolve through a two-tier capability profile
 `IntakeValue::CapabilityRef(String)` lets a rule say "the mainspace namespaces for this wiki" instead of a literal namespace number, so one pipeline definition works across wikis with different conventions. Capability profiles split into:
@@ -79,14 +88,21 @@ Registering a wiki the platform doesn't yet know is always an explicit administr
 
 ### 6. Every decision is a routed, provenanced outcome — and misconfiguration is never silent
 ```
-IntakePipeline { id, condition: IntakeCondition, on_pass: IntakeOutcome, on_fail: IntakeOutcome }
+IntakePipeline { id, condition: IntakeCondition, on_pass: IntakeOutcome, on_fail: IntakeOutcome, on_unknown: Option<IntakeOutcome> }
 IntakeOutcome  = Admit { route_to: String } | Drop | Reclassify { pipeline: String }
 IntakeDecision = { outcome, pipeline_id, matched_rule_path, config_version } | Misconfigured { pipeline_id, unresolved_ref }
 ```
-A `CapabilityRef` that cannot resolve is checked twice: at config **load time**, every reference is resolved against every wiki profile the config could apply to, and an unresolvable config is rejected outright — it never goes live. If a Tier A drift later breaks a previously-valid reference, evaluation returns `Misconfigured`, a state distinct from `Drop`, so a broken filter is never indistinguishable from an intentional one. An `Unknown` three-valued result (§4) is a different situation from `Misconfigured`: the config is valid and every reference resolves, the *data* simply doesn't carry that field for this item — it routes through `on_fail` like an ordinary non-match, never through `Misconfigured`, which is reserved for a config-resolution failure.
+`on_unknown`, when omitted, defaults to `Drop` — never inherited from
+`on_fail`, since `on_fail` may itself be `Admit` and defaulting `Unknown` to
+whatever `on_fail` says would reopen the fail-open gap §4 exists to close. A
+pipeline author who genuinely wants `Unknown` to behave like a normal
+non-match sets `on_unknown` to the same value as `on_fail` explicitly; the
+default only ever picks the conservative option.
+
+A `CapabilityRef` that cannot resolve is checked twice: at config **load time**, every reference is resolved against every wiki profile the config could apply to, and an unresolvable config is rejected outright — it never goes live. If a Tier A drift later breaks a previously-valid reference, evaluation returns `Misconfigured`, a state distinct from `Drop`, so a broken filter is never indistinguishable from an intentional one. An `Unknown` three-valued result (§4) is a different situation from `Misconfigured`: the config is valid and every reference resolves, the *data* simply doesn't carry that field for this item — it routes through `on_unknown` like an ordinary non-match, never through `Misconfigured`, which is reserved for a config-resolution failure.
 
 ### 7. Configs are linted mechanically, the same way layering is
-A CI-time check (an `xtask` subcommand run from `ci-all.sh`, alongside `scripts/check-layering.sh` and `scripts/check-scoring-governance.sh`) validates every config in `configs/`: schema conformance, every `CapabilityRef` resolves against the profiles it applies to, every `Custom(String)` field is registered by some domain, every `route_to` and `Reclassify.pipeline` target resolves to a real queue/workflow or pipeline id, the directed graph formed by all `Reclassify` edges across the config set contains no cycle, and no branch of a condition tree is statically unreachable. A `Reclassify.pipeline` that doesn't resolve, or that closes a cycle (including a direct self-reference), is rejected at load/CI time exactly like an unresolvable `CapabilityRef` — never left to loop or fail at runtime.
+A CI-time check (an `xtask` subcommand run from `ci-all.sh`, alongside `scripts/check-layering.sh` and `scripts/check-scoring-governance.sh`) validates every config in `configs/`: schema conformance, every `CapabilityRef` resolves against the profiles it applies to, every `Custom(String)` field is registered by some domain, every `IntakeRule`'s `field`/`op`/`value` triple type-checks against the fixed per-field compatibility table (§4), every `route_to` and `Reclassify.pipeline` target resolves to a real queue/workflow or pipeline id, the directed graph formed by all `Reclassify` edges across the config set contains no cycle, and no branch of a condition tree is statically unreachable. A `Reclassify.pipeline` that doesn't resolve, or that closes a cycle (including a direct self-reference), is rejected at load/CI time exactly like an unresolvable `CapabilityRef` — never left to loop or fail at runtime. An incompatible `field`/`op`/`value` triple is the same class of rejection: a rule that could never evaluate as its author intended is a config bug, not a rule that will just never match.
 
 ### 8. The same pipeline mechanism serves two altitudes
 A workflow's top-level trigger ("is this page even a candidate for review at all") and a gate's own scoped narrowing ("of this contributor's history, which edits are in scope for this check") are the same `IntakePipeline` mechanism invoked at different points — not two separate systems. Workflow definitions and gates both reference pipelines by id.
@@ -103,6 +119,7 @@ A workflow's top-level trigger ("is this page even a candidate for review at all
 - **Trust dynamically discovered wiki facts directly as filtering policy.** Rejected: conflates "this wiki has a right named X" (a fact) with "right X means skip human review" (a policy judgment with real consequences if wrong); the Tier A/B split with confirm-on-drift avoids silently promoting a fact into a policy decision.
 - **Treat an absent optional field as an ordinary `False` comparison.** Rejected: under `Not`, this silently flips "unknown" into "confirmed clear" — `Not(CreatedAt YoungerThan 1h)` against a missing `created_at` would read as a confirmed old-enough page rather than an unknown one, quietly admitting exactly the item a restrictive rule meant to hold back. Three-valued evaluation (§4) keeps unknown-ness from masquerading as a checked fact.
 - **Validate `route_to` targets only, leave `Reclassify.pipeline` unchecked.** Rejected: a typo'd or self-referential/cyclic reclassify target can loop the engine indefinitely on every matching item, with no load-time signal that the config is broken. Validating it exactly like `CapabilityRef` (§7) closes that gap without a second linting mechanism.
+- **Route `Unknown` through `on_fail`, one collapsed non-`True` branch.** Rejected: `on_fail` is itself an `IntakeOutcome`, which can be `Admit` (a restrictive-baseline pipeline that admits everything except a named disqualifying condition); collapsing `Unknown` into that branch would let missing data ride an admitting `on_fail` straight into admission, silently reopening the exact fail-open gap the three-valued design (§4) exists to close. A dedicated `on_unknown`, defaulting to `Drop`, keeps "we don't know" from ever inheriting an admitting outcome by accident.
 
 ## Consequences
 
@@ -111,7 +128,7 @@ A workflow's top-level trigger ("is this page even a candidate for review at all
 - Requires building: the `sp42-types` contracts (§3–§4), the `sp42-platform` evaluation engine (§4, §6), the embedded default baseline pipeline (§2), the query-source fetch/pagination path (§3), the capability-profile discovery job and confirm-on-drift flow (§5, needs a review surface that doesn't exist yet), and the config linter (§7) — none of this exists today.
 - Requires wiring intake startup into every shell's boot sequence (§2) and migrating `sp42-live`'s inline filtering to a `Stream` adapter (behavior-preserving, but a real refactor) before patrolling itself benefits; until that lands, intake exists as a platform mechanism with no production consumer, the same "mechanism ahead of adoption" state ADR-0021 already documents for scoring's `ScoringSignal` catalogue.
 - Query-mode fetches need pagination and a hard result-count bound enforced at the source, not just the pipeline — a maintenance category can have tens of thousands of members, and the guarded `sp42-fetch` edge caps size/redirects but not result-set cardinality on its own.
-- Will be pinned by: unit tests on the condition-tree evaluator, including its three-valued `Unknown` propagation through `All`/`Any`/`Not` (§4) — mirroring `scoring_engine`'s tests — fixture-driven regression tests per wiki (mirroring `evals/scoring/fixtures/`), and the CI linter in §7 failing the build on any invalid config, including an unresolved `Reclassify.pipeline` target or a reclassify-graph cycle — none of these exist yet and are tracked as follow-up implementation work, not covered by this ADR.
+- Will be pinned by: unit tests on the condition-tree evaluator, including its three-valued `Unknown` propagation through `All`/`Any`/`Not` and its routing to `on_unknown` independent of `on_fail` (§4) — mirroring `scoring_engine`'s tests — fixture-driven regression tests per wiki (mirroring `evals/scoring/fixtures/`), and the CI linter in §7 failing the build on any invalid config, including an unresolved `Reclassify.pipeline` target, a reclassify-graph cycle, or an incompatible `field`/`op`/`value` triple — none of these exist yet and are tracked as follow-up implementation work, not covered by this ADR.
 - Forecloses silently defaulting an unresolvable wiki-relative value to a permissive guess; every misconfiguration path is either a rejected config (load time) or a distinguishable `Misconfigured` decision (eval time), never an ordinary `Drop`.
 
 ## Non-goals

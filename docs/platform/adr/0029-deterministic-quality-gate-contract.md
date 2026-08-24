@@ -62,16 +62,20 @@ be interchangeable at the type level, the same discipline ADR-0028 §1
 established for deterministic vs. stochastic eligibility, now drawn a second
 time between eligibility and quality.
 
-### 2. Rulesets compose intake's condition tree and reuse `PriorOutcome` verbatim — including across gate types
+### 2. Rulesets compose intake's condition tree and reuse `PriorOutcome`/`PriorReviewerAction` verbatim — including across gate types
 ```
 QualityCondition = All(Vec<QualityCondition>) | Any(Vec<QualityCondition>) | Not(Box<QualityCondition>)
                   | Rule(IntakeRule)
                   | PriorOutcome { gate_id: String, ruleset_id: Option<String>, outcome_key: Option<String>, resolution_class: Option<ResolutionClass>, within: Option<Duration> }
+                  | PriorReviewerAction { actor: Option<String>, action_kind: Option<String>, within: Option<Duration> }
 ```
-This is the same `PriorOutcome` shape ADR-0028 §2 defines, not a
-quality-flavored reimplementation — `PriorOutcome` was already generic over
-`gate_id` and reads a `LifecycleTransition`, never a gate-specific verdict
-type (ADR-0028 §2), so it needs no changes to serve a second gate type. Two
+This is the same `PriorOutcome`/`PriorReviewerAction` pair ADR-0028 §2
+defines, not a quality-flavored reimplementation — both were already generic
+over `gate_id`/`ReviewerAction`'s own fields and read a `LifecycleTransition`,
+never a gate-specific verdict type (ADR-0028 §2), so neither needs changes
+to serve a second gate type; a GA/FA coordinator's contested-promotion call
+(§7) is exactly as addressable via `PriorReviewerAction` as a human
+eligibility decision is. Two
 directions of chaining follow directly from that genericity, both real:
 a GA reassessment ruleset can require "was this article previously promoted
 to GA" (`PriorOutcome` against this gate's own prior verdicts — GA
@@ -83,7 +87,12 @@ allowing a lighter deletion path, or a quality ruleset can require "was this
 kept, not merged, at a prior AfD" before considering DYK/GA candidacy —
 `gate_id` crossing from a quality ruleset to an eligibility gate's recorded
 verdicts, or vice versa, with neither gate's Rust types imported by the
-other. This is the concrete case that answers why the two stayed separated-
+other. Per ADR-0027 §4/ADR-0028 §2, `PriorOutcome` reads only the most
+recent matching transition for a `gate_id`/`ruleset_id` lineage, never any
+historical occurrence — a GA `promoted` transition later superseded by a
+`delisted` one must read as delisted, not as still-promoted because
+`promoted` occurred at some point in the item's history. This is the
+concrete case that answers why the two stayed separated-
 but-composable rather than merged: the composition the platform vision
 requires is exactly this cross-gate-type `PriorOutcome` reference, and it
 only works cleanly because both write through the same `ContentLifecycle`
@@ -117,6 +126,7 @@ QualityVerdict {
     ruleset_id, gate_id, item_id,
     outcome: { key, resolution_class },
     reasons: Vec<Reason>, matched_rule_path: Option<Vec<String>>,
+    config_version: String, revision_id,
     evaluated_at,
 }
 ```
@@ -126,16 +136,36 @@ deliberately so, since both write through the same widened
 the same reason `EligibilityVerdict` and a future stochastic verdict must
 stay distinct: nothing here carries an `evaluator` field, since this gate,
 like ADR-0028's, cannot structurally produce a verdict any way other than a
-reproducible rule-tree match. Recording through `ContentLifecycle` rather
+reproducible rule-tree match. `config_version` and `revision_id` carry the
+same replay-vs-audit distinction ADR-0028 §4 draws: `matched_rule_path`
+alone names which rules fired, not which ruleset version was live or what
+page state the facts were read against, so both are needed for a verdict to
+actually be reproducible rather than merely traceable. Recording through `ContentLifecycle` rather
 than a separate store is what makes §2's cross-gate `PriorOutcome` reads
 correct in the first place — the same "eligibility does not own a separate
 store" argument (ADR-0028 §4) applies here without modification.
 
-### 5. A ruleset declares what it may *not* decide on
+### 5. A ruleset is an ordered list of guarded outcomes, not one condition plus a separate outcome catalogue
 ```
-QualityRuleset { id, condition: QualityCondition, outcomes: Vec<{ key, resolution_class, effects }>, disallowed_reasons: Vec<String>, capability_required: String }
+QualityRuleset { id, outcomes: Vec<QualityOutcomeArm>, disallowed_reasons: Vec<String>, capability_required: String }
+QualityOutcomeArm { key: String, resolution_class: ResolutionClass, when: QualityCondition, effects }
 ```
-Same shape as `EligibilityRuleset` (ADR-0028 §5), same rationale: a GA/FA
+Same shape and rationale as `EligibilityRuleset`/`EligibilityOutcomeArm`
+(ADR-0028 §5): a single top-level `condition` only ever resolves to `True |
+False | Unknown`, which cannot itself select among three or more named
+outcomes (DYK's `approved`/`failed-hook`/`failed-length`; GA's
+`promoted`/`delisted`/`on-hold`). Evaluation walks `outcomes` in order; the
+first arm whose `when` evaluates `True` wins, `Unknown` falls through like
+`False` (never manufactures a match), and a mandatory trailing catch-all arm
+(`when: All([])`) guarantees every input produces some outcome — §6 rejects
+a ruleset missing one, mirroring ADR-0028 §6's identical check. A GA/FA
+ruleset's catch-all commonly resolves `NeedsHuman` (§7's "more of these
+terminate at NeedsHuman than eligibility's" observation is exactly what a
+judgment-heavy catch-all arm encodes), but is again the ruleset author's
+choice, not fixed by the mechanism.
+
+A recorded `Reason` matching `disallowed_reasons` is rejected at evaluation
+time, the same as ADR-0028 §5: a GA/FA
 review process that forbids certain rejection rationales (e.g. a
 formatting-only complaint blocking an otherwise-passing review, mirroring
 AFCSTANDARDS' disallowed-reasons precedent) expresses that as
@@ -144,7 +174,11 @@ log-only, matching ADR-0026 §6 and ADR-0028 §5's precedent.
 
 ### 6. Configs are linted by extending the same linter — a third gate type, not a third linter
 The xtask from ADR-0026 §7, already extended by ADR-0028 §6, gains the
-identical validations for quality rulesets: schema conformance,
+identical validations for quality rulesets: schema conformance, a check that
+a ruleset's last `outcomes` arm is the unconditional catch-all required by §5
+(and that no earlier arm is itself statically `All([])`, which would make
+every arm after it unreachable — the same check ADR-0028 §6 runs on
+`EligibilityOutcomeArm`, extended here to `QualityOutcomeArm`),
 `PriorOutcome` `gate_id` existence (now checked against *both* eligibility
 and quality gate ids, since chaining crosses gate types per §2), `outcome_key`
 membership validated against the specific referenced ruleset when both
@@ -219,6 +253,28 @@ ADR-0026 §5's wiki-relative discipline.
   block real cases (eligibility wanting to know "is this a Featured Article"
   before applying a lighter deletion path) for no benefit, and would need its
   own justification this ADR has no grounds to supply.
+- **One top-level `condition` plus a separate `outcomes` catalogue for
+  `QualityRuleset`, the shape this ADR originally drafted.** Rejected for the
+  identical reason ADR-0028 §5/Alternatives rejected it for
+  `EligibilityRuleset`: `QualityCondition` only ever resolves to a single
+  three-valued result, while a real quality ruleset routinely needs three or
+  more named outcomes (DYK's approve/failed-hook/failed-length; GA's
+  promoted/delisted/on-hold), and nothing in the old shape specified which
+  outcome a `True` result should select. The ordered `QualityOutcomeArm` list
+  (§5) is the same fix, not a quality-specific variant of it.
+- **Widen `ReviewerAction` with gate-shaped fields instead of a separate
+  `PriorReviewerAction` condition.** Rejected — reuses ADR-0028
+  §2/Alternatives' reasoning without modification: a human's action isn't
+  naturally shaped like a gate's verdict, and this gate composes with
+  `PriorReviewerAction` as-is (§2) rather than needing its own variant, so
+  there is even less reason here to blur the `GateVerdict`/`ReviewerAction`
+  boundary than there was for eligibility.
+- **Leave `QualityVerdict` at `{..., matched_rule_path}` with no
+  `config_version`/`revision_id`.** Rejected — same gap ADR-0028
+  §4/Alternatives identifies for `EligibilityVerdict`: `matched_rule_path`
+  alone names which rules fired, not which ruleset version or page state
+  produced the match, so a verdict without both fields could be audited but
+  not replayed.
 
 ## Consequences
 

@@ -239,6 +239,7 @@ fn is_whole_word_match(text: &str, start: usize, end: usize) -> bool {
 #[cfg(test)]
 mod tests {
     use sp42_core::{DiffSegmentKind, InlineSpan};
+    use wasm_bindgen_test::wasm_bindgen_test;
 
     use super::{
         RenderedHighlightPhrase, RenderedHighlightSource, build_rendered_highlight_candidates,
@@ -246,7 +247,7 @@ mod tests {
         find_rendered_highlight_matches, normalize_rendered_highlight_phrase,
     };
 
-    #[test]
+    #[wasm_bindgen_test]
     fn normalize_rendered_highlight_phrase_filters_markup_noise() {
         assert_eq!(
             normalize_rendered_highlight_phrase("  Added text here  "),
@@ -260,7 +261,7 @@ mod tests {
         assert_eq!(normalize_rendered_highlight_phrase("  "), None);
     }
 
-    #[test]
+    #[wasm_bindgen_test]
     fn rendered_highlight_matches_prefer_longer_phrase_at_same_position() {
         let matches = find_rendered_highlight_matches(
             "Added a major city landmark",
@@ -279,7 +280,7 @@ mod tests {
         assert_eq!(matches, vec![(0, "Added a major".len())]);
     }
 
-    #[test]
+    #[wasm_bindgen_test]
     fn rendered_highlight_matches_respect_word_boundaries() {
         let matches = find_rendered_highlight_matches(
             "Capitales parisiennes",
@@ -292,7 +293,7 @@ mod tests {
         assert!(matches.is_empty());
     }
 
-    #[test]
+    #[wasm_bindgen_test]
     fn extract_rendered_word_tokens_keeps_short_meaningful_units() {
         assert_eq!(
             extract_rendered_word_tokens("Jean-Pierre d'Arc 2024"),
@@ -304,7 +305,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[wasm_bindgen_test]
     fn build_rendered_highlight_candidates_avoids_long_sentence_fallbacks() {
         let candidates = build_rendered_highlight_candidates(
             "This is a long changed sentence with many words in it",
@@ -323,7 +324,7 @@ mod tests {
         assert!(texts.contains(&"sentence".to_string()));
     }
 
-    #[test]
+    #[wasm_bindgen_test]
     fn collect_rendered_highlight_phrases_uses_inline_target_spans() {
         let inline_highlights = vec![
             InlineSpan {

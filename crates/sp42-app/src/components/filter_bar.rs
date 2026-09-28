@@ -380,8 +380,9 @@ mod tests {
     use super::PatrolFilterParams;
     use sp42_core::FlagState;
     use sp42_live::LiveOperatorQuery;
+    use wasm_bindgen_test::wasm_bindgen_test;
 
-    #[test]
+    #[wasm_bindgen_test]
     fn default_query_string_contains_limit() {
         let params = PatrolFilterParams::default();
         let qs = params.to_query_string();
@@ -397,7 +398,7 @@ mod tests {
         assert!(!qs.contains("selected_index"));
     }
 
-    #[test]
+    #[wasm_bindgen_test]
     fn query_string_includes_all_set_params() {
         let params = PatrolFilterParams {
             query: LiveOperatorQuery {

@@ -1016,6 +1016,7 @@ fn service_worker_registration_status(
 #[cfg(test)]
 mod tests {
     use futures::executor::block_on;
+    use wasm_bindgen_test::wasm_bindgen_test;
 
     use super::{
         PwaBrowserContext, PwaEnvironmentStatus, PwaShellMode, icon_192_path, icon_512_path,
@@ -1024,7 +1025,7 @@ mod tests {
         pwa_status_lines, service_worker_path, shell_asset_paths,
     };
 
-    #[test]
+    #[wasm_bindgen_test]
     fn secure_origin_detector_accepts_https_and_localhost() {
         assert!(is_probably_secure_origin("https:", "example.org"));
         assert!(is_probably_secure_origin("http:", "localhost"));
@@ -1032,7 +1033,7 @@ mod tests {
         assert!(!is_probably_secure_origin("http:", "example.org"));
     }
 
-    #[test]
+    #[wasm_bindgen_test]
     fn manifest_href_is_trimmed_and_empty_values_are_ignored() {
         assert_eq!(
             normalize_manifest_href(Some("  /manifest.webmanifest  ")),
@@ -1042,7 +1043,7 @@ mod tests {
         assert_eq!(normalize_manifest_href(None), None);
     }
 
-    #[test]
+    #[wasm_bindgen_test]
     fn preview_lines_include_all_flags() {
         let lines = pwa_status_lines(&PwaEnvironmentStatus {
             secure_context: true,
@@ -1113,7 +1114,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[wasm_bindgen_test]
     fn non_wasm_stubs_return_expected_defaults() {
         assert!(!super::inject_manifest_link());
         assert!(!super::listen_for_install_prompt());
@@ -1128,7 +1129,7 @@ mod tests {
         assert!(!status.service_worker_supported);
     }
 
-    #[test]
+    #[wasm_bindgen_test]
     fn preview_pwa_environment_returns_safe_defaults_on_native() {
         let status = super::preview_pwa_environment();
         assert!(!status.secure_context);
@@ -1140,7 +1141,7 @@ mod tests {
         assert_eq!(status.shell_mode, PwaShellMode::Unsupported);
     }
 
-    #[test]
+    #[wasm_bindgen_test]
     fn asset_paths_are_stable() {
         assert_eq!(manifest_path(), "/manifest.json");
         assert_eq!(service_worker_path(), "/sw.js");
@@ -1159,7 +1160,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[wasm_bindgen_test]
     fn readiness_helpers_require_secure_context_and_registration() {
         let ready = PwaEnvironmentStatus {
             secure_context: true,
@@ -1199,7 +1200,39 @@ mod tests {
         assert!(!is_update_ready(&missing_registration));
     }
 
-    #[test]
+    #[wasm_bindgen_test]
+    fn guidance_lines_teach_ios_install_when_not_yet_standalone() {
+        // The companion case to the IosStandalone fixture: in a browser tab on
+        // iOS, the guidance must actually carry the install instruction.
+        let status = PwaEnvironmentStatus {
+            secure_context: true,
+            online: true,
+            service_worker_supported: true,
+            service_worker_controlled: false,
+            manifest_href: Some("/manifest.json".to_string()),
+            registration_scope: Some("/".to_string()),
+            waiting_worker: false,
+            active_worker: true,
+            active_cache: None,
+            install_prompt_available: false,
+            shell_mode: PwaShellMode::BrowserTab,
+            browser_context: PwaBrowserContext {
+                display_mode_standalone: false,
+                ios_device: true,
+                browser_label: Some("iOS Safari".to_string()),
+            },
+            errors: Vec::new(),
+        };
+
+        let lines = pwa_guidance_lines(&status);
+
+        assert!(
+            lines.iter().any(|line| line.contains("Add to Home Screen")),
+            "{lines:?}"
+        );
+    }
+
+    #[wasm_bindgen_test]
     fn guidance_lines_call_out_ios_and_updates() {
         let status = PwaEnvironmentStatus {
             secure_context: true,
@@ -1223,12 +1256,20 @@ mod tests {
 
         let lines = pwa_guidance_lines(&status);
 
+        // The fixture is `IosStandalone` with `display_mode_standalone: true`,
+        // so the install-instruction line is not emitted: that branch is
+        // guarded on `ios_device && !display_mode_standalone`. Assert the line
+        // that this fixture *does* produce rather than one it cannot, and cover
+        // the install instruction in its own BrowserTab test below.
         assert!(
             lines
                 .iter()
                 .any(|line| line.contains("iOS standalone mode"))
         );
-        assert!(lines.iter().any(|line| line.contains("Add to Home Screen")));
+        assert!(
+            !lines.iter().any(|line| line.contains("Add to Home Screen")),
+            "an already-standalone shell must not tell the operator to install: {lines:?}"
+        );
         assert!(
             lines
                 .iter()
@@ -1241,7 +1282,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[wasm_bindgen_test]
     fn ios_user_agents_are_detected() {
         assert!(is_ios_user_agent(
             "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X)"

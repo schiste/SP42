@@ -48,7 +48,8 @@ sets `core.hooksPath=.husky`, so the hooks run automatically:
 - `pre-commit`: staged/working-tree whitespace checks, `cargo fmt --all -- --check`,
   the forbidden-pattern guard on added lines (§5.3), pedantic `clippy` on the
   changed crates, docs consistency, the markdown link check, release-tree audit,
-  and `./scripts/check-focused.sh`.
+  the browser shell's wasm unit tests when `crates/sp42-app/` changed
+  (§ below), and `./scripts/check-focused.sh`.
 - `commit-msg`: enforces Conventional Commits (§8.1).
 - `pre-push`: release-tree audit, the markdown link check, the layer check
   (ADR-0013 dependency direction), `./scripts/ci-all.sh`, the supply-chain gate
@@ -59,8 +60,22 @@ sets `core.hooksPath=.husky`, so the hooks run automatically:
 These gates need a few extra tools installed once (all Rust):
 
 ```sh
-cargo install --locked cargo-deny cargo-audit cargo-llvm-cov
+cargo install --locked cargo-deny cargo-audit cargo-llvm-cov wasm-pack
 ```
+
+The browser shell's unit tests are `wasm`-only: `sp42-app`'s modules are
+`#[cfg(target_arch = "wasm32")]`, so the host test run cannot compile them. They
+execute separately:
+
+```sh
+./scripts/check-wasm-tests.sh
+```
+
+That script runs them through `wasm-bindgen-test` under the Node runner. It uses
+`--release` deliberately — the debug wasm is ~180 MB and the runner exhausts the
+disk parsing it. If you touch anything under `crates/sp42-app/`, run it before
+opening a pull request; `pre-commit` does this for you when `wasm-pack` is
+installed. See [ADR-0034](docs/platform/adr/0034-execute-browser-shell-tests.md).
 
 The markdown link check is a deterministic, internal-links-only scan (Python 3,
 no extra install; external URL liveness is intentionally out of scope). CI also
@@ -69,10 +84,10 @@ path-enumerated), a path-filtered desktop (Tauri) build-check, and a weekly
 `cargo-mutants` mutation-testing report.
 
 The same gates run in CI on every non-draft pull request (see
-`.github/workflows/ci.yml`), which additionally enforces the wasm bundle-size
-ceiling against the optimized build. The wasm-size gate is CI/release-only — it
-is not in `pre-push`, which would otherwise force an optimized rebuild on every
-push.
+`.github/workflows/ci.yml`), which additionally executes the browser shell's wasm
+unit tests and enforces the wasm bundle-size ceiling against the optimized build.
+The wasm-size gate is CI/release-only — it is not in `pre-push`, which would
+otherwise force an optimized rebuild on every push.
 
 > The supply-chain gate is currently red on `main` due to transitive advisories
 > with no available fix (`paste`/`proc-macro-error2` are Leptos build-time
@@ -99,6 +114,7 @@ If your change touches the browser app or runtime config, also run:
 
 ```sh
 rustup target add wasm32-unknown-unknown
+./scripts/check-wasm-tests.sh   # executes the browser shell's unit tests
 ./scripts/build-frontend.sh
 ```
 

@@ -1419,6 +1419,8 @@ fn select_value(_id: &str) -> Option<String> {
 
 #[cfg(test)]
 mod action_row_tests {
+    use wasm_bindgen_test::wasm_bindgen_test;
+
     use super::{
         FixCitationRoute, finding_has_action_row, fix_citation_route, parse_concern_kind,
         resolve_concern_kind, suggested_concern_kind,
@@ -1459,7 +1461,7 @@ mod action_row_tests {
         }
     }
 
-    #[test]
+    #[wasm_bindgen_test]
     fn action_row_shows_only_for_partial_and_not_supported() {
         // PRD-0014 DoD: "An action row renders only for Partial/NotSupported
         // findings; Supported/SourceUnavailable findings remain read-only" —
@@ -1488,7 +1490,7 @@ mod action_row_tests {
         assert!(!finding_has_action_row(&book));
     }
 
-    #[test]
+    #[wasm_bindgen_test]
     fn suggests_partial_support_for_partial_verdict() {
         let f = finding(CitationVerdict::Judged(SupportLevel::Partial));
         assert_eq!(
@@ -1497,7 +1499,7 @@ mod action_row_tests {
         );
     }
 
-    #[test]
+    #[wasm_bindgen_test]
     fn suggests_failed_verification_for_not_supported_verdict() {
         let f = finding(CitationVerdict::Judged(SupportLevel::NotSupported));
         assert_eq!(
@@ -1506,7 +1508,7 @@ mod action_row_tests {
         );
     }
 
-    #[test]
+    #[wasm_bindgen_test]
     fn suggests_nothing_for_supported_or_unavailable_verdicts() {
         assert_eq!(
             suggested_concern_kind(&finding(CitationVerdict::Judged(SupportLevel::Supported))),
@@ -1518,7 +1520,7 @@ mod action_row_tests {
         );
     }
 
-    #[test]
+    #[wasm_bindgen_test]
     fn fix_citation_routes_to_replace_only_for_a_bare_url_ref() {
         // PRD-0014 DoD + the ref-identity fix: "Fix citation" routes to bare-URL repair
         // only when the finding's OWN ref is a bare URL, so a proposal matched by the
@@ -1529,7 +1531,7 @@ mod action_row_tests {
         assert_eq!(fix_citation_route(&f), FixCitationRoute::Replace);
     }
 
-    #[test]
+    #[wasm_bindgen_test]
     fn fix_citation_does_not_offer_repair_for_a_formatted_ref() {
         // The finding's ref is already a formatted citation (not a bare URL). Even if
         // another bare ref cites the same URL, bare-URL repair must not be offered here.
@@ -1539,14 +1541,14 @@ mod action_row_tests {
         assert_eq!(fix_citation_route(&f), FixCitationRoute::AlreadyFormatted);
     }
 
-    #[test]
+    #[wasm_bindgen_test]
     fn fix_citation_routes_to_insert_when_ref_id_empty() {
         let mut f = finding(CitationVerdict::Judged(SupportLevel::Partial));
         f.ref_id = String::new();
         assert_eq!(fix_citation_route(&f), FixCitationRoute::Insert);
     }
 
-    #[test]
+    #[wasm_bindgen_test]
     fn parse_concern_kind_round_trips_every_variant_label() {
         for kind in [
             CitationConcernKind::PartialSupport,
@@ -1556,12 +1558,12 @@ mod action_row_tests {
         }
     }
 
-    #[test]
+    #[wasm_bindgen_test]
     fn parse_concern_kind_rejects_unknown_value() {
         assert_eq!(parse_concern_kind("unknown-kind"), None);
     }
 
-    #[test]
+    #[wasm_bindgen_test]
     fn operator_override_wins_over_suggestion() {
         // PRD-0014 DoD: "the operator can override the suggested
         // CitationConcernKind for any other wiki-configured one before
@@ -1575,13 +1577,13 @@ mod action_row_tests {
         );
     }
 
-    #[test]
+    #[wasm_bindgen_test]
     fn falls_back_to_suggestion_when_operator_makes_no_selection() {
         let suggested = Some(CitationConcernKind::FailedVerification);
         assert_eq!(resolve_concern_kind(None, suggested), suggested);
     }
 
-    #[test]
+    #[wasm_bindgen_test]
     fn resolves_to_none_when_neither_selected_nor_suggested() {
         assert_eq!(resolve_concern_kind(None, None), None);
     }

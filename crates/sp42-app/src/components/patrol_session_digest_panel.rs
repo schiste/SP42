@@ -229,6 +229,7 @@ mod tests {
         PatrolScenarioFinding, PatrolScenarioReadiness, PatrolScenarioReport,
         PatrolScenarioSection, ReportSeverity,
     };
+    use wasm_bindgen_test::wasm_bindgen_test;
 
     fn sample_report(readiness: PatrolScenarioReadiness) -> PatrolScenarioReport {
         PatrolScenarioReport {
@@ -267,7 +268,7 @@ mod tests {
         }
     }
 
-    #[test]
+    #[wasm_bindgen_test]
     fn digest_badges_include_readiness_and_selection() {
         let badges = session_digest_badges(&sample_report(PatrolScenarioReadiness::Ready));
 
@@ -276,7 +277,7 @@ mod tests {
         assert!(badges.iter().any(|(label, _)| label == "rev 123456"));
     }
 
-    #[test]
+    #[wasm_bindgen_test]
     fn digest_lines_include_next_step() {
         let lines = session_digest_lines(&sample_report(PatrolScenarioReadiness::Ready));
 
@@ -289,7 +290,7 @@ mod tests {
         assert!(lines.iter().any(|line| line.starts_with("next_step=")));
     }
 
-    #[test]
+    #[wasm_bindgen_test]
     fn next_step_reflects_readiness_and_findings() {
         assert_eq!(
             recommended_next_step(&sample_report(PatrolScenarioReadiness::Blocked)),
@@ -301,7 +302,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[wasm_bindgen_test]
     fn finding_helpers_render_labels() {
         let finding = PatrolScenarioFinding {
             severity: ReportSeverity::Warning,

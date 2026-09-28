@@ -118,8 +118,9 @@ mod tests {
         DevAuthSessionStatus, LocalOAuthConfigStatus,
     };
     use sp42_reporting::ServerDebugSummary;
+    use wasm_bindgen_test::wasm_bindgen_test;
 
-    #[test]
+    #[wasm_bindgen_test]
     fn bootstrap_error_lines_prefix_error() {
         assert_eq!(
             bootstrap_error_lines("localhost unavailable"),
@@ -127,7 +128,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[wasm_bindgen_test]
     fn bootstrap_sections_include_error_section_when_present() {
         let snapshot = BrowserBootstrapSnapshot {
             pwa: super::pwa::PwaEnvironmentStatus {

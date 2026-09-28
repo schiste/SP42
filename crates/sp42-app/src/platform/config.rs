@@ -229,10 +229,11 @@ fn runtime_meta_content(name: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::{configured_default_wiki_id, join_base_and_path, normalize_base_url};
+    use wasm_bindgen_test::wasm_bindgen_test;
 
     // origin parsing/comparison is now tested in sp42_platform::origin.
 
-    #[test]
+    #[wasm_bindgen_test]
     fn joins_same_origin_paths() {
         assert_eq!(
             join_base_and_path("", "/operator/live/frwiki"),
@@ -244,7 +245,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[wasm_bindgen_test]
     fn joins_absolute_base_url_without_double_slashes() {
         assert_eq!(
             join_base_and_path("https://sp42.example.org/", "/debug/runtime"),
@@ -252,7 +253,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[wasm_bindgen_test]
     fn normalizes_base_url() {
         assert_eq!(
             normalize_base_url(" https://sp42.example.org/// "),
@@ -260,7 +261,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[wasm_bindgen_test]
     fn defaults_to_frwiki_when_no_runtime_or_build_value_is_available() {
         assert_eq!(configured_default_wiki_id(), "frwiki");
     }

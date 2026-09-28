@@ -131,6 +131,7 @@ The workspace is currently kept green with:
 - `./scripts/build-web-release.sh`
 - `./scripts/package-vps.sh`
 - `./scripts/check-focused.sh`
+- `./scripts/check-wasm-tests.sh` (executes the browser shell's `wasm`-gated unit tests; ADR-0034)
 - `./scripts/dev-local.sh --smoke`
 - `./scripts/ci-all.sh`
 - `./scripts/build-desktop.sh --platform macos --debug`

@@ -143,8 +143,9 @@ pub fn start_eventstream(
 #[cfg(test)]
 mod tests {
     use super::parse_stream_event;
+    use wasm_bindgen_test::wasm_bindgen_test;
 
-    #[test]
+    #[wasm_bindgen_test]
     fn parses_edit_event() {
         let json = r#"{
             "type": "edit",
@@ -167,7 +168,7 @@ mod tests {
         assert_eq!(ev.byte_delta(), 10);
     }
 
-    #[test]
+    #[wasm_bindgen_test]
     fn ignores_log_events() {
         let json = r#"{"type": "log", "wiki": "frwiki"}"#;
         assert!(parse_stream_event(json).is_none());

@@ -143,8 +143,9 @@ mod tests {
     use super::{
         InspectorLineKind, classify_inspector_line, inspector_entries_from_lines, kind_meta,
     };
+    use wasm_bindgen_test::wasm_bindgen_test;
 
-    #[test]
+    #[wasm_bindgen_test]
     fn classifies_known_prefixes() {
         assert_eq!(
             classify_inspector_line("stream_delivered=3"),
@@ -172,7 +173,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[wasm_bindgen_test]
     fn preserves_entry_text() {
         let entries = inspector_entries_from_lines(&["queue_depth=4".to_string()]);
 
@@ -180,7 +181,7 @@ mod tests {
         assert_eq!(entries[0].kind, InspectorLineKind::Queue);
     }
 
-    #[test]
+    #[wasm_bindgen_test]
     fn kind_meta_returns_nonempty_labels() {
         for kind in [
             InspectorLineKind::Queue,

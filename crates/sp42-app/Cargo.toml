@@ -35,4 +35,9 @@ wasm-bindgen-futures = "0.4.55"
 web-sys.workspace = true
 
 [dev-dependencies]
+# The browser shell's unit tests live in `#[cfg(target_arch = "wasm32")]` modules,
+# so host `cargo test` cannot compile or run them: CI historically only
+# *type-checked* them, which let them rot unnoticed. `wasm-bindgen-test` is the
+# runner that executes them in a real browser (ADR-0012, ADR-0034).
+wasm-bindgen-test = "0.3.64"
 sp42-wiki = { path = "../sp42-wiki" }

@@ -1,5 +1,18 @@
 pub mod inspector;
 
+// The browser shell's tests are declared with `wasm_bindgen_test` and executed
+// by wasm-bindgen-test-runner under `wasm-pack test` (ADR-0012, ADR-0034).
+// Previously they used `#[test]` inside `#[cfg(target_arch = "wasm32")]` modules,
+// which no runner could execute: host `cargo test` cannot compile them, and the
+// wasm runner only collects `wasm_bindgen_test` functions. CI merely
+// type-checked them, so 88 tests were reported as covered while never running.
+//
+// No `run_in_browser` is declared: these tests exercise pure presentation logic
+// (diff shaping, label formatting, highlight extraction, config joining) and do
+// not touch the DOM, so the Node runner executes them deterministically and
+// without a browser download — see ADR-0034 for why that matters for CI
+// reliability. Node is wasm-bindgen-test's default when no rule is set.
+
 #[cfg(target_arch = "wasm32")]
 pub mod app;
 #[cfg(target_arch = "wasm32")]

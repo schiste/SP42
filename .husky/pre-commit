@@ -69,6 +69,20 @@ fi
 printf '\n== SP42 pre-commit: release tree audit ==\n'
 ./scripts/audit-release-tree.sh
 
+# A change under crates/sp42-app/ cannot be validated by the host checks: that
+# crate's tests are wasm-only, and the focused host build does not compile them
+# (ADR-0034). Run them so a commit that breaks the browser shell is caught here
+# rather than only in CI.
+if printf '%s\n' "$changed_crates" | grep -qx 'sp42-app'; then
+  if command -v wasm-pack >/dev/null 2>&1; then
+    printf '\n== SP42 pre-commit: sp42-app wasm unit tests ==\n'
+    ./scripts/check-wasm-tests.sh
+  else
+    printf '\nsp42-app changed but `wasm-pack` is not installed — skipping its wasm unit tests here.\n'
+    printf 'CI runs them; locally: cargo install --locked wasm-pack\n'
+  fi
+fi
+
 printf '\n== SP42 pre-commit: focused checks ==\n'
 ./scripts/check-focused.sh
 

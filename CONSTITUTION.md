@@ -96,7 +96,7 @@
 
 **6.1** Single source of truth. Every type, constant, and rule exists in one place. `EditEvent` lives in `sp42-platform/src/types.rs` (re-exported via `sp42-core` during the ADR-0013 migration) and is used directly by all crates. No copies. No conversion layers.
 
-**6.2** Trait-based abstraction. All external dependencies via traits defined in `sp42-platform/src/traits.rs` (re-exported via `sp42-core`). The platform never names a concrete implementation. Enables: testing with mocks, compiling to different targets.
+**6.2** Trait-based abstraction. All external dependencies via traits, declared in `sp42-types/src/traits.rs` and re-exported for compatibility from `sp42-platform/src/traits.rs` (and from `sp42-core`). The platform never names a concrete implementation. Enables: testing with mocks, compiling to different targets. *(The traits moved from `sp42-platform` to `sp42-types` during the ADR-0013 migration; this article previously still named the old file.)*
 
 **6.3** Domain-specific error types. Each module has its own error enum (`ScoringError`, `DiffError`, `ActionError`). No `anyhow::Error` in public interfaces.
 

@@ -1,9 +1,9 @@
 # ADR-0026: Intake contract — data-driven event filtering, composable rule trees, wiki-relative capability resolution
 
-**Status:** Proposed
-**Date:** 2026-08-24
+**Status:** Accepted
+**Date:** 2026-09-28
 **Author:** Christophe Henner (drafted by Claude Code)
-**Summary:** Every workflow needs to narrow a raw stream or a composed query of wiki content down to what it should even consider before any gate or scoring logic runs; intake is that platform mechanism — always loaded with the application behind a safe broad baseline, a data-driven and composable rule engine over a generic item envelope fed by either a live stream or an on-demand query, parameterized per wiki through a confirmed capability profile, that fails closed and loud on misconfiguration.
+**Summary:** Intake narrows a raw stream or composed query down to what a workflow should even consider, before any gate runs: a composable condition-tree engine over a generic item envelope, always loaded behind a safe broad baseline, wiki-parameterized through a confirmed capability profile, and failing closed and loud on misconfiguration.
 
 ## Context
 
@@ -133,6 +133,8 @@ A workflow's top-level trigger ("is this page even a candidate for review at all
 
 ## Non-goals
 
+- Minting a `ReviewableItemId` — intake operates at `(wiki_id, page_id, revision_id)` granularity on raw events and deliberately never mints reviewable-item identity, because a subject intake has not admitted is not yet a reviewable item. Identity is minted at admission and is defined by ADR-0030.
+- Where an `IntakeDecision` is durably recorded — the decision is provenanced and carries `config_version` for replay, but intake decisions are operational routing records on the stream, deliberately **not** written to `ContentLifecycle` (ADR-0027). That log is keyed by reviewable-item identity, which a `Drop`ped or `Unknown`-routed item does not have, and ADR-0028 §1 separately refuses to record scoping decisions as verdicts; filing a routing decision there would put entries on a canonical audit log for subjects that were never review items at all.
 - The workflow engine, gate-type marketplace, and per-process workflow definitions (e.g. an `npp.yaml`-equivalent) that would call into intake pipelines — a separate, forward-looking ADR once that design is ready to commit.
 - The actual `sp42-live` adapter migration and any other source-adapter implementation — authorized here, implemented separately.
 - Any user-facing surface for composing or running a §3 query (a "topic research" UI/CLI command) — this ADR fixes that `IntakeQuerySpec` is a supported source, not how a person builds one.

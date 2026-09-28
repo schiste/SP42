@@ -3,7 +3,7 @@
 **Status:** Proposed
 **Date:** 2026-06-26
 **Author:** Christophe Henner (drafted with Claude)
-**Summary:** Frontend end-to-end tests use a Rust-native browser harness rather than Playwright/Node, keeping the E2E stack inside the all-Rust toolchain (ADR-0001).
+**Summary:** Frontend end-to-end tests use a Rust-native browser harness rather than Playwright/Node, keeping the E2E stack inside the all-Rust toolchain (ADR-0001). Still Proposed: the browser shell's `wasm` unit tests do not yet execute in CI (see the "Status" note under Consequences in ADR-0032's companion work).
 
 ## Context
 

@@ -6,6 +6,7 @@ rust-version.workspace = true
 version.workspace = true
 
 [dependencies]
+ammonia.workspace = true
 async-trait.workspace = true
 ip_network.workspace = true
 rand.workspace = true

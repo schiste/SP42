@@ -462,11 +462,7 @@ async fn render_revision_section_side(
     let label = section_label.unwrap_or("Lead").trim();
     if label.is_empty() || label == "Lead" {
         let html = fetch_rendered_section_html(client, access_token, config, rev_id, 0).await?;
-        return Ok(RenderedHunkSide {
-            section_label: "Lead".to_string(),
-            html,
-            missing: false,
-        });
+        return Ok(RenderedHunkSide::sanitized("Lead", html, false));
     }
 
     let sections = fetch_revision_sections(client, access_token, config, rev_id).await?;
@@ -474,20 +470,12 @@ async fn render_revision_section_side(
         .into_iter()
         .find_map(|(candidate_label, index)| (candidate_label == label).then_some(index))
     else {
-        return Ok(RenderedHunkSide {
-            section_label: label.to_string(),
-            html: String::new(),
-            missing: true,
-        });
+        return Ok(RenderedHunkSide::sanitized(label, String::new(), true));
     };
 
     let html =
         fetch_rendered_section_html(client, access_token, config, rev_id, section_index).await?;
-    Ok(RenderedHunkSide {
-        section_label: label.to_string(),
-        html,
-        missing: false,
-    })
+    Ok(RenderedHunkSide::sanitized(label, html, false))
 }
 
 async fn fetch_revision_sections(
@@ -534,6 +522,15 @@ async fn fetch_revision_sections(
         .collect())
 }
 
+/// Fetch the rendered HTML of one revision section and **sanitize it before it
+/// crosses the trust boundary** (ADR-0032).
+///
+/// The markup is authored by whoever made the revision and is rendered straight
+/// into the review surface with `set_inner_html`, so the allowlist in
+/// `sp42_fetch::sanitize_rendered_html` is applied here — at the edge, once —
+///
+/// so the browser, the CLI and the MCP surface all receive the same clean value
+/// and no future caller can hand them untrusted markup.
 async fn fetch_rendered_section_html(
     client: &reqwest::Client,
     access_token: &str,
@@ -561,7 +558,11 @@ async fn fetch_rendered_section_html(
 
     let value: serde_json::Value = serde_json::from_slice(&body)
         .map_err(|error| format!("rendered section JSON failed: {error}"))?;
-    extract_parse_html(&value)
+    // Sanitize here, on the raw parse payload, so no `RenderedHunkSide` can ever
+    // be constructed with unsanitized HTML anywhere in the process.
+    Ok(sp42_fetch::sanitize_rendered_html(&extract_parse_html(
+        &value,
+    )?))
 }
 
 fn extract_parse_html(value: &serde_json::Value) -> Result<String, String> {

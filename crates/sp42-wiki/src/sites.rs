@@ -13,8 +13,8 @@
 use std::collections::BTreeMap;
 use std::sync::LazyLock;
 
-use sp42_core::scoring_policy::load_embedded_compiled_scoring_policy;
-use sp42_core::{
+use sp42_platform::scoring_policy::load_embedded_compiled_scoring_policy;
+use sp42_platform::{
     DEFAULT_PATROL_NAMESPACES, DEFAULT_SCORING_POLICY_REF, WikiConfig, WikiTemplates,
     default_namespace_content_model,
 };

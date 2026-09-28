@@ -1,6 +1,6 @@
 //! Shared wiki fixtures for downstream crate tests.
 
-use sp42_core::WikiConfig;
+use sp42_platform::WikiConfig;
 
 pub const FRWIKI_CONFIG_YAML: &str = include_str!("../../../configs/frwiki.yaml");
 

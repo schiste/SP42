@@ -7,7 +7,7 @@ pub enum ConfigError {
     #[error("configuration is not valid YAML: {0}")]
     InvalidYaml(#[from] serde_yaml::Error),
     #[error(transparent)]
-    ScoringPolicy(#[from] sp42_core::ScoringPolicyError),
+    ScoringPolicy(#[from] sp42_platform::ScoringPolicyError),
     #[error("configuration field `{field}` is invalid: {message}")]
     InvalidField {
         field: &'static str,

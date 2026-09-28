@@ -31,7 +31,7 @@ flowchart LR
   G_hybrid -->|2 deps| G_platform
   G_hybrid -->|1 dep| G_references
   G_patrolling -->|5 deps| G_platform
-  G_platform -->|2 deps| G_hybrid
+  G_platform -->|1 dep| G_hybrid
   G_references -->|3 deps| G_platform
   G_shell -->|1 dep| G_assessment
   G_shell -->|5 deps| G_hybrid
@@ -139,7 +139,7 @@ flowchart TB
   sp42_server --> sp42_patrol
   sp42_server --> sp42_reporting
   sp42_server --> sp42_wiki
-  sp42_wiki --> sp42_core
+  sp42_wiki --> sp42_platform
   classDef shell fill:#fef3c7,stroke:#b45309,color:#111
   classDef domain fill:#dcfce7,stroke:#15803d,color:#111
   classDef platform fill:#dbeafe,stroke:#1d4ed8,color:#111

@@ -17,5 +17,6 @@ pub use model::{
 pub use traits::{
     Clock, EventSource, FileStorage, FixedClock, HttpClient, LoopbackWebSocket, MemoryStorage,
     ReplayEventSource, Rng, SequenceRng, Storage, StubHttpClient, SystemClock, WebSocket,
+    WikiRegistryView,
 };
 pub use transport::{HttpMethod, HttpRequest, HttpResponse, ServerSentEvent, WebSocketFrame};

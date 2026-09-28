@@ -4,7 +4,8 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use sp42_core::WikiConfig;
+use sp42_platform::WikiConfig;
+use sp42_types::WikiRegistryView;
 
 use crate::errors::WikiRegistryError;
 use crate::parse_wiki_config;
@@ -162,6 +163,11 @@ impl WikiRegistry {
 
     /// The default wiki's resolved config (hand-configured or derived), computed
     /// once at construction.
+    ///
+    /// Note the deliberate asymmetry with [`Self::resolve`]: this returns only
+    /// explicitly registered wikis, because ADR-0026 §5 requires registration to
+    /// be an explicit administrative action and forbids intake from acting on a
+    /// wiki merely because an event referenced it. See [`WikiRegistryView`].
     #[must_use]
     pub fn default_config(&self) -> WikiConfig {
         self.inner.default_config.clone()
@@ -185,6 +191,18 @@ impl WikiRegistry {
     #[must_use]
     pub fn wiki_ids(&self) -> Vec<String> {
         self.inner.configs.keys().cloned().collect()
+    }
+}
+
+impl WikiRegistryView for WikiRegistry {
+    /// Delegates to [`WikiRegistry::wiki_ids`] rather than reaching into
+    /// `inner.configs`, so "resolvable" and "registered" cannot drift apart.
+    fn registered_wiki_ids(&self) -> Vec<String> {
+        self.wiki_ids()
+    }
+
+    fn is_registered(&self, wiki_id: &str) -> bool {
+        self.inner.configs.contains_key(wiki_id)
     }
 }
 
@@ -249,6 +267,8 @@ mod tests {
     use std::fs;
     use std::path::PathBuf;
 
+    use sp42_types::WikiRegistryView;
+
     use crate::test_fixtures::frwiki_config;
 
     use super::WikiRegistry;
@@ -298,6 +318,32 @@ mod tests {
             registry.resolve("not-a-real-wiki"),
             Err(super::WikiRegistryError::UnknownWikiId { .. })
         ));
+    }
+
+    #[test]
+    fn registration_is_narrower_than_resolution() {
+        let registry = WikiRegistry::embedded_default().expect("embedded registry should load");
+
+        // Resolution may derive an unconfigured-but-real Wikimedia project, and
+        // that behavior is deliberately preserved.
+        assert!(
+            registry.resolve("dewiki").is_ok(),
+            "dynamic derivation is still supported"
+        );
+
+        // ...but an unconfigured wiki is NOT registered, so ADR-0026 §5's
+        // "registration is an explicit administrative action" holds: intake must
+        // not start filtering on a wiki just because an event referenced it.
+        assert!(!registry.is_registered("dewiki"));
+        assert!(!registry.is_registered("not-a-real-wiki"));
+
+        // The configured default is registered.
+        assert!(registry.is_registered("frwiki"));
+        assert_eq!(registry.registered_wiki_ids(), vec!["frwiki".to_string()]);
+
+        // A configured wiki is both resolvable and registered; an unconfigured one
+        // is only resolvable. That asymmetry is the whole point of the split.
+        assert!(registry.is_registered("frwiki") && registry.resolve("frwiki").is_ok());
     }
 
     #[test]

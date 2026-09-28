@@ -165,6 +165,7 @@ pub use training_data::{
 pub use traits::{
     Clock, EventSource, FileStorage, FixedClock, HttpClient, LoopbackWebSocket, MemoryStorage,
     ReplayEventSource, Rng, SequenceRng, Storage, StubHttpClient, SystemClock, WebSocket,
+    WikiRegistryView,
 };
 pub use types::{
     Action, CompositeScore, DEFAULT_PATROL_NAMESPACES, DEFAULT_SCORING_POLICY_REF,

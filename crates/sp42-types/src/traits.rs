@@ -37,6 +37,23 @@ pub trait Clock: Send + Sync {
     fn now_ms(&self) -> i64;
 }
 
+/// The subset of the wiki registry that platform code may consult.
+///
+/// Deliberately narrower than resolution. `sp42-wiki` can derive a config for any
+/// dbname in its embedded Wikimedia site matrix, but ADR-0026 §5 requires that a
+/// wiki be *registered* before intake will filter on it — so auto-derivation must
+/// not be reachable from a filter decision. Splitting the two keeps "we can build
+/// a config for this project" and "this project is a configured target" from
+/// quietly collapsing into the same question.
+pub trait WikiRegistryView: Send + Sync {
+    /// The wiki ids that have been explicitly configured/registered.
+    fn registered_wiki_ids(&self) -> Vec<String>;
+
+    /// True only for explicitly registered wikis — never for a merely derivable
+    /// one.
+    fn is_registered(&self, wiki_id: &str) -> bool;
+}
+
 pub trait Rng: Send {
     fn next_u64(&mut self) -> u64;
 }

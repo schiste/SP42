@@ -30,6 +30,7 @@ use crate::runtime_status::{
     get_debug_summary, get_healthz, get_operator_readiness, get_operator_report,
     get_operator_runtime, get_runtime_debug,
 };
+use crate::security_headers::{csp_layer, hardening_layers};
 use crate::session_runtime::CSRF_HEADER_NAME;
 use crate::state::AppState;
 use crate::static_assets::{
@@ -60,7 +61,7 @@ pub(crate) fn build_router(state: AppState) -> Router {
     };
 
     let allowed_origins = state.deployment.allowed_origins.clone();
-    let router = operator_routes(Router::new())
+    let mut router = operator_routes(Router::new())
         .with_state(state)
         .layer(
             CorsLayer::new()
@@ -73,7 +74,14 @@ pub(crate) fn build_router(state: AppState) -> Router {
                     HeaderName::from_static(CSRF_HEADER_NAME),
                 ]),
         )
-        .layer(middleware::from_fn(disable_response_caching));
+        .layer(middleware::from_fn(disable_response_caching))
+        .layer(csp_layer());
+
+    // Each layer uses `if_not_present`, so a route that deliberately sets one of
+    // these headers keeps its own value.
+    for layer in hardening_layers() {
+        router = router.layer(layer);
+    }
 
     if let Some(browser_shell) = browser_shell {
         router.fallback_service(browser_shell)

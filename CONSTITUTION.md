@@ -142,7 +142,7 @@
 
 **10.1** OAuth tokens in memory only. Never IndexedDB, localStorage, sessionStorage. Tab close = token gone.
 
-**10.2** No `eval`, no `innerHTML` equivalent with untrusted content. Leptos auto-escapes. Diff rendering uses sanitized allowlist — `sp42_fetch::sanitize_rendered_html` at the server fetch edge, per ADR-0032. The browser's `set_inner_html` is a second stage, not the only barrier, and is permitted only for markup that allowlist produced.
+**10.2** No `eval`, no `innerHTML` equivalent with untrusted content. Leptos auto-escapes. Diff rendering uses sanitized allowlist — `sp42_fetch::sanitize_rendered_html` at the server fetch edge, per ADR-0032. The browser's `set_inner_html` is a second stage, not the only barrier, and is permitted only for markup that allowlist produced. `'unsafe-eval'` is prohibited; every response carries a Content-Security-Policy with no bare scheme-source in `connect-src` (ADR-0033).
 
 **10.3** `cargo audit` in CI. Lockfile integrity verified. Wasm built from source in CI.
 

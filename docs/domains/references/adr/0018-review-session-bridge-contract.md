@@ -1,8 +1,9 @@
 # ADR-0018: Review-session bridge contract and store placement
 
-**Status:** Proposed
+**Status:** Accepted
 **Date:** 2026-07-11
 **Author:** Claude Code (Fable), for Luis Villa
+**Summary:** A review session is a durable, server-owned store of agent findings and operator replies bridged over a WebSocket contract, so an interrupted or handed-off review keeps its thread. Promoted from Proposed on 2026-09-28: the decision is settled and implemented — `sp42-platform/src/review_session.rs`, the server `review_routes`, and the CLI review-session modes ship. PRD-0017 remains Draft, which is a separate document with its own scope.
 
 PRD-0017 ports the agent↔human artifact-review loop popularized by
 [lavish-axi](https://github.com/kunchenguid/lavish-axi) from local HTML files

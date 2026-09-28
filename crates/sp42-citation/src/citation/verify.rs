@@ -1039,6 +1039,8 @@ async fn run_repair_turn<M>(
 // window, the use-site ordinal, and the run options are all distinct, named inputs; bundling
 // them would obscure rather than clarify. The context rides a separate argument by design —
 // it is kept off `CitationVerificationRequest` (the clean claim+url record, ADR-0008 §1).
+// https://github.com/schiste/SP42/issues/182 — injected edges and site,
+// matching verify_citation_use_site.
 #[allow(clippy::too_many_arguments)]
 pub async fn verify_citation_use_site<C, M>(
     fetch_client: &C,

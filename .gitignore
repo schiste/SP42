@@ -29,3 +29,6 @@
 *.log
 __pycache__/
 *.pyc
+
+# Local tooling scratch (broker db, logs)
+.aethyme/

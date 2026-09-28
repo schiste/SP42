@@ -16,6 +16,15 @@ name: CI
 on:
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
+  # Direct pushes to main bypassed every check: the workflow only ran on
+  # pull_request, and the local Husky hooks are developer-machine-local and
+  # skippable via SP42_SKIP_GIT_HOOKS=1. Constitution Art. 5.1 says no code
+  # merges without passing every check, which means main must be checked too.
+  # Branch protection should still make this the backstop, not the primary
+  # gate — it exists so a force-push or a ruleset change cannot land
+  # unvalidated code.
+  push:
+    branches: [main]
 
 concurrency:
   group: ci-${{ github.event.pull_request.number || github.ref }}
@@ -28,7 +37,10 @@ permissions:
 jobs:
   changes:
     name: detect changed areas
-    if: github.event.pull_request.draft == false
+    # PR-only: dorny/paths-filter resolves the changed set through the pull
+    # request API here, which has no equivalent on a push event. The desktop job
+    # below runs unconditionally on push instead, so nothing is lost.
+    if: github.event_name == 'pull_request' && github.event.pull_request.draft == false
     runs-on: ubuntu-latest
     outputs:
       desktop: ${{ steps.filter.outputs.desktop }}
@@ -133,13 +145,22 @@ jobs:
     needs: changes
     # Fail CLOSED: always() so a failed detector can't silently skip this gate;
     # run when the detector errored (guard step fails the job) or desktop changed.
+    #
+    # On a push to main the `changes` job does not run (it resolves the diff
+    # through the PR API), so there is no signal to filter on. The gate runs
+    # unconditionally there instead: it is a compile-check, and the point of
+    # adding the push trigger is that main is never unvalidated.
     if: >-
-      always() && github.event.pull_request.draft == false &&
-      (needs.changes.result != 'success' || needs.changes.outputs.desktop == 'true')
+      always() && (
+        github.event_name == 'push' ||
+        (github.event.pull_request.draft == false &&
+          (needs.changes.result != 'success' || needs.changes.outputs.desktop == 'true'))
+      )
     runs-on: ubuntu-latest
     steps:
       - name: Fail closed if change detection did not succeed
-        if: needs.changes.result != 'success'
+        # PR-only: on push the detector is intentionally absent, not failed.
+        if: github.event_name == 'pull_request' && needs.changes.result != 'success'
         env:
           DETECT_RESULT: ${{ needs.changes.result }}
         run: |

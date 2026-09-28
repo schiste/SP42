@@ -69,6 +69,8 @@ fn free_port() -> u16 {
         .port()
 }
 
+// https://github.com/schiste/SP42/issues/187 — live multi-client
+// scenario exercised as one readable sequence.
 #[allow(clippy::too_many_lines)]
 async fn start_mock_backend() -> (String, tokio::task::JoinHandle<()>) {
     async fn profile() -> Json<serde_json::Value> {
@@ -82,6 +84,7 @@ async fn start_mock_backend() -> (String, tokio::task::JoinHandle<()>) {
         Json(serde_json::json!({ "probability": 0.73 }))
     }
 
+    // https://github.com/schiste/SP42/issues/187
     #[allow(clippy::too_many_lines)]
     async fn api(
         axum::extract::State(state): axum::extract::State<MockState>,
@@ -373,6 +376,7 @@ async fn wait_for_live_title(
     }
 }
 
+// https://github.com/schiste/SP42/issues/187
 #[allow(clippy::too_many_lines)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn operator_live_contract_reuses_checkpoints_and_handles_concurrent_requests() {

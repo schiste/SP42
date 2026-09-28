@@ -34,6 +34,8 @@ pub struct TagAction {
 }
 
 /// Reserved for future inline diff editing affordances.
+// https://github.com/schiste/SP42/issues/181 — reachable only from the wasm32
+// test build, which the host build cannot see.
 #[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct EditAction {
@@ -1150,6 +1152,8 @@ fn apply_rendered_highlights(
     phrases: &[RenderedHighlightPhrase],
     highlight_class: &str,
 ) {
+    // https://github.com/schiste/SP42/issues/181 — imported for the wasm32
+    // test build only.
     #[allow(unused_imports)]
     use wasm_bindgen::JsCast;
 

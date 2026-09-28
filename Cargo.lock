@@ -3468,7 +3468,6 @@ dependencies = [
  "base64",
  "futures",
  "percent-encoding",
- "proptest",
  "regex",
  "serde",
  "serde_json",
@@ -3628,7 +3627,6 @@ dependencies = [
 name = "sp42-reporting"
 version = "0.1.0"
 dependencies = [
- "proptest",
  "serde",
  "serde_json",
  "sp42-coordination",

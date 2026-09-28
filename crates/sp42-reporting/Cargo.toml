@@ -15,7 +15,7 @@ sp42-platform = { path = "../sp42-platform" }
 sp42-live = { path = "../sp42-live" }
 
 [dev-dependencies]
-proptest = "1.9.0"
+# `proptest` was declared and never used here (Art. 7.1). Removed.
 serde_json.workspace = true
 sp42-wiki = { path = "../sp42-wiki", features = ["test-fixtures"] }
 url.workspace = true

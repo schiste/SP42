@@ -1,0 +1,148 @@
+# Aethyme affected-gate policy for SP42.
+#
+# These run on the *merged* tree, before integration — the thing plain
+# worktrees and PR-CI do not give you: a pre-integration check on the result
+# of the merge, not on either side of it.
+#
+# Selection is deliberately over-selecting (a gate with no triggers matches
+# every diff), so triggers below are as narrow as is safe. `cost` ascends, so
+# cheap gates fail fast before the expensive ones are reached.
+#
+# Every command here was run against a clean main-based worktree and passed
+# before being wired. `reviewed = true` asserts that, not that the numbers are
+# the author's preference.
+
+reviewed = true
+
+# ── Tier 1 — documentation and policy metadata ──────────────────────────────
+# Seconds. Nothing here compiles, so they are cheap enough to always run when
+# the trigger matches.
+
+[[gate]]
+name = "doc-links"
+command = "./scripts/check-links.sh"
+cost = 1
+triggers = ["**/*.md"]
+cache = true
+timeout_seconds = 300
+
+[[gate]]
+name = "doc-consistency"
+command = "./scripts/check-doc-consistency.sh"
+cost = 1
+triggers = ["**/*.md", "docs/**"]
+cache = true
+timeout_seconds = 300
+
+# ADR-0021's governance script. Note this gate is NOT in .github/workflows/ci.yml
+# and never has been — it is referenced only in ADR prose. Wiring it here means
+# a scoring-policy change is checked before integration, not only by a human
+# remembering to run it. It passed on a clean tree when wired.
+[[gate]]
+name = "scoring-governance"
+command = "./scripts/check-scoring-governance.sh"
+cost = 1
+triggers = [
+    "configs/scoring/**",
+    "schemas/**",
+    "evals/**",
+    "docs/platform/scoring/**",
+]
+cache = true
+timeout_seconds = 300
+
+# ── Tier 2 — cheap structural checks ────────────────────────────────────────
+# These need `cargo metadata` but no compilation.
+
+[[gate]]
+name = "layering"
+command = "./scripts/check-layering.sh"
+cost = 2
+triggers = ["Cargo.toml", "crates/**/Cargo.toml", "scripts/check-layering.sh"]
+cache = true
+timeout_seconds = 600
+
+# Regenerated from cargo metadata, the LAYER map parsed out of
+# scripts/check-layering.sh, and the ADR/PRD set. Editing any of those makes
+# the committed map stale, which is the failure this catches.
+[[gate]]
+name = "architecture-map"
+command = "./scripts/generate-architecture-map.sh --check"
+cost = 2
+triggers = [
+    "Cargo.toml",
+    "crates/**/Cargo.toml",
+    "scripts/check-layering.sh",
+    "docs/**/adr/**",
+    "docs/**/prd/**",
+]
+cache = true
+timeout_seconds = 900
+
+# `cache = false`: this reads git metadata (the index), so a cached result
+# would be wrong for a different tree.
+#
+# Uses the script's own default mode, --staged, matching the repo's pre-commit
+# hook. Caveat worth knowing: it inspects the index of the tree under test, so
+# it is only meaningful when the submitted changes are staged in that tree.
+# Verified green on a clean worktree; the vacuous-pass case cannot be exercised
+# without a real submit, so treat this one as the least certain gate here.
+[[gate]]
+name = "forbidden-patterns"
+command = "./scripts/check-forbidden-patterns.sh --staged"
+cost = 2
+triggers = ["**/*.rs", "**/*.toml", "scripts/**"]
+cache = false
+timeout_seconds = 600
+
+# ── Tier 3 — real compilation and test ──────────────────────────────────────
+
+# Separate from ci-all on purpose: `scripts/ci-all.sh` delegates to
+# `xtask ci-all`, which does not run rustfmt. CI runs it as its own step, so
+# without this gate a formatting regression would pass every pre-integration
+# check and only surface after push.
+[[gate]]
+name = "rust-fmt"
+command = "cargo fmt --all -- --check"
+cost = 3
+triggers = ["**/*.rs", "**/Cargo.toml", "rustfmt.toml"]
+cache = true
+timeout_seconds = 600
+
+# The heavy one, and the reason the broker is worth having: build, test,
+# clippy -D warnings, doc, wasm build, wasm test-compile, trunk, and the Tauri
+# contract check — on the merged tree. Generous timeout; it takes ~8 minutes
+# cold on CI.
+[[gate]]
+name = "ci-all"
+command = "./scripts/ci-all.sh"
+cost = 3
+triggers = [
+    "**/*.rs",
+    "**/Cargo.toml",
+    "crates/**",
+    "xtask/**",
+    "scripts/**",
+    "Trunk.toml",
+    "index.html",
+]
+cache = true
+timeout_seconds = 3600
+
+# ── Deliberately NOT gates ──────────────────────────────────────────────────
+#
+# These are real CI status checks and they stay CI's job. Each is either far too
+# slow for a submit loop or needs network the bare worktree under test may not
+# have, and duplicating them locally buys no signal CI does not already give:
+#
+#   ./scripts/check-supply-chain.sh   needs network (cargo-audit fetches the
+#                                     advisory DB), and is why RUSTSEC-2026-0285
+#                                     was caught at PR time.
+#   ./scripts/check-coverage.sh       cargo-llvm-cov over the workspace, and
+#                                     enforces the >=90% sp42-platform floor.
+#   ./scripts/check-wasm-size.sh      needs an optimized frontend build; the
+#                                     Art. 5.2 ceiling is a bundle-size check
+#                                     that only means anything post-build.
+#
+# Add them here only if submit latency stops mattering more than catching their
+# failures pre-integration.

@@ -29,3 +29,31 @@
 *.log
 __pycache__/
 *.pyc
+
+# Aethyme local-only activation. Deliberately outside the managed block above,
+# because this is a repository *policy* choice rather than broker runtime state.
+#
+# `.aethyme/local/enabled` is the flag AGENTS.md checks, and `local/AGENTS.md` is
+# the policy it points at. Committing either would make the full agent policy
+# mandatory on every clone and every agent — which is the opposite of local-only
+# mode, and would quietly change how the repository works for anyone who has not
+# opted in. The shared parts (config.toml, gates.toml) are tracked on purpose, so
+# sibling worktrees inherit the same gates.
+#
+# Each clone opts in once with: aethyme deploy --local-only --repo .
+.aethyme/local/
+
+# aethyme-broker:begin (managed block — do not edit inside)
+.aethyme/broker.db*
+.aethyme/logs/
+.aethyme/reports/
+.aethyme/run/
+.aethyme/worktrees/
+.aethyme/broker-action-required.md
+.aethyme/broker-advisory.md
+.aethyme/graph_store.redb
+.aethyme/graph_store.redb.indexing
+.aethyme/generated/experience-status.json
+.aethyme/generated/experience-status.md
+.aethyme/generated/experience-telemetry.jsonl
+# aethyme-broker:end

@@ -1,0 +1,95 @@
+{
+  "schema_version": "aethyme-act-starter-v1",
+  "repo": {
+    "name": "SP42",
+    "kind": "repository"
+  },
+  "recommended_mode": "repo-act",
+  "starter_checklists": {
+    "debugging": [
+      "Load repo-onboarding first if the repository or area is unfamiliar.",
+      "Run Aethyme Explore on the user task before broad manual search.",
+      "Verify answer candidates before concluding when trust_policy is not answer-safe.",
+      "Identify the nearest fast test or validation command before editing.",
+      "Inspect caution zones before changing generated or vendored areas."
+    ],
+    "change_validation": [
+      "Run the fastest relevant test command first.",
+      "Check likely entrypoints and impacted callers before finishing.",
+      "Re-run lint/build only after the focused validation passes.",
+      "Document any override-based maintainer note that affected the change plan."
+    ]
+  },
+  "commands": {
+    "fast_test": "cargo test --workspace",
+    "full_test": null,
+    "lint": null,
+    "build": "cargo build --workspace",
+    "dev": "cargo run"
+  },
+  "entrypoints": [
+    {
+      "path": "Procfile:web",
+      "kind": "process",
+      "role": "app",
+      "reason": "Procfile process entrypoint",
+      "confidence": "high",
+      "relevance": "supporting"
+    },
+    {
+      "path": "crates/sp42-app/src/main.rs",
+      "kind": "file",
+      "role": "cli",
+      "reason": "tracked Rust binary entrypoint in `.`",
+      "confidence": "high",
+      "workspace_root": ".",
+      "provenance": "derived from tracked workspace source",
+      "executable_name": "sp42-app",
+      "relevance": "product"
+    },
+    {
+      "path": "crates/sp42-cli/src/main.rs",
+      "kind": "file",
+      "role": "cli",
+      "reason": "tracked Rust binary entrypoint in `.`",
+      "confidence": "high",
+      "workspace_root": ".",
+      "provenance": "derived from tracked workspace source",
+      "executable_name": "sp42-cli",
+      "relevance": "product"
+    }
+  ],
+  "primary_entrypoints": {
+    "app": {
+      "path": "Procfile:web",
+      "kind": "process",
+      "role": "app",
+      "reason": "Procfile process entrypoint",
+      "confidence": "high",
+      "relevance": "supporting"
+    },
+    "cli": {
+      "path": "crates/sp42-app/src/main.rs",
+      "kind": "file",
+      "role": "cli",
+      "reason": "tracked Rust binary entrypoint in `.`",
+      "confidence": "high",
+      "workspace_root": ".",
+      "provenance": "derived from tracked workspace source",
+      "executable_name": "sp42-app",
+      "relevance": "product"
+    }
+  },
+  "caution_zones": [
+    {
+      "path": "fixtures",
+      "reason": "likely generated, vendored, fixture, or migration-heavy area"
+    }
+  ],
+  "telemetry": {
+    "derived_from": ".aethyme/generated/onboarding.json",
+    "entrypoint_count": 8,
+    "primary_entrypoint_count": 2,
+    "caution_zone_count": 1
+  }
+}

@@ -69,6 +69,17 @@ The following areas need maintainer review before merge:
 Maintainers enforce these review boundaries through branch protection, review
 policy, and release/deployment access controls.
 
+Two of these areas also carry a CI floor of their own, because review alone does
+not protect them:
+
+- `crates/sp42-server/` — `check-coverage.sh` enforces a per-crate line-coverage
+  floor (`SP42_SERVER_COVERAGE_MIN`) rather than relying on the workspace
+  average, which allowed a well-covered workspace to coexist with a
+  security-critical server at roughly half the workspace figure.
+- Desktop packaging and Tauri configuration — the Content-Security-Policy
+  invariants are asserted in `sp42-server`'s unit tests (ADR-0033), so a
+  weakening of the policy fails the build rather than waiting for review.
+
 ## Contributor Issue Labels
 
 Use `good first issue` only for work that can be completed without deployment

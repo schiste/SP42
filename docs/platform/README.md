@@ -47,6 +47,7 @@ domains may consume it as the system expands toward sourcing and quality signals
 - [ADR-0028 — Deterministic eligibility gate contract: capability-gated verdicts, open outcome vocabulary, gate chaining](adr/0028-deterministic-eligibility-gate-contract.md)
 - [ADR-0029 — Deterministic quality gate contract: promotion verdicts, shared resolution vocabulary, per-project ruleset optionality](adr/0029-deterministic-quality-gate-contract.md)
 - [ADR-0030 — Reviewable item identity: one opaque, revision-independent, lane-agnostic identity for every subject under review](adr/0030-reviewable-item-identity.md)
+- [ADR-0031 — Verdict reason: a static policy-legible code plus localizable text, so a blocklist never has to match prose](adr/0031-verdict-reason.md)
 
 ADR-0006 defines the provider-agnostic LLM interface every capability reaches a
 model through, and ADR-0010 defines the propose/confirm editing pattern domains

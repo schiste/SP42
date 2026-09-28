@@ -160,6 +160,7 @@ fn apply_wikitext_quick_signals(
 mod tests {
     use super::stream_event_to_queued_edit;
     use crate::platform::eventstream::StreamEvent;
+    use wasm_bindgen_test::wasm_bindgen_test;
 
     fn event(wiki: &str, namespace: i32) -> StreamEvent {
         StreamEvent {
@@ -180,7 +181,7 @@ mod tests {
         }
     }
 
-    #[test]
+    #[wasm_bindgen_test]
     fn live_wikidata_insert_seeds_content_model_and_skips_wikitext_signals() {
         let queued = stream_event_to_queued_edit(&event("wikidatawiki", 0));
         assert_eq!(queued.event.content_model.as_deref(), Some("wikibase-item"));
@@ -194,7 +195,7 @@ mod tests {
         assert!(!talk.score.contributions.is_empty());
     }
 
-    #[test]
+    #[wasm_bindgen_test]
     fn live_wikipedia_insert_keeps_the_quick_signals() {
         let queued = stream_event_to_queued_edit(&event("enwiki", 0));
         assert_eq!(queued.event.content_model, None);

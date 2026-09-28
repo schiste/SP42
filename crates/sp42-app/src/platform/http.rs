@@ -181,8 +181,9 @@ pub(crate) async fn post_json_bytes(
 #[cfg(test)]
 mod tests {
     use super::{format_http_error, is_success_status};
+    use wasm_bindgen_test::wasm_bindgen_test;
 
-    #[test]
+    #[wasm_bindgen_test]
     fn success_status_only_matches_2xx() {
         assert!(is_success_status(200));
         assert!(is_success_status(204));
@@ -191,7 +192,7 @@ mod tests {
         assert!(!is_success_status(300));
     }
 
-    #[test]
+    #[wasm_bindgen_test]
     fn formats_http_error_with_context_and_body() {
         let message = format_http_error("fetch demo", 418, b"teapot");
 
@@ -201,7 +202,7 @@ mod tests {
     // Only a 401 invokes the single re-gate handler; other errors and successes
     // leave auth state untouched. Codex review #90.
     #[cfg(target_arch = "wasm32")]
-    #[test]
+    #[wasm_bindgen_test]
     fn only_401_triggers_the_unauthorized_handler() {
         use std::cell::Cell;
         use std::rc::Rc;

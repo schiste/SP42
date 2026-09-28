@@ -13,10 +13,10 @@
 | Tier | Tool | Requirement |
 |------|------|-------------|
 | Unit tests | `cargo test` | Every public function tested. Every scoring/filtering branch tested. Coverage ≥90% on the platform-independent logic (`sp42-platform` + `sp42-core`; see ADR-0013). |
-| Integration tests | `cargo test --features integration` | Every API action has a mock-server test. |
+| Integration tests | `cargo test --features integration` | Every API action has a mock-server test. **Not yet implemented** — no crate declares an `integration` feature, so this tier does not exist yet; the closest current coverage is `sp42-server/tests/operator_live.rs` (live-network, opt-in) and the in-crate `axum` route tests over `tower::ServiceExt::oneshot`. Tracked, not enforced. |
 | End-to-end tests | Playwright or cargo-based browser tests | Core workflows against test wiki (MediaWiki Docker in CI). |
 | Property-based tests | `proptest` | Scoring monotonic in all signal directions. Queue dequeues highest. Codec round-trip is identity. |
-| Component tests | `leptos::test` or `wasm-pack test` | Every Leptos component renders correctly with mock data. |
+| Component tests | `leptos::test` or `wasm-pack test` | Every Leptos component renders correctly with mock data. Browser-shell unit tests are `#[wasm_bindgen_test]` and execute via `scripts/check-wasm-tests.sh` (ADR-0034) — declaring them `#[test]` inside a `wasm`-gated module makes them unrunnable, which is how 88 of them went unexecuted. |
 
 **1.3** Test isolation: All external dependencies (HTTP, storage, clock, RNG, WebSocket) behind trait interfaces. Tests use mock implementations. No network in unit tests.
 

@@ -71,9 +71,10 @@ fn summarize_kinds(lines: &[String]) -> Vec<(String, usize, Tone)> {
 
 #[cfg(test)]
 mod tests {
+    use wasm_bindgen_test::wasm_bindgen_test;
     use super::summarize_kinds;
 
-    #[test]
+    #[wasm_bindgen_test]
     fn summarizes_kinds_by_label() {
         let counts = summarize_kinds(&[
             "stream_delivered=3".to_string(),

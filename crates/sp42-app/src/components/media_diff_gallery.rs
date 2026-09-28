@@ -163,6 +163,7 @@ fn render_signature_block(
 #[cfg(test)]
 mod tests {
     use sp42_core::{MediaDiffEntry, MediaDiffKind, MediaDiffReport};
+    use wasm_bindgen_test::wasm_bindgen_test;
 
     use super::{entries_for_kind, usage_summary_line};
 
@@ -196,14 +197,14 @@ mod tests {
         }
     }
 
-    #[test]
+    #[wasm_bindgen_test]
     fn entries_for_kind_filters_entries() {
         let added = entries_for_kind(&sample_report(), MediaDiffKind::Added);
         assert_eq!(added.len(), 1);
         assert_eq!(added[0].display_title, "Added.jpg");
     }
 
-    #[test]
+    #[wasm_bindgen_test]
     fn usage_summary_line_formats_occurrence_delta() {
         let report = sample_report();
         assert_eq!(usage_summary_line(&report.entries[0]), "Occurrences: 0 → 1");

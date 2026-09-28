@@ -27,19 +27,20 @@ pub fn score_tone_for_score(score: i32) -> ScoreTone {
 mod tests {
     use super::{score_tone_for_score, wiki_base_url};
     use sp42_ui::ScoreTone;
+    use wasm_bindgen_test::wasm_bindgen_test;
 
-    #[test]
+    #[wasm_bindgen_test]
     fn wiki_base_url_resolves_known_wikis() {
         assert_eq!(wiki_base_url("frwiki"), "https://fr.wikipedia.org");
         assert_eq!(wiki_base_url("enwiki"), "https://en.wikipedia.org");
     }
 
-    #[test]
+    #[wasm_bindgen_test]
     fn wiki_base_url_falls_back_for_unknown() {
         assert_eq!(wiki_base_url("xxwiki"), "https://fr.wikipedia.org");
     }
 
-    #[test]
+    #[wasm_bindgen_test]
     fn score_tone_uses_domain_score_tier() {
         assert_eq!(score_tone_for_score(12), ScoreTone::Low);
         assert_eq!(score_tone_for_score(42), ScoreTone::Medium);

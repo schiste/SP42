@@ -276,6 +276,7 @@ docker run --rm \
 ./scripts/build-desktop.sh --platform macos --debug
 ./scripts/dev-local.sh --smoke
 ./scripts/check-focused.sh
+./scripts/check-wasm-tests.sh
 ./scripts/ci-all.sh
 ```
 

@@ -385,13 +385,14 @@ fn collaboration_mode(report: &RoomInspectionReport) -> String {
 #[cfg(test)]
 mod tests {
     use serde_json::json;
+    use wasm_bindgen_test::wasm_bindgen_test;
 
     use super::{
         coordination_room_narrative_lines, parse_room_inspection_collection, room_inspection_lines,
     };
     use sp42_coordination::{CoordinationRoomSummary, CoordinationStateSummary};
 
-    #[test]
+    #[wasm_bindgen_test]
     fn room_inspection_lines_cover_presence_and_state() {
         let lines = room_inspection_lines(&super::RoomInspectionReport {
             room: CoordinationRoomSummary {
@@ -416,21 +417,85 @@ mod tests {
             }),
         });
 
-        assert!(lines.iter().any(|line| line.contains("wiki_id=frwiki")));
         assert!(
             lines
                 .iter()
-                .any(|line| line.contains("connected_clients=3"))
+                .any(|line| line.contains("state_wiki_id=frwiki"))
+        );
+        // The narrative header renders the client count as `clients=`, not
+        // `connected_clients=`. The old assertion used the latter and had never
+        // been executed; see ADR-0034.
+        assert!(lines.iter().any(|line| line.contains("clients=3")));
+        // The fixture's state has empty presence, recent_actions, claims,
+        // flagged_edits, score_deltas and race_resolutions, so the mode resolves
+        // to "quiet" — the last arm of `collaboration_mode`, not "active".
+        // Assert the derived value rather than the branch the old assertion
+        // guessed at; see ADR-0034.
+        assert!(
+            lines.iter().any(|line| line.contains("mode=quiet")),
+            "{lines:?}"
         );
         assert!(
             lines
                 .iter()
                 .any(|line| line.contains("state_wiki_id=frwiki"))
         );
-        assert!(lines.iter().any(|line| line.contains("mode=active")));
+        // With every collection empty the narrative reports no actors, no
+        // claims and no latest action. Assert those terminal values so the line
+        // set is pinned, rather than asserting a non-quiet mode this fixture
+        // cannot produce.
+        assert!(lines.iter().any(|line| line.contains("active_actors=none")));
+        assert!(
+            lines
+                .iter()
+                .any(|line| line.contains("claimed_revisions=none"))
+        );
     }
 
-    #[test]
+    #[wasm_bindgen_test]
+    fn room_inspection_reports_active_mode_when_presence_exists() {
+        // Companion to the quiet fixture above: with presence recorded, the mode
+        // must resolve to "active". This is the branch the previous version of
+        // that test asserted against the wrong fixture.
+        let lines = room_inspection_lines(&super::RoomInspectionReport {
+            room: CoordinationRoomSummary {
+                wiki_id: "frwiki".to_string(),
+                connected_clients: 2,
+                published_messages: 4,
+                claim_count: 0,
+                presence_count: 1,
+                flagged_edit_count: 0,
+                score_delta_count: 0,
+                race_resolution_count: 0,
+                recent_action_count: 0,
+            },
+            state: Some(CoordinationStateSummary {
+                wiki_id: "frwiki".to_string(),
+                claims: vec![],
+                presence: vec![sp42_coordination::PresenceHeartbeat {
+                    wiki_id: "frwiki".to_string(),
+                    actor: "Alice".to_string(),
+                    active_edit_count: 1,
+                }],
+                flagged_edits: vec![],
+                score_deltas: vec![],
+                race_resolutions: vec![],
+                recent_actions: vec![],
+            }),
+        });
+
+        assert!(
+            lines.iter().any(|line| line.contains("mode=active")),
+            "{lines:?}"
+        );
+        assert!(
+            lines
+                .iter()
+                .any(|line| line.contains("active_actors=Alice"))
+        );
+    }
+
+    #[wasm_bindgen_test]
     fn parse_room_inspection_collection_handles_multiple_rooms() {
         let value = json!({
             "rooms": [
@@ -492,7 +557,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[wasm_bindgen_test]
     fn coordination_room_narrative_lines_surface_collaboration_details() {
         let lines = coordination_room_narrative_lines(&super::RoomInspectionReport {
             room: CoordinationRoomSummary {

@@ -331,6 +331,7 @@ fn read_string(object: &serde_json::Map<String, Value>, keys: &[&str]) -> Option
 #[cfg(test)]
 mod tests {
     use serde_json::json;
+    use wasm_bindgen_test::wasm_bindgen_test;
 
     use super::{
         DevActionHistoryRecord, RuntimeDebugStatus, dev_action_history_lines,
@@ -339,7 +340,7 @@ mod tests {
     use sp42_coordination::CoordinationSnapshot;
     use sp42_core::{DevAuthSessionStatus, LocalOAuthConfigStatus};
 
-    #[test]
+    #[wasm_bindgen_test]
     fn runtime_debug_status_lines_include_key_statuses() {
         let lines = runtime_debug_status_lines(&RuntimeDebugStatus {
             project: "SP42".to_string(),
@@ -391,7 +392,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[wasm_bindgen_test]
     fn runtime_debug_status_parse_requires_core_fields() {
         let value = json!({
             "project": "SP42",
@@ -443,7 +444,7 @@ mod tests {
         assert_eq!(parsed.coordination.rooms.len(), 0);
     }
 
-    #[test]
+    #[wasm_bindgen_test]
     fn dev_action_history_lines_include_key_fields() {
         let lines = dev_action_history_lines(&[DevActionHistoryRecord {
             timestamp_ms: Some(42),
@@ -465,7 +466,7 @@ mod tests {
         assert!(lines.iter().any(|line| line.contains("result=ok")));
     }
 
-    #[test]
+    #[wasm_bindgen_test]
     fn dev_action_history_parse_accepts_wrapped_entries() {
         let value = json!({
             "history": [

@@ -3,6 +3,7 @@
 **Status:** Proposed
 **Date:** 2026-07-09
 **Author:** Luis Villa
+**Summary:** Re-verification reuses the session-cached source bodies and cached verdicts for citations whose content is unchanged, so a second pass over a page does not refetch. Remains Proposed as of 2026-09-28: no cache type is implemented yet (`sp42-citation` has no verdict or source-body cache), so the decision is still open rather than merely unimplemented.
 
 ## Context
 

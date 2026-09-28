@@ -1,7 +1,7 @@
 # ADR-0027: Content lifecycle contract — canonical state, append-only transition log, transition-triggered re-entry
 
-**Status:** Proposed
-**Date:** 2026-08-24
+**Status:** Accepted
+**Date:** 2026-09-28
 **Author:** Christophe Henner (drafted by Claude Code)
 **Summary:** Every reviewable item gets one durable, cross-domain lifecycle record — a current state plus an append-only transition log — that any gate can query for a prior verdict and any workflow can watch for a specific transition to automatically re-trigger, replacing the hardcoded, patrol-only state that `LiveOperatorView` improvises today.
 
@@ -43,10 +43,20 @@ ContentLifecycleRecord { item_id: ReviewableItemId, wiki_id, states: HashMap<Str
 LifecycleState { key: String, disposition: StateDisposition }
 StateDisposition = Active | Terminal
 ```
-`ReviewableItemId` is referenced, not designed, here — it is the generic
-queueable-unit identity sketched informally in earlier design discussion
-(page \| draft \| nomination \| investigation case) and belongs to its own
-future ADR (Non-goals). `LifecycleState` follows ADR-0026's typed-but-open
+`ReviewableItemId` is defined by ADR-0030 rather than here: an opaque, globally
+unique, revision-independent identity for the *subject* under review, minted at
+intake admission. This ADR depends on three of its properties and does not
+restate them. It is **revision-independent**, so a verdict recorded about a page
+stays that same item's history after the page is edited — which is what §4's
+recency-ordered query and ADR-0028's G4 chaining require, and what a
+revision-scoped key would shatter. It is **globally unique across wikis**, so
+`wiki_id` below is the item's home wiki rather than part of the key, and a
+cross-wiki read is unambiguous without re-keying. And it **does not encode a
+review lane**, which leaves the per-track `states` map below as the single
+canonical statement of concurrency rather than a second competing notion of
+identity — a lane-bearing id would mint three identities for one page that is
+legitimately under NPP, AfD, and CCI review at once. `LifecycleState` follows
+ADR-0026's typed-but-open
 pattern: `key` is domain-owned vocabulary (`"reviewed"`, `"draft"`,
 `"merged"`, `"redirected"`, `"deleted"`, `"stub"`, …), never a platform enum
 edited per new domain lane; `disposition` is the one thing the engine needs
@@ -106,8 +116,12 @@ the same reasoning that keeps `LifecycleState.key` open but `disposition`
 closed (§1). A gate-type contract (e.g. a deterministic eligibility gate)
 reuses it verbatim, exactly as it would reuse `IntakeField`/`Op`/`Value`
 from ADR-0026 — one vocabulary, not a parallel one per gate type. `Reason`
-is referenced, not defined, here — its shape belongs to whichever gate-type
-contract produces it.
+is defined by ADR-0031, not here: a static, machine-legible `code` plus text
+rendered from a per-project, per-language catalog keyed by that same code. That
+is what keeps `reasons: Vec<Reason>` a policy-legible audit trail rather than
+free prose — this log is shared by every project that will ever write a verdict
+to it, and the blocklist check ADR-0028 §5 performs must mean the same thing on
+a French or Japanese wiki as it does on enwiki.
 
 ### 3. Transition-triggered re-entry is a registered watch, not a bespoke callback
 ```
@@ -242,8 +256,10 @@ and ADR-0026 already established.
 
 ## Non-goals
 
-- `ReviewableItem` itself (the generic queueable/rankable unit) — referenced
-  here by name only; its own contract is a separate future ADR.
+- `ReviewableItem` itself (the generic queueable/rankable unit) and the
+  `ReviewableItemId` identity type — ADR-0030, which defines the identity this
+  contract keys on. Its payload, diff, and ranking concerns are decided
+  neither there nor here.
 - The specific state vocabulary any one domain uses (what NPP/AfC/AfD/CCI
   actually call their states) — domain policy, not this contract.
 - Eligibility ruleset and verdict shape — ADR-0028.

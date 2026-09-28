@@ -3574,7 +3574,8 @@ dependencies = [
  "serde",
  "serde_json",
  "serde_yaml",
- "sp42-core",
+ "sp42-platform",
+ "sp42-types",
  "thiserror 2.0.18",
  "url",
 ]

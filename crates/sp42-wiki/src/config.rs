@@ -4,8 +4,8 @@ use std::collections::BTreeSet;
 
 use crate::errors::ConfigError;
 use serde::Deserialize;
-use sp42_core::scoring_policy::load_embedded_compiled_scoring_policy;
-use sp42_core::{
+use sp42_platform::scoring_policy::load_embedded_compiled_scoring_policy;
+use sp42_platform::{
     DEFAULT_SCORING_POLICY_REF, DEFAULT_SCORING_POLICY_WIKI_ID, WikiConfig, WikiTemplates,
 };
 use url::Url;

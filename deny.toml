@@ -44,12 +44,21 @@ allow = [
 ]
 
 [bans]
-# "warn", not "deny": ammonia (ADR-0032) pulls html5ever 0.40 while parsoid
-# pins 0.36, so the two html5ever/markup5ever/cssparser families now coexist.
-# The sanitizer is deliberately native-only (it must not enter the wasm bundle
-# that shares the sp42-parsoid chain), and html5ever is not reachable across
-# those versions by a shared type, so unifying is not currently possible.
-# Revisit if a parsoid release moves to html5ever 0.40.
+# "warn", not "deny": two duplication families are accepted deliberately.
+#
+# 1. reqwest 0.12 + 0.13. `genai` 0.6.5 pins reqwest 0.13, while the workspace
+#    pins 0.12 for the guarded fetch edge (ADR-0015) and the server. genai does
+#    not expose a hook to substitute the workspace's client, so deduplicating
+#    means dropping the multi-provider abstraction (ADR-0006) or vendoring a
+#    fork. The cost is a second HTTP stack and a second rustls in the binary; the
+#    inference endpoint is operator-supplied via SP42_INFERENCE_URL rather than
+#    attacker-influenced, and the call is bounded by sp42-inference's
+#    MODEL_CALL_TIMEOUT. Revisit when genai exposes a client override.
+# 2. html5ever 0.36 + 0.40. ammonia 4.2 (ADR-0032) pulls 0.40 while parsoid pins
+#    0.36. The sanitizer is deliberately native-only — it must not enter the wasm
+#    bundle that shares the sp42-parsoid chain — and the two versions share no
+#    type, so unification is not currently possible. Revisit if a parsoid release
+#    moves to html5ever 0.40.
 multiple-versions = "warn"
 # Workspace crates depend on each other via path dependencies on purpose.
 # Keep the signal, but do not fail CI on the repo's own crate topology.

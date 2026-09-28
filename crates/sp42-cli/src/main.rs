@@ -4631,6 +4631,7 @@ mod tests {
         assert!(summary.contains("## Stream report"));
     }
 
+    // https://github.com/schiste/SP42/issues/184 — flat arg-parser table.
     #[allow(clippy::too_many_lines)]
     fn sample_server_report() -> BTreeMap<String, Value> {
         BTreeMap::from([

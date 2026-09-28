@@ -83,20 +83,43 @@ RANK = {"platform": 0, "domain": 1, "shell": 2}
 EXEMPT_AS_SOURCE = {"tooling", "hybrid"}
 EXEMPT_AS_TARGET = {"tooling", "hybrid"}
 
+# sp42-core is a re-export facade (ADR-0013): it re-exports the *domain* crates
+# so that `sp42_core::*` keeps resolving while dependents are retargeted. That
+# makes a rank comparison meaningless in both directions — it necessarily sits
+# above the domains it re-exports, which no rank can express.
+#
+# So instead of exempting it from checking, the one invariant that actually
+# matters is enforced: a facade must not reach into a shell. Nothing about a
+# re-export barrel needs application code, and a facade that pulls in a shell
+# would invert the dependency direction in a way no consumer could see.
+# Previously it was in EXEMPT_AS_SOURCE, which meant *nothing* about its outgoing
+# dependencies was checked.
+HYBRID = "hybrid"
+FORBIDDEN_FOR_HYBRID = {"shell"}
+
 violations, notes = [], []
 for name in sorted(members):
     src = LAYER.get(name)
     if src is None:
         notes.append(f"untagged crate (add to LAYER map): {name}")
         continue
-    if src in EXEMPT_AS_SOURCE:
-        continue
     for dep in members[name]["dependencies"]:
         dname = dep["name"]
         if dname not in members:
             continue  # external crate
         dst = LAYER.get(dname)
-        if dst is None or dst in EXEMPT_AS_TARGET:
+        if dst is None:
+            continue
+        if src in EXEMPT_AS_SOURCE:
+            # Rank comparison does not apply. `xtask` is build tooling and may
+            # reference anything; a re-export facade may not reach a shell.
+            if src == HYBRID and dst in FORBIDDEN_FOR_HYBRID:
+                violations.append(
+                    f"{name} ({src}) -> {dname} ({dst})"
+                    f"  [forbidden: a re-export facade must not depend on a {dst}]"
+                )
+            continue
+        if dst in EXEMPT_AS_TARGET:
             continue
         if RANK[dst] > RANK[src]:
             violations.append(
@@ -106,7 +129,8 @@ for name in sorted(members):
 
 print("== SP42 layer check (ADR-0013) ==")
 print("  layers: platform <- domains <- shells")
-print("  exemptions: sp42-core (hybrid, pending split), xtask (tooling)")
+print("  exemptions: sp42-core (hybrid re-export facade), xtask (tooling)")
+print("  hybrid rule: a facade may not depend on a shell")
 for n in notes:
     print("  note:", n)
 

@@ -868,6 +868,8 @@ where
 // the per-use-site `VerifyOptions` (where it would be a meaningless field on the
 // single-claim path), so it stays a parameter — same trade-off as
 // `verify_citation_use_site`.
+// https://github.com/schiste/SP42/issues/182 — grouped inputs are a
+// deliberate trade-off, same as verify_citation_use_site.
 #[allow(clippy::too_many_arguments)]
 pub async fn verify_page<C, M>(
     fetch_client: &C,

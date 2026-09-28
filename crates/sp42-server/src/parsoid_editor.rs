@@ -639,6 +639,8 @@ mod tests {
         config
     }
 
+    // https://github.com/schiste/SP42/issues/185 — keeps the call sites
+    // uniform with the other editors.
     #[allow(clippy::trivially_copy_pass_by_ref)]
     fn smoke_verdict_str(verdict: &sp42_core::CitationVerdict) -> &'static str {
         use sp42_core::{CitationVerdict, SupportLevel};
@@ -666,6 +668,8 @@ mod tests {
     ///   SMOKE_PARSOID_URL (default en.wikipedia /w/rest.php), SMOKE_WIKI (label)
     #[tokio::test]
     #[ignore = "live: needs network + SP42_INFERENCE_* credentials"]
+    // https://github.com/schiste/SP42/issues/186 — live smoke test drives
+    // the full pipeline end to end.
     #[allow(
         clippy::too_many_lines,
         clippy::format_push_string,

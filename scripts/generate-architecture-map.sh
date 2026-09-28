@@ -117,6 +117,15 @@ def collect(glob_dirs, kind):
         for f in sorted(os.listdir(d)):
             if not f.endswith(".md"):
                 continue
+            # Skip macOS AppleDouble sidecar files (`._<name>.md`). On a volume
+            # that cannot store resource forks natively (exFAT — the usual
+            # format for an external SSD) macOS writes one beside every file.
+            # They end in `.md`, so they pass the filter above and are then
+            # opened as text, where the binary sidecar payload raises
+            # UnicodeDecodeError and the whole generator dies. They are not
+            # documents and must never be read.
+            if f.startswith("._"):
+                continue
             doc = scan_doc(os.path.join(d, f))
             if doc["id"] is None or not doc["id"].startswith(kind):
                 continue

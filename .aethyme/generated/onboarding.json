@@ -1,0 +1,534 @@
+{
+  "schema_version": "aethyme-onboarding-v2",
+  "repo": {
+    "name": "SP42",
+    "root": ".",
+    "kind": "repository",
+    "languages": [
+      "rust"
+    ],
+    "primary_language": "rust",
+    "package_manager": "cargo",
+    "manifests": [
+      "Cargo.toml",
+      "Procfile",
+      "crates/sp42-app/Cargo.toml",
+      "crates/sp42-assessment/Cargo.toml",
+      "crates/sp42-citation/Cargo.toml",
+      "crates/sp42-cli/Cargo.toml",
+      "crates/sp42-coordination/Cargo.toml",
+      "crates/sp42-core/Cargo.toml",
+      "crates/sp42-desktop/Cargo.toml",
+      "crates/sp42-desktop/src-tauri/Cargo.toml",
+      "crates/sp42-devtools/Cargo.toml",
+      "crates/sp42-fetch/Cargo.toml",
+      "crates/sp42-inference/Cargo.toml",
+      "crates/sp42-live/Cargo.toml",
+      "crates/sp42-mcp/Cargo.toml",
+      "crates/sp42-parsoid/Cargo.toml",
+      "crates/sp42-patrol/Cargo.toml",
+      "crates/sp42-platform/Cargo.toml",
+      "crates/sp42-reporting/Cargo.toml",
+      "crates/sp42-server/Cargo.toml",
+      "crates/sp42-types/Cargo.toml",
+      "crates/sp42-ui/Cargo.toml",
+      "crates/sp42-wiki/Cargo.toml",
+      "xtask/Cargo.toml"
+    ]
+  },
+  "workspaces": [
+    {
+      "root": ".",
+      "manifest": {
+        "path": "Cargo.toml",
+        "kind": "cargo"
+      },
+      "package_manager": "cargo",
+      "languages": [
+        "rust"
+      ],
+      "members": [
+        "crates/sp42-app",
+        "crates/sp42-assessment",
+        "crates/sp42-citation",
+        "crates/sp42-cli",
+        "crates/sp42-coordination",
+        "crates/sp42-core",
+        "crates/sp42-desktop",
+        "crates/sp42-desktop/src-tauri",
+        "crates/sp42-devtools",
+        "crates/sp42-fetch",
+        "crates/sp42-inference",
+        "crates/sp42-live",
+        "crates/sp42-mcp",
+        "crates/sp42-parsoid",
+        "crates/sp42-patrol",
+        "crates/sp42-platform",
+        "crates/sp42-reporting",
+        "crates/sp42-server",
+        "crates/sp42-types",
+        "crates/sp42-ui",
+        "crates/sp42-wiki",
+        "xtask"
+      ],
+      "lockfiles": [
+        "Cargo.lock",
+        "crates/sp42-desktop/src-tauri/Cargo.lock"
+      ],
+      "candidate_commands": [
+        {
+          "kind": "fast_test",
+          "command": "cargo test --workspace",
+          "source": "Cargo.toml",
+          "confidence": "high"
+        },
+        {
+          "kind": "build",
+          "command": "cargo build --workspace",
+          "source": "Cargo.toml",
+          "confidence": "high"
+        }
+      ],
+      "evidence": [
+        {
+          "kind": "tracked_manifest",
+          "detail": "Cargo.toml",
+          "confidence": "high"
+        },
+        {
+          "kind": "root_manifest",
+          "detail": "manifest is at repository root",
+          "confidence": "high"
+        },
+        {
+          "kind": "workspace_members",
+          "detail": "22 tracked member roots",
+          "confidence": "high"
+        }
+      ],
+      "confidence": "high",
+      "primary": true,
+      "ranking": {
+        "root_manifest": true,
+        "declares_workspace": true,
+        "member_count": 22,
+        "ci_mentions": 0,
+        "executable_entrypoints": 7,
+        "source_files": 208
+      }
+    },
+    {
+      "root": "crates/sp42-desktop/src-tauri",
+      "manifest": {
+        "path": "crates/sp42-desktop/src-tauri/Cargo.toml",
+        "kind": "cargo"
+      },
+      "package_manager": "cargo",
+      "languages": [
+        "rust"
+      ],
+      "members": [],
+      "lockfiles": [
+        "crates/sp42-desktop/src-tauri/Cargo.lock"
+      ],
+      "candidate_commands": [
+        {
+          "kind": "fast_test",
+          "command": "cargo test --manifest-path crates/sp42-desktop/src-tauri/Cargo.toml --workspace",
+          "source": "crates/sp42-desktop/src-tauri/Cargo.toml",
+          "confidence": "high"
+        },
+        {
+          "kind": "build",
+          "command": "cargo build --manifest-path crates/sp42-desktop/src-tauri/Cargo.toml --workspace",
+          "source": "crates/sp42-desktop/src-tauri/Cargo.toml",
+          "confidence": "high"
+        }
+      ],
+      "evidence": [
+        {
+          "kind": "tracked_manifest",
+          "detail": "crates/sp42-desktop/src-tauri/Cargo.toml",
+          "confidence": "high"
+        },
+        {
+          "kind": "ci_usage",
+          "detail": "workspace root mentioned 2 time(s) in CI",
+          "confidence": "medium"
+        }
+      ],
+      "confidence": "high",
+      "primary": false,
+      "ranking": {
+        "root_manifest": false,
+        "declares_workspace": true,
+        "member_count": 0,
+        "ci_mentions": 2,
+        "executable_entrypoints": 1,
+        "source_files": 4
+      }
+    }
+  ],
+  "primary_workspace": {
+    "root": ".",
+    "manifest": {
+      "path": "Cargo.toml",
+      "kind": "cargo"
+    },
+    "package_manager": "cargo",
+    "languages": [
+      "rust"
+    ],
+    "members": [
+      "crates/sp42-app",
+      "crates/sp42-assessment",
+      "crates/sp42-citation",
+      "crates/sp42-cli",
+      "crates/sp42-coordination",
+      "crates/sp42-core",
+      "crates/sp42-desktop",
+      "crates/sp42-desktop/src-tauri",
+      "crates/sp42-devtools",
+      "crates/sp42-fetch",
+      "crates/sp42-inference",
+      "crates/sp42-live",
+      "crates/sp42-mcp",
+      "crates/sp42-parsoid",
+      "crates/sp42-patrol",
+      "crates/sp42-platform",
+      "crates/sp42-reporting",
+      "crates/sp42-server",
+      "crates/sp42-types",
+      "crates/sp42-ui",
+      "crates/sp42-wiki",
+      "xtask"
+    ],
+    "lockfiles": [
+      "Cargo.lock",
+      "crates/sp42-desktop/src-tauri/Cargo.lock"
+    ],
+    "candidate_commands": [
+      {
+        "kind": "fast_test",
+        "command": "cargo test --workspace",
+        "source": "Cargo.toml",
+        "confidence": "high"
+      },
+      {
+        "kind": "build",
+        "command": "cargo build --workspace",
+        "source": "Cargo.toml",
+        "confidence": "high"
+      }
+    ],
+    "evidence": [
+      {
+        "kind": "tracked_manifest",
+        "detail": "Cargo.toml",
+        "confidence": "high"
+      },
+      {
+        "kind": "root_manifest",
+        "detail": "manifest is at repository root",
+        "confidence": "high"
+      },
+      {
+        "kind": "workspace_members",
+        "detail": "22 tracked member roots",
+        "confidence": "high"
+      }
+    ],
+    "confidence": "high",
+    "primary": true,
+    "ranking": {
+      "root_manifest": true,
+      "declares_workspace": true,
+      "member_count": 22,
+      "ci_mentions": 0,
+      "executable_entrypoints": 7,
+      "source_files": 208
+    }
+  },
+  "commands": [
+    {
+      "kind": "dev",
+      "command": "cargo run",
+      "source": "Cargo.toml",
+      "confidence": "medium"
+    },
+    {
+      "kind": "dev",
+      "command": "SP42_BIND_ADDR=0.0.0.0:8000 SP42_DEPLOYMENT_MODE=vps SP42_PUBLIC_BASE_URL=https://sp42.toolforge.org ./target/release/sp42-server",
+      "source": "Procfile:web",
+      "confidence": "medium"
+    },
+    {
+      "kind": "fast_test",
+      "command": "cargo test",
+      "source": "Cargo.toml",
+      "confidence": "high"
+    },
+    {
+      "kind": "fast_test",
+      "command": "cargo test --workspace",
+      "source": "Cargo.toml",
+      "confidence": "high",
+      "workspace_root": ".",
+      "provenance": "derived from tracked workspace manifest"
+    },
+    {
+      "kind": "fast_test",
+      "command": "cargo test --manifest-path crates/sp42-desktop/src-tauri/Cargo.toml --workspace",
+      "source": "crates/sp42-desktop/src-tauri/Cargo.toml",
+      "confidence": "high",
+      "workspace_root": "crates/sp42-desktop/src-tauri",
+      "provenance": "derived from tracked workspace manifest"
+    },
+    {
+      "kind": "build",
+      "command": "cargo build",
+      "source": "Cargo.toml",
+      "confidence": "high"
+    },
+    {
+      "kind": "build",
+      "command": "cargo build --workspace",
+      "source": "Cargo.toml",
+      "confidence": "high",
+      "workspace_root": ".",
+      "provenance": "derived from tracked workspace manifest"
+    },
+    {
+      "kind": "build",
+      "command": "cargo build --manifest-path crates/sp42-desktop/src-tauri/Cargo.toml --workspace",
+      "source": "crates/sp42-desktop/src-tauri/Cargo.toml",
+      "confidence": "high",
+      "workspace_root": "crates/sp42-desktop/src-tauri",
+      "provenance": "derived from tracked workspace manifest"
+    }
+  ],
+  "primary_commands": {
+    "dev": "cargo run",
+    "fast_test": "cargo test --workspace",
+    "build": "cargo build --workspace"
+  },
+  "areas": [
+    {
+      "path": ".github",
+      "role": "automation",
+      "reason": "automation and CI configuration",
+      "confidence": "high"
+    },
+    {
+      "path": "docs",
+      "role": "docs",
+      "reason": "documentation area",
+      "confidence": "high"
+    },
+    {
+      "path": "scripts",
+      "role": "tooling",
+      "reason": "developer tooling or scripts",
+      "confidence": "high"
+    }
+  ],
+  "entrypoints": [
+    {
+      "path": "Procfile:web",
+      "kind": "process",
+      "role": "app",
+      "reason": "Procfile process entrypoint",
+      "confidence": "high",
+      "relevance": "supporting"
+    },
+    {
+      "path": "crates/sp42-app/src/main.rs",
+      "kind": "file",
+      "role": "cli",
+      "reason": "tracked Rust binary entrypoint in `.`",
+      "confidence": "high",
+      "workspace_root": ".",
+      "provenance": "derived from tracked workspace source",
+      "executable_name": "sp42-app",
+      "relevance": "product"
+    },
+    {
+      "path": "crates/sp42-cli/src/main.rs",
+      "kind": "file",
+      "role": "cli",
+      "reason": "tracked Rust binary entrypoint in `.`",
+      "confidence": "high",
+      "workspace_root": ".",
+      "provenance": "derived from tracked workspace source",
+      "executable_name": "sp42-cli",
+      "relevance": "product"
+    },
+    {
+      "path": "crates/sp42-desktop/src-tauri/src/main.rs",
+      "kind": "file",
+      "role": "cli",
+      "reason": "tracked Rust binary entrypoint in `crates/sp42-desktop/src-tauri`",
+      "confidence": "high",
+      "workspace_root": "crates/sp42-desktop/src-tauri",
+      "provenance": "derived from tracked workspace source",
+      "executable_name": "sp42-desktop-tauri",
+      "relevance": "product"
+    },
+    {
+      "path": "crates/sp42-desktop/src/main.rs",
+      "kind": "file",
+      "role": "cli",
+      "reason": "tracked Rust binary entrypoint in `.`",
+      "confidence": "high",
+      "workspace_root": ".",
+      "provenance": "derived from tracked workspace source",
+      "executable_name": "sp42-desktop",
+      "relevance": "product"
+    },
+    {
+      "path": "crates/sp42-mcp/src/main.rs",
+      "kind": "file",
+      "role": "cli",
+      "reason": "tracked Rust binary entrypoint in `.`",
+      "confidence": "high",
+      "workspace_root": ".",
+      "provenance": "derived from tracked workspace source",
+      "executable_name": "sp42-mcp",
+      "relevance": "product"
+    },
+    {
+      "path": "crates/sp42-server/src/main.rs",
+      "kind": "file",
+      "role": "cli",
+      "reason": "tracked Rust binary entrypoint in `.`",
+      "confidence": "high",
+      "workspace_root": ".",
+      "provenance": "derived from tracked workspace source",
+      "executable_name": "sp42-server",
+      "relevance": "product"
+    },
+    {
+      "path": "xtask/src/main.rs",
+      "kind": "file",
+      "role": "cli",
+      "reason": "tracked Rust binary entrypoint in `.`",
+      "confidence": "high",
+      "workspace_root": ".",
+      "provenance": "derived from tracked workspace source",
+      "executable_name": "xtask",
+      "relevance": "supporting"
+    }
+  ],
+  "primary_entrypoints": {
+    "app": {
+      "path": "Procfile:web",
+      "kind": "process",
+      "role": "app",
+      "reason": "Procfile process entrypoint",
+      "confidence": "high",
+      "relevance": "supporting"
+    },
+    "cli": {
+      "path": "crates/sp42-app/src/main.rs",
+      "kind": "file",
+      "role": "cli",
+      "reason": "tracked Rust binary entrypoint in `.`",
+      "confidence": "high",
+      "workspace_root": ".",
+      "provenance": "derived from tracked workspace source",
+      "executable_name": "sp42-app",
+      "relevance": "product"
+    }
+  },
+  "caution_zones": [
+    {
+      "path": "fixtures",
+      "reason": "likely generated, vendored, fixture, or migration-heavy area"
+    }
+  ],
+  "generated_paths": [
+    {
+      "path": ".aethyme/generated",
+      "reason": "tracked generated or vendored surface; verify ownership before editing",
+      "provenance": "tracked path classification"
+    }
+  ],
+  "dangerous_paths": [
+    {
+      "path": ".github/workflows",
+      "reason": "repository automation; changes can affect publication or shared CI",
+      "provenance": "tracked path classification"
+    }
+  ],
+  "navigation_recipes": [
+    {
+      "purpose": "Broad repository orientation for a user request",
+      "command": "aethyme explore --repo \"$PWD\" --request \"<task>\" --format answer-json"
+    },
+    {
+      "purpose": "Quick deterministic repo summary",
+      "command": "aethyme repo inspect \"$PWD\" --mode brief --json-output"
+    },
+    {
+      "purpose": "Trace likely impact before editing",
+      "command": "aethyme graph callers \"$PWD\" \"<symbol-or-file>\" --json-output"
+    }
+  ],
+  "summon": {
+    "description": "Use when starting work in an unfamiliar repository, when the task asks for repo overview, setup, architecture, entrypoints, test commands, or where to begin. Skip for narrow file-scoped edits once the relevant paths are already known.",
+    "recommended_when": [
+      "first task in repo",
+      "repo overview",
+      "setup or run instructions",
+      "architecture or entrypoints",
+      "where should I start",
+      "broad debugging or feature-localization request"
+    ],
+    "skip_when": [
+      "known file-scoped edit",
+      "follow-up inside already identified area",
+      "task already localized to concrete files"
+    ],
+    "task_signals": [
+      "unfamiliar repository",
+      "broad task with no path named",
+      "user asks how the repo is organized"
+    ]
+  },
+  "freshness": {
+    "source_digest": "14e149ab00837e2bef45608be9aced9758b822047913e88db2b33df2deacd459",
+    "source_commit": null,
+    "source_file_count": 525,
+    "generator": "deterministic"
+  },
+  "telemetry": {
+    "sections": [
+      "repo",
+      "workspaces",
+      "primary_workspace",
+      "commands",
+      "areas",
+      "entrypoints",
+      "caution_zones",
+      "generated_paths",
+      "dangerous_paths",
+      "navigation_recipes",
+      "summon",
+      "freshness"
+    ],
+    "counts": {
+      "workspaces": 2,
+      "commands": 8,
+      "areas": 3,
+      "entrypoints": 8,
+      "caution_zones": 1,
+      "generated_paths": 1,
+      "dangerous_paths": 1,
+      "navigation_recipes": 3,
+      "notes": 0
+    },
+    "overrides_applied": false,
+    "override_source": null,
+    "override_invalid": false
+  }
+}

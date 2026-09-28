@@ -66,6 +66,48 @@ in_test_module() {
   [[ "$lines" == *" $2 "* ]]
 }
 
+# The `unsafe` detector, in one place so the pattern and its self-test can never
+# drift apart. Requires Rust syntax after the keyword (`unsafe {`, `unsafe fn`,
+# `unsafe impl`, `unsafe trait`, `unsafe extern`) rather than a bare word
+# boundary: a word-boundary match also fires on CSP tokens like 'unsafe-inline'
+# and on prose quoting them, which is how this check previously rejected a
+# correct security-hardening change.
+unsafe_rust_syntax() {
+  [[ "$1" =~ (^|[^[:alnum:]_])unsafe[[:space:]]*(\{|fn|impl|trait|extern) ]]
+}
+
+# Self-test for `unsafe_rust_syntax`. Runs on every invocation (it is a handful
+# of string matches) so a future edit cannot silently stop detecting real
+# violations without also failing here. Set SP42_SKIP_PATTERN_SELFTEST=1 to
+# bypass while bisecting a false positive.
+if [[ "${SP42_SKIP_PATTERN_SELFTEST:-0}" != "1" ]]; then
+  selftest_fail=0
+  expect_unsafe() { # $1 = content, $2 = 1 if it must be detected
+    local content="$1" want="$2" got=0
+    unsafe_rust_syntax "$content" && got=1
+    if [[ "$got" != "$want" ]]; then
+      printf '  pattern self-test FAILED for content [%s]: expected=%s got=%s\n' \
+        "$content" "$want" "$got" >&2
+      selftest_fail=1
+    fi
+  }
+  # Must be detected: real `unsafe` Rust syntax.
+  expect_unsafe 'unsafe {' 1
+  expect_unsafe '    unsafe {' 1
+  expect_unsafe 'unsafe fn f() {}' 1
+  expect_unsafe 'unsafe impl Send for X {}' 1
+  expect_unsafe 'unsafe trait T {}' 1
+  # Must NOT be detected: CSP tokens, prose, and longer identifiers.
+  expect_unsafe "let csp = \"script-src 'self' 'unsafe-inline'\";" 0
+  expect_unsafe "// keeps 'unsafe-inline' in script-src" 0
+  expect_unsafe 'let my_unsafe_thing = 1;' 0
+  if (( selftest_fail != 0 )); then
+    echo "SP42 forbidden-pattern check failed: unsafe-pattern self-test failed." >&2
+    exit 1
+  fi
+  unset -f expect_unsafe
+fi
+
 # Does a `// SAFETY:` note sit on line `$2` or within the 3 lines above it?
 has_safety_context() {
   local lo=$(( $2 > 3 ? $2 - 3 : 1 ))
@@ -120,7 +162,7 @@ while IFS= read -r line; do
         emit "$n" '#[ignore] without an issue link'
       fi
       # unsafe without a // SAFETY: note on the same line or the 3 lines above
-      if [[ "$content" =~ (^|[^[:alnum:]_])unsafe([^[:alnum:]_]|$) ]] \
+      if unsafe_rust_syntax "$content" \
         && [[ "$content" != *"// SAFETY:"* ]] \
         && ! has_safety_context "$file" "$n"; then
         emit "$n" 'unsafe without a // SAFETY: justification'

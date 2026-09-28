@@ -4,6 +4,7 @@
 
 pub mod errors;
 pub mod model;
+pub mod reviewable;
 pub mod traits;
 pub mod transport;
 
@@ -13,6 +14,9 @@ pub use errors::{
 pub use model::{
     ChatMessage, ChatRole, EndpointMode, ModelClient, ModelCompletion, ModelCompletionRequest,
     ModelEndpointConfig, ModelInvocation, ModelRef, SamplingParams, StubModelClient,
+};
+pub use reviewable::{
+    REVIEWABLE_ITEM_ID_VERSION, ReviewableItemId, ReviewableItemIdError, ReviewableItemKind,
 };
 pub use traits::{
     Clock, EventSource, FileStorage, FixedClock, HttpClient, LoopbackWebSocket, MemoryStorage,

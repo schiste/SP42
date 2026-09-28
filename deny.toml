@@ -44,6 +44,12 @@ allow = [
 ]
 
 [bans]
+# "warn", not "deny": ammonia (ADR-0032) pulls html5ever 0.40 while parsoid
+# pins 0.36, so the two html5ever/markup5ever/cssparser families now coexist.
+# The sanitizer is deliberately native-only (it must not enter the wasm bundle
+# that shares the sp42-parsoid chain), and html5ever is not reachable across
+# those versions by a shared type, so unifying is not currently possible.
+# Revisit if a parsoid release moves to html5ever 0.40.
 multiple-versions = "warn"
 # Workspace crates depend on each other via path dependencies on purpose.
 # Keep the signal, but do not fail CI on the repo's own crate topology.

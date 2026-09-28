@@ -89,11 +89,16 @@ unit tests and enforces the wasm bundle-size ceiling against the optimized build
 The wasm-size gate is CI/release-only — it is not in `pre-push`, which would
 otherwise force an optimized rebuild on every push.
 
-> The supply-chain gate is currently red on `main` due to transitive advisories
-> with no available fix (`paste`/`proc-macro-error2` are Leptos build-time
-> proc-macros; `rand` RUSTSEC-2026-0097 has no patched 0.9.x). Until those clear
-> upstream, pushing requires `SP42_SKIP_GIT_HOOKS=1` and PR CI will show the
-> supply-chain step red. New advisories are still caught — this is deliberate.
+> **The supply-chain gate is green.** An earlier revision of this file said it
+> was red and required `SP42_SKIP_GIT_HOOKS=1` to push; that is no longer true.
+> The three unfixable transitive advisories are now recorded in `deny.toml` with
+> a reason and a revisit trigger each (`paste` and `proc-macro-error2` are
+> Leptos build-time proc-macros pending Leptos 0.9; `rand` RUSTSEC-2026-0097 has
+> no patched 0.9.x). Vulnerabilities, yanked crates, licences, bans and sources
+> stay hard-deny, so **a new advisory still fails the gate** — only these three
+> named ids are accepted. The burn-down register is
+> [issue #63](https://github.com/schiste/SP42/issues/63); if the gate goes red
+> again, this note is the thing to update.
 
 Documentation-only changes (every modified file is `.md`, `.log`, or `.txt`)
 skip the compile-heavy steps: `pre-commit` still runs the whitespace and docs

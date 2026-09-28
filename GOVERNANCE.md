@@ -52,7 +52,11 @@ operators, editors, or external integrations can do or rely on.
 - Pull request descriptions must include validation notes, even when the only
   validation is a documented reason why a check was not run.
 - Maintainers may ask for tests, docs, or a narrower scope before review.
-- Self-merge is not allowed for protected files or release/deployment changes.
+- Self-merge is not allowed, per Constitution Art. 8.3. (This file previously
+  said self-merge was allowed outside protected files; the Constitution is the
+  binding document and prohibits it outright. If a narrowly-scoped self-merge
+  ever needs to be permitted, that is a Constitution amendment under Art. 12,
+  not a Governance edit.)
 
 ## Protected Areas
 

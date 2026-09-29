@@ -1,0 +1,51 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/schiste/SP42/schemas/reason-catalog.schema.json",
+  "title": "SP42 reason catalog",
+  "description": "Per-project, per-language wording for verdict reason codes (ADR-0031 §4). One file per (wiki_id, language). The keys under `reasons` are the same machine-legible codes a ruleset declares statically on its outcome arms, and are what `disallowed_reasons` matches against; the template is the only place human wording lives.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["wiki_id", "language", "reasons"],
+  "properties": {
+    "wiki_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The project this catalog is for, e.g. frwiki."
+    },
+    "language": {
+      "type": "string",
+      "pattern": "^[a-z]{2,3}(-[A-Za-z0-9]+)*$",
+      "description": "BCP-47-ish language tag. Coverage is enforced per language: a code a configured ruleset can produce must be present in every language that project ships, or that language does not load."
+    },
+    "reasons": {
+      "type": "object",
+      "minProperties": 1,
+      "description": "Reason code -> wording. Every placeholder used by a template must be declared in that entry's `params`, and every declared parameter must be used by the template; both directions are load errors, not runtime surprises.",
+      "propertyNames": {
+        "pattern": "^[a-z][a-z0-9_]*$",
+        "description": "Reason codes are lower-case snake_case. A project may not ship a ruleset whose reasons render as machine identifiers, so a code with no entry is a load error rather than a fallback."
+      },
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["template"],
+        "properties": {
+          "template": {
+            "type": "string",
+            "minLength": 1,
+            "description": "The human-readable sentence. All grammar and word order belong here and never to a parameter (ADR-0031 §5), so a translation needs this file and nothing else. Placeholders are written {name}."
+          },
+          "params": {
+            "type": "array",
+            "uniqueItems": true,
+            "description": "Placeholder names this template substitutes. Must be exactly the set of {name} placeholders in `template`.",
+            "items": {
+              "type": "string",
+              "pattern": "^[a-z][a-z0-9_]*$"
+            }
+          }
+        }
+      }
+    }
+  }
+}

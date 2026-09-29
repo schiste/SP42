@@ -45,3 +45,11 @@ pub enum WebSocketError {
     #[error("stub state is poisoned: {resource}")]
     StatePoisoned { resource: &'static str },
 }
+
+#[derive(Debug, Error, Clone, PartialEq, Eq)]
+pub enum ReasonError {
+    #[error("a reason code must not be empty")]
+    EmptyCode,
+    #[error("reason code {code:?} must be lower-case snake_case (a-z, 0-9, _)")]
+    MalformedCode { code: String },
+}

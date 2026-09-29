@@ -48,6 +48,7 @@ pub mod origin;
 pub mod priority_queue;
 pub mod public_documents;
 pub mod queue_builder;
+pub mod reason_catalog;
 pub mod review_session;
 pub mod review_workbench;
 pub mod routes;
@@ -127,6 +128,9 @@ pub use public_documents::{
 };
 pub use queue_builder::{
     build_ranked_queue, build_ranked_queue_with_contexts, build_ranked_queue_with_policy,
+};
+pub use reason_catalog::{
+    ReasonCatalog, ReasonCatalogError, load_frwiki_english, params_from, required_codes,
 };
 pub use review_session::{
     FindingsRevisionMismatch, REVIEW_SESSION_CONTRACT_VERSION, ReviewAckResponse, ReviewAnchor,

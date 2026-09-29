@@ -124,14 +124,57 @@ pub struct StructuredDiff {
     pub stats: DiffStats,
 }
 
+/// One side (before/after) of a rendered hunk preview.
+///
+/// # Trust boundary
+///
+/// [`Self::html`] is **not** a raw wiki response. It is always the output of
+/// `sp42_fetch::sanitize_rendered_html` (ADR-0032), because the review surface
+/// renders it with `set_inner_html` and the markup is authored by whoever made
+/// the revision. The field is private and construction goes through
+/// [`Self::sanitized`] so that obligation is visible at every call site rather
+/// than being a convention that a struct literal can silently break.
+///
+/// The sanitizer lives in `sp42-fetch` rather than here on purpose:
+/// `sp42-platform` is in the browser/wasm dependency chain
+/// (`sp42-app` -> `sp42-core` -> `sp42-platform`) and pulling an HTML parser in
+/// here would breach the Art. 5.2 wasm-size ceiling. Sanitization is applied at
+/// the server fetch edge instead — once, for all consumers.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub struct RenderedHunkSide {
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub section_label: String,
     #[serde(default, skip_serializing_if = "String::is_empty")]
-    pub html: String,
+    html: String,
     #[serde(default)]
     pub missing: bool,
+}
+
+impl RenderedHunkSide {
+    /// Build a side from HTML that has **already** passed
+    /// `sp42_fetch::sanitize_rendered_html`.
+    ///
+    /// Passing unsanitized markup here reintroduces the XSS path this type
+    /// exists to prevent (ADR-0032); there is no runtime re-check because
+    /// `sp42-platform` deliberately cannot depend on the sanitizer.
+    #[must_use]
+    pub fn sanitized(
+        section_label: impl Into<String>,
+        html: impl Into<String>,
+        missing: bool,
+    ) -> Self {
+        Self {
+            section_label: section_label.into(),
+            html: html.into(),
+            missing,
+        }
+    }
+
+    /// The sanitized HTML for this side.
+    #[must_use]
+    pub fn html(&self) -> &str {
+        &self.html
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]

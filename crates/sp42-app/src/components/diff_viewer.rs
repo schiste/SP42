@@ -669,7 +669,7 @@ fn render_rendered_hunk_preview(
                                         {Card(
                                             CardProps::new(ui_children(move || view! {
                                                 <RenderedHtmlPane
-                                                    html=before.html.clone()
+                                                    html=before.html().to_string()
                                                     highlight_phrases=before_highlights.clone()
                                                     highlight_tone=RenderedHighlightTone::Remove
                                                 />
@@ -688,7 +688,7 @@ fn render_rendered_hunk_preview(
                                         {Card(
                                             CardProps::new(ui_children(move || view! {
                                                 <RenderedHtmlPane
-                                                    html=after.html.clone()
+                                                    html=after.html().to_string()
                                                     highlight_phrases=after_highlights.clone()
                                                     highlight_tone=RenderedHighlightTone::Add
                                                 />
@@ -731,6 +731,20 @@ fn rendered_highlight_sources(
     })
 }
 
+/// Render server-sanitized HTML for a hunk side.
+///
+/// # Trust boundary
+///
+/// `html` arrives from the server's rendered-hunk-preview route, which applies
+/// the `sp42_fetch::sanitize_rendered_html` allowlist at the fetch edge
+/// (ADR-0032). `set_inner_html` is therefore a deliberate second stage, not the
+/// only barrier: the allowlist removes script, event handlers, `style`,
+/// dangerous URL schemes and active-content elements, and this pane does not
+/// re-parse or extend the markup beyond injecting highlight spans.
+///
+/// This component is the single place in the workspace that assigns untrusted
+/// markup to the DOM. Any change here must preserve the server-side sanitization
+/// contract; do not add a source of HTML that has not passed the allowlist.
 #[component]
 fn RenderedHtmlPane(
     html: String,

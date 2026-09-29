@@ -669,7 +669,7 @@ fn render_rendered_hunk_preview(
                                         {Card(
                                             CardProps::new(ui_children(move || view! {
                                                 <RenderedHtmlPane
-                                                    html=before.html.clone()
+                                                    html=before.html().to_string()
                                                     highlight_phrases=before_highlights.clone()
                                                     highlight_tone=RenderedHighlightTone::Remove
                                                 />
@@ -688,7 +688,7 @@ fn render_rendered_hunk_preview(
                                         {Card(
                                             CardProps::new(ui_children(move || view! {
                                                 <RenderedHtmlPane
-                                                    html=after.html.clone()
+                                                    html=after.html().to_string()
                                                     highlight_phrases=after_highlights.clone()
                                                     highlight_tone=RenderedHighlightTone::Add
                                                 />

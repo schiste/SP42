@@ -61,15 +61,44 @@ purge_appledouble() {
 # `cargo llvm-cov` merges profiles as part of the same invocation that runs the
 # tests, so the sweep has to happen in between: run with --no-report to produce
 # the .profraw files, purge the sidecars, then `report` to merge and measure.
+# `report` does not accept every flag the test subcommands do. It takes
+# -p/--package and --ignore-filename-regex, but rejects --workspace and --exclude
+# outright:
+#
+#   error: --workspace is specific to [test,nextest,nextest-archive,show-env,
+#   clean,no subcommand] and not supported for subcommand 'report'
+#
+# so the args have to be split: everything before a literal `--` is valid for
+# both invocations, everything after it goes to the test run alone. The report
+# then expresses the same intent with a flag it understands - for the xtask
+# exclusion, --ignore-filename-regex rather than --exclude.
 run_floor() {
   local label="$1" floor="$2"
   shift 2
+  local -a shared=() test_only=()
+  local after_sep=0 arg
+  for arg in "$@"; do
+    if [[ "$arg" == "--" ]]; then after_sep=1; continue; fi
+    if [[ $after_sep -eq 1 ]]; then test_only+=("$arg"); else shared+=("$arg"); fi
+  done
+
   printf '\n== %s line coverage (must be >= %s%%) ==\n' "$label" "$floor"
-  RUST_TEST_THREADS="${RUST_TEST_THREADS:-1}" cargo llvm-cov "$@" --no-report
+  RUST_TEST_THREADS="${RUST_TEST_THREADS:-1}" \
+    cargo llvm-cov ${test_only[@]+"${test_only[@]}"} "${shared[@]}" --no-report
   purge_appledouble
   RUST_TEST_THREADS="${RUST_TEST_THREADS:-1}" \
-    cargo llvm-cov report "$@" --fail-under-lines "$floor"
+    cargo llvm-cov report "${shared[@]}" --fail-under-lines "$floor"
 }
+
+# Every argument handed to run_floor is passed to BOTH the test run and the
+# report, so each one has to be valid for the `report` subcommand too. That is
+# why xtask is excluded by path rather than with `--exclude`:
+#
+#   error: --exclude is specific to [test,nextest,nextest-archive,no
+#   subcommand] and not supported for subcommand 'report'
+#
+# --ignore-filename-regex is accepted by both, and the first floor above already
+# relies on that for crates/sp42-types/.
 
 run_floor \
   'platform-independent logic (sp42-platform + sp42-core + sp42-citation + sp42-patrol)' \
@@ -80,7 +109,7 @@ run_floor \
 run_floor 'sp42-server (protected area: auth, session, deployment mode)' \
   "$server_min" -p sp42-server
 
-run_floor 'workspace, excl. xtask' "$ws_min" --workspace --exclude xtask
+run_floor 'workspace, excl. xtask' "$ws_min" --ignore-filename-regex 'xtask/' -- --workspace --exclude xtask
 
 printf '\nSP42 coverage check passed (platform-independent logic >= %s%%, sp42-server >= %s%%, workspace excl. xtask >= %s%%).\n' \
   "$core_min" "$server_min" "$ws_min"

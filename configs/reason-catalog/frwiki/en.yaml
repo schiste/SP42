@@ -1,0 +1,69 @@
+# Reason catalog — frwiki / English (ADR-0031 §4).
+#
+# One file per (wiki, language). The `code` keys here are the same
+# machine-legible identifiers a ruleset declares statically on its outcome arms,
+# and are what `disallowed_reasons` matches against. The template is the only
+# place human wording lives; it is never stored on a verdict and never matched.
+#
+# Because reasons are authored by humans, in each wiki's own language, this file
+# is per-language on purpose. A French or Japanese wiki keeps its own catalog,
+# and the disallowed-reasons blocklist still means the same thing there,
+# because it matches codes and never text.
+#
+# placeholders: {name} is substituted from the reason's ReasonParams. All
+# grammar and word order belong to the template, never to a parameter
+# (ADR-0031 §5), so a translation needs this file and nothing else.
+
+wiki_id: frwiki
+language: en
+
+reasons:
+  # ── Notability / sourcing ───────────────────────────────────────────────────
+  insufficient_sources:
+    template: "The article has too few independent sources ({count} cited, {threshold} required)."
+    params: [count, threshold]
+  no_outline:
+    template: "The article does not meet the notability guideline: it reads as a list rather than prose."
+  original_research:
+    template: "The article's notability rests on original research, which is not a valid basis."
+  promotional_language:
+    template: "The article is written in promotional or advertising language."
+
+  # ── Deletion candidacy ──────────────────────────────────────────────────────
+  csd_g4_recreated:
+    template: "This page was recreated after a deletion discussion resolved it to deletion."
+  redirect_to_non_mainspace:
+    template: "The page is a redirect to a target outside the main namespace ({target_namespace})."
+    params: [target_namespace]
+  redirect_never_linked:
+    template: "The redirect has never been linked to from another article."
+
+  # ── Merge / discussion outcomes ─────────────────────────────────────────────
+  merge_consensus:
+    template: "A discussion reached a consensus to merge this page ({target})."
+    params: [target]
+  no_consensus:
+    template: "A discussion closed with no consensus."
+  off_topic:
+    template: "A discussion closed as off-topic."
+
+  # ── Citation handling ───────────────────────────────────────────────────────
+  # Present deliberately: AFCSTANDARDS forbids citation-formatting complaints as
+  # a decline reason, so this is the code a ruleset would list in
+  # `disallowed_reasons`. A blocklist of *codes* holds here; a blocklist of
+  # rendered sentences would only hold in this language.
+  citation_formatting_complaint:
+    template: "The decline reason cited only citation formatting."
+  unverifiable_source:
+    template: "A cited source could not be verified ({unverified_count} unverified)."
+    params: [unverified_count]
+
+  # ── Promotion tiers ─────────────────────────────────────────────────────────
+  ga_checklist_incomplete:
+    template: "The Good Article review checklist is not complete ({completed} of {total} items)."
+    params: [completed, total]
+  fa_not_yet_ga:
+    template: "The article has not yet been promoted to Good Article, which this process requires first."
+  dyk_failed_length:
+    template: "The article is shorter than the length criterion requires ({length} bytes)."
+    params: [length]

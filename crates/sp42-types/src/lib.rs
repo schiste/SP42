@@ -4,17 +4,19 @@
 
 pub mod errors;
 pub mod model;
+pub mod reason;
 pub mod reviewable;
 pub mod traits;
 pub mod transport;
 
 pub use errors::{
-    EventSourceError, HttpClientError, ModelClientError, StorageError, WebSocketError,
+    EventSourceError, HttpClientError, ModelClientError, ReasonError, StorageError, WebSocketError,
 };
 pub use model::{
     ChatMessage, ChatRole, EndpointMode, ModelClient, ModelCompletion, ModelCompletionRequest,
     ModelEndpointConfig, ModelInvocation, ModelRef, SamplingParams, StubModelClient,
 };
+pub use reason::{Reason, ReasonCode, ReasonParam, ReasonParams};
 pub use reviewable::{
     REVIEWABLE_ITEM_ID_VERSION, ReviewableItemId, ReviewableItemIdError, ReviewableItemKind,
 };

@@ -16,7 +16,7 @@
 //!   missing data ride an admitting branch and admit exactly the item a
 //!   restrictive rule meant to hold back (ADR-0026 §4, §6).
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use serde::{Deserialize, Serialize};
 
@@ -312,16 +312,66 @@ pub enum IntakeDecision {
         /// rules fired.
         config_version: String,
     },
-    /// The config was valid but a `CapabilityRef` could not be resolved at
-    /// evaluation time, because a discovered fact drifted.
+    /// The pipeline could not be evaluated at all, for a reason that is a
+    /// configuration fault rather than a property of the item.
     ///
     /// Deliberately *not* a `Drop`: a broken filter must be distinguishable from
-    /// an intentional one (ADR-0026 §6).
+    /// an intentional one (ADR-0026 §6). Collapsing the two would make a
+    /// silently broken ruleset indistinguishable from a restrictive one, and the
+    /// operator would see a clean stream rather than a fault.
     Misconfigured {
         /// Which pipeline could not be evaluated.
         pipeline_id: String,
+        /// What was wrong with it.
+        reason: IntakeMisconfiguration,
+    },
+}
+
+/// Why a pipeline could not be evaluated.
+///
+/// Each variant is a defect in the *configuration* or the *environment*, never a
+/// statement about the item. That is the distinction [`IntakeDecision`] turns on:
+/// an item the rules reject is `Routed`, and a ruleset that cannot answer is
+/// `Misconfigured`.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case", tag = "kind", content = "detail")]
+pub enum IntakeMisconfiguration {
+    /// A `CapabilityRef` did not resolve against the current discovered
+    /// profile.
+    ///
+    /// Load-time-valid but evaluation-time-broken: a Tier-A drift removed a
+    /// namespace the ruleset named (ADR-0026 §5).
+    UnresolvedCapability {
         /// The reference that would not resolve.
-        unresolved_ref: String,
+        reference: String,
+    },
+    /// A rule named a `Custom` field that no registered domain supplies.
+    UnregisteredCustomField {
+        /// The field name the rule used.
+        field: String,
+    },
+    /// A rule reached the evaluator that the compatibility table rejects, so it
+    /// could never have evaluated as its author intended.
+    ///
+    /// Only reachable for a hand-built pipeline; [`compile_pipeline`] rejects
+    /// these at load time, so this is defence in depth.
+    ///
+    /// [`compile_pipeline`]: https://docs.rs/sp42-platform
+    InvalidRule {
+        /// A human-readable description of the incompatibility.
+        detail: String,
+    },
+    /// A `Custom` field resolved to a value shape its rule cannot compare.
+    ///
+    /// Distinct from [`Self::UnregisteredCustomField`]: the field exists, but the
+    /// domain returns the wrong type for the operator the rule uses.
+    UnusableCustomField {
+        /// The field name the rule used.
+        field: String,
+        /// The operator the rule used.
+        op: IntakeOp,
+        /// The shape the registry actually produced.
+        resolved: String,
     },
 }
 
@@ -396,6 +446,45 @@ pub enum IntakeResolveError {
     /// The field name is not registered by any domain.
     #[error("custom intake field {0:?} is not registered by any domain")]
     UnregisteredField(String),
+    /// A capability reference did not resolve against the current profile.
+    ///
+    /// Distinct from an empty resolution on purpose: an empty set would make a
+    /// rule written to exclude something exclude nothing, and read as a
+    /// confirmed answer.
+    #[error("capability reference {0:?} did not resolve against the current wiki profile")]
+    UnresolvedCapability(String),
+}
+
+/// Wiki-relative facts a rule can name, e.g. "the mainspace namespaces for
+/// this wiki" (ADR-0026 §5).
+///
+/// A capability reference resolves against a *discovered* profile, so a value can
+/// legitimately fail to resolve at evaluation time — a Tier-A drift broke a
+/// reference that was valid at load time. That is a `Misconfigured` decision,
+/// not a non-match (ADR-0026 §6).
+pub trait CapabilityResolver: Send + Sync {
+    /// Resolve a reference to a set of comparable values.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`IntakeResolveError::UnresolvedCapability`] when the name does
+    /// not resolve against the current profile. The caller must turn that into
+    /// `IntakeDecision::Misconfigured` rather than evaluating it as `False`.
+    fn resolve(&self, reference: &str) -> Result<BTreeSet<IntakeValue>, IntakeResolveError>;
+}
+
+/// A resolver for deployments with no capability references, which rejects them
+/// rather than resolving to an empty set — an empty set would silently admit
+/// everything a rule was written to exclude.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct NoCapabilities;
+
+impl CapabilityResolver for NoCapabilities {
+    fn resolve(&self, reference: &str) -> Result<BTreeSet<IntakeValue>, IntakeResolveError> {
+        Err(IntakeResolveError::UnresolvedCapability(
+            reference.to_string(),
+        ))
+    }
 }
 
 /// An empty resolver, for callers with no `Custom` fields.
@@ -444,8 +533,8 @@ impl IntakeFieldRegistry {
 #[cfg(test)]
 mod tests {
     use super::{
-        IntakeCondition, IntakeDecision, IntakeField, IntakeItem, IntakeOp, IntakeOutcome,
-        IntakePipeline, IntakeRule, IntakeValue, ResolvedField,
+        IntakeCondition, IntakeDecision, IntakeField, IntakeItem, IntakeMisconfiguration, IntakeOp,
+        IntakeOutcome, IntakePipeline, IntakeRule, IntakeValue, ResolvedField,
     };
     use crate::timestamp::Timestamp;
 
@@ -535,7 +624,9 @@ mod tests {
     fn misconfigured_is_not_an_outcome() {
         let misconfigured = IntakeDecision::Misconfigured {
             pipeline_id: "p".to_string(),
-            unresolved_ref: "mainspace".to_string(),
+            reason: IntakeMisconfiguration::UnresolvedCapability {
+                reference: "mainspace".to_string(),
+            },
         };
         assert!(misconfigured.outcome().is_none());
 
@@ -546,6 +637,40 @@ mod tests {
             config_version: "abc".to_string(),
         };
         assert_eq!(routed.outcome(), Some(&IntakeOutcome::Drop));
+    }
+
+    #[test]
+    fn every_misconfiguration_survives_a_round_trip() {
+        // Recorded in the same stream as routed decisions, so the shape has to
+        // survive storage and replay — an internally tagged enum is easy to get
+        // subtly wrong and only shows up once a record is read back.
+        for reason in [
+            IntakeMisconfiguration::UnresolvedCapability {
+                reference: "mainspace".to_string(),
+            },
+            IntakeMisconfiguration::UnregisteredCustomField {
+                field: "edit_count".to_string(),
+            },
+            IntakeMisconfiguration::InvalidRule {
+                detail: "field actor_is_bot does not accept operator OlderThan".to_string(),
+            },
+            IntakeMisconfiguration::UnusableCustomField {
+                field: "custom:edit_count".to_string(),
+                op: IntakeOp::Eq,
+                resolved: "text".to_string(),
+            },
+        ] {
+            let decision = IntakeDecision::Misconfigured {
+                pipeline_id: "baseline".to_string(),
+                reason: reason.clone(),
+            };
+            let json = serde_json::to_string(&decision).expect("serializes");
+            assert_eq!(
+                serde_json::from_str::<IntakeDecision>(&json).expect("deserializes"),
+                decision,
+                "round trip failed for {json}"
+            );
+        }
     }
 
     #[test]

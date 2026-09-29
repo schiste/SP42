@@ -41,6 +41,7 @@ pub mod context_builder;
 pub mod dev_auth;
 pub mod diff_engine;
 pub mod errors;
+pub mod intake_engine;
 pub mod liftwing;
 pub mod media_diff;
 pub mod oauth;

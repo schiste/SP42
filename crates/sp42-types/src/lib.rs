@@ -15,9 +15,10 @@ pub use errors::{
     EventSourceError, HttpClientError, ModelClientError, ReasonError, StorageError, WebSocketError,
 };
 pub use intake::{
-    IntakeActor, IntakeCondition, IntakeDecision, IntakeField, IntakeFieldRegistry,
-    IntakeFieldResolver, IntakeItem, IntakeOp, IntakeOutcome, IntakePipeline, IntakeResolveError,
-    IntakeRule, IntakeValue, NoCustomFields, ResolvedField,
+    CapabilityResolver, IntakeActor, IntakeCondition, IntakeDecision, IntakeField,
+    IntakeFieldRegistry, IntakeFieldResolver, IntakeItem, IntakeMisconfiguration, IntakeOp,
+    IntakeOutcome, IntakePipeline, IntakeResolveError, IntakeRule, IntakeValue, NoCapabilities,
+    NoCustomFields, ResolvedField,
 };
 pub use model::{
     ChatMessage, ChatRole, EndpointMode, ModelClient, ModelCompletion, ModelCompletionRequest,

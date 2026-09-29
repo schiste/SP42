@@ -10,8 +10,8 @@
 //! Note for anyone adding a fetch here: `genai` pins its own `reqwest` version,
 //! so a model call cannot be routed through this workspace's guarded client. The
 //! inference endpoint is operator-supplied via `SP42_INFERENCE_URL` rather than
-//! attacker-influenced, which is why that seam is acceptable; it is bounded by
-//! [`MODEL_CALL_TIMEOUT`].
+//! attacker-influenced, which is why that seam is acceptable; it is bounded by an
+//! internal `MODEL_CALL_TIMEOUT`.
 
 use std::time::Duration;
 

@@ -29,6 +29,8 @@ unicode-normalization = "0.1"
 url.workspace = true
 
 [dev-dependencies]
-proptest = "1.9.0"
+# NOTE: `proptest` was previously declared here and never used (Art. 7.1: every
+# dependency is a liability). Removed. The crate is itself a retiring facade and
+# is deleted in the ADR-0013 relocation slice.
 # test-support exposes sp42_platform::test_fixtures to this crate's domain tests.
 sp42-platform = { path = "../sp42-platform", features = ["test-support"] }

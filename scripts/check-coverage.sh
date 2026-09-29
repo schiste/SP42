@@ -12,6 +12,15 @@
 #   - workspace line coverage, excluding the `xtask` build-tooling crate, >=
 #     SP42_WORKSPACE_COVERAGE_MIN (default 80) — so coverage cannot silently
 #     erode outside the platform-independent crates. Ratchet upward over time.
+#   - sp42-server line coverage >= SP42_SERVER_COVERAGE_MIN (default 60).
+#     sp42-server is a GOVERNANCE.md "protected area" holding every
+#     auth/session/deployment-mode code path, and the two aggregate floors above
+#     let it sit far below the rest of the workspace: an 83% workspace average
+#     coexisted with sp42-server at roughly 64%, and with
+#     revision_artifacts.rs — the rendered-HTML trust boundary of ADR-0032 — at
+#     26%. A protected area needs its own floor, or it is protected only in
+#     review and not in CI. 60 is deliberately below the measured value so it
+#     cannot fail spuriously; raise it as the server's tests improve.
 #
 # The combined run instruments the crates' shared dependency (sp42-types) too;
 # it is excluded via --ignore-filename-regex so the floor is measured on the
@@ -23,21 +32,84 @@ cd "$repo_root"
 
 core_min="${SP42_COVERAGE_MIN:-90}"
 ws_min="${SP42_WORKSPACE_COVERAGE_MIN:-80}"
+server_min="${SP42_SERVER_COVERAGE_MIN:-60}"
 
 command -v cargo-llvm-cov >/dev/null 2>&1 || {
   printf 'SP42 coverage check: `cargo-llvm-cov` is not installed.\n  install: cargo install --locked cargo-llvm-cov\n' >&2
   exit 1
 }
 
-printf '\n== platform-independent logic (sp42-platform + sp42-core + sp42-citation + sp42-patrol) line coverage (must be >= %s%%) ==\n' "$core_min"
-RUST_TEST_THREADS="${RUST_TEST_THREADS:-1}" \
-  cargo llvm-cov -p sp42-platform -p sp42-core -p sp42-citation -p sp42-patrol \
-    --ignore-filename-regex 'crates/sp42-types/' \
-    --fail-under-lines "$core_min"
+# On filesystems that cannot store resource forks natively (exFAT, which is what
+# an external SSD is usually formatted as), macOS writes AppleDouble sidecar
+# files next to every artifact: `._SP42-<pid>-<n>_0.profraw`. cargo-llvm-cov
+# globs `*.profraw`, so llvm-profdata is handed those sidecars and aborts the
+# whole merge with "unrecognized instrumentation profile encoding format" ->
+# "no profile can be merged" — the coverage gate then fails for a reason that has
+# nothing to do with the code. Purging the sidecars between the test run and the
+# merge is harmless on APFS/ext4 (where the glob finds nothing to delete) and
+# makes the gate work on an external volume. Set SP42_SKIP_APPLEDOUBLE_SWEEP=1
+# to bypass.
+purge_appledouble() {
+  if [[ "${SP42_SKIP_APPLEDOUBLE_SWEEP:-0}" == "1" ]]; then
+    return 0
+  fi
+  local dir="target/llvm-cov-target"
+  [[ -d "$dir" ]] || return 0
+  find "$dir" -name '._*' -type f -delete 2>/dev/null || true
+}
 
-printf '\n== workspace line coverage, excl. xtask (must be >= %s%%) ==\n' "$ws_min"
-RUST_TEST_THREADS="${RUST_TEST_THREADS:-1}" \
-  cargo llvm-cov --workspace --exclude xtask --fail-under-lines "$ws_min"
+# `cargo llvm-cov` merges profiles as part of the same invocation that runs the
+# tests, so the sweep has to happen in between: run with --no-report to produce
+# the .profraw files, purge the sidecars, then `report` to merge and measure.
+# `report` does not accept every flag the test subcommands do. It takes
+# -p/--package and --ignore-filename-regex, but rejects --workspace and --exclude
+# outright:
+#
+#   error: --workspace is specific to [test,nextest,nextest-archive,show-env,
+#   clean,no subcommand] and not supported for subcommand 'report'
+#
+# so the args have to be split: everything before a literal `--` is valid for
+# both invocations, everything after it goes to the test run alone. The report
+# then expresses the same intent with a flag it understands - for the xtask
+# exclusion, --ignore-filename-regex rather than --exclude.
+run_floor() {
+  local label="$1" floor="$2"
+  shift 2
+  local -a shared=() test_only=()
+  local after_sep=0 arg
+  for arg in "$@"; do
+    if [[ "$arg" == "--" ]]; then after_sep=1; continue; fi
+    if [[ $after_sep -eq 1 ]]; then test_only+=("$arg"); else shared+=("$arg"); fi
+  done
 
-printf '\nSP42 coverage check passed (platform-independent logic >= %s%%, workspace excl. xtask >= %s%%).\n' \
-  "$core_min" "$ws_min"
+  printf '\n== %s line coverage (must be >= %s%%) ==\n' "$label" "$floor"
+  RUST_TEST_THREADS="${RUST_TEST_THREADS:-1}" \
+    cargo llvm-cov ${test_only[@]+"${test_only[@]}"} "${shared[@]}" --no-report
+  purge_appledouble
+  RUST_TEST_THREADS="${RUST_TEST_THREADS:-1}" \
+    cargo llvm-cov report "${shared[@]}" --fail-under-lines "$floor"
+}
+
+# Every argument handed to run_floor is passed to BOTH the test run and the
+# report, so each one has to be valid for the `report` subcommand too. That is
+# why xtask is excluded by path rather than with `--exclude`:
+#
+#   error: --exclude is specific to [test,nextest,nextest-archive,no
+#   subcommand] and not supported for subcommand 'report'
+#
+# --ignore-filename-regex is accepted by both, and the first floor above already
+# relies on that for crates/sp42-types/.
+
+run_floor \
+  'platform-independent logic (sp42-platform + sp42-core + sp42-citation + sp42-patrol)' \
+  "$core_min" \
+  -p sp42-platform -p sp42-core -p sp42-citation -p sp42-patrol \
+  --ignore-filename-regex 'crates/sp42-types/'
+
+run_floor 'sp42-server (protected area: auth, session, deployment mode)' \
+  "$server_min" -p sp42-server
+
+run_floor 'workspace, excl. xtask' "$ws_min" --ignore-filename-regex 'xtask/' -- --workspace --exclude xtask
+
+printf '\nSP42 coverage check passed (platform-independent logic >= %s%%, sp42-server >= %s%%, workspace excl. xtask >= %s%%).\n' \
+  "$core_min" "$server_min" "$ws_min"

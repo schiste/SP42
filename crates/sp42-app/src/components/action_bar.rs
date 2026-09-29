@@ -152,6 +152,7 @@ mod tests {
     use sp42_live::{
         LiveOperatorActionPreflight, LiveOperatorActionRecommendation, LiveOperatorRetryClass,
     };
+    use wasm_bindgen_test::wasm_bindgen_test;
 
     use super::{find_recommendation, tooltip_from_reasons};
 
@@ -184,7 +185,7 @@ mod tests {
         }
     }
 
-    #[test]
+    #[wasm_bindgen_test]
     fn find_recommendation_returns_matching_kind() {
         let preflight = test_preflight();
 
@@ -193,7 +194,7 @@ mod tests {
         assert!(patrol.expect("should exist").available);
     }
 
-    #[test]
+    #[wasm_bindgen_test]
     fn find_recommendation_returns_none_for_missing_kind() {
         let preflight = test_preflight();
 
@@ -201,7 +202,7 @@ mod tests {
         assert!(undo.is_none());
     }
 
-    #[test]
+    #[wasm_bindgen_test]
     fn tooltip_from_reasons_joins_reasons() {
         let preflight = test_preflight();
         let patrol = find_recommendation(&preflight, SessionActionKind::Patrol);
@@ -210,7 +211,7 @@ mod tests {
         assert_eq!(tooltip, "edit is unpatrolled; user can patrol");
     }
 
-    #[test]
+    #[wasm_bindgen_test]
     fn tooltip_from_reasons_returns_empty_for_none() {
         let tooltip = tooltip_from_reasons(None);
         assert!(tooltip.is_empty());

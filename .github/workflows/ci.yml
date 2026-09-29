@@ -1,8 +1,9 @@
 name: CI
 
 # CI-shaped checks on non-draft PRs.
-#   - `checks` (always): the core gate, incl. a wasm32 compile-check so a wasm-only
-#     break is caught regardless of which crate changed.
+#   - `checks` (always): the core gate, incl. a wasm32 job that *executes* the
+#     browser shell's unit tests (ADR-0034), so a wasm-only break is caught
+#     regardless of which crate changed.
 #   - `frontend` (always): optimized build + wasm size ceiling. NOT path-filtered —
 #     the bundle's inputs can't be enumerated (any crate dep, any include_str!
 #     asset like fixtures/ or configs/), so the size gate must run every PR.
@@ -15,6 +16,15 @@ name: CI
 on:
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
+  # Direct pushes to main bypassed every check: the workflow only ran on
+  # pull_request, and the local Husky hooks are developer-machine-local and
+  # skippable via SP42_SKIP_GIT_HOOKS=1. Constitution Art. 5.1 says no code
+  # merges without passing every check, which means main must be checked too.
+  # Branch protection should still make this the backstop, not the primary
+  # gate — it exists so a force-push or a ruleset change cannot land
+  # unvalidated code.
+  push:
+    branches: [main]
 
 concurrency:
   group: ci-${{ github.event.pull_request.number || github.ref }}
@@ -27,7 +37,10 @@ permissions:
 jobs:
   changes:
     name: detect changed areas
-    if: github.event.pull_request.draft == false
+    # PR-only: dorny/paths-filter resolves the changed set through the pull
+    # request API here, which has no equivalent on a push event. The desktop job
+    # below runs unconditionally on push instead, so nothing is lost.
+    if: github.event_name == 'pull_request' && github.event.pull_request.draft == false
     runs-on: ubuntu-latest
     outputs:
       desktop: ${{ steps.filter.outputs.desktop }}
@@ -70,18 +83,20 @@ jobs:
       - name: Install gate tools
         uses: taiki-e/install-action@v2
         with:
-          tool: cargo-deny,cargo-audit,cargo-llvm-cov
+          tool: cargo-deny,cargo-audit,cargo-llvm-cov,wasm-pack
       - name: Formatting
         run: cargo fmt --all -- --check
       - name: Build (workspace, all targets)
         run: cargo ci-build
       - name: Wasm compile-check (sp42-app)
         run: cargo build -p sp42-app --target wasm32-unknown-unknown --profile ci --locked
-      - name: Wasm test compile-check (sp42-app)
-        # sp42-app's modules are #[cfg(target_arch = "wasm32")], so the host `cargo
-        # ci-test` step never compiles its tests; without --tests here, stale wasm-only
-        # #[cfg(test)] code rots unnoticed. Compile-only (running needs wasm-bindgen-test).
-        run: cargo check -p sp42-app --target wasm32-unknown-unknown --profile ci --locked --tests
+      - name: Wasm unit tests (sp42-app, executed not just type-checked)
+        # sp42-app's modules are #[cfg(target_arch = "wasm32")], so the host
+        # `cargo ci-test` step never compiles its tests. These used to be
+        # type-checked only, and were declared with `#[test]`, which no wasm
+        # runner collects — so 88 tests counted as covered while never running
+        # (ADR-0034). They are now `#[wasm_bindgen_test]` and execute here.
+        run: ./scripts/check-wasm-tests.sh
       - name: Tests
         run: cargo ci-test
       - name: Clippy (pedantic = deny)
@@ -130,13 +145,22 @@ jobs:
     needs: changes
     # Fail CLOSED: always() so a failed detector can't silently skip this gate;
     # run when the detector errored (guard step fails the job) or desktop changed.
+    #
+    # On a push to main the `changes` job does not run (it resolves the diff
+    # through the PR API), so there is no signal to filter on. The gate runs
+    # unconditionally there instead: it is a compile-check, and the point of
+    # adding the push trigger is that main is never unvalidated.
     if: >-
-      always() && github.event.pull_request.draft == false &&
-      (needs.changes.result != 'success' || needs.changes.outputs.desktop == 'true')
+      always() && (
+        github.event_name == 'push' ||
+        (github.event.pull_request.draft == false &&
+          (needs.changes.result != 'success' || needs.changes.outputs.desktop == 'true'))
+      )
     runs-on: ubuntu-latest
     steps:
       - name: Fail closed if change detection did not succeed
-        if: needs.changes.result != 'success'
+        # PR-only: on push the detector is intentionally absent, not failed.
+        if: github.event_name == 'pull_request' && needs.changes.result != 'success'
         env:
           DETECT_RESULT: ${{ needs.changes.result }}
         run: |

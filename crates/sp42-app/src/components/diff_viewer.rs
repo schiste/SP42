@@ -34,6 +34,8 @@ pub struct TagAction {
 }
 
 /// Reserved for future inline diff editing affordances.
+// https://github.com/schiste/SP42/issues/181 — reachable only from the wasm32
+// test build, which the host build cannot see.
 #[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct EditAction {
@@ -1150,6 +1152,8 @@ fn apply_rendered_highlights(
     phrases: &[RenderedHighlightPhrase],
     highlight_class: &str,
 ) {
+    // https://github.com/schiste/SP42/issues/181 — imported for the wasm32
+    // test build only.
     #[allow(unused_imports)]
     use wasm_bindgen::JsCast;
 
@@ -1402,6 +1406,7 @@ fn format_line_label(
 mod tests {
     use sp42_core::{DiffLineSpan, DiffMode, DiffSegment, DiffSegmentKind};
     use sp42_ui::DiffTone;
+    use wasm_bindgen_test::wasm_bindgen_test;
 
     use super::{
         SegmentData, SegmentVisibility, build_side_by_side_rows, compute_visibility,
@@ -1443,7 +1448,7 @@ mod tests {
         }
     }
 
-    #[test]
+    #[wasm_bindgen_test]
     fn compute_visibility_collapses_distant_equal_runs() {
         let segments = vec![
             segment(DiffSegmentKind::Equal),
@@ -1466,7 +1471,7 @@ mod tests {
         assert!(matches!(visibility[5], SegmentVisibility::Separator(3)));
     }
 
-    #[test]
+    #[wasm_bindgen_test]
     fn format_line_label_uses_real_line_ranges_for_line_diffs() {
         let span = DiffLineSpan {
             start_line: 12,
@@ -1488,7 +1493,7 @@ mod tests {
         assert_eq!(format_line_label(None, DiffMode::Lines, 99), "");
     }
 
-    #[test]
+    #[wasm_bindgen_test]
     fn format_line_label_falls_back_for_char_diffs() {
         let span = DiffLineSpan {
             start_line: 12,
@@ -1499,7 +1504,7 @@ mod tests {
         assert_eq!(format_line_label(None, DiffMode::Chars, 4), "4");
     }
 
-    #[test]
+    #[wasm_bindgen_test]
     fn side_by_side_rows_align_asymmetrical_change_runs_by_line() {
         let rows = build_side_by_side_rows(
             &[
@@ -1544,7 +1549,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[wasm_bindgen_test]
     fn side_by_side_rows_split_equal_segments_into_aligned_lines() {
         let rows = build_side_by_side_rows(
             &[segment_data(
@@ -1575,7 +1580,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[wasm_bindgen_test]
     fn whitespace_only_inline_spans_are_not_emphasized() {
         assert_eq!(
             inline_diff_tone(&sp42_core::InlineSpan {

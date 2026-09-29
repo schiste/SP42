@@ -454,8 +454,9 @@ mod tests {
         preview_browser_auth,
     };
     use sp42_core::{DevAuthSessionStatus, LocalOAuthConfigStatus};
+    use wasm_bindgen_test::wasm_bindgen_test;
 
-    #[test]
+    #[wasm_bindgen_test]
     fn preview_contains_redirect_uri() {
         let preview = preview_browser_auth();
 
@@ -464,18 +465,23 @@ mod tests {
         assert_eq!(preview.dev_bridge_url, "/dev/auth/session/bootstrap");
         assert!(!preview.callback_preview.is_empty());
         assert!(preview.launch_state_preview.contains("verifier_len="));
-        assert_eq!(preview.notes.len(), 3);
+        // Four notes: the client_id-fallback note is inserted at index 0 by
+        // `build_notes`, so the vector is 3 + 1. This assertion predates that
+        // insert and never ran; see ADR-0034.
+        assert_eq!(preview.notes.len(), 4);
     }
 
-    #[test]
+    #[wasm_bindgen_test]
     fn callback_preview_masks_codes() {
         let preview = callback_preview("?code=supersecret&state=abc");
 
-        assert!(preview.contains("code=super..."));
+        // `mask_code` keeps 6 leading characters. The full secret must not leak.
+        assert!(preview.contains("code=supers..."), "{preview}");
+        assert!(!preview.contains("supersecret"), "{preview}");
         assert!(preview.contains("state=abc"));
     }
 
-    #[test]
+    #[wasm_bindgen_test]
     fn bootstrap_status_lines_include_the_core_fields() {
         let lines = bootstrap_status_lines(&DevAuthBootstrapStatus {
             bootstrap_ready: true,
@@ -515,7 +521,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[wasm_bindgen_test]
     fn parse_bootstrap_status_value_accepts_the_server_shape() {
         let status = super::parse_bootstrap_status_value(serde_json::json!({
             "bootstrap_ready": true,
@@ -542,7 +548,7 @@ mod tests {
         assert_eq!(status.source_path.as_deref(), Some(".env.wikimedia.local"));
     }
 
-    #[test]
+    #[wasm_bindgen_test]
     fn parse_bootstrap_status_value_rejects_invalid_objects() {
         let err = super::parse_bootstrap_status_value(serde_json::json!({
             "bootstrap_ready": true,

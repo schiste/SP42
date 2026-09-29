@@ -1,6 +1,17 @@
 //! Shared inference edge: the genai-backed `ModelClient` and env-driven
-//! construction of an endpoint config + model panel. Also exports the guarded HTTP client
-//! builder for source fetches with per-hop SSRF validation (SP42#34).
+//! construction of an endpoint config + model panel.
+//!
+//! This crate does **not** export a guarded HTTP client builder for source
+//! fetches. That lives in `sp42-fetch` (ADR-0015 for the SSRF guard, ADR-0032 for
+//! the rendered-HTML allowlist); the guarded builders are
+//! `sp42_fetch::build_source_client` and `sp42_fetch::source_client_from_env`.
+//! This module previously claimed to re-export one, which it does not.
+//!
+//! Note for anyone adding a fetch here: `genai` pins its own `reqwest` version,
+//! so a model call cannot be routed through this workspace's guarded client. The
+//! inference endpoint is operator-supplied via `SP42_INFERENCE_URL` rather than
+//! attacker-influenced, which is why that seam is acceptable; it is bounded by an
+//! internal `MODEL_CALL_TIMEOUT`.
 
 use std::time::Duration;
 

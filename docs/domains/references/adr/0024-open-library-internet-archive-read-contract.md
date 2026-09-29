@@ -1,9 +1,9 @@
 # ADR-0024: Open Library / Internet Archive read contract
 
-**Status:** Proposed
-**Date:** 2026-07-07
+**Status:** Accepted
+**Date:** 2026-09-28
 **Author:** Luis Villa (drafted by Claude Code)
-**Summary:** A book citation's ISBN resolves to an Open Library catalog record and, when available, an Internet Archive scan or search-inside snippet, entirely through documented read-only endpoints — never the Open Library route that can trigger a write-side import.
+**Summary:** A book citation's ISBN resolves to an Open Library catalog record and, when available, an Internet Archive scan or search-inside snippet, entirely through documented read-only endpoints — never the Open Library route that can trigger a write-side import. Promoted from Proposed on 2026-09-28: the decision is settled and implemented — the Open Library Books/Read lanes and the Internet Archive search-inside grounding ship in `sp42-citation`.
 
 Spawned by PRD-0009 (book-citation grounding and Open Library enrichment),
 resolved Q6(a): the **read-contract** ADR. It fixes how SP42 turns a book

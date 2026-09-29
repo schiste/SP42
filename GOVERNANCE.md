@@ -52,7 +52,11 @@ operators, editors, or external integrations can do or rely on.
 - Pull request descriptions must include validation notes, even when the only
   validation is a documented reason why a check was not run.
 - Maintainers may ask for tests, docs, or a narrower scope before review.
-- Self-merge is not allowed for protected files or release/deployment changes.
+- Self-merge is not allowed, per Constitution Art. 8.3. (This file previously
+  said self-merge was allowed outside protected files; the Constitution is the
+  binding document and prohibits it outright. If a narrowly-scoped self-merge
+  ever needs to be permitted, that is a Constitution amendment under Art. 12,
+  not a Governance edit.)
 
 ## Protected Areas
 
@@ -68,6 +72,17 @@ The following areas need maintainer review before merge:
 
 Maintainers enforce these review boundaries through branch protection, review
 policy, and release/deployment access controls.
+
+Two of these areas also carry a CI floor of their own, because review alone does
+not protect them:
+
+- `crates/sp42-server/` — `check-coverage.sh` enforces a per-crate line-coverage
+  floor (`SP42_SERVER_COVERAGE_MIN`) rather than relying on the workspace
+  average, which allowed a well-covered workspace to coexist with a
+  security-critical server at roughly half the workspace figure.
+- Desktop packaging and Tauri configuration — the Content-Security-Policy
+  invariants are asserted in `sp42-server`'s unit tests (ADR-0033), so a
+  weakening of the policy fails the build rather than waiting for review.
 
 ## Contributor Issue Labels
 

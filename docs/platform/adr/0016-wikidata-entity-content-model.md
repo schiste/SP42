@@ -1,9 +1,9 @@
 # ADR-0016: Wikidata entity content-model — revision read, `EntityDiff`, and content-model routing
 
-**Status:** Proposed
-**Date:** 2026-07-01
+**Status:** Accepted
+**Date:** 2026-09-28
 **Author:** Luis Villa (drafted by Claude Code)
-**Summary:** Wikidata support treats the content model as a first-class per-revision fact, adding an additive `EntityDiff` and content-model routing so entity revisions are read and diffed alongside wikitext without disturbing the wikitext path.
+**Summary:** Wikidata support treats the content model as a first-class per-revision fact, adding an additive `EntityDiff` and content-model routing so entity revisions are read and diffed alongside wikitext without disturbing the wikitext path. Promoted from Proposed on 2026-09-28: the decision is settled and implemented end to end — the `wikibase` module, the `/operator/content-diff` route, and the browser `EntityDiffViewer` all ship.
 
 Spawned by PRD-0011 (Wikidata as a first-class SP42 target). This ADR owns the
 **read** mechanism; the entity **write** contract is ADR-0017.

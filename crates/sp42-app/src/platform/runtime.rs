@@ -119,7 +119,12 @@ pub struct LocalStorageBrowserStorage;
 #[async_trait]
 impl Storage for LocalStorageBrowserStorage {
     async fn get(&self, key: &str) -> Result<Option<Vec<u8>>, StorageError> {
-        let Some(storage) = browser_local_storage()? else {
+        // A read is total: when no `localStorage` is reachable (storage
+        // disabled, or a non-browser host) the key simply has no value, which is
+        // exactly `Ok(None)`. Erroring here would make every read fail in those
+        // environments. `set` below still errors, because a write that cannot
+        // persist must not look successful.
+        let Some(storage) = browser_local_storage().unwrap_or(None) else {
             return Ok(None);
         };
 
@@ -607,19 +612,20 @@ fn stringify_js_value(value: &JsValue) -> String {
 mod tests {
     use futures::executor::block_on;
     use sp42_types::{Clock, Rng, Storage};
+    use wasm_bindgen_test::wasm_bindgen_test;
 
     use super::{
         BrowserClock, BrowserRng, LocalStorageBrowserStorage, VolatileBrowserStorage,
         preview_runtime_environment, runtime_environment_status,
     };
 
-    #[test]
+    #[wasm_bindgen_test]
     fn clock_returns_non_negative_timestamp() {
         let clock = BrowserClock;
         assert!(clock.now_ms() >= 0);
     }
 
-    #[test]
+    #[wasm_bindgen_test]
     fn rng_returns_progressive_values() {
         let mut rng = BrowserRng::default();
         let first = rng.next_u64();
@@ -627,7 +633,7 @@ mod tests {
         assert_ne!(first ^ second, 0);
     }
 
-    #[test]
+    #[wasm_bindgen_test]
     fn volatile_storage_round_trips() {
         let storage = VolatileBrowserStorage::default();
         block_on(storage.set("key".to_string(), b"value".to_vec())).expect("set should succeed");
@@ -636,14 +642,20 @@ mod tests {
         assert_eq!(value, Some(b"value".to_vec()));
     }
 
-    #[test]
-    fn local_storage_handles_missing_window_gracefully() {
+    #[wasm_bindgen_test]
+    fn local_storage_get_is_ok_wherever_it_runs() {
+        // `LocalStorageBrowserStorage::get` must be total: with no
+        // `window.localStorage` (Node, or a browser with storage disabled) it
+        // yields `Ok(None)` rather than an error, so a read never breaks the
+        // shell. Under the Node runner that is the *only* reachable path, which
+        // is why the assertion checks the Result rather than a stored value.
         let storage = LocalStorageBrowserStorage;
         let result = block_on(storage.get("missing"));
-        assert!(result.is_ok());
+        assert!(result.is_ok(), "{result:?}");
+        assert_eq!(result.expect("total get"), None);
     }
 
-    #[test]
+    #[wasm_bindgen_test]
     fn runtime_preview_contains_entries() {
         let lines = preview_runtime_environment();
         assert!(lines.len() >= 6);
@@ -653,7 +665,7 @@ mod tests {
         assert!(lines.iter().any(|line| line.contains("clock_now_ms=")));
     }
 
-    #[test]
+    #[wasm_bindgen_test]
     fn runtime_status_contains_field_level_data() {
         let status = runtime_environment_status();
 

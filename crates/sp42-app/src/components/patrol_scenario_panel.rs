@@ -338,6 +338,7 @@ mod tests {
         PatrolScenarioFinding, PatrolScenarioReadiness, PatrolScenarioReport,
         PatrolScenarioSection, ReportSeverity,
     };
+    use wasm_bindgen_test::wasm_bindgen_test;
 
     fn sample_report() -> PatrolScenarioReport {
         PatrolScenarioReport {
@@ -415,7 +416,7 @@ mod tests {
         }
     }
 
-    #[test]
+    #[wasm_bindgen_test]
     fn readiness_metadata_is_stable() {
         assert_eq!(
             readiness_meta(PatrolScenarioReadiness::Blocked).1,
@@ -427,7 +428,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[wasm_bindgen_test]
     fn scenario_badges_include_queue_and_findings() {
         let badges = scenario_badges(&sample_report());
 
@@ -435,7 +436,7 @@ mod tests {
         assert!(badges.iter().any(|(label, _)| label == "2 finding(s)"));
     }
 
-    #[test]
+    #[wasm_bindgen_test]
     fn storyboard_lines_cover_queue_to_workbench_flow() {
         let lines = scenario_storyboard_lines(&sample_report());
 
@@ -445,10 +446,14 @@ mod tests {
                 .iter()
                 .any(|line| line.starts_with("selected rev=123456"))
         );
+        // The Workbench section is rendered under the label "action rail", not
+        // "workbench" (see `scenario_storyboard_lines`). The old assertion used
+        // the source name and had never been executed; see ADR-0034.
         assert!(
             lines
                 .iter()
-                .any(|line| line.starts_with("workbench available=true"))
+                .any(|line| line.starts_with("action rail available=true")),
+            "{lines:?}"
         );
         assert!(
             lines
@@ -462,7 +467,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[wasm_bindgen_test]
     fn ordered_sections_preserve_flow_order() {
         let sections = ordered_sections(&sample_report());
 
@@ -476,7 +481,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[wasm_bindgen_test]
     fn finding_summary_tone_reflects_severity() {
         let mut findings = sample_report().findings;
         assert_eq!(finding_summary_tone(&findings), Tone::Accent);

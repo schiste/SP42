@@ -119,6 +119,8 @@ fn is_boundary(text: &str, dot: usize, end: usize) -> bool {
         // This handles intermediate dots in "U.S.", "U.K.", "U.N.", etc.
         // The dot is NOT a boundary if the char immediately before it is uppercase
         // AND the char immediately after it (at `end`) is uppercase (no intervening space).
+        // https://github.com/schiste/SP42/issues/183 — the two conditions are
+        // distinct assertions; collapsing them hides which one failed.
         #[allow(clippy::collapsible_if)]
         if let (Some(prev), Some(next)) =
             (text[..dot].chars().next_back(), text[end..].chars().next())

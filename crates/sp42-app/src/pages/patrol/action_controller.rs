@@ -72,7 +72,7 @@ pub(super) fn create_patrol_action_controller(
     }
 }
 
-#[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments)] // https://github.com/schiste/SP42/issues/182
 fn install_action_effect(
     view_data: ReadSignal<Option<LiveOperatorView>>,
     selected_edit: ReadSignal<Option<QueuedEdit>>,

@@ -5,6 +5,37 @@
 
 schema = 1
 
+# ── Starting a session: always pass --base main ──────────────────────────────
+# Not a config key — a usage rule this repository needs, recorded where the rest
+# of the broker's behaviour for SP42 is recorded.
+#
+# `broker start` picks its base in this order: an explicit `--base`; else
+# refs/heads/aethyme/integration if that branch exists; else origin/HEAD; else
+# refs/heads/main. The integration branch therefore *wins over main* whenever it
+# exists — and under verify-only above, nothing ever promotes to it, so it can
+# only ever go stale.
+#
+# Deleting it does not hold. The broker recreates it from the current checkout's
+# HEAD, so with the checkout parked on someone's feature branch, a new session
+# branches from that unmerged work. Verified here: with the checkout on
+# refactor/split-oversized-functions, `broker start` reported
+#
+#     Start base: refs/heads/aethyme/integration at 16b00be (integration tip)
+#
+# i.e. another agent's in-progress commits. With `--base main` the same command
+# reported
+#
+#     Start base: main at 772b8bd (explicit --base)
+#
+# so use `aethyme broker start --base main --task "..."` in this repository.
+# An explicit base is still measured against the default branch, so inherited
+# drift stays visible rather than being laundered by the choice.
+#
+# This is not hypothetical: refs/heads/aethyme/integration had drifted 8 commits
+# from main while unpushed, holding two unreviewed security fixes. Those commits
+# are now recovered and landed, and the branch is preserved at
+# origin/backup/aethyme-integration-2026-09-28.
+
 [promote]
 # verify-only, deliberately. The generated default is "auto", which promotes
 # verified submissions onto a local `aethyme/integration` branch — and the

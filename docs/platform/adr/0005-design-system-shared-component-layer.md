@@ -1,7 +1,7 @@
 # ADR-0005: Design system and shared component layer (`sp42-ui`)
 
 **Status:** Accepted
-**Date:** 2026-06-07
+**Date:** 2026-09-28
 **Author:** SP42
 **Summary:** A presentation-only `sp42-ui` crate is the single source of the design system (tokens, atoms, primitives) that shells consume; it takes no domain dependency, and the design contract is enforced mechanically rather than by prose. Promoted from Proposed on 2026-09-28: the decision is settled and implemented — `sp42-ui` carries 11 primitive modules (107 public types) and `scripts/check-design-system.sh` enforces the gate.
 

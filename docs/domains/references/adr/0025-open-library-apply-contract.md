@@ -1,7 +1,7 @@
 # ADR-0025: Open Library apply contract (operator-confirmed enrichment writes)
 
 **Status:** Accepted
-**Date:** 2026-07-08
+**Date:** 2026-09-28
 **Author:** Luis Villa (drafted by Claude Code)
 **Summary:** A confirmed field-level Open Library record enrichment transfers ADR-0010's propose/confirm/refuse-on-drift discipline to Open Library's usergroup-gated write API — replaying exactly what the operator confirmed and refusing on revision drift, with no CSRF protection or server-side conflict detection to lean on upstream. Promoted from Proposed on 2026-09-28: the *contract* is settled and the mechanism ships (`openlibrary_apply.rs`, 1,097 lines). The write lane is deliberately disabled and unwired pending this ADR's own enablement gate, which is a recorded implementation state, not an open question about the decision.
 

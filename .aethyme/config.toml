@@ -53,6 +53,7 @@ mode = "verify-only"
 # The safer delivery route when refs diverge — which they will, since the ADR
 # work lands as a stacked chain of branches.
 default = "pull_request"
+push_session_branches = true
 
 [leases]
 # Paths no session should ever claim. Everything here is either generated,

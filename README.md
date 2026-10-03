@@ -11,6 +11,29 @@ localhost server, MCP agent surface) drives the same core contracts.
 SP42 is currently alpha software. The repository is public and buildable, but it
 is not yet a production-ready moderation tool.
 
+## SP42 Challenges
+
+Wikimedia quality work does not fit one workflow, one wiki, or one language
+edition. A gate that works for recent-changes patrol may not fit citation review;
+a policy that is correct on one project may be wrong on another; and local
+practices often live in templates, norms, queues, and reviewer habits rather than
+in one central API.
+
+SP42's core challenge is to make those differences portable without turning every
+new gate into a one-off application. The project needs shared components and
+shared functions that can be reused across patrol, references, assessment,
+Wikidata, coordination, reporting, and future domains. It also needs abstraction
+layers that can accept project-specific policies and practices for any Wikimedia
+project or language edition: scoring rules, source expectations, citation
+templates, review actions, capability checks, model prompts, and operator
+workflows.
+
+That is why SP42 is structured as platform plus domains. The platform provides
+stable mechanisms; domains describe the quality gate; per-project configuration
+and policy decide how that gate behaves in context. The design rule is simple:
+domains own Wikimedia quality gates; the platform owns the reusable mechanisms
+those gates need.
+
 ## What SP42 Is
 
 - A **platform** of shared, domain-agnostic layers: transport contracts, a
@@ -122,6 +145,19 @@ Optional:
 - A local Wikimedia testing token in `.env.wikimedia.local` for the single-user auth bridge
 
 ## Quick Start
+
+The fastest way to see SP42 running is the local development stack:
+
+```sh
+rustup target add wasm32-unknown-unknown
+cargo install trunk
+./scripts/dev-local.sh --smoke
+```
+
+This starts the browser app on `http://127.0.0.1:4173` and the server on
+`http://127.0.0.1:8788` (the script sets `SP42_DEPLOYMENT_MODE=local` for its
+server), writes logs under `.tmp/`, and stops both processes on `Ctrl-C`. The
+steps below build and run each piece on its own.
 
 ### Local Development
 
@@ -238,7 +274,7 @@ docker run --rm \
     sp42:latest
 ```
 
-####
+### Docker Development Environment
 
 #### 1. Build the Docker Development Image
 
@@ -247,7 +283,7 @@ Clone the repo and build the `sp42-dev` image:
 docker build -f Dockerfile.dev -t sp42-dev:latest .
 ```
 
-#### 2. Build the Docker Development Image
+#### 2. Run the Docker Development Image
 
 Assuming the repository is in the current directory:
 ```sh

@@ -54,6 +54,12 @@ blocked.
    back as a warning naming the holder, with the `note send` command to
    coordinate.
 
+   Orchestration with no path -- a release, a merge chain -- is claimed by
+   name instead: `aethyme broker advanced ownership claim "release v1.2.0"
+   --session <your-session-id> --reason "<why>"`. `status` shows every claim,
+   its holder and when the holder last acted; a claim is refused only while
+   its holder is working, and a quiet holder's claim is taken over.
+
 3. **Guard broad rewrite commands**. For formatters, code generators, or any
    command likely to touch many files, run through the broker guard:
 
@@ -103,6 +109,8 @@ blocked.
    `aethyme broker sync --session <id>` when it warns, before the pull request
    reports the conflict: it rebases an unpublished branch or merges the default
    branch into a published one, and changes nothing if that would conflict.
+   Sync is local only: it never pushes, so run `aethyme broker push --session
+   <id>` afterwards to publish the caught-up branch.
    `broker start` and `start --reuse` refresh the default branch first, so a
    new worktree starts from the latest fetched tip. In a repository
    with `[promote] mode = "verify-only"`, `broker submit` is a pre-flight

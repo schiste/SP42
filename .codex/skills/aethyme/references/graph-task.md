@@ -145,38 +145,3 @@ Two ways the graph can quietly disagree with the source you are reading:
 2. **The extraction is incomplete.** Unresolved edges and absent callers are
    expected in the coverage gaps listed above. Absence of evidence in the graph
    is not evidence of absence in the code.
-
-## Task Scope And Anchors
-
-Use task commands when the user asks "where should I work?", "what files are in
-scope?", or "what should I inspect next?" and the initial Explore answer is not
-enough.
-
-```bash
-aethyme task anchors --repo "$REPO" --task "<task>" --json-output
-aethyme task scope --repo "$REPO" --task "<task>" --json-output
-aethyme task next --repo "$REPO" --task "<task>" --json-output
-```
-
-Read reasons and risks before expanding scope. A file with a clear reason beats
-a larger list with weak evidence.
-
-## Context Packs
-
-Use a pack when you need a compact prompt-ready bundle instead of reading many
-files manually.
-
-```bash
-aethyme task context --repo "$REPO" --task "<task>" --json-output
-aethyme task pack --repo "$REPO" --task "<task>" --json-output
-```
-
-Inspect selected files, selected symbols, snippets, and token estimates. If a
-pack is too large, narrow the task or anchor before asking for a larger pack.
-
-## Verification Discipline
-
-Graph/task output is a candidate selector, not a substitute for reading code.
-After a graph or task command, verify with targeted file reads or symbol grep
-against the returned paths. Avoid raw `rg --files`, broad `find`, or
-repo-wide grep unless Aethyme returned no usable candidates.

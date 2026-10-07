@@ -1125,4 +1125,13 @@ mod tests {
 
         assert_eq!(args, ["tauri", "build"]);
     }
+
+    #[test]
+    fn web_loading_shell_does_not_expose_local_server_instructions() {
+        let html = include_str!("../../index.html");
+
+        assert!(html.contains("Loading SP42…"));
+        assert!(!html.contains("127.0.0.1:8788"));
+        assert!(!html.contains("localhost server"));
+    }
 }

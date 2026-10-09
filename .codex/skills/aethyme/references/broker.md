@@ -170,6 +170,29 @@ blocked.
    aethyme broker advanced ship execute --entry <promoted-entry-id> --confirm <full-publication-sha>
    ```
 
+   By default, the selected entry is a prefix boundary: every earlier
+   promoted-but-unpublished entry ships with it. In promote-mode repositories,
+   `--only` can publish one independent entry without changing that default:
+
+   ```bash
+   aethyme broker advanced ship plan --entry <promoted-entry-id> --only
+   aethyme broker advanced ship execute --entry <promoted-entry-id> --only --confirm <full-publication-sha> --plan <sha256>
+   ```
+
+   The plan refuses when an earlier unshipped entry is required by ancestry,
+   changed-path overlap, or a declared `Depends-On` trailer. Otherwise it gates
+   the exact tree made from the remote default branch plus only the selected
+   entry. Planning does not move refs, though it may record gate results in the
+   local cache; execution requires the reviewed plan digest. After publication,
+   the broker rebases the remaining pending entries onto the published commit
+   in integration and re-runs gates only for replayed trees that changed.
+   Review that reconciliation report. If it refuses or cannot apply safely,
+   use `aethyme broker advanced integration reconcile --upstream <published-sha> --dry-run`
+   and follow its reviewed apply plan. `broker main reconcile plan/apply` remains
+   the separate operation for advancing the local default checkout from
+   integration; independent publication does not mark the other queue entries
+   shipped or change their promotion order.
+
    Prefer this reviewed broker ship workflow over a raw push. Never infer
    publication authority from permission to edit, submit, or promote.
    Without publication authority, stop after submit and report the promoted
